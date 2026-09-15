@@ -175,7 +175,7 @@ app.post('/api/creer-checkout', verifierToken, async (req, res) => {
             const session = await stripe.checkout.sessions.create({
               customer: customerId, 
               payment_method_types: ['card'],
-              line_items: [{ price: 'price_1UFeXl09rDJ4C799FBTiz6nK', quantity: 1 }], 
+              line_items: [{ price: 'price_1UG3R910YWspHc2COuHy70XW', quantity: 1 }], 
               mode: 'subscription',
               success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes',
               cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
