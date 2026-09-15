@@ -91,7 +91,7 @@ app.post('/api/register', async (req, res) => {
         
         let customerId = null;
         try { 
-            const customer = await .customers.create({ email: email, name: nom_salon }); 
+            const customer = await stripe.customers.create({ email: email, name: nom_salon });
             customerId = customer.id; 
         } catch(e) { console.error("Erreur création client :", e.message); }
         
