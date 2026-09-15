@@ -163,7 +163,7 @@ app.post('/api/creer-checkout', async (req, res) => {
             const result = await pool.query('SELECT _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
             if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
             
-            const session = await .checkout.sessions.create({
+            const session = await stripe.checkout.sessions.create({
               customer: result.rows[0]._customer_id, 
               payment_method_types: ['card'],
               line_items: [{ price: 'price_1UFeXl09rDJ4C799FBTiz6nK', quantity: 1 }], 
