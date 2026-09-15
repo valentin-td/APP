@@ -1,0 +1,712 @@
+/* --- 1. DESIGN GLOBAL --- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+body {
+  margin: 0;
+  background-color: #f8f9fa;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #1c1c1e;
+  -webkit-font-smoothing: antialiased;
+}
+
+.dashboard-container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  letter-spacing: -0.5px;
+}
+
+.date-subtitle {
+  font-size: 15px;
+  color: #8e8e93;
+  margin-top: -15px;
+  margin-bottom: 25px;
+  display: block;
+}
+
+/* --- 2. TABLEAU DE BORD (FINANCES) --- */
+.cartes-financieres {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  margin-bottom: 30px;
+}
+
+.carte {
+  background: white;
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0,0,0,0.02);
+}
+
+.carte-titre-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.icon-purple { background-color: #f4e8ff; color: #a154f2; }
+.icon-orange { background-color: #fff0e6; color: #ff9500; }
+.icon-blue { background-color: #e6f2ff; color: #007aff; }
+
+.carte h3 {
+  margin: 0;
+  color: #3a3a3c;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.montant {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+  color: #1c1c1e;
+}
+
+.sous-montant {
+  font-size: 13px;
+  color: #a154f2;
+  margin: 0;
+  font-weight: 500;
+}
+
+.section-titre {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.section-badge {
+  font-size: 13px;
+  color: #8e8e93;
+  font-weight: 400;
+}
+
+.top-prestations {
+  background: white;
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  margin-bottom: 80px;
+}
+
+.presta-item {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+  border-bottom: 1px solid #f2f2f7;
+}
+
+.presta-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.presta-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.presta-nom {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1c1c1e;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-succes {
+  background-color: #34c759;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.presta-details {
+  display: flex;
+  justify-content: space-between;
+  color: #8e8e93;
+  font-size: 14px;
+}
+
+.montant-presta {
+  color: #a154f2;
+  font-weight: 600;
+}
+
+/* --- 3. BARRE DE NAVIGATION (SIDEBAR VERTICALE) --- */
+.navbar-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 90px;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 0;
+  gap: 35px;
+  border-right: 1px solid #e5e5ea;
+  box-shadow: 4px 0 12px rgba(0,0,0,0.03);
+  z-index: 1000;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #8e8e93;
+  font-size: 11px;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.nav-item:hover {
+  color: #a154f2;
+  transform: scale(1.1);
+}
+
+.nav-item.active {
+  color: #a154f2;
+  font-weight: 600;
+}
+
+.nav-icon {
+  font-size: 24px;
+}
+/* --- 4. SCANNER DE FACTURES (ADMINISTRATION) --- */
+.admin-container {
+  padding-bottom: 80px;
+}
+
+.scan-carte {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.input-fournisseur, .textarea-facture {
+  width: 100%;
+  padding: 12px 15px;
+  border: 1px solid #e5e5ea;
+  border-radius: 12px;
+  font-size: 15px;
+  font-family: inherit;
+  box-sizing: border-box;
+  outline: none;
+  background-color: #f8f9fa;
+}
+
+.input-fournisseur:focus, .textarea-facture:focus {
+  border-color: #a154f2;
+  background-color: white;
+}
+
+.textarea-facture {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.btn-action {
+  background-color: #1c1c1e;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.2s;
+}
+
+.btn-action:active {
+  transform: scale(0.98);
+}
+
+.btn-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.resultat-scan {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #f4e8ff;
+  border-radius: 12px;
+  border: 1px solid #eaddff;
+}
+
+.resultat-scan h4 {
+  margin: 0 0 10px 0;
+  color: #a154f2;
+  font-size: 14px;
+}
+
+.scan-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scan-ligne {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #3a3a3c;
+}
+
+.scan-ligne.total {
+  margin-top: 5px;
+  padding-top: 10px;
+  border-top: 1px dashed #d0b0ff;
+  font-weight: 700;
+  font-size: 16px;
+  color: #1c1c1e;
+}
+
+/* --- 5. INVENTAIRE (PRODUITS) --- */
+.stock-container {
+  background: white;
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  margin-bottom: 80px;
+}
+
+.stock-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid #f2f2f7;
+}
+
+.stock-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.stock-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.pastille {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.stock-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stock-nom {
+  font-weight: 600;
+  font-size: 16px;
+  color: #1c1c1e;
+}
+
+.stock-label {
+  font-size: 13px;
+  color: #8e8e93;
+}
+
+.stock-quantite-container {
+  text-align: right;
+}
+
+.stock-quantite {
+  font-weight: 700;
+  font-size: 18px;
+  color: #1c1c1e;
+}
+
+/* --- 6. CARTE E-REPUTATION (GOOGLE) --- */
+.reputation-carte {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, #ffffff 0%, #fcf9ff 100%);
+  margin-bottom: 30px;
+}
+
+.reputation-gauche {
+  display: flex;
+  flex-direction: column;
+}
+
+.reputation-note {
+  font-size: 36px;
+  font-weight: 800;
+  color: #1c1c1e;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+}
+
+.reputation-etoile {
+  color: #ffcc00;
+  font-size: 28px;
+}
+
+.reputation-avis {
+  font-size: 13px;
+  color: #8e8e93;
+}
+
+.reputation-droite {
+  width: 120px;
+  height: 60px;
+}
+
+.tendance-label {
+  font-size: 11px;
+  color: #34c759;
+  font-weight: 600;
+  text-align: right;
+  display: block;
+  margin-bottom: 5px;
+}
+
+/* --- 7. PÔLE RH (PRIMES & PERFORMANCES) --- */
+.rh-carte {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.rh-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #f2f2f7;
+  padding-bottom: 10px;
+}
+
+.rh-nom {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1c1c1e;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rh-role {
+  font-size: 12px;
+  background-color: #f2f2f7;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: #8e8e93;
+  font-weight: 600;
+}
+
+.rh-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  text-align: center;
+}
+
+.rh-stat-item {
+  background: #f8f9fa;
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.rh-stat-valeur {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1c1c1e;
+}
+
+.rh-stat-label {
+  font-size: 11px;
+  color: #8e8e93;
+  display: block;
+  margin-top: 4px;
+}
+
+.rh-prime-box {
+  background: #f4e8ff;
+  border: 1px solid #eaddff;
+  border-radius: 12px;
+  padding: 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rh-prime-label {
+  font-size: 14px;
+  color: #a154f2;
+  font-weight: 600;
+}
+
+.rh-prime-montant {
+  font-size: 24px;
+  font-weight: 800;
+  color: #a154f2;
+}
+
+.rh-chronogramme {
+  margin-top: 5px;
+  padding-top: 15px;
+  border-top: 1px dashed #e5e5ea;
+}
+
+.chronogramme-titre {
+  font-size: 12px;
+  color: #8e8e93;
+  margin-bottom: 10px;
+  display: block;
+}
+
+/* --- 8. HISTORIQUE ET EXPORT COMPTABLE --- */
+.export-carte {
+  background: linear-gradient(135deg, #1c1c1e 0%, #3a3a3c 100%);
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+.btn-export {
+  background-color: #a154f2;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dossier-mois {
+  background: white;
+  border-radius: 16px;
+  padding: 15px;
+  margin-bottom: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  border: 1px solid #e5e5ea;
+}
+
+.dossier-header {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed #e5e5ea;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+
+.dossier-titre {
+  font-weight: 700;
+  color: #1c1c1e;
+}
+
+.dossier-total {
+  font-weight: 700;
+  color: #a154f2;
+}
+
+.facture-mini {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #8e8e93;
+  padding: 4px 0;
+}
+
+
+
+/* --- 9. AGENDA / PLANNING (VUE SEMAINE FAÇON APPLE CALENDAR) --- */
+.agenda-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.agenda-filtre {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e5e5ea;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: white;
+  cursor: pointer;
+}
+
+.week-calendar {
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  overflow: hidden;
+  border: 1px solid #e5e5ea;
+}
+
+/* En-tête des jours (Lundi, Mardi...) */
+.week-header-row {
+  display: flex;
+  border-bottom: 1px solid #e5e5ea;
+  background: #fdfdfd;
+}
+
+.time-spacer {
+  width: 60px;
+  flex-shrink: 0;
+  border-right: 1px solid #e5e5ea;
+}
+
+.day-header {
+  flex: 1;
+  text-align: center;
+  padding: 10px 0;
+  border-right: 1px solid #e5e5ea;
+}
+.day-header:last-child { border-right: none; }
+
+.day-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #8e8e93;
+  font-weight: 600;
+  display: block;
+}
+
+.day-number {
+  font-size: 22px;
+  color: #1c1c1e;
+  font-weight: 400;
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+}
+
+.day-header.today .day-number {
+  background: #007aff;
+  color: white;
+  border-radius: 50%;
+  font-weight: 600;
+}
+.day-header.today .day-name {
+  color: #007aff;
+}
+
+/* Corps du calendrier (Grille des heures) */
+.week-body {
+  display: flex;
+  height: 600px;
+  overflow-y: auto;
+}
+
+.time-column {
+  width: 60px;
+  flex-shrink: 0;
+  border-right: 1px solid #e5e5ea;
+  background: #fcfcfc;
+  position: relative;
+}
+
+.time-label {
+  height: 60px;
+  font-size: 10px;
+  color: #8e8e93;
+  text-align: right;
+  padding-right: 8px;
+  box-sizing: border-box;
+  transform: translateY(-6px);
+}
+
+.days-container {
+  display: flex;
+  flex: 1;
+}
+
+.day-column {
+  flex: 1;
+  border-right: 1px solid #e5e5ea;
+  position: relative;
+  /* Lignes pointillées pour chaque heure */
+  background-image: linear-gradient(to bottom, #f2f2f7 1px, transparent 1px);
+  background-size: 100% 60px; 
+}
+.day-column:last-child { border-right: none; }
+
+/* Les Cartes de RDV */
+.agenda-card {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 4px;
+  padding: 4px 6px;
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  overflow: hidden;
+  border-left: 4px solid rgba(0,0,0,0.3); /* Effet 3D sur le bord gauche */
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.1s;
+}
+
+.agenda-card:hover {
+  transform: scale(1.02);
+  z-index: 10;
+}
+
+.agenda-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.agenda-card-subtitle {
+  font-size: 10px;
+  opacity: 0.9;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
