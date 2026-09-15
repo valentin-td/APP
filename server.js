@@ -168,7 +168,7 @@ app.post('/api/creer-checkout', async (req, res) => {
               payment_method_types: ['card'],
               line_items: [{ price: 'price_1UFeXl09rDJ4C799FBTiz6nK', quantity: 1 }], 
               mode: 'subscription',
-              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', 
+              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes',
               cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
             });
             res.json({ url: session.url });
