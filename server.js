@@ -13,7 +13,7 @@ const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // Pour la certification NF525
-const  = require('')(process.env._SECRET_KEY);
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const http = require('http');
 const { Server } = require('socket.io');
