@@ -13,7 +13,7 @@ const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // Pour la certification NF525
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const  = require('')(process.env._SECRET_KEY);
 
 const http = require('http');
 const { Server } = require('socket.io');
@@ -32,9 +32,9 @@ io.on('connection', (socket) => {
     });
 });
 
-// Le Webhook Stripe a besoin du raw body, le reste utilise JSON
+// Le Webhook  a besoin du raw body, le reste utilise JSON
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/webhooks/stripe') { next(); } 
+  if (req.originalUrl === '/api/webhooks/') { next(); } 
   else { express.json()(req, res, next); }
 });
 
@@ -74,7 +74,7 @@ const verifierToken = (req, res, next) => {
 };
 
 // =========================================================================
-// --- AUTHENTIFICATION & STRIPE BILLING ---
+// --- AUTHENTIFICATION &  BILLING ---
 // =========================================================================
 
 app.post('/api/register', async (req, res) => {
@@ -91,12 +91,12 @@ app.post('/api/register', async (req, res) => {
         
         let customerId = null;
         try { 
-            const customer = await stripe.customers.create({ email: email, name: nom_salon }); 
+            const customer = await .customers.create({ email: email, name: nom_salon }); 
             customerId = customer.id; 
-        } catch(e) { console.error("Erreur création client Stripe:", e.message); }
+        } catch(e) { console.error("Erreur création client :", e.message); }
         
         await clientDB.query(
-            'INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, stripe_customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', 
+            'INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', 
             [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']
         ); 
         await clientDB.query('COMMIT');
@@ -160,38 +160,38 @@ app.post('/api/creer-checkout', async (req, res) => {
     jwt.verify(token, process.env.JWT_SECRET || 'cle_secrete_saas_2026', async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token invalide." });
         try {
-            const result = await pool.query('SELECT stripe_customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
+            const result = await pool.query('SELECT _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
             if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
             
-            const session = await stripe.checkout.sessions.create({
-              customer: result.rows[0].stripe_customer_id, 
+            const session = await .checkout.sessions.create({
+              customer: result.rows[0]._customer_id, 
               payment_method_types: ['card'],
               line_items: [{ price: 'price_1UFeXl09rDJ4C799FBTiz6nK', quantity: 1 }], 
               mode: 'subscription',
-              success_url: 'http://https://app-salon-caiss.onrender.com/?paiement=succes', 
-              cancel_url: 'http://https://app-salon-caiss.onrender.com/?paiement=annule',
+              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', 
+              cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
             });
             res.json({ url: session.url });
         } catch (e) { 
             console.error("Erreur création checkout:", e);
-            res.status(500).json({ erreur: "Erreur lors de la création du lien Stripe." }); 
+            res.status(500).json({ erreur: "Erreur lors de la création du lien ." }); 
         }
     });
 });
 
-app.post('/api/webhooks/stripe', express.raw({type: 'application/json'}), async (req, res) => {
+app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, res) => {
     let event;
     try { event = JSON.parse(req.body); } catch (err) { res.status(400).send(`Webhook Error`); return; }
     
     if (event.type === 'checkout.session.completed') {
-        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, stripe_subscription_id = $2 WHERE stripe_customer_id = $3', 
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', 
                          ['actif', event.data.object.subscription, event.data.object.customer]);
-        console.log("✅ Abonnement Stripe validé !");
+        console.log("✅ Abonnement  validé !");
     }
     if (event.type === 'customer.subscription.deleted') {
-         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE stripe_subscription_id = $2', 
+         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', 
                           ['inactif', event.data.object.id]);
-         console.log("❌ Abonnement Stripe expiré !");
+         console.log("❌ Abonnement  expiré !");
     }
     res.json({received: true});
 });
@@ -213,7 +213,7 @@ app.post('/api/webhooks/synchronisation-clients', async (req, res) => {
 });
 
 app.post('/api/webhooks/nouveau-rdv', async (req, res) => {
-    const { id_salon, nom_client, telephone_client, nom_employe, prestation, date_heure_debut, duree_minutes, planity_ref, stripe_payment_id } = req.body;
+    const { id_salon, nom_client, telephone_client, nom_employe, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id } = req.body;
     
     try {
         // 1. CRM AUTOMATIQUE : On cherche le client, s'il n'existe pas on le CRÉE silencieusement
@@ -232,9 +232,9 @@ app.post('/api/webhooks/nouveau-rdv', async (req, res) => {
         const id_employe = empRes.rowCount > 0 ? empRes.rows[0].id_employe : null;
         
         await pool.query(
-            `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes, planity_ref, stripe_payment_id) 
+            `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
-            [id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30, planity_ref || null, stripe_payment_id || null]
+            [id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30, planity_ref || null, _payment_id || null]
         );
         
         io.to(id_salon.toString()).emit('nouveauRDV');
