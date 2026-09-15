@@ -152,7 +152,7 @@ app.post('/api/forgot-password', async (req, res) => {
     res.json({ message: "Si cet email existe, un lien de réinitialisation vous a été envoyé." });
 });
 
-app.post('/api/creer-checkout', verifierToken, async (req, res) => {
+app.post('/api/creer-checkout', async (req, res) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; 
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
