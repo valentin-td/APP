@@ -152,7 +152,7 @@ app.post('/api/forgot-password', async (req, res) => {
     res.json({ message: "Si cet email existe, un lien de réinitialisation vous a été envoyé." });
 });
 
-app.post('/api/creer-checkout', async (req, res) => {
+app.post('/api/creer-checkout', verifierToken, async (req, res) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; 
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
@@ -160,11 +160,20 @@ app.post('/api/creer-checkout', async (req, res) => {
     jwt.verify(token, process.env.JWT_SECRET || 'cle_secrete_saas_2026', async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token invalide." });
         try {
-            const result = await pool.query('SELECT _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
+            const result = await pool.query('SELECT email, _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
             if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
             
+            let customerId = result.rows[0]._customer_id;
+            
+            // SÉCURITÉ : Si le client Stripe n'existe pas, on le crée dynamiquement
+            if (!customerId) {
+                const customer = await stripe.customers.create({ email: result.rows[0].email });
+                customerId = customer.id;
+                await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
+            }
+
             const session = await stripe.checkout.sessions.create({
-              customer: result.rows[0]._customer_id, 
+              customer: customerId, 
               payment_method_types: ['card'],
               line_items: [{ price: 'price_1UFeXl09rDJ4C799FBTiz6nK', quantity: 1 }], 
               mode: 'subscription',
@@ -173,8 +182,8 @@ app.post('/api/creer-checkout', async (req, res) => {
             });
             res.json({ url: session.url });
         } catch (e) { 
-            console.error("Erreur création checkout:", e);
-            res.status(500).json({ erreur: "Erreur lors de la création du lien ." }); 
+            console.error("Erreur création checkout:", e.message);
+            res.status(500).json({ erreur: "Erreur Stripe : " + e.message }); 
         }
     });
 });
