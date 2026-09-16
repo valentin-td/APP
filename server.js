@@ -32,7 +32,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// Le Webhook  a besoin du raw body, le reste utilise JSON
+// Le Webhook Stripe a besoin du raw body, le reste utilise JSON
 app.use((req, res, next) => {
   if (req.originalUrl === '/api/webhooks/') { next(); } 
   else { express.json()(req, res, next); }
@@ -55,7 +55,8 @@ const verifierToken = (req, res, next) => {
     const token = authHeader && authHeader.split(' ')[1]; 
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
     
-    jwt.verify(token, process.env.JWT_SECRET || 'cle_secrete_saas_2026', async (err, user) => {
+    // SÉCURITÉ : On exige strictement la variable d'environnement (plus de clé en dur)
+    jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token expiré ou invalide." });
         
         try {
@@ -74,7 +75,7 @@ const verifierToken = (req, res, next) => {
 };
 
 // =========================================================================
-// --- AUTHENTIFICATION &  BILLING ---
+// --- AUTHENTIFICATION & BILLING ---
 // =========================================================================
 
 app.post('/api/register', async (req, res) => {
@@ -101,7 +102,7 @@ app.post('/api/register', async (req, res) => {
         ); 
         await clientDB.query('COMMIT');
         
-        const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant' }, process.env.JWT_SECRET || 'cle_secrete_saas_2026', { expiresIn: '24h' });
+        const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: "Inscription réussie", token });
     } catch (erreur) { 
         await clientDB.query('ROLLBACK'); 
@@ -119,7 +120,7 @@ app.post('/api/login', async (req, res) => {
             const { id_salon, mot_de_passe_hash, statut_abonnement } = result.rows[0];
             const match = await bcrypt.compare(mot_de_passe, mot_de_passe_hash);
             if (match) {
-                const token = jwt.sign({ id_salon, role: 'gerant' }, process.env.JWT_SECRET || 'cle_secrete_saas_2026', { expiresIn: '24h' });
+                const token = jwt.sign({ id_salon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
                 res.json({ message: "Connexion réussie", token, statut_abonnement });
             } else { res.status(401).json({ erreur: "Mot de passe incorrect." }); }
         } else { res.status(401).json({ erreur: "Aucun compte trouvé avec cet e-mail." }); }
@@ -137,7 +138,7 @@ app.post('/api/employes/login-pin', async (req, res) => {
         
         const token = jwt.sign(
             { id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe }, 
-            process.env.JWT_SECRET || 'cle_secrete_saas_2026', 
+            process.env.JWT_SECRET, 
             { expiresIn: '12h' }
         );
         res.json({ message: "Accès employé autorisé", token, employe: { id: emp.id_employe, nom: emp.nom } });
@@ -146,10 +147,49 @@ app.post('/api/employes/login-pin', async (req, res) => {
     }
 });
 
+// SÉCURITÉ : Les vraies routes de mot de passe oublié
 app.post('/api/forgot-password', async (req, res) => {
     const { email } = req.body;
-    console.log(`Un email de réinitialisation a été envoyé à ${email}`);
-    res.json({ message: "Si cet email existe, un lien de réinitialisation vous a été envoyé." });
+    try {
+        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ erreur: "Serveur mail non configuré." });
+
+        const result = await pool.query('SELECT id_user FROM utilisateurs WHERE email = $1', [email]);
+        // Anti-scan de pirates : message générique
+        if (result.rowCount === 0) return res.json({ message: "Si cet email existe, un lien a été envoyé." });
+
+        // Token temporaire ultra-sécurisé (15 minutes)
+        const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '15m' });
+        const resetLink = `https://app-salon-caiss.onrender.com/?resetToken=${resetToken}`;
+
+        let transporter = nodemailer.createTransport({
+            host: 'smtp.gmail.com', port: 465, secure: true,
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+        });
+
+        await transporter.sendMail({
+            from: `"Support SaaS Caisse" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: '🔐 Réinitialisation de votre mot de passe',
+            html: `<p>Bonjour,</p><p>Cliquez sur ce lien pour choisir un nouveau mot de passe (valable 15 minutes) :</p><p><a href="${resetLink}">Réinitialiser mon accès</a></p>`
+        });
+
+        res.json({ message: "Si cet email existe, un lien a été envoyé." });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ erreur: "Erreur lors de l'envoi." });
+    }
+});
+
+app.post('/api/reset-password', async (req, res) => {
+    const { token, nouveau_mot_de_passe } = req.body;
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const hash = await bcrypt.hash(nouveau_mot_de_passe, 10);
+        await pool.query('UPDATE utilisateurs SET mot_de_passe_hash = $1 WHERE email = $2', [hash, decoded.email]);
+        res.json({ message: "Mot de passe mis à jour avec succès !" });
+    } catch (e) {
+        res.status(400).json({ erreur: "Lien expiré, corrompu ou falsifié." });
+    }
 });
 
 app.post('/api/creer-checkout', async (req, res) => {
@@ -157,7 +197,7 @@ app.post('/api/creer-checkout', async (req, res) => {
     const token = authHeader && authHeader.split(' ')[1]; 
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
     
-    jwt.verify(token, process.env.JWT_SECRET || 'cle_secrete_saas_2026', async (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token invalide." });
         try {
             const result = await pool.query('SELECT email, _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
@@ -165,7 +205,6 @@ app.post('/api/creer-checkout', async (req, res) => {
             
             let customerId = result.rows[0]._customer_id;
             
-            // SÉCURITÉ : Si le client Stripe n'existe pas, on le crée dynamiquement
             if (!customerId) {
                 const customer = await stripe.customers.create({ email: result.rows[0].email });
                 customerId = customer.id;
@@ -188,19 +227,30 @@ app.post('/api/creer-checkout', async (req, res) => {
     });
 });
 
+// SÉCURITÉ : La route de Webhook avec signature de l'événement obligatoire
 app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, res) => {
+    const signature = req.headers['stripe-signature'];
+    
+    if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(500).send("Clé secrète Webhook manquante.");
+
     let event;
-    try { event = JSON.parse(req.body); } catch (err) { res.status(400).send(`Webhook Error`); return; }
+    try {
+        // VÉRIFICATION CRYPTOGRAPHIQUE ABSOLUE
+        event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+        console.error(`🚨 ALERTE FRAUDE OU ERREUR WEBHOOK : ${err.message}`);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
     
     if (event.type === 'checkout.session.completed') {
         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', 
                          ['actif', event.data.object.subscription, event.data.object.customer]);
-        console.log("✅ Abonnement  validé !");
+        console.log("✅ Abonnement Stripe sécurisé et validé !");
     }
     if (event.type === 'customer.subscription.deleted') {
          await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', 
                           ['inactif', event.data.object.id]);
-         console.log("❌ Abonnement  expiré !");
+         console.log("❌ Abonnement expiré ou annulé !");
     }
     res.json({received: true});
 });
@@ -225,7 +275,6 @@ app.post('/api/webhooks/nouveau-rdv', async (req, res) => {
     const { id_salon, nom_client, telephone_client, nom_employe, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id } = req.body;
     
     try {
-        // 1. CRM AUTOMATIQUE : On cherche le client, s'il n'existe pas on le CRÉE silencieusement
         let id_client = null;
         if (telephone_client) {
             const clientRes = await pool.query('SELECT id_client FROM clients WHERE telephone = $1 AND id_salon = $2', [telephone_client, id_salon]);
@@ -337,7 +386,30 @@ async function envoyerSMSClient(clientDB, id_client, id_salon) {
 // --- L'ENCAISSEMENT TPE TEMPS RÉEL (NF525) ---
 // =========================================================================
 app.post('/api/caisse/payer', verifierToken, async (req, res) => {
-    res.json({ message: "Ordre envoyé au TPE." });
+    const { montant } = req.body;
+    try {
+        // Récupère l'identifiant du TPE renseigné par le client dans ses paramètres
+        const configResult = await pool.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+        const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
+
+        if (!readerId) {
+            return res.status(400).json({ erreur: "Aucun lecteur TPE physique configuré. Veuillez l'ajouter dans vos Paramètres." });
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(montant * 100), // Stripe requiert des centimes
+          currency: 'eur',
+          payment_method_types: ['card_present'],
+          capture_method: 'manual', 
+        });
+
+        // Envoi de l'ordre au boîtier physique
+        const reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntent.id });
+        res.json({ message: "TPE activé. En attente de la carte...", reader });
+    } catch (error) {
+        console.error("Erreur communication TPE:", error);
+        res.status(500).json({ erreur: "Erreur de communication avec le boîtier TPE." });
+    }
 });
 
 app.post('/api/webhooks/tpe-externe', async (req, res) => {
@@ -453,7 +525,15 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
     } catch (erreur) { res.status(500).json({ erreur: "Erreur calcul dashboard." }); }
 });
 
-app.post('/api/settings', verifierToken, async (req, res) => { const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps } = req.body; try { const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8 WHERE id_salon = $9`; await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, req.user.id_salon]); res.json({ message: "Paramètres enregistrés avec succès !" }); } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }});
+// SÉCURITÉ : La route Settings enregistre maintenant le lecteur de carte de chaque client !
+app.post('/api/settings', verifierToken, async (req, res) => { 
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id } = req.body; 
+    try { 
+        const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9 WHERE id_salon = $10`; 
+        await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, req.user.id_salon]); 
+        res.json({ message: "Paramètres enregistrés avec succès !" }); 
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
+});
 app.get('/api/settings', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); res.json(result.rowCount > 0 ? result.rows[0] : {}); } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }});
 
 // =========================================================================
