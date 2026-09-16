@@ -339,7 +339,7 @@ function App() {
           <ThemeToggle isFixed={true} />
           <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
             <div className="logo-container">
-                <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+                <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
             </div>
             <h2 style={{color: 'var(--text-main)'}}>Nouveau mot de passe</h2>
             <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
