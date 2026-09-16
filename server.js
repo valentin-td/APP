@@ -12,7 +12,7 @@ const simpleParser = require('mailparser').simpleParser;
 const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const crypto = require('crypto'); // Pour la certification NF525
+const crypto = require('crypto');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const http = require('http');
@@ -22,7 +22,6 @@ console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
 app.use(cors());
 
-// --- INITIALISATION DE SOCKET.IO ---
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
@@ -32,7 +31,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// Le Webhook Stripe a besoin du raw body, le reste utilise JSON
 app.use((req, res, next) => {
   if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { 
       next(); 
@@ -58,10 +56,8 @@ const verifierToken = (req, res, next) => {
     const token = authHeader && authHeader.split(' ')[1]; 
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
     
-    // SÉCURITÉ : On exige strictement la variable d'environnement (plus de clé en dur)
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token expiré ou invalide." });
-        
         try {
             if (user.role === 'gerant') {
                 const result = await pool.query('SELECT statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
@@ -71,16 +67,13 @@ const verifierToken = (req, res, next) => {
             }
             req.user = user; 
             next(); 
-        } catch (e) { 
-            return res.status(500).json({ erreur: "Erreur vérification." }); 
-        }
+        } catch (e) { return res.status(500).json({ erreur: "Erreur vérification." }); }
     });
 };
 
 // =========================================================================
 // --- AUTHENTIFICATION & BILLING ---
 // =========================================================================
-
 app.post('/api/register', async (req, res) => {
     const { email, mot_de_passe, nom_salon } = req.body;
     const clientDB = await pool.connect();
@@ -97,22 +90,19 @@ app.post('/api/register', async (req, res) => {
         try { 
             const customer = await stripe.customers.create({ email: email, name: nom_salon });
             customerId = customer.id; 
-        } catch(e) { console.error("Erreur création client :", e.message); }
+        } catch(e) {}
         
         await clientDB.query(
             'INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', 
             [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']
         ); 
         await clientDB.query('COMMIT');
-        
         const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: "Inscription réussie", token });
     } catch (erreur) { 
         await clientDB.query('ROLLBACK'); 
         res.status(400).json({ erreur: erreur.message }); 
-    } finally { 
-        clientDB.release(); 
-    }
+    } finally { clientDB.release(); }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -135,50 +125,25 @@ app.post('/api/employes/login-pin', async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
         if (result.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable." });
-        
         const emp = result.rows[0];
         if (emp.code_pin !== code_pin) return res.status(401).json({ erreur: "Code PIN invalide." });
-        
-        const token = jwt.sign(
-            { id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe }, 
-            process.env.JWT_SECRET, 
-            { expiresIn: '12h' }
-        );
+        const token = jwt.sign({ id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe }, process.env.JWT_SECRET, { expiresIn: '12h' });
         res.json({ message: "Accès employé autorisé", token, employe: { id: emp.id_employe, nom: emp.nom } });
-    } catch (e) { 
-        res.status(500).json({ erreur: "Erreur serveur PIN." }); 
-    }
+    } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
 });
 
-// SÉCURITÉ : Les vraies routes de mot de passe oublié
 app.post('/api/forgot-password', async (req, res) => {
     const { email } = req.body;
     try {
         if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ erreur: "Serveur mail non configuré." });
-
         const result = await pool.query('SELECT id_user FROM utilisateurs WHERE email = $1', [email]);
         if (result.rowCount === 0) return res.json({ message: "Si cet email existe, un lien a été envoyé." });
-
         const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '15m' });
         const resetLink = `https://app-salon-caiss.onrender.com/?resetToken=${resetToken}`;
-
-        let transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com', port: 465, secure: true,
-            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-        });
-
-        await transporter.sendMail({
-            from: `"Support SaaS Caisse" <${process.env.SMTP_USER}>`,
-            to: email,
-            subject: '🔐 Réinitialisation de votre mot de passe',
-            html: `<p>Bonjour,</p><p>Cliquez sur ce lien pour choisir un nouveau mot de passe (valable 15 minutes) :</p><p><a href="${resetLink}">Réinitialiser mon accès</a></p>`
-        });
-
+        let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+        await transporter.sendMail({ from: `"Support SaaS Caisse" <${process.env.SMTP_USER}>`, to: email, subject: '🔐 Réinitialisation de votre mot de passe', html: `<p>Bonjour,</p><p>Cliquez sur ce lien pour choisir un nouveau mot de passe (valable 15 minutes) :</p><p><a href="${resetLink}">Réinitialiser mon accès</a></p>` });
         res.json({ message: "Si cet email existe, un lien a été envoyé." });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ erreur: "Erreur lors de l'envoi." });
-    }
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'envoi." }); }
 });
 
 app.post('/api/reset-password', async (req, res) => {
@@ -188,76 +153,98 @@ app.post('/api/reset-password', async (req, res) => {
         const hash = await bcrypt.hash(nouveau_mot_de_passe, 10);
         await pool.query('UPDATE utilisateurs SET mot_de_passe_hash = $1 WHERE email = $2', [hash, decoded.email]);
         res.json({ message: "Mot de passe mis à jour avec succès !" });
-    } catch (e) {
-        res.status(400).json({ erreur: "Lien expiré, corrompu ou falsifié." });
-    }
+    } catch (e) { res.status(400).json({ erreur: "Lien expiré, corrompu ou falsifié." }); }
 });
 
 app.post('/api/creer-checkout', async (req, res) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; 
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
-    
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token invalide." });
         try {
             const result = await pool.query('SELECT email, _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
             if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
-            
             let customerId = result.rows[0]._customer_id;
-            
             if (!customerId) {
                 const customer = await stripe.customers.create({ email: result.rows[0].email });
                 customerId = customer.id;
                 await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
             }
-
             const session = await stripe.checkout.sessions.create({
-              customer: customerId, 
-              payment_method_types: ['card'],
-              line_items: [{ price: 'price_1UG3bh10YWspHc2C8J2bmXL0', quantity: 1 }], 
-              mode: 'subscription',
-              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes',
-              cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
+              customer: customerId, payment_method_types: ['card'],
+              line_items: [{ price: 'price_1UG3bh10YWspHc2C8J2bmXL0', quantity: 1 }], mode: 'subscription',
+              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
             });
             res.json({ url: session.url });
-        } catch (e) { 
-            console.error("Erreur création checkout:", e.message);
-            res.status(500).json({ erreur: "Erreur Stripe : " + e.message }); 
-        }
+        } catch (e) { res.status(500).json({ erreur: "Erreur Stripe : " + e.message }); }
     });
 });
 
 app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, res) => {
     const signature = req.headers['stripe-signature'];
-    
     if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(500).send("Clé secrète Webhook manquante.");
-
     let event;
-    try {
-        event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
-    } catch (err) {
-        console.error(`🚨 ALERTE FRAUDE OU ERREUR WEBHOOK : ${err.message}`);
-        return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
+    try { event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET); } 
+    catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
     
     if (event.type === 'checkout.session.completed') {
-        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', 
-                         ['actif', event.data.object.subscription, event.data.object.customer]);
-        console.log("✅ Abonnement Stripe sécurisé et validé !");
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', ['actif', event.data.object.subscription, event.data.object.customer]);
     }
     if (event.type === 'customer.subscription.deleted') {
-         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', 
-                          ['inactif', event.data.object.id]);
-         console.log("❌ Abonnement expiré ou annulé !");
+         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', ['inactif', event.data.object.id]);
     }
     res.json({received: true});
 });
 
 // =========================================================================
+// --- CRM : AUTO-HEALING & CONFIGURATION ---
+// =========================================================================
+pool.query(`
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
+`).then(() => console.log("✅ Base de données prête (CRM & Agenda à jour)")).catch(() => {});
+
+app.post('/api/settings', verifierToken, async (req, res) => { 
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture } = req.body; 
+    try { 
+        const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11 WHERE id_salon = $12`; 
+        await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, req.user.id_salon]); 
+        res.json({ message: "Paramètres enregistrés avec succès !" }); 
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
+});
+
+app.get('/api/settings', verifierToken, async (req, res) => { 
+    try { 
+        const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); 
+        res.json(result.rowCount > 0 ? result.rows[0] : {}); 
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }
+});
+
+app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
+    const id_client = req.params.id; const id_salon = req.user.id_salon;
+    try {
+        const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
+        if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
+        
+        const achatsRes = await pool.query(`SELECT t.date_creation, c.nom as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
+        const rdvRes = await pool.query(`SELECT date_heure_debut, prestation, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.telephone_client = $1 AND r.id_salon = $2 ORDER BY r.date_heure_debut DESC LIMIT 20`, [clientRes.rows[0].telephone, id_salon]);
+
+        res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows });
+    } catch (e) { res.status(500).json({ erreur: "Erreur historique." }); }
+});
+
+app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
+    try {
+        await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', [req.body.notes, req.params.id, req.user.id_salon]);
+        res.json({ message: "Notes sauvegardées" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur sauvegarde." }); }
+});
+
+// =========================================================================
 // --- WEBHOOKS & AGENDA (PLANNING) ---
 // =========================================================================
-
 app.post('/api/webhooks/synchronisation-clients', async (req, res) => {
     const { nom, telephone, email, id_salon } = req.body;
     if (!id_salon || !nom || !telephone) return res.status(400).json({ erreur: "Données manquantes." });
@@ -265,96 +252,88 @@ app.post('/api/webhooks/synchronisation-clients', async (req, res) => {
         const checkClient = await pool.query('SELECT id_client FROM clients WHERE telephone = $1 AND id_salon = $2', [telephone, id_salon]);
         if (checkClient.rowCount === 0) {
             await pool.query('INSERT INTO clients (nom, telephone, email, id_salon) VALUES ($1, $2, $3, $4)', [nom, telephone, email || null, id_salon]);
-            res.status(201).json({ message: "Client synchronisé avec succès." });
-        } else { res.status(200).json({ message: "Le client existe déjà." }); }
-    } catch (error) { res.status(500).json({ erreur: "Erreur lors de la synchronisation." }); }
+            res.status(201).json({ message: "Client synchronisé." });
+        } else { res.status(200).json({ message: "Client existe." }); }
+    } catch (error) { res.status(500).json({ erreur: "Erreur sync." }); }
 });
 
 app.post('/api/webhooks/nouveau-rdv', async (req, res) => {
     const { id_salon, nom_client, telephone_client, nom_employe, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id } = req.body;
-    
     try {
         let id_client = null;
         if (telephone_client) {
             const clientRes = await pool.query('SELECT id_client FROM clients WHERE telephone = $1 AND id_salon = $2', [telephone_client, id_salon]);
-            if (clientRes.rowCount > 0) { 
-                id_client = clientRes.rows[0].id_client; 
-            } else {
+            if (clientRes.rowCount > 0) { id_client = clientRes.rows[0].id_client; } 
+            else {
                 const newClient = await pool.query('INSERT INTO clients (nom, telephone, id_salon) VALUES ($1, $2, $3) RETURNING id_client', [nom_client, telephone_client, id_salon]);
                 id_client = newClient.rows[0].id_client;
             }
         }
-
         const empRes = await pool.query('SELECT id_employe FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
         const id_employe = empRes.rowCount > 0 ? empRes.rows[0].id_employe : null;
-        
         await pool.query(
-            `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
+            `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
             [id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30, planity_ref || null, _payment_id || null]
         );
-        
         io.to(id_salon.toString()).emit('nouveauRDV');
-        res.status(201).json({ success: true, message: "RDV et Client enregistrés." });
-    } catch (error) { 
-        res.status(500).json({ erreur: "Erreur serveur Webhook." }); 
-    }
+        res.status(201).json({ success: true, message: "RDV enregistré." });
+    } catch (error) { res.status(500).json({ erreur: "Erreur Webhook RDV." }); }
 });
 
 app.post('/api/webhooks/annuler-rdv', async (req, res) => {
     const { id_salon, planity_ref } = req.body;
     try {
         await pool.query('DELETE FROM rendez_vous WHERE planity_ref = $1 AND id_salon = $2', [planity_ref, id_salon]);
-        io.to(id_salon.toString()).emit('nouveauRDV'); 
-        res.json({ message: "RDV annulé avec succès." });
+        io.to(id_salon.toString()).emit('nouveauRDV'); res.json({ message: "RDV annulé." });
     } catch (e) { res.status(500).json({ erreur: "Erreur annulation." }); }
 });
 
 app.post('/api/rdv', verifierToken, async (req, res) => {
     const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes } = req.body;
     try {
-        await pool.query(
-            `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
-            [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30]
-        );
-        res.status(201).json({ message: "Rendez-vous ajouté manuellement." });
+        await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.status(201).json({ message: "RDV ajouté." });
     } catch (e) { res.status(500).json({ erreur: "Erreur création RDV." }); }
 });
 
-app.get('/api/planning', verifierToken, async (req, res) => {
-    const startDate = req.query.startDate;
-    const endDate = req.query.endDate;
-    
+// ROUTE DYNAMIQUE : Modification d'un rendez-vous existant
+app.put('/api/rdv/:id', verifierToken, async (req, res) => {
+    const { id_employe, prestation, date_heure_debut } = req.body;
     try {
-        let query = `
-            SELECT r.*, e.nom as nom_employe 
-            FROM rendez_vous r 
-            LEFT JOIN employes e ON r.id_employe = e.id_employe 
-            WHERE r.id_salon = $1 
-            AND DATE(r.date_heure_debut) >= $2 
-            AND DATE(r.date_heure_debut) <= $3
-        `;
+        await pool.query(
+            `UPDATE rendez_vous SET id_employe = $1, prestation = $2, date_heure_debut = $3 WHERE id_rdv = $4 AND id_salon = $5`, 
+            [id_employe, prestation, date_heure_debut, req.params.id, req.user.id_salon]
+        );
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous modifié." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur modification RDV." }); }
+});
+
+// ROUTE DYNAMIQUE : Suppression manuelle d'un rendez-vous
+app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous supprimé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
+});
+
+app.get('/api/planning', verifierToken, async (req, res) => {
+    const startDate = req.query.startDate; const endDate = req.query.endDate;
+    try {
+        let query = `SELECT r.*, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.id_salon = $1 AND DATE(r.date_heure_debut) >= $2 AND DATE(r.date_heure_debut) <= $3`;
         const params = [req.user.id_salon, startDate, endDate];
-
-        if (req.user.role === 'employe') {
-            query += ` AND r.id_employe = $4`;
-            params.push(req.user.id_employe);
-        }
-
+        if (req.user.role === 'employe') { query += ` AND r.id_employe = $4`; params.push(req.user.id_employe); }
         query += ` ORDER BY r.date_heure_debut ASC`;
-        
         const result = await pool.query(query, params);
         res.json(result.rows);
-    } catch (e) { 
-        res.status(500).json({ erreur: "Erreur lecture agenda." }); 
-    }
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture agenda." }); }
 });
 
 // =========================================================================
 // --- L'ENCAISSEMENT TPE TEMPS RÉEL (NF525) & TICKET ÉCOLOGIQUE ---
 // =========================================================================
-
-// Cette route génère tout de suite le ticket en BDD pour qu'il soit prêt à être envoyé par email
 app.post('/api/caisse/payer', verifierToken, async (req, res) => {
     const { montant, id_employe, id_client, lignes } = req.body;
     const id_salon = req.user.id_salon;
@@ -364,20 +343,13 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
         const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
 
-        if (!readerId) {
-            return res.status(400).json({ erreur: "Aucun lecteur TPE physique configuré. Veuillez l'ajouter dans vos Paramètres." });
-        }
+        if (!readerId) return res.status(400).json({ erreur: "Aucun lecteur TPE physique configuré. Veuillez l'ajouter dans vos Paramètres." });
 
-        // 1. DÉCLENCHEMENT MATÉRIEL DU TPE
         const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(montant * 100),
-          currency: 'eur',
-          payment_method_types: ['card_present'],
-          capture_method: 'manual', 
+          amount: Math.round(montant * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
         });
         const reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntent.id });
 
-        // 2. CRÉATION IMMÉDIATE DU TICKET LÉGAL EN BDD
         await clientDB.query('BEGIN'); 
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
@@ -389,7 +361,6 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
         );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
 
-        // Loi NF525 : Création du Hash inaltérable
         const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montant}-${previousHash}`).digest('hex');
         await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
 
@@ -416,25 +387,18 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
             }
         }
         await clientDB.query('COMMIT');
-
-        io.to(id_salon.toString()).emit('paiementValide', { message: `Paiement validé (Ticket certifié #${idNouveauTicket})` });
+        io.to(id_salon.toString()).emit('paiementValide', { message: `Paiement validé (Ticket #${idNouveauTicket})` });
         
-        // On renvoie l'ID du ticket au Front-End pour la fenêtre "Anti-Gaspi"
         res.json({ message: "TPE activé.", reader, id_ticket: idNouveauTicket });
     } catch (error) {
         await clientDB.query('ROLLBACK');
-        console.error("Erreur TPE:", error);
-        res.status(500).json({ erreur: "Erreur de communication TPE." });
-    } finally {
-        clientDB.release();
-    }
+        console.error("Erreur TPE:", error); res.status(500).json({ erreur: "Erreur TPE." });
+    } finally { clientDB.release(); }
 });
 
-// Le bouton de la fenêtre "Anti-Gaspi" appelle cette route :
 app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
     const { id_ticket, email, id_client, methode } = req.body;
     const id_salon = req.user.id_salon;
-
     try {
         const salonConfig = await pool.query('SELECT nom_salon, email_reception_factures, mot_de_passe_app_email, brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         if (salonConfig.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
@@ -447,41 +411,21 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
         const textRecap = `Merci pour votre visite chez ${config.nom_salon} !\nTicket n°${ticket.numero_ticket_caisse} du ${new Date(ticket.date_creation).toLocaleDateString()}.\nMontant total : ${parseFloat(ticket.total_ttc).toFixed(2)} €.\nÀ très bientôt !`;
 
         if (methode === 'email') {
-            if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "L'e-mail du salon n'est pas configuré dans les Paramètres." });
-            
-            let transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com', port: 465, secure: true,
-                auth: { user: config.email_reception_factures, pass: config.mot_de_passe_app_email }
-            });
-
-            await transporter.sendMail({
-                from: `"${config.nom_salon}" <${config.email_reception_factures}>`,
-                to: email,
-                subject: `Votre reçu - ${config.nom_salon}`,
-                text: textRecap
-            });
-
-            if (id_client && email) {
-                await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
-            }
-        } 
-        
-        else if (methode === 'sms') {
+            if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
+            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: config.mot_de_passe_app_email } });
+            await transporter.sendMail({ from: `"${config.nom_salon}" <${config.email_reception_factures}>`, to: email, subject: `Votre reçu - ${config.nom_salon}`, text: textRecap });
+            if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
+        } else if (methode === 'sms') {
             if (!config.brevo_api_key) return res.status(400).json({ erreur: "Clé Brevo non configurée." });
             const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1', [id_client]);
-            if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro de téléphone pour ce client." });
-
+            if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro." });
             await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
                 method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
                 body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: client.rows[0].telephone, content: textRecap })
             });
         }
-
-        res.json({ message: "Ticket envoyé avec succès." });
-    } catch (error) {
-        console.error("Erreur envoi ticket:", error);
-        res.status(500).json({ erreur: "Erreur serveur lors de l'envoi." });
-    }
+        res.json({ message: "Ticket envoyé." });
+    } catch (error) { res.status(500).json({ erreur: "Erreur envoi ticket." }); }
 });
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
@@ -544,71 +488,6 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
         } catch (e) { console.error("Avertissement Google API :", e); } 
         res.json({ statut: "Succès", finances: { chiffre_affaires_total: caTotal, panier_moyen: nbVentes > 0 ? (caTotal / nbVentes).toFixed(2) : 0, commissions_a_payer: parseFloat(commissionsResult.rows[0].total_commissions) }, top_3_prestations: topPrestationsResult.rows, marketing: googleMarketing }); 
     } catch (erreur) { res.status(500).json({ erreur: "Erreur calcul dashboard." }); }
-});
-
-app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id } = req.body; 
-    try { 
-        const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9 WHERE id_salon = $10`; 
-        await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, req.user.id_salon]); 
-        res.json({ message: "Paramètres enregistrés avec succès !" }); 
-    } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
-});
-app.get('/api/settings', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); res.json(result.rowCount > 0 ? result.rows[0] : {}); } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }});
-
-// --- MISE À JOUR AUTO-HEALING DE LA BASE DE DONNÉES (Zéro Friction) ---
-pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;')
-    .then(() => console.log("✅ Base de données prête (CRM à jour)"))
-    .catch(() => console.log("Info: Vérification DB terminée"));
-
-// =========================================================================
-// --- CRM : HISTORIQUE ET NOTES CLIENTS ---
-// =========================================================================
-
-app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
-    const id_client = req.params.id;
-    const id_salon = req.user.id_salon;
-    try {
-        const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
-        if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
-        const client = clientRes.rows[0];
-
-        const achatsRes = await pool.query(`
-            SELECT t.date_creation, c.nom as article, lt.quantite, lt.prix_unitaire_ttc 
-            FROM tickets t 
-            JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket 
-            JOIN catalogue c ON lt.id_article = c.id_article 
-            WHERE t.id_client = $1 AND t.id_salon = $2 
-            ORDER BY t.date_creation DESC LIMIT 20
-        `, [id_client, id_salon]);
-
-        const rdvRes = await pool.query(`
-            SELECT date_heure_debut, prestation, e.nom as nom_employe
-            FROM rendez_vous r
-            LEFT JOIN employes e ON r.id_employe = e.id_employe
-            WHERE r.telephone_client = $1 AND r.id_salon = $2
-            ORDER BY r.date_heure_debut DESC LIMIT 20
-        `, [client.telephone, id_salon]);
-
-        res.json({
-            notes: client.notes || '',
-            achats: achatsRes.rows,
-            rdv: rdvRes.rows
-        });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ erreur: "Erreur serveur historique." });
-    }
-});
-
-app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
-    try {
-        await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', 
-        [req.body.notes, req.params.id, req.user.id_salon]);
-        res.json({ message: "Notes mises à jour avec succès" });
-    } catch (e) {
-        res.status(500).json({ erreur: "Erreur sauvegarde notes." });
-    }
 });
 
 // =========================================================================
