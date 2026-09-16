@@ -1,49 +1,112 @@
-/* --- 1. DESIGN GLOBAL --- */
+/* ==========================================================================
+   1. SYSTÈME DE VARIABLES (THÈME FINTECH / FINARY)
+   ========================================================================== */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+:root {
+  /* Couleurs de fond */
+  --bg-app: #f9fafb;
+  --bg-card: #ffffff;
+  --bg-hover: #f3f4f6;
+
+  /* Typographie */
+  --text-main: #111827;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+
+  /* Bordures et Ombres (Zéro friction, ultra-plat) */
+  --border-color: #e5e7eb;
+  --border-focus: #111827;
+  --radius-card: 12px;
+  --radius-input: 8px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+  
+  /* Couleurs de statut (Discrètes) */
+  --color-success: #166534;
+  --bg-success: #dcfce7;
+  --color-danger: #991b1b;
+  --bg-danger: #fee2e2;
+  --color-info: #1e40af;
+  --bg-info: #dbeafe;
+
+  /* Actions */
+  --btn-primary: #111827;
+  --btn-primary-hover: #374151;
+}
+
+/* ==========================================================================
+   2. DESIGN GLOBAL & TYPOGRAPHIE
+   ========================================================================== */
 body {
   margin: 0;
-  background-color: #f8f9fa;
+  background-color: var(--bg-app);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  color: #1c1c1e;
+  color: var(--text-main);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .dashboard-container {
   max-width: 600px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 40px 20px;
 }
 
 h1 {
-  font-size: 28px;
-  font-weight: 700;
-  margin-bottom: 20px;
-  letter-spacing: -0.5px;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  margin: 0 0 8px 0;
+  color: var(--text-main);
 }
 
 .date-subtitle {
-  font-size: 15px;
-  color: #8e8e93;
-  margin-top: -15px;
-  margin-bottom: 25px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 32px;
   display: block;
+  font-weight: 400;
 }
 
-/* --- 2. TABLEAU DE BORD (FINANCES) --- */
+.section-titre {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+/* ==========================================================================
+   3. CARTES & CONTENEURS
+   ========================================================================== */
+.carte, .top-prestations, .stock-container, .dossier-mois, .scan-carte, .reputation-carte, .export-carte {
+  background: var(--bg-card);
+  border-radius: var(--radius-card);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
+  margin-bottom: 24px;
+}
+
+/* Suppression formelle de tous les anciens dégradés */
+.reputation-carte, .export-carte {
+  background: var(--bg-card);
+}
+
+/* ==========================================================================
+   4. DATA VIZ (CHIFFRES & FINANCES)
+   ========================================================================== */
 .cartes-financieres {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 15px;
-  margin-bottom: 30px;
-}
-
-.carte {
-  background: white;
-  border-radius: 20px;
-  padding: 16px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-  border: 1px solid rgba(0,0,0,0.02);
+  gap: 16px;
+  margin-bottom: 32px;
 }
 
 .carte-titre-container {
@@ -53,202 +116,91 @@ h1 {
   margin-bottom: 12px;
 }
 
-.icon {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-}
-
-.icon-purple { background-color: #f4e8ff; color: #a154f2; }
-.icon-orange { background-color: #fff0e6; color: #ff9500; }
-.icon-blue { background-color: #e6f2ff; color: #007aff; }
-
 .carte h3 {
   margin: 0;
-  color: #3a3a3c;
-  font-size: 14px;
+  color: var(--text-secondary);
+  font-size: 13px;
   font-weight: 500;
 }
 
 .montant {
-  font-size: 24px;
-  font-weight: 700;
-  margin: 0 0 4px 0;
-  color: #1c1c1e;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  margin: 0;
+  color: var(--text-main);
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
 }
 
-.sous-montant {
-  font-size: 13px;
-  color: #a154f2;
-  margin: 0;
+/* Le signe de la devise ou les décimales (s'il y en a) doivent paraître plus discrets */
+.montant span {
+  font-size: 16px;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
-.section-titre {
-  font-size: 20px;
-  font-weight: 700;
-  margin-bottom: 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.section-badge {
-  font-size: 13px;
-  color: #8e8e93;
-  font-weight: 400;
-}
-
-.top-prestations {
-  background: white;
-  border-radius: 20px;
-  padding: 20px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-  margin-bottom: 80px;
-}
-
-.presta-item {
-  display: flex;
-  flex-direction: column;
-  padding: 12px 0;
-  border-bottom: 1px solid #f2f2f7;
-}
-
-.presta-item:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.presta-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.presta-nom {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1c1c1e;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .badge-succes {
-  background-color: #34c759;
-  color: white;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.presta-details {
-  display: flex;
-  justify-content: space-between;
-  color: #8e8e93;
-  font-size: 14px;
-}
-
-.montant-presta {
-  color: #a154f2;
-  font-weight: 600;
-}
-
-/* --- 3. BARRE DE NAVIGATION (SIDEBAR VERTICALE) --- */
-.navbar-sidebar {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 90px;
-  background: white;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 40px 0;
-  gap: 35px;
-  border-right: 1px solid #e5e5ea;
-  box-shadow: 4px 0 12px rgba(0,0,0,0.03);
-  z-index: 1000;
-}
-
-.nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  color: #8e8e93;
+  background-color: var(--bg-success);
+  color: var(--color-success);
+  padding: 4px 8px;
+  border-radius: 4px;
   font-size: 11px;
-  gap: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.nav-item:hover {
-  color: #a154f2;
-  transform: scale(1.1);
-}
-
-.nav-item.active {
-  color: #a154f2;
   font-weight: 600;
+  letter-spacing: 0.025em;
 }
 
-.nav-icon {
-  font-size: 24px;
-}
-/* --- 4. SCANNER DE FACTURES (ADMINISTRATION) --- */
-.admin-container {
-  padding-bottom: 80px;
-}
-
-.scan-carte {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.input-fournisseur, .textarea-facture {
+/* ==========================================================================
+   5. FORMULAIRES & BOUTONS (ZÉRO FRICTION)
+   ========================================================================== */
+.input-fournisseur, .textarea-facture, .agenda-filtre {
   width: 100%;
-  padding: 12px 15px;
-  border: 1px solid #e5e5ea;
-  border-radius: 12px;
-  font-size: 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-input);
+  font-size: 14px;
   font-family: inherit;
   box-sizing: border-box;
   outline: none;
-  background-color: #f8f9fa;
+  background-color: var(--bg-card);
+  color: var(--text-main);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.input-fournisseur:focus, .textarea-facture:focus {
-  border-color: #a154f2;
-  background-color: white;
+.input-fournisseur::placeholder, .textarea-facture::placeholder {
+  color: var(--text-muted);
+}
+
+/* Focus très "Stripe" : Ligne stricte, aucun effet néon ou flou */
+.input-fournisseur:focus, .textarea-facture:focus, .agenda-filtre:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .textarea-facture {
-  min-height: 120px;
+  min-height: 100px;
   resize: vertical;
 }
 
-.btn-action {
-  background-color: #1c1c1e;
+.btn-action, .btn-export {
+  background-color: var(--btn-primary);
   color: white;
-  border: none;
-  border-radius: 12px;
-  padding: 15px;
-  font-size: 16px;
-  font-weight: 600;
+  border: 1px solid var(--btn-primary);
+  border-radius: var(--radius-input);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  transition: transform 0.1s, opacity 0.2s;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.btn-action:active {
-  transform: scale(0.98);
+.btn-action:hover, .btn-export:hover {
+  background-color: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 
 .btn-action:disabled {
@@ -256,448 +208,205 @@ h1 {
   cursor: not-allowed;
 }
 
-.resultat-scan {
-  margin-top: 20px;
-  padding: 15px;
-  background-color: #f4e8ff;
-  border-radius: 12px;
-  border: 1px solid #eaddff;
-}
-
-.resultat-scan h4 {
-  margin: 0 0 10px 0;
-  color: #a154f2;
-  font-size: 14px;
-}
-
-.scan-details {
+/* ==========================================================================
+   6. BARRE DE NAVIGATION LATÉRALE
+   ========================================================================== */
+.navbar-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 80px;
+  background: var(--bg-card);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  padding: 32px 0;
+  gap: 24px;
+  border-right: 1px solid var(--border-color);
+  z-index: 1000;
 }
 
-.scan-ligne {
+.nav-item {
   display: flex;
-  justify-content: space-between;
-  font-size: 14px;
-  color: #3a3a3c;
+  flex-direction: column;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 11px;
+  gap: 6px;
+  cursor: pointer;
+  padding: 12px 8px;
+  border-radius: var(--radius-input);
+  width: 56px;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.scan-ligne.total {
-  margin-top: 5px;
-  padding-top: 10px;
-  border-top: 1px dashed #d0b0ff;
-  font-weight: 700;
-  font-size: 16px;
-  color: #1c1c1e;
+.nav-item:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-main);
 }
 
-/* --- 5. INVENTAIRE (PRODUITS) --- */
-.stock-container {
-  background: white;
-  border-radius: 20px;
-  padding: 20px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-  margin-bottom: 80px;
+/* Fin de l'effet "zoom/scale" amateur, on passe sur un fond subtil */
+.nav-item.active {
+  background-color: var(--bg-hover);
+  color: var(--text-main);
+  font-weight: 600;
 }
 
-.stock-item {
+.nav-icon {
+  font-size: 20px;
+  opacity: 0.8;
+}
+
+.nav-item.active .nav-icon {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   7. LISTES (INVENTAIRE, PRESTATIONS, EQUIPE)
+   ========================================================================== */
+.presta-item, .stock-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 16px 0;
-  border-bottom: 1px solid #f2f2f7;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.stock-item:last-child {
+.presta-item:last-child, .stock-item:last-child {
   border-bottom: none;
   padding-bottom: 0;
 }
 
-.stock-info {
-  display: flex;
-  align-items: center;
-  gap: 15px;
+.presta-nom, .stock-nom {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-main);
 }
 
-.pastille {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.stock-details {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stock-nom {
+.montant-presta, .stock-quantite {
+  font-size: 14px;
   font-weight: 600;
-  font-size: 16px;
-  color: #1c1c1e;
+  color: var(--text-main);
 }
 
-.stock-label {
-  font-size: 13px;
-  color: #8e8e93;
-}
-
-.stock-quantite-container {
-  text-align: right;
-}
-
-.stock-quantite {
-  font-weight: 700;
-  font-size: 18px;
-  color: #1c1c1e;
-}
-
-/* --- 6. CARTE E-REPUTATION (GOOGLE) --- */
-.reputation-carte {
+.presta-details {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: linear-gradient(135deg, #ffffff 0%, #fcf9ff 100%);
-  margin-bottom: 30px;
-}
-
-.reputation-gauche {
-  display: flex;
-  flex-direction: column;
-}
-
-.reputation-note {
-  font-size: 36px;
-  font-weight: 800;
-  color: #1c1c1e;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 5px 0;
-}
-
-.reputation-etoile {
-  color: #ffcc00;
-  font-size: 28px;
-}
-
-.reputation-avis {
-  font-size: 13px;
-  color: #8e8e93;
-}
-
-.reputation-droite {
-  width: 120px;
-  height: 60px;
-}
-
-.tendance-label {
-  font-size: 11px;
-  color: #34c759;
-  font-weight: 600;
-  text-align: right;
-  display: block;
-  margin-bottom: 5px;
-}
-
-/* --- 7. PÔLE RH (PRIMES & PERFORMANCES) --- */
-.rh-carte {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  margin-bottom: 20px;
-}
-
-.rh-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #f2f2f7;
-  padding-bottom: 10px;
-}
-
-.rh-nom {
-  font-size: 18px;
-  font-weight: 700;
-  color: #1c1c1e;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rh-role {
-  font-size: 12px;
-  background-color: #f2f2f7;
-  padding: 4px 8px;
-  border-radius: 8px;
-  color: #8e8e93;
-  font-weight: 600;
-}
-
-.rh-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 10px;
-  text-align: center;
-}
-
-.rh-stat-item {
-  background: #f8f9fa;
-  padding: 10px;
-  border-radius: 12px;
-}
-
-.rh-stat-valeur {
-  font-size: 16px;
-  font-weight: 700;
-  color: #1c1c1e;
-}
-
-.rh-stat-label {
-  font-size: 11px;
-  color: #8e8e93;
-  display: block;
+  width: 100%;
   margin-top: 4px;
 }
 
-.rh-prime-box {
-  background: #f4e8ff;
-  border: 1px solid #eaddff;
-  border-radius: 12px;
-  padding: 15px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.rh-prime-label {
-  font-size: 14px;
-  color: #a154f2;
-  font-weight: 600;
-}
-
-.rh-prime-montant {
-  font-size: 24px;
-  font-weight: 800;
-  color: #a154f2;
-}
-
-.rh-chronogramme {
-  margin-top: 5px;
-  padding-top: 15px;
-  border-top: 1px dashed #e5e5ea;
-}
-
-.chronogramme-titre {
+.presta-details span:first-child, .stock-label {
   font-size: 12px;
-  color: #8e8e93;
-  margin-bottom: 10px;
-  display: block;
+  color: var(--text-secondary);
 }
 
-/* --- 8. HISTORIQUE ET EXPORT COMPTABLE --- */
-.export-carte {
-  background: linear-gradient(135deg, #1c1c1e 0%, #3a3a3c 100%);
-  color: white;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 25px;
-}
-
-.btn-export {
-  background-color: #a154f2;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 15px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.dossier-mois {
-  background: white;
-  border-radius: 16px;
-  padding: 15px;
-  margin-bottom: 15px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
-  border: 1px solid #e5e5ea;
-}
-
-.dossier-header {
-  display: flex;
-  justify-content: space-between;
-  border-bottom: 1px dashed #e5e5ea;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-}
-
-.dossier-titre {
-  font-weight: 700;
-  color: #1c1c1e;
-}
-
-.dossier-total {
-  font-weight: 700;
-  color: #a154f2;
-}
-
-.facture-mini {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  color: #8e8e93;
-  padding: 4px 0;
-}
-
-
-
-/* --- 9. AGENDA / PLANNING (VUE SEMAINE FAÇON APPLE CALENDAR) --- */
-.agenda-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.agenda-filtre {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid #e5e5ea;
-  font-size: 14px;
-  font-weight: 600;
-  background-color: white;
-  cursor: pointer;
-}
-
+/* ==========================================================================
+   8. L'AGENDA DYNAMIQUE (FLAT DESIGN)
+   ========================================================================== */
 .week-calendar {
   display: flex;
   flex-direction: column;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  background: var(--bg-card);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-color);
   overflow: hidden;
-  border: 1px solid #e5e5ea;
 }
 
-/* En-tête des jours (Lundi, Mardi...) */
 .week-header-row {
   display: flex;
-  border-bottom: 1px solid #e5e5ea;
-  background: #fdfdfd;
-}
-
-.time-spacer {
-  width: 60px;
-  flex-shrink: 0;
-  border-right: 1px solid #e5e5ea;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-app);
 }
 
 .day-header {
   flex: 1;
   text-align: center;
-  padding: 10px 0;
-  border-right: 1px solid #e5e5ea;
+  padding: 12px 0;
+  border-right: 1px solid var(--border-color);
 }
+
 .day-header:last-child { border-right: none; }
 
 .day-name {
   font-size: 11px;
   text-transform: uppercase;
-  color: #8e8e93;
+  color: var(--text-secondary);
   font-weight: 600;
   display: block;
 }
 
 .day-number {
-  font-size: 22px;
-  color: #1c1c1e;
-  font-weight: 400;
+  font-size: 18px;
+  color: var(--text-main);
+  font-weight: 500;
   margin-top: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
+  display: inline-block;
 }
 
 .day-header.today .day-number {
-  background: #007aff;
+  background: var(--text-main);
   color: white;
-  border-radius: 50%;
-  font-weight: 600;
-}
-.day-header.today .day-name {
-  color: #007aff;
+  border-radius: 4px;
+  padding: 2px 8px;
 }
 
-/* Corps du calendrier (Grille des heures) */
 .week-body {
   display: flex;
   height: 600px;
   overflow-y: auto;
+  background: var(--bg-card);
 }
 
 .time-column {
-  width: 60px;
+  width: 50px;
   flex-shrink: 0;
-  border-right: 1px solid #e5e5ea;
-  background: #fcfcfc;
-  position: relative;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-app);
 }
 
 .time-label {
   height: 60px;
-  font-size: 10px;
-  color: #8e8e93;
+  font-size: 11px;
+  color: var(--text-secondary);
   text-align: right;
   padding-right: 8px;
   box-sizing: border-box;
-  transform: translateY(-6px);
-}
-
-.days-container {
-  display: flex;
-  flex: 1;
+  transform: translateY(-7px);
 }
 
 .day-column {
   flex: 1;
-  border-right: 1px solid #e5e5ea;
+  border-right: 1px solid var(--border-color);
   position: relative;
-  /* Lignes pointillées pour chaque heure */
-  background-image: linear-gradient(to bottom, #f2f2f7 1px, transparent 1px);
+  background-image: linear-gradient(to bottom, var(--border-color) 1px, transparent 1px);
   background-size: 100% 60px; 
 }
-.day-column:last-child { border-right: none; }
 
-/* Les Cartes de RDV */
 .agenda-card {
   position: absolute;
-  left: 2px;
-  right: 2px;
+  left: 1px;
+  right: 1px;
   border-radius: 4px;
-  padding: 4px 6px;
-  color: white;
+  padding: 6px;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  overflow: hidden;
-  border-left: 4px solid rgba(0,0,0,0.3); /* Effet 3D sur le bord gauche */
+  /* Design Flat, plus d'effet 3D */
+  border-left: 3px solid rgba(0,0,0,0.5);
   display: flex;
   flex-direction: column;
-  transition: transform 0.1s;
+  transition: opacity 0.15s ease;
 }
 
 .agenda-card:hover {
-  transform: scale(1.02);
+  opacity: 0.9;
   z-index: 10;
 }
 
 .agenda-card-title {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -705,7 +414,7 @@ h1 {
 
 .agenda-card-subtitle {
   font-size: 10px;
-  opacity: 0.9;
+  opacity: 0.8;
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
