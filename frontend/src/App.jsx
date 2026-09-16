@@ -5,6 +5,30 @@ import './App.css';
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   
+  // --- GESTION DU THÈME SOMBRE (DARK MODE) ---
+  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+
+  useEffect(() => {
+      if (isDarkMode) {
+          document.body.classList.add('dark-mode');
+          localStorage.setItem('theme', 'dark');
+      } else {
+          document.body.classList.remove('dark-mode');
+          localStorage.setItem('theme', 'light');
+      }
+  }, [isDarkMode]);
+
+  // Composant Bouton Thème
+  const ThemeToggle = ({ isFixed }) => (
+      <button onClick={() => setIsDarkMode(!isDarkMode)} className={`theme-toggle-btn ${isFixed ? 'theme-toggle-fixed' : ''}`} title="Basculer le thème">
+          {isDarkMode ? (
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          ) : (
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          )}
+      </button>
+  );
+
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [loginType, setLoginType] = useState('gerant'); 
   const [isForgotPassword, setIsForgotPassword] = useState(false);
@@ -33,7 +57,7 @@ function App() {
   const [resetTokenUrl] = useState(urlParams.get('resetToken'));
   const [newPassword, setNewPassword] = useState('');
 
-  // --- TOAST NOTIFICATIONS (Remplacement des alert) ---
+  // --- TOAST NOTIFICATIONS ---
   const [toast, setToast] = useState(null);
 
   const showToast = (message, type = 'success') => {
@@ -62,7 +86,6 @@ function App() {
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
   const [clientCaisse, setClientCaisse] = useState('');
 
-  // --- AGENDA & CREATION MANUELLE ---
   const getMonday = (d) => { const date = new Date(d); const day = date.getDay(); const diff = date.getDate() - day + (day === 0 ? -6 : 1); return new Date(date.setDate(diff)); };
   const [dateAgendaDebut, setDateAgendaDebut] = useState(getMonday(new Date())); 
   const [filtreAgenda, setFiltreAgenda] = useState('TOUS');
@@ -94,11 +117,9 @@ function App() {
   const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
   const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  
   const changerSemaine = (semaines) => { const nouvelleDate = new Date(dateAgendaDebut); nouvelleDate.setDate(nouvelleDate.getDate() + (semaines * 7)); setDateAgendaDebut(nouvelleDate); };
   const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); }
 
-  // API CALLS
   const getAuthHeaders = (isJson = false) => { const headers = { 'Authorization': `Bearer ${token}` }; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
   const handleFetchError = async (res) => { if (res.status === 401 || res.status === 403) { seDeconnecter(); throw new Error("Session expirée"); } if (res.status === 402) { setIsAbonnementInactif(true); throw new Error("Abonnement inactif"); } const data = await res.json(); if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); return data; };
 
@@ -189,7 +210,6 @@ function App() {
       } catch (e) { showToast("Erreur réseau avec Stripe.", "error"); }
   };
 
-  // --- ACTIONS CRM ---
   const ouvrirFicheClient = async (client) => {
       setClientSelectionne(client);
       setChargementFiche(true);
@@ -221,15 +241,14 @@ function App() {
       const num = parseFloat(q); 
       if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; 
       if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; 
-      if (num >= 1) return { bg: '#fef3c7', text: '#92400e', label: 'Faible' }; 
+      if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; 
       return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; 
   };
-  const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="#34c759" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
-  const dessinerChronogramme = (d) => { const max = Math.max(...d) * 1.2; return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="#a154f2" rx="2" />)}</svg>); };
+  const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
+  const dessinerChronogramme = (d) => { const max = Math.max(...d) * 1.2; return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="var(--btn-primary)" rx="2" />)}</svg>); };
 
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
-  // --- ACTIONS CAISSE & TICKET ECOLOGIQUE ---
   const lancerPaiementTPE = async (montant, lignes) => {
     if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
     setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
@@ -265,7 +284,6 @@ function App() {
   const declencherExport = async () => { showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
   const sauvegarderParametres = async () => { showToast("Sauvegarde en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); const data = await handleFetchError(response); showToast(data.message, "success"); chargerTout(); setTimeout(() => { setActiveTab('accueil'); }, 1000); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }};
 
-  // --- ACTIONS AGENDA DYNAMIQUE ---
   const creerRdvManuel = async () => {
       try {
           const datetime = `${formRdv.date}T${formRdv.heure}:00`;
@@ -305,7 +323,6 @@ function App() {
       } catch(e) { showToast("Erreur lors de la suppression.", "error"); }
   };
 
-  // Z DE CAISSE LÉGAL
   const faireZdeCaisse = async () => {
       if(!window.confirm("Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées.")) return;
       try {
@@ -318,12 +335,13 @@ function App() {
   // --- RENDER RESET PASSWORD ---
   if (resetTokenUrl) {
       return (
-        <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh' }}>
-          <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '30px' }}>
-            <h2>Nouveau mot de passe</h2>
+        <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh', position: 'relative' }}>
+          <ThemeToggle isFixed={true} />
+          <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
+            <h2 style={{color: 'var(--text-main)'}}>Nouveau mot de passe</h2>
             <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
             <input type="password" placeholder="Votre nouveau mot de passe" className="input-fournisseur" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-            <button className="btn-action" style={{ width: '100%', marginTop: '15px' }} onClick={async () => {
+            <button className="btn-action" style={{ width: '100%', marginTop: '16px' }} onClick={async () => {
                const res = await fetch('https://api-salon-backend.onrender.com/api/reset-password', {
                   method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword})
                });
@@ -350,27 +368,28 @@ function App() {
   // --- RENDER LOGIN ---
   if (!token) {
     return (
-      <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh' }}>
-        <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '30px' }}>
+      <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
+        <ThemeToggle isFixed={true} />
+        <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
           
           <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
-             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'white' : 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border-color)'}}>Gérant</button>
-             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'white' : 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border-color)'}}>Employé</button>
+             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-app)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Gérant</button>
+             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'var(--bg-app)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Employé</button>
           </div>
           
           {isForgotPassword ? (
               <>
                  <h2 style={{color: 'var(--text-main)'}}>Mot de passe oublié</h2>
                  <p style={{fontSize:'13px', color:'var(--text-secondary)', marginBottom: '24px'}}>Saisissez votre email pour réinitialiser l'accès.</p>
-                 {msgSucces && <div style={{backgroundColor: 'var(--bg-success)', color: 'var(--color-success)', padding: '10px', borderRadius: '8px', fontSize: '13px', marginBottom: '15px'}}>{msgSucces}</div>}
-                 <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '10px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
-                 <button className="btn-action" onClick={motDePasseOublie} style={{ width: '100%', marginTop: '15px' }}>Recevoir le lien</button>
-                 <p style={{fontSize: '13px', color: 'var(--text-main)', marginTop: '20px', cursor: 'pointer', fontWeight: '500'}} onClick={() => setIsForgotPassword(false)}>Retour à la connexion</p>
+                 {msgSucces && <div style={{backgroundColor: 'var(--bg-success)', color: 'var(--color-success)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500'}}>{msgSucces}</div>}
+                 <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
+                 <button className="btn-action" onClick={motDePasseOublie} style={{ width: '100%', marginTop: '8px' }}>Recevoir le lien</button>
+                 <p style={{fontSize: '13px', color: 'var(--text-main)', marginTop: '24px', cursor: 'pointer', fontWeight: '500'}} onClick={() => setIsForgotPassword(false)}>Retour à la connexion</p>
               </>
           ) : (
              <>
-                <h2 style={{color: 'var(--text-main)', marginBottom: '24px'}}>{loginType === 'gerant' ? (isLoginMode ? 'Connexion' : 'Créer un compte') : 'Espace Équipe'}</h2>
-                {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '10px', borderRadius: '8px', fontSize: '13px', marginBottom: '15px' }}>{erreurLogin}</div>)}
+                <h2 style={{color: 'var(--text-main)', marginBottom: '24px', fontSize: '20px'}}>{loginType === 'gerant' ? (isLoginMode ? 'Espace Gérant' : 'Créer un compte') : 'Espace Équipe'}</h2>
+                {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500' }}>{erreurLogin}</div>)}
                 
                 {loginType === 'gerant' ? (
                    <>
@@ -385,7 +404,7 @@ function App() {
                    </>
                 ) : (
                    <>
-                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px' }}>Saisissez votre code confidentiel.</p>
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px' }}>Saisissez votre code confidentiel.</p>
                       <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
                       <input type="text" className="input-fournisseur" placeholder="Votre prénom" style={{marginBottom: '12px'}} value={nomEmployeInput} onChange={(e) => setNomEmployeInput(e.target.value)} />
                       <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN à 4 chiffres" value={pinEmployeInput} onChange={(e) => setPinEmployeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
@@ -395,22 +414,35 @@ function App() {
              </>
           )}
         </div>
+        {toast && (
+          <div className="toast-container">
+            <div className={`toast ${toast.type}`}>
+              {toast.type === 'success' ? (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              )}
+              {toast.message}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   if (isAbonnementInactif && userRole === 'gerant') {
      return (
-        <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh' }}>
-        <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '30px' }}>
-          <div style={{ fontSize: '32px', marginBottom: '16px' }}>
-             <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="var(--text-main)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
+        <ThemeToggle isFixed={true} />
+        <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
+          <div style={{ color: 'var(--text-main)', marginBottom: '16px', display: 'flex', justifyContent: 'center' }}>
+             <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           </div>
-          <h2 style={{color: 'var(--text-main)'}}>Abonnement Requis</h2>
+          <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Abonnement Requis</h2>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>
-            Pour accéder à votre tableau de bord, gérer votre catalogue et activer les automatisations (TPE, SMS, IA Comptable), vous devez activer votre abonnement mensuel.
+            Pour accéder à votre tableau de bord, gérer votre catalogue et activer les automatisations, vous devez activer votre abonnement mensuel.
           </p>
-          <h1 style={{color: 'var(--text-main)', marginBottom: '24px'}}>49.00 € <span style={{fontSize: '14px', color: 'var(--text-secondary)'}}>/ mois</span></h1>
+          <h1 style={{color: 'var(--text-main)', marginBottom: '24px'}}>49.00 <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>€ / mois</span></h1>
           
           <button className="btn-action" onClick={lancerPaiementStripe} style={{ width: '100%' }}>
             Payer de manière sécurisée avec Stripe
@@ -437,7 +469,6 @@ function App() {
 
   const role = userRole;
 
-  // Calcul dynamique des heures de l'agenda (borné entre 0h et 23h)
   const heureDebutAgenda = Math.max(0, Math.min(23, parseInt(configSalon.heure_ouverture) || 8));
   const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
   const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
@@ -484,9 +515,6 @@ function App() {
       <div style={{ flexGrow: 1, marginLeft: '90px' }}>
         <div className="dashboard-container" style={{maxWidth: (activeTab === 'caisse' || activeTab === 'agenda') ? '900px' : '600px'}}>
           
-          {/* ============================================== */}
-          {/* ONGLET : AGENDA / PLANNING (VUE SEMAINE)         */}
-          {/* ============================================== */}
           {activeTab === 'agenda' && (
             <div className="admin-container">
               <div className="agenda-header">
@@ -494,13 +522,14 @@ function App() {
                       <h1 style={{margin: 0}}>Agenda</h1>
                       
                       <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-                          <button onClick={() => changerSemaine(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>◀</button>
+                          <button onClick={() => changerSemaine(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>◀</button>
                           <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', padding: '0 10px'}}>{joursSemaine[0].toLocaleDateString('fr-FR', {month: 'short'})} {joursSemaine[0].getFullYear()}</span>
-                          <button onClick={() => changerSemaine(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>▶</button>
-                          <button onClick={() => setDateAgendaDebut(getMonday(new Date()))} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
+                          <button onClick={() => changerSemaine(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>▶</button>
+                          <button onClick={() => setDateAgendaDebut(getMonday(new Date()))} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
                       </div>
                   </div>
-                  <div style={{display: 'flex', gap: '15px', alignItems: 'center'}}>
+                  <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                      <ThemeToggle />
                       <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
                       {role === 'gerant' && (
                           <select className="agenda-filtre" value={filtreAgenda} onChange={(e) => setFiltreAgenda(e.target.value)}>
@@ -522,7 +551,7 @@ function App() {
                       ))}
                   </div>
 
-                 <div className="week-body">
+                  <div className="week-body">
                       <div className="time-column">
                           {Array.from({ length: nbHeures }).map((_, i) => (<div key={i} className="time-label">{heureDebutAgenda + i} h</div>))}
                       </div>
@@ -539,21 +568,15 @@ function App() {
                                   <div key={indexJour} className="day-column">
                                       {rdvsDuJour.map((rdv) => {
                                           const dateDebut = new Date(rdv.date_heure_debut);
-                                          
-                                          // NOUVELLE ÉCHELLE DYNAMIQUE : 80px par heure
                                           const ECHELLE_HEURE = 80;
                                           const dureeReelle = rdv.duree_minutes || 30;
-                                          
-                                          // Calcul de la position et de la taille
                                           const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (dateDebut.getMinutes() * (ECHELLE_HEURE / 60));
-                                          // On force une hauteur minimale de 26px pour qu'on puisse toujours lire la carte
                                           const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
-
                                           const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
 
                                           return (
                                               <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
-                                                   style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#1c1c1e' }}>
+                                                   style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
                                                   <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
                                                   <span className="agenda-card-subtitle">{rdv.prestation}</span>
                                               </div>
@@ -564,9 +587,8 @@ function App() {
                           })}
                       </div>
                   </div>
-            
+              </div>
 
-              {/* MODAL CRÉATION RDV MANUEL */}
               {showModalRdv && (
                   <div className="modal-overlay">
                       <div className="modal-content">
@@ -592,7 +614,6 @@ function App() {
                   </div>
               )}
 
-              {/* Pop-up de détails, modification & annulation */}
               {rdvSelectionne && (
                   <div className="modal-overlay">
                       <div className="modal-content">
@@ -641,9 +662,6 @@ function App() {
             </div>
           )}
 
-          {/* ============================================== */}
-          {/* LES AUTRES ONGLETS (RÉSERVÉS AU GÉRANT)          */}
-          {/* ============================================== */}
           {role === 'gerant' && activeTab === 'accueil' && (
             <>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
@@ -652,6 +670,7 @@ function App() {
                   <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span>
                 </h1>
                 <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                  <ThemeToggle />
                   <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                   </button>
@@ -767,7 +786,7 @@ function App() {
                 <div style={{marginTop: '16px'}}>
                   {clientsListe.map(cli => (
                     <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
-                      <span style={{cursor: 'pointer', color: 'var(--btn-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={() => ouvrirFicheClient(cli)}>
+                      <span style={{cursor: 'pointer', color: 'var(--color-info)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={() => ouvrirFicheClient(cli)}>
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                         {cli.nom} <span style={{color: 'var(--text-muted)', fontWeight: 'normal'}}>({cli.telephone || 'Pas de numéro'})</span>
                       </span>
@@ -777,7 +796,6 @@ function App() {
                 </div>
               </div>
 
-              {/* --- MODAL FICHE CLIENT (CRM) --- */}
               {clientSelectionne && (
                   <div className="modal-overlay">
                       <div className="modal-content">
@@ -909,7 +927,7 @@ function App() {
                   <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px'}}>
                     {employesListe.map((emp, index) => (
                       <div key={emp.id_employe} onClick={() => { setPosEmploye(emp); setPosStep('type'); }}
-                        style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#1c1c1e', padding: '32px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', border: '1px solid rgba(0,0,0,0.05)' }}>
+                        style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '32px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', border: '1px solid rgba(0,0,0,0.05)' }}>
                         {emp.nom.split(' ')[0]}
                       </div>
                     ))}
@@ -979,7 +997,7 @@ function App() {
                                   <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient}>Envoyer</button>
                               </div>
 
-                              <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'white' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>
+                              <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>
                                   Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}
                               </button>
                           </div>
