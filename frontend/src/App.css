@@ -112,8 +112,27 @@ h1 {
 .carte-titre-container {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+/* Nouvelles icônes strictes et grises */
+.icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.icon svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
 }
 
 .carte h3 {
@@ -123,34 +142,106 @@ h1 {
   font-weight: 500;
 }
 
+/* La typographie forte pour les montants */
 .montant {
-  font-size: 32px;
-  font-weight: 600;
-  letter-spacing: -0.025em;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 0;
+  color: var(--text-main);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* La devise plus petite et claire */
+.devise {
+  font-size: 16px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Badges ultra-discrets (finies les pilules) */
+.badge-succes, .rh-role, .badge-discret {
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+}
+
+.badge-succes {
+  background-color: var(--bg-success);
+  color: var(--color-success);
+}
+
+.rh-role {
+  background-color: var(--bg-app);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+/* ==========================================================================
+   7. LISTES (INVENTAIRE, PRESTATIONS, EQUIPE)
+   ========================================================================== */
+.presta-item, .stock-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.presta-item:last-child, .stock-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.presta-nom, .stock-nom {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.montant-presta, .stock-quantite {
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-main);
   display: flex;
   align-items: baseline;
   gap: 4px;
 }
 
-/* Le signe de la devise ou les décimales (s'il y en a) doivent paraître plus discrets */
-.montant span {
-  font-size: 16px;
+.presta-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.presta-details span:first-child, .stock-label {
+  font-size: 12px;
   color: var(--text-secondary);
-  font-weight: 500;
 }
 
-.badge-succes {
-  background-color: var(--bg-success);
-  color: var(--color-success);
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.025em;
+.stock-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
 }
 
+.stock-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 /* ==========================================================================
    5. FORMULAIRES & BOUTONS (ZÉRO FRICTION)
    ========================================================================== */
