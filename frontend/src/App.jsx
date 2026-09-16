@@ -29,6 +29,10 @@ function App() {
   const [planningData, setPlanningData] = useState([]); 
   const [erreur, setErreur] = useState(null);
 
+  const urlParams = new URLSearchParams(window.location.search);
+  const [resetTokenUrl] = useState(urlParams.get('resetToken'));
+  const [newPassword, setNewPassword] = useState('');
+
   const [catalogueListe, setCatalogueListe] = useState([]);
   const [employesListe, setEmployesListe] = useState([]);
   const [clientsListe, setClientsListe] = useState([]);
@@ -64,7 +68,7 @@ function App() {
 
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '',
-    email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: ''
+    email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: ''
   });
 
   const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
@@ -127,7 +131,7 @@ function App() {
     fetch('https://api-salon-backend.onrender.com/api/rh', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setRhData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/factures/historique', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setHistoriqueData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/clients', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setClientsListe(d)).catch(e => console.log(e.message));
-    fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setConfigSalon({ google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '' })).catch(e => console.log(e.message));
+    fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setConfigSalon({ google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '' })).catch(e => console.log(e.message));
   };
 
   useEffect(() => {
@@ -204,6 +208,26 @@ function App() {
           const data = await handleFetchError(res);
           alert(data.message);
       } catch(e) { alert("Erreur lors de la clôture."); }
+  }
+
+  // --- RENDER RESET PASSWORD ---
+  if (resetTokenUrl) {
+      return (
+        <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh' }}>
+          <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '30px' }}>
+            <h2>Nouveau mot de passe</h2>
+            <p style={{fontSize:'13px', color:'#8e8e93'}}>Votre lien est sécurisé et valable 15 minutes.</p>
+            <input type="password" placeholder="Votre nouveau mot de passe" className="input-fournisseur" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+            <button className="btn-action" style={{ width: '100%', marginTop: '15px' }} onClick={async () => {
+               const res = await fetch('https://api-salon-backend.onrender.com/api/reset-password', {
+                  method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword})
+               });
+               if(res.ok) { alert("Mot de passe mis à jour !"); window.location.href = '/'; }
+               else { alert("Lien expiré ou invalide."); }
+            }}>Confirmer la modification</button>
+          </div>
+        </div>
+      )
   }
 
   // --- RENDER LOGIN ---
@@ -576,6 +600,13 @@ function App() {
                 <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} />
                 <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps (ex: https://g.page/...)" value={configSalon.lien_google_maps} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
               </div>
+
+              <div className="carte scan-carte" style={{marginTop: '20px', border: '2px solid #007aff'}}>
+                <h3 style={{marginBottom: '5px', color: '#007aff'}}>💳 TPE Physique (Stripe Terminal)</h3>
+                <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
+                <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
+              </div>
+
               <button className="btn-action" style={{marginTop: '25px', width: '100%'}} onClick={sauvegarderParametres}>💾 Enregistrer la configuration</button>
             </div>
           )}
