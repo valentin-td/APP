@@ -157,10 +157,8 @@ app.post('/api/forgot-password', async (req, res) => {
         if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ erreur: "Serveur mail non configuré." });
 
         const result = await pool.query('SELECT id_user FROM utilisateurs WHERE email = $1', [email]);
-        // Anti-scan de pirates : message générique
         if (result.rowCount === 0) return res.json({ message: "Si cet email existe, un lien a été envoyé." });
 
-        // Token temporaire ultra-sécurisé (15 minutes)
         const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '15m' });
         const resetLink = `https://app-salon-caiss.onrender.com/?resetToken=${resetToken}`;
 
@@ -230,7 +228,6 @@ app.post('/api/creer-checkout', async (req, res) => {
     });
 });
 
-// SÉCURITÉ : La route de Webhook avec signature de l'événement obligatoire
 app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, res) => {
     const signature = req.headers['stripe-signature'];
     
@@ -238,7 +235,6 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 
     let event;
     try {
-        // VÉRIFICATION CRYPTOGRAPHIQUE ABSOLUE
         event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
     } catch (err) {
         console.error(`🚨 ALERTE FRAUDE OU ERREUR WEBHOOK : ${err.message}`);
@@ -355,84 +351,46 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 });
 
 // =========================================================================
-// --- SYSTÈME SMS (AVEC GOOGLE MAPS & BOUCLIER) ---
+// --- L'ENCAISSEMENT TPE TEMPS RÉEL (NF525) & TICKET ÉCOLOGIQUE ---
 // =========================================================================
-async function envoyerSMSClient(clientDB, id_client, id_salon) {
-    if (!id_client) return; 
-    try {
-        const config = await clientDB.query('SELECT brevo_api_key, sms_sender_name, lien_google_maps FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const client = await clientDB.query('SELECT telephone, nom, avis_demande FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
-        
-        if (config.rowCount > 0 && client.rowCount > 0) {
-            const { brevo_api_key, sms_sender_name, lien_google_maps } = config.rows[0];
-            const { telephone, nom, avis_demande } = client.rows[0];
-            
-            if (brevo_api_key && telephone && !avis_demande) {
-                let message = `Bonjour ${nom}, merci pour votre visite chez ${sms_sender_name || 'notre salon'} ! `;
-                if (lien_google_maps) message += `Pourriez-vous nous laisser un avis rapide ? ${lien_google_maps} `;
-                message += `À très bientôt.`;
-                
-                const response = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
-                    method: 'POST', headers: { 'accept': 'application/json', 'api-key': brevo_api_key, 'content-type': 'application/json' },
-                    body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (sms_sender_name || 'MonSalon').substring(0, 11), recipient: telephone, content: message })
-                });
-                
-                if (response.ok) { 
-                    await clientDB.query('UPDATE clients SET avis_demande = TRUE WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
-                } 
-            } 
-        }
-    } catch (e) { console.error("❌ Erreur SMS :", e.message); }
-}
 
-// =========================================================================
-// --- L'ENCAISSEMENT TPE TEMPS RÉEL (NF525) ---
-// =========================================================================
+// Cette route génère tout de suite le ticket en BDD pour qu'il soit prêt à être envoyé par email
 app.post('/api/caisse/payer', verifierToken, async (req, res) => {
-    const { montant } = req.body;
+    const { montant, id_employe, id_client, lignes } = req.body;
+    const id_salon = req.user.id_salon;
+    const clientDB = await pool.connect();
+
     try {
-        // Récupère l'identifiant du TPE renseigné par le client dans ses paramètres
-        const configResult = await pool.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+        const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
 
         if (!readerId) {
             return res.status(400).json({ erreur: "Aucun lecteur TPE physique configuré. Veuillez l'ajouter dans vos Paramètres." });
         }
 
+        // 1. DÉCLENCHEMENT MATÉRIEL DU TPE
         const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(montant * 100), // Stripe requiert des centimes
+          amount: Math.round(montant * 100),
           currency: 'eur',
           payment_method_types: ['card_present'],
           capture_method: 'manual', 
         });
-
-        // Envoi de l'ordre au boîtier physique
         const reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntent.id });
-        res.json({ message: "TPE activé. En attente de la carte...", reader });
-    } catch (error) {
-        console.error("Erreur communication TPE:", error);
-        res.status(500).json({ erreur: "Erreur de communication avec le boîtier TPE." });
-    }
-});
 
-app.post('/api/webhooks/tpe-externe', async (req, res) => {
-    const { montant, id_employe, id_client, lignes, id_salon = 1 } = req.body; 
-    const clientDB = await pool.connect();
-    try {
+        // 2. CRÉATION IMMÉDIATE DU TICKET LÉGAL EN BDD
         await clientDB.query('BEGIN'); 
-        
-        // SÉCURITÉ NF525 (CHAÎNAGE CRYPTOGRAPHIQUE)
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
+        const numeroTicket = 'TPE-' + Date.now();
         
-        const numeroTicket = 'TPE-CLOUD-' + Date.now();
-        const insertTicketQuery = `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon) VALUES ($1, $2, $3, $4, $5) RETURNING id_ticket;`;
-        const ticketResult = await clientDB.query(insertTicketQuery, [numeroTicket, id_client || null, id_employe, montant, id_salon]);
+        const ticketResult = await clientDB.query(
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon) VALUES ($1, $2, $3, $4, $5) RETURNING id_ticket;`, 
+            [numeroTicket, id_client || null, id_employe, montant, id_salon]
+        );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
 
-        // Création du Hash inaltérable (Loi anti-fraude)
-        const dataToHash = `${idNouveauTicket}-${numeroTicket}-${montant}-${previousHash}`;
-        const newHash = crypto.createHash('sha256').update(dataToHash).digest('hex');
+        // Loi NF525 : Création du Hash inaltérable
+        const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montant}-${previousHash}`).digest('hex');
         await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
 
         const employeResult = await clientDB.query('SELECT * FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
@@ -443,10 +401,12 @@ app.post('/api/webhooks/tpe-externe', async (req, res) => {
                 const total_ligne = ligne.quantite * ligne.prix_unitaire;
                 await clientDB.query(`INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon) VALUES ($1, $2, $3, $4, $5, $6);`, 
                 [idNouveauTicket, ligne.id_article, ligne.quantite, ligne.prix_unitaire, total_ligne, id_salon]);
+                
                 const updateStockQuery = `UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') RETURNING nom, stock_actuel, type_article;`;
                 const stockResult = await clientDB.query(updateStockQuery, [ligne.quantite, ligne.id_article, id_salon]);
                 let type_article = 'PRESTATION'; 
                 if (stockResult.rowCount > 0) type_article = stockResult.rows[0].type_article;
+                
                 if (employe) {
                     const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
                     const montant_commission = (total_ligne * (taux / 100)).toFixed(2);
@@ -455,15 +415,73 @@ app.post('/api/webhooks/tpe-externe', async (req, res) => {
                 }
             }
         }
-        await clientDB.query('COMMIT'); 
-        if(id_client) envoyerSMSClient(clientDB, id_client, id_salon); 
+        await clientDB.query('COMMIT');
 
         io.to(id_salon.toString()).emit('paiementValide', { message: `Paiement validé (Ticket certifié #${idNouveauTicket})` });
-        res.status(200).json({ message: "Paiement TPE enregistré avec succès !" });
-    } catch (e) {
-        await clientDB.query('ROLLBACK'); 
-        res.status(500).json({ erreur: "Erreur TPE." }); 
-    } finally { clientDB.release(); }
+        
+        // On renvoie l'ID du ticket au Front-End pour la fenêtre "Anti-Gaspi"
+        res.json({ message: "TPE activé.", reader, id_ticket: idNouveauTicket });
+    } catch (error) {
+        await clientDB.query('ROLLBACK');
+        console.error("Erreur TPE:", error);
+        res.status(500).json({ erreur: "Erreur de communication TPE." });
+    } finally {
+        clientDB.release();
+    }
+});
+
+// Le bouton de la fenêtre "Anti-Gaspi" appelle cette route :
+app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
+    const { id_ticket, email, id_client, methode } = req.body;
+    const id_salon = req.user.id_salon;
+
+    try {
+        const salonConfig = await pool.query('SELECT nom_salon, email_reception_factures, mot_de_passe_app_email, brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        if (salonConfig.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
+        const config = salonConfig.rows[0];
+
+        const ticketData = await pool.query('SELECT numero_ticket_caisse, total_ttc, date_creation FROM tickets WHERE id_ticket = $1 AND id_salon = $2', [id_ticket, id_salon]);
+        if (ticketData.rowCount === 0) return res.status(404).json({ erreur: "Ticket introuvable." });
+        const ticket = ticketData.rows[0];
+
+        const textRecap = `Merci pour votre visite chez ${config.nom_salon} !\nTicket n°${ticket.numero_ticket_caisse} du ${new Date(ticket.date_creation).toLocaleDateString()}.\nMontant total : ${parseFloat(ticket.total_ttc).toFixed(2)} €.\nÀ très bientôt !`;
+
+        if (methode === 'email') {
+            if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "L'e-mail du salon n'est pas configuré dans les Paramètres." });
+            
+            let transporter = nodemailer.createTransport({
+                host: 'smtp.gmail.com', port: 465, secure: true,
+                auth: { user: config.email_reception_factures, pass: config.mot_de_passe_app_email }
+            });
+
+            await transporter.sendMail({
+                from: `"${config.nom_salon}" <${config.email_reception_factures}>`,
+                to: email,
+                subject: `Votre reçu - ${config.nom_salon}`,
+                text: textRecap
+            });
+
+            if (id_client && email) {
+                await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
+            }
+        } 
+        
+        else if (methode === 'sms') {
+            if (!config.brevo_api_key) return res.status(400).json({ erreur: "Clé Brevo non configurée." });
+            const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1', [id_client]);
+            if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro de téléphone pour ce client." });
+
+            await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+                body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: client.rows[0].telephone, content: textRecap })
+            });
+        }
+
+        res.json({ message: "Ticket envoyé avec succès." });
+    } catch (error) {
+        console.error("Erreur envoi ticket:", error);
+        res.status(500).json({ erreur: "Erreur serveur lors de l'envoi." });
+    }
 });
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
@@ -528,7 +546,6 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
     } catch (erreur) { res.status(500).json({ erreur: "Erreur calcul dashboard." }); }
 });
 
-// SÉCURITÉ : La route Settings enregistre maintenant le lecteur de carte de chaque client !
 app.post('/api/settings', verifierToken, async (req, res) => { 
     const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id } = req.body; 
     try { 
@@ -538,7 +555,6 @@ app.post('/api/settings', verifierToken, async (req, res) => {
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
 });
 app.get('/api/settings', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); res.json(result.rowCount > 0 ? result.rows[0] : {}); } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }});
-
 
 // --- MISE À JOUR AUTO-HEALING DE LA BASE DE DONNÉES (Zéro Friction) ---
 pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;')
@@ -553,12 +569,10 @@ app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
     const id_client = req.params.id;
     const id_salon = req.user.id_salon;
     try {
-        // 1. Récupérer les notes actuelles du client
         const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
         if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
         const client = clientRes.rows[0];
 
-        // 2. Récupérer l'historique d'achats en caisse (tickets)
         const achatsRes = await pool.query(`
             SELECT t.date_creation, c.nom as article, lt.quantite, lt.prix_unitaire_ttc 
             FROM tickets t 
@@ -568,8 +582,6 @@ app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
             ORDER BY t.date_creation DESC LIMIT 20
         `, [id_client, id_salon]);
 
-        // 3. Récupérer l'historique des réservations passées (Agenda)
-        // La liaison se fait intelligemment par le téléphone pour tout synchroniser
         const rdvRes = await pool.query(`
             SELECT date_heure_debut, prestation, e.nom as nom_employe
             FROM rendez_vous r
@@ -598,6 +610,7 @@ app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
         res.status(500).json({ erreur: "Erreur sauvegarde notes." });
     }
 });
+
 // =========================================================================
 // --- IA COMPTABLE ET EXPORT PDF ---
 // =========================================================================
