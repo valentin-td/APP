@@ -74,6 +74,8 @@ function App() {
   const [chargementScan, setChargementScan] = useState(false);
   const [notificationCaisse, setNotificationCaisse] = useState(null);
   const [socket, setSocket] = useState(null);
+  const [notificationSettings, setNotificationSettings] = useState(null);
+  const [notificationExport, setNotificationExport] = useState(null);
 
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '',
