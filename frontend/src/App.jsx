@@ -5,7 +5,7 @@ import './App.css';
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   
-  // --- GESTION DU THÈME SOMBRE (DARK MODE) ---
+  // --- GESTION DU THÈME SOMBRE ET DES LOGOS ---
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
 
   useEffect(() => {
@@ -18,7 +18,7 @@ function App() {
       }
   }, [isDarkMode]);
 
-  // Composant Bouton Thème
+  // Composant Bouton Thème Premium
   const ThemeToggle = ({ isFixed }) => (
       <button onClick={() => setIsDarkMode(!isDarkMode)} className={`theme-toggle-btn ${isFixed ? 'theme-toggle-fixed' : ''}`} title="Basculer le thème">
           {isDarkMode ? (
@@ -241,7 +241,7 @@ function App() {
       const num = parseFloat(q); 
       if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; 
       if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; 
-      if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; 
+      if (num >= 1) return { bg: '#fef3c7', text: '#92400e', label: 'Faible' }; 
       return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; 
   };
   const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
@@ -338,6 +338,9 @@ function App() {
         <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh', position: 'relative' }}>
           <ThemeToggle isFixed={true} />
           <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
+            <div className="logo-container">
+                <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+            </div>
             <h2 style={{color: 'var(--text-main)'}}>Nouveau mot de passe</h2>
             <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
             <input type="password" placeholder="Votre nouveau mot de passe" className="input-fournisseur" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
@@ -372,9 +375,13 @@ function App() {
         <ThemeToggle isFixed={true} />
         <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
           
+          <div className="logo-container">
+              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+          </div>
+
           <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
-             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-app)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Gérant</button>
-             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'var(--bg-app)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Employé</button>
+             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Gérant</button>
+             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Employé</button>
           </div>
           
           {isForgotPassword ? (
@@ -388,7 +395,6 @@ function App() {
               </>
           ) : (
              <>
-                <h2 style={{color: 'var(--text-main)', marginBottom: '24px', fontSize: '20px'}}>{loginType === 'gerant' ? (isLoginMode ? 'Espace Gérant' : 'Créer un compte') : 'Espace Équipe'}</h2>
                 {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500' }}>{erreurLogin}</div>)}
                 
                 {loginType === 'gerant' ? (
@@ -404,7 +410,6 @@ function App() {
                    </>
                 ) : (
                    <>
-                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px' }}>Saisissez votre code confidentiel.</p>
                       <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
                       <input type="text" className="input-fournisseur" placeholder="Votre prénom" style={{marginBottom: '12px'}} value={nomEmployeInput} onChange={(e) => setNomEmployeInput(e.target.value)} />
                       <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN à 4 chiffres" value={pinEmployeInput} onChange={(e) => setPinEmployeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
@@ -435,9 +440,11 @@ function App() {
         <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
         <ThemeToggle isFixed={true} />
         <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
-          <div style={{ color: 'var(--text-main)', marginBottom: '16px', display: 'flex', justifyContent: 'center' }}>
-             <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          
+          <div className="logo-container">
+              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
           </div>
+
           <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Abonnement Requis</h2>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>
             Pour accéder à votre tableau de bord, gérer votre catalogue et activer les automatisations, vous devez activer votre abonnement mensuel.
@@ -786,7 +793,7 @@ function App() {
                 <div style={{marginTop: '16px'}}>
                   {clientsListe.map(cli => (
                     <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
-                      <span style={{cursor: 'pointer', color: 'var(--color-info)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={() => ouvrirFicheClient(cli)}>
+                      <span style={{cursor: 'pointer', color: 'var(--btn-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={() => ouvrirFicheClient(cli)}>
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                         {cli.nom} <span style={{color: 'var(--text-muted)', fontWeight: 'normal'}}>({cli.telephone || 'Pas de numéro'})</span>
                       </span>
