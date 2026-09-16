@@ -536,6 +536,65 @@ app.post('/api/settings', verifierToken, async (req, res) => {
 });
 app.get('/api/settings', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); res.json(result.rowCount > 0 ? result.rows[0] : {}); } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }});
 
+
+// --- MISE À JOUR AUTO-HEALING DE LA BASE DE DONNÉES (Zéro Friction) ---
+pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;')
+    .then(() => console.log("✅ Base de données prête (CRM à jour)"))
+    .catch(() => console.log("Info: Vérification DB terminée"));
+
+// =========================================================================
+// --- CRM : HISTORIQUE ET NOTES CLIENTS ---
+// =========================================================================
+
+app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
+    const id_client = req.params.id;
+    const id_salon = req.user.id_salon;
+    try {
+        // 1. Récupérer les notes actuelles du client
+        const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
+        if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
+        const client = clientRes.rows[0];
+
+        // 2. Récupérer l'historique d'achats en caisse (tickets)
+        const achatsRes = await pool.query(`
+            SELECT t.date_creation, c.nom as article, lt.quantite, lt.prix_unitaire_ttc 
+            FROM tickets t 
+            JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket 
+            JOIN catalogue c ON lt.id_article = c.id_article 
+            WHERE t.id_client = $1 AND t.id_salon = $2 
+            ORDER BY t.date_creation DESC LIMIT 20
+        `, [id_client, id_salon]);
+
+        // 3. Récupérer l'historique des réservations passées (Agenda)
+        // La liaison se fait intelligemment par le téléphone pour tout synchroniser
+        const rdvRes = await pool.query(`
+            SELECT date_heure_debut, prestation, e.nom as nom_employe
+            FROM rendez_vous r
+            LEFT JOIN employes e ON r.id_employe = e.id_employe
+            WHERE r.telephone_client = $1 AND r.id_salon = $2
+            ORDER BY r.date_heure_debut DESC LIMIT 20
+        `, [client.telephone, id_salon]);
+
+        res.json({
+            notes: client.notes || '',
+            achats: achatsRes.rows,
+            rdv: rdvRes.rows
+        });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ erreur: "Erreur serveur historique." });
+    }
+});
+
+app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
+    try {
+        await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', 
+        [req.body.notes, req.params.id, req.user.id_salon]);
+        res.json({ message: "Notes mises à jour avec succès" });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur sauvegarde notes." });
+    }
+});
 // =========================================================================
 // --- IA COMPTABLE ET EXPORT PDF ---
 // =========================================================================
