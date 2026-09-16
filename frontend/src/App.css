@@ -129,18 +129,31 @@ h1 {
 .logo-container {
   display: flex;
   justify-content: center;
+  align-items: center;
   margin-bottom: 32px;
+  width: 100%;
 }
 
 .app-logo {
-  height: 64px;
+  width: 100%;
+  max-width: 260px; /* Logo beaucoup plus grand et majestueux */
+  height: auto;
   object-fit: contain;
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
-  box-shadow: var(--shadow-sm);
+  /* Suppression absolue du cadre (zéro bordure, zéro ombre) */
+  border: none;
+  box-shadow: none;
+  background: transparent;
   transition: all 0.3s ease;
 }
 
+/* ASTUCE MAGIQUE PRO : Fusionne le fond du JPG avec la carte pour un effet transparent */
+body:not(.dark-mode) .app-logo {
+  mix-blend-mode: darken; /* Rend le fond clair du JPG invisible sur la carte blanche */
+}
+
+body.dark-mode .app-logo {
+  mix-blend-mode: lighten; /* Rend le fond foncé du JPG invisible sur la carte sombre */
+}
 /* ==========================================================================
    4. DATA VIZ (CHIFFRES & FINANCES)
    ========================================================================== */
