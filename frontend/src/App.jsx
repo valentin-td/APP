@@ -376,7 +376,7 @@ function App() {
         <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
           
           <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
           </div>
 
           <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
@@ -442,7 +442,7 @@ function App() {
         <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
           
           <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
           </div>
 
           <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Abonnement Requis</h2>
