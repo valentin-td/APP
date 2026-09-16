@@ -210,7 +210,13 @@ function App() {
   const ajouterArticle = async () => { if (newArticle.type_article === 'PRODUIT_REVENTE') { if (!newArticle.reference || newArticle.reference.trim().length < 4) { alert("❌ Veuillez saisir une référence d'au moins 4 caractères."); return; } } try { const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); const data = await handleFetchError(res); if (data.message && data.message.includes("Stock mis à jour")) { alert("✅ " + data.message); } setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' }); chargerTout(); } catch(e) { if(e.message !== "Abonnement inactif") alert("❌ " + e.message); }};
   const supprimerArticle = async (id) => { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); };
 
-  const getStockStatus = (q) => { const num = parseFloat(q); if (num > 20) return { couleur: '#34c759', label: 'Presque plein' }; if (num >= 6) return { couleur: '#007aff', label: 'Correct' }; if (num >= 1) return { couleur: '#ff3b30', label: 'Bientôt en rupture' }; return { couleur: '#1c1c1e', label: 'Rupture totale' }; };
+  const getStockStatus = (q) => { 
+      const num = parseFloat(q); 
+      if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; 
+      if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; 
+      if (num >= 1) return { bg: '#fef3c7', text: '#92400e', label: 'Faible' }; 
+      return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; 
+  };
   const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="#34c759" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
   const dessinerChronogramme = (d) => { const max = Math.max(...d) * 1.2; return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="#a154f2" rx="2" />)}</svg>); };
 
@@ -632,14 +638,27 @@ function App() {
                       <div className="reputation-droite"><span className="tendance-label">En hausse ↗</span>{dessinerCourbe(dashboardData.marketing.tendance_6_mois)}</div>
                     </div>
                   )}
+                  
                   <div className="cartes-financieres">
-                    <div className="carte"><div className="carte-titre-container"><div className="icon icon-orange">€</div><h3>Chiffre d'Aff.</h3></div><p className="montant">{dashboardData.finances.chiffre_affaires_total} €</p></div>
-                    <div className="carte"><div className="carte-titre-container"><div className="icon icon-blue">🛍️</div><h3>Panier Moyen</h3></div><p className="montant">{dashboardData.finances.panier_moyen} €</p></div>
+                    <div className="carte">
+                      <div className="carte-titre-container">
+                        <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+                        <h3>Chiffre d'Aff.</h3>
+                      </div>
+                      <p className="montant">{dashboardData.finances.chiffre_affaires_total} <span className="devise">€</span></p>
+                    </div>
+                    <div className="carte">
+                      <div className="carte-titre-container">
+                        <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
+                        <h3>Panier Moyen</h3>
+                      </div>
+                      <p className="montant">{dashboardData.finances.panier_moyen} <span className="devise">€</span></p>
+                    </div>
                   </div>
                   <div className="section-titre"><span>Top 3 Prestations</span></div>
                   <div className="top-prestations">
                     {dashboardData.top_3_prestations.map((presta, i) => (
-                      <div className="presta-item" key={i}><div className="presta-header"><span className="presta-nom">✂️ {presta.nom}</span>{i === 0 && <span className="badge-succes">N°1</span>}</div><div className="presta-details"><span>Total généré</span><span className="montant-presta">{presta.total_genere} €</span></div></div>
+                      <div className="presta-item" key={i}><div className="presta-header"><span className="presta-nom"> {presta.nom}</span>{i === 0 && <span className="badge-succes">N°1</span>}</div><div className="presta-details"><span>Total généré</span><span className="montant-presta">{presta.total_genere} €</span></div></div>
                     ))}
                   </div>
                 </>
@@ -937,8 +956,15 @@ function App() {
                     const status = getStockStatus(produit.stock_actuel);
                     return (
                       <div className="stock-item" key={produit.id_article}>
-                        <div className="stock-info"><div className="pastille" style={{ backgroundColor: status.couleur }}></div><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="stock-label">{status.label}</span></div></div>
-                        <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+                        <div className="stock-info">
+                          <div className="stock-details">
+                            <span className="stock-nom">{produit.nom}</span>
+                            <span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>
+                          </div>
+                        </div>
+                        <div className="stock-quantite-container">
+                          <span className="stock-quantite">{produit.stock_actuel}</span>
+                        </div>
                       </div>
                     );
                 })}
