@@ -523,3 +523,113 @@ h1 {
   text-overflow: ellipsis;
   overflow: hidden;
 }
+
+/* ==========================================================================
+   9. MODALS & OVERLAYS (ZÉRO FRICTION & BACKDROP BLUR)
+   ========================================================================== */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(17, 24, 39, 0.4);
+  backdrop-filter: blur(4px); /* Le fameux flou Apple/Finary */
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.modal-content {
+  background: var(--bg-card);
+  padding: 32px;
+  border-radius: var(--radius-card);
+  width: 100%;
+  max-width: 440px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  position: relative;
+  border: 1px solid var(--border-color);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.modal-close-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: color 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close-btn:hover {
+  color: var(--text-main);
+}
+
+.modal-close-btn svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+}
+
+/* ==========================================================================
+   10. TOAST NOTIFICATIONS (Remplacement des alert() natifs)
+   ========================================================================== */
+.toast-container {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  background: var(--bg-card);
+  padding: 16px 20px;
+  border-radius: var(--radius-input);
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--btn-primary);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 500;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toast.success { border-left-color: var(--color-success); }
+.toast.error { border-left-color: var(--color-danger); }
+
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Override strict des inputs et boutons demandés */
+.input-fournisseur:focus, .textarea-facture:focus, .agenda-filtre:focus {
+  border-color: var(--btn-primary);
+  box-shadow: none !important; /* Force la suppression du glow */
+}
+
+.btn-action, .btn-export {
+  background-color: var(--btn-primary);
+  border-color: var(--btn-primary);
+  box-shadow: none !important; /* Pas d'ombre portée */
+}
+.btn-action:hover, .btn-export:hover {
+  background-color: #1f2937; /* Gris très foncé au survol */
+  border-color: #1f2937;
+}
