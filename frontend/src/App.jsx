@@ -400,9 +400,9 @@ function App() {
 
   const role = userRole;
 
-  // Calcul dynamique des heures de l'agenda
-  const heureDebutAgenda = parseInt(configSalon.heure_ouverture) || 8;
-  const heureFinAgenda = parseInt(configSalon.heure_fermeture) || 20;
+  // Calcul dynamique des heures de l'agenda (borné entre 0h et 23h)
+  const heureDebutAgenda = Math.max(0, Math.min(23, parseInt(configSalon.heure_ouverture) || 8));
+  const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
   const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
 
   return (
@@ -767,12 +767,12 @@ function App() {
                 <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
                 <div style={{display: 'flex', gap: '15px'}}>
                   <div style={{flex: 1}}>
-                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure d'ouverture</label>
-                    <input type="number" className="input-fournisseur" value={configSalon.heure_ouverture} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
+                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure d'ouverture (0-23)</label>
+                    <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_ouverture} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
                   </div>
                   <div style={{flex: 1}}>
-                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure de fermeture</label>
-                    <input type="number" className="input-fournisseur" value={configSalon.heure_fermeture} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
+                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure de fermeture (0-23)</label>
+                    <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_fermeture} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
                   </div>
                 </div>
               </div>
