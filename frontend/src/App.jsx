@@ -522,7 +522,7 @@ function App() {
                       ))}
                   </div>
 
-                  <div className="week-body">
+                 <div className="week-body">
                       <div className="time-column">
                           {Array.from({ length: nbHeures }).map((_, i) => (<div key={i} className="time-label">{heureDebutAgenda + i} h</div>))}
                       </div>
@@ -539,12 +539,21 @@ function App() {
                                   <div key={indexJour} className="day-column">
                                       {rdvsDuJour.map((rdv) => {
                                           const dateDebut = new Date(rdv.date_heure_debut);
-                                          const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * 60) + dateDebut.getMinutes();
+                                          
+                                          // NOUVELLE ÉCHELLE DYNAMIQUE : 80px par heure
+                                          const ECHELLE_HEURE = 80;
+                                          const dureeReelle = rdv.duree_minutes || 30;
+                                          
+                                          // Calcul de la position et de la taille
+                                          const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (dateDebut.getMinutes() * (ECHELLE_HEURE / 60));
+                                          // On force une hauteur minimale de 26px pour qu'on puisse toujours lire la carte
+                                          const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
+
                                           const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
 
                                           return (
                                               <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
-                                                   style={{ top: `${topPosition}px`, height: `${Math.max(rdv.duree_minutes, 20)}px`, backgroundColor: backgroundColor, color: '#1c1c1e' }}>
+                                                   style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#1c1c1e' }}>
                                                   <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
                                                   <span className="agenda-card-subtitle">{rdv.prestation}</span>
                                               </div>
@@ -555,7 +564,7 @@ function App() {
                           })}
                       </div>
                   </div>
-              </div>
+            
 
               {/* MODAL CRÉATION RDV MANUEL */}
               {showModalRdv && (
