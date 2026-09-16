@@ -33,6 +33,14 @@ function App() {
   const [resetTokenUrl] = useState(urlParams.get('resetToken'));
   const [newPassword, setNewPassword] = useState('');
 
+  // --- TOAST NOTIFICATIONS (Remplacement des alert) ---
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'success') => {
+      setToast({ message, type });
+      setTimeout(() => setToast(null), 4000);
+  };
+
   const [catalogueListe, setCatalogueListe] = useState([]);
   const [employesListe, setEmployesListe] = useState([]);
   const [clientsListe, setClientsListe] = useState([]);
@@ -162,9 +170,8 @@ function App() {
               const newSocket = io('https://api-salon-backend.onrender.com');
               newSocket.emit('rejoindreSalon', user.id_salon);
               newSocket.on('paiementValide', (data) => { 
-                  setNotificationCaisse(`✅ ${data.message}`); 
+                  showToast(data.message, "success"); 
                   if(user.role === 'gerant') chargerTout(); 
-                  setTimeout(() => setNotificationCaisse(null), 5000); 
               });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
               setSocket(newSocket);
@@ -178,8 +185,8 @@ function App() {
           const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', { method: 'POST', headers: getAuthHeaders() });
           const data = await res.json();
           if(data.url) { window.location.href = data.url; } 
-          else { alert("Erreur lors de la création du lien de paiement."); }
-      } catch (e) { alert("Erreur réseau avec Stripe."); }
+          else { showToast("Erreur lors de la création du lien de paiement.", "error"); }
+      } catch (e) { showToast("Erreur réseau avec Stripe.", "error"); }
   };
 
   // --- ACTIONS CRM ---
@@ -190,7 +197,7 @@ function App() {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/clients/${client.id_client}/history`, { headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           setClientHistorique(data);
-      } catch (e) { alert("Erreur lors du chargement de l'historique."); }
+      } catch (e) { showToast("Erreur lors du chargement de l'historique.", "error"); }
       setChargementFiche(false);
   };
 
@@ -199,16 +206,16 @@ function App() {
           await fetch(`https://api-salon-backend.onrender.com/api/clients/${clientSelectionne.id_client}/notes`, {
               method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ notes: clientHistorique.notes })
           });
-          alert("Notes sauvegardées avec succès !");
-      } catch (e) { alert("Erreur lors de la sauvegarde des notes."); }
+          showToast("Notes sauvegardées avec succès !", "success");
+      } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
   };
 
-  const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ nom: '', telephone: '', email: '' }); chargerTout(); } catch(e) { if(e.message !== "Abonnement inactif") alert("❌ " + e.message); }};
-  const supprimerClient = async (id) => { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); };
-  const ajouterEmploye = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' }); chargerTout(); } catch(e) { if(e.message !== "Abonnement inactif") alert("❌ " + e.message); }};
-  const supprimerEmploye = async (id) => { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); };
-  const ajouterArticle = async () => { if (newArticle.type_article === 'PRODUIT_REVENTE') { if (!newArticle.reference || newArticle.reference.trim().length < 4) { alert("❌ Veuillez saisir une référence d'au moins 4 caractères."); return; } } try { const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); const data = await handleFetchError(res); if (data.message && data.message.includes("Stock mis à jour")) { alert("✅ " + data.message); } setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' }); chargerTout(); } catch(e) { if(e.message !== "Abonnement inactif") alert("❌ " + e.message); }};
-  const supprimerArticle = async (id) => { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); };
+  const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ nom: '', telephone: '', email: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const supprimerClient = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
+  const ajouterEmploye = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const supprimerEmploye = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
+  const ajouterArticle = async () => { if (newArticle.type_article === 'PRODUIT_REVENTE') { if (!newArticle.reference || newArticle.reference.trim().length < 4) { showToast("Veuillez saisir une référence d'au moins 4 caractères.", "error"); return; } } try { const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); const data = await handleFetchError(res); if (data.message && data.message.includes("Stock mis à jour")) { showToast(data.message, "success"); } setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' }); chargerTout(); showToast("Catalogue mis à jour.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const supprimerArticle = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
 
   const getStockStatus = (q) => { 
       const num = parseFloat(q); 
@@ -220,11 +227,11 @@ function App() {
   const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="#34c759" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
   const dessinerChronogramme = (d) => { const max = Math.max(...d) * 1.2; return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="#a154f2" rx="2" />)}</svg>); };
 
-  const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); } catch (error) { if(error.message !== "Abonnement inactif") setResultatScan({ erreur: "Erreur IA." }); } setChargementScan(false); };
+  const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
   // --- ACTIONS CAISSE & TICKET ECOLOGIQUE ---
   const lancerPaiementTPE = async (montant, lignes) => {
-    if(!posEmploye) { alert("❌ Veuillez sélectionner un employé."); return; }
+    if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
     setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
     try {
         const payloadTPE = { montant, id_employe: posEmploye.id_employe, id_client: clientCaisse || null, lignes };
@@ -250,21 +257,21 @@ function App() {
               body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, methode })
           });
           await handleFetchError(res);
-          alert(`✅ Ticket envoyé par ${methode.toUpperCase()} !`);
+          showToast(`Ticket envoyé par ${methode.toUpperCase()} !`, "success");
           setTicketGenere(null);
-      } catch (e) { alert(`Erreur d'envoi : ${e.message}`); }
+      } catch (e) { showToast(`Erreur d'envoi : ${e.message}`, "error"); }
   }
 
-  const declencherExport = async () => { setNotificationExport("⏳ Génération et envoi du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); setNotificationExport("✅ Liasse PDF générée et envoyée par e-mail !"); setTimeout(() => setNotificationExport(null), 5000); } catch (error) { setNotificationExport(`❌ ${error.message}`); setTimeout(() => setNotificationExport(null), 6000); }};
-  const sauvegarderParametres = async () => { setNotificationSettings("⏳ Sauvegarde en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); const data = await handleFetchError(response); setNotificationSettings(`✅ ${data.message}`); chargerTout(); setTimeout(() => { setNotificationSettings(null); setActiveTab('accueil'); }, 2000); } catch (error) { if(error.message !== "Abonnement inactif") setNotificationSettings("❌ Erreur serveur."); }};
+  const declencherExport = async () => { showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
+  const sauvegarderParametres = async () => { showToast("Sauvegarde en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); const data = await handleFetchError(response); showToast(data.message, "success"); chargerTout(); setTimeout(() => { setActiveTab('accueil'); }, 1000); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }};
 
   // --- ACTIONS AGENDA DYNAMIQUE ---
   const creerRdvManuel = async () => {
       try {
           const datetime = `${formRdv.date}T${formRdv.heure}:00`;
           const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime}) });
-          if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); }
-      } catch(e) { alert("Erreur de création."); }
+          if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); }
+      } catch(e) { showToast("Erreur de création.", "error"); }
   }
 
   const ouvrirRdvSelectionne = (rdv) => {
@@ -286,16 +293,16 @@ function App() {
               method: 'PUT', headers: getAuthHeaders(true),
               body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime })
           });
-          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); }
-      } catch(e) { alert("Erreur lors de la modification."); }
+          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); }
+      } catch(e) { showToast("Erreur lors de la modification.", "error"); }
   };
 
   const supprimerRdvManuel = async () => {
       if(!window.confirm("Supprimer ce rendez-vous ?")) return;
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'DELETE', headers: getAuthHeaders() });
-          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); }
-      } catch(e) { alert("Erreur lors de la suppression."); }
+          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous supprimé", "success"); }
+      } catch(e) { showToast("Erreur lors de la suppression.", "error"); }
   };
 
   // Z DE CAISSE LÉGAL
@@ -304,8 +311,8 @@ function App() {
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders() });
           const data = await handleFetchError(res);
-          alert(data.message);
-      } catch(e) { alert("Erreur lors de la clôture."); }
+          showToast(data.message, "success");
+      } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
   }
 
   // --- RENDER RESET PASSWORD ---
@@ -314,16 +321,28 @@ function App() {
         <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh' }}>
           <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '30px' }}>
             <h2>Nouveau mot de passe</h2>
-            <p style={{fontSize:'13px', color:'#8e8e93'}}>Votre lien est sécurisé et valable 15 minutes.</p>
+            <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
             <input type="password" placeholder="Votre nouveau mot de passe" className="input-fournisseur" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
             <button className="btn-action" style={{ width: '100%', marginTop: '15px' }} onClick={async () => {
                const res = await fetch('https://api-salon-backend.onrender.com/api/reset-password', {
                   method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword})
                });
-               if(res.ok) { alert("Mot de passe mis à jour !"); window.location.href = '/'; }
-               else { alert("Lien expiré ou invalide."); }
+               if(res.ok) { showToast("Mot de passe mis à jour !", "success"); setTimeout(() => window.location.href = '/', 2000); }
+               else { showToast("Lien expiré ou invalide.", "error"); }
             }}>Confirmer la modification</button>
           </div>
+          {toast && (
+            <div className="toast-container">
+              <div className={`toast ${toast.type}`}>
+                {toast.type === 'success' ? (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                )}
+                {toast.message}
+              </div>
+            </div>
+          )}
         </div>
       )
   }
@@ -334,45 +353,43 @@ function App() {
       <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh' }}>
         <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '30px' }}>
           
-          <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '20px'}}>
-             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: loginType === 'gerant' ? '#1c1c1e' : '#f2f2f7', color: loginType === 'gerant' ? 'white' : '#8e8e93', cursor: 'pointer'}}>Gérant</button>
-             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: loginType === 'employe' ? '#1c1c1e' : '#f2f2f7', color: loginType === 'employe' ? 'white' : '#8e8e93', cursor: 'pointer'}}>Employé</button>
+          <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
+             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'white' : 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border-color)'}}>Gérant</button>
+             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'white' : 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border-color)'}}>Employé</button>
           </div>
-
-          <div style={{ fontSize: '40px', marginBottom: '10px' }}>{loginType === 'gerant' ? '💼' : '🧑‍🎨'}</div>
           
           {isForgotPassword ? (
               <>
-                 <h2>Mot de passe oublié</h2>
-                 <p style={{fontSize:'13px', color:'#8e8e93'}}>Saisissez votre email pour réinitialiser l'accès.</p>
-                 {msgSucces && <div style={{backgroundColor: '#e6f2ff', color: '#007aff', padding: '10px', borderRadius: '8px', fontSize: '13px', marginBottom: '15px'}}>{msgSucces}</div>}
+                 <h2 style={{color: 'var(--text-main)'}}>Mot de passe oublié</h2>
+                 <p style={{fontSize:'13px', color:'var(--text-secondary)', marginBottom: '24px'}}>Saisissez votre email pour réinitialiser l'accès.</p>
+                 {msgSucces && <div style={{backgroundColor: 'var(--bg-success)', color: 'var(--color-success)', padding: '10px', borderRadius: '8px', fontSize: '13px', marginBottom: '15px'}}>{msgSucces}</div>}
                  <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '10px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
                  <button className="btn-action" onClick={motDePasseOublie} style={{ width: '100%', marginTop: '15px' }}>Recevoir le lien</button>
-                 <p style={{fontSize: '13px', color: '#007aff', marginTop: '20px', cursor: 'pointer'}} onClick={() => setIsForgotPassword(false)}>Retour à la connexion</p>
+                 <p style={{fontSize: '13px', color: 'var(--text-main)', marginTop: '20px', cursor: 'pointer', fontWeight: '500'}} onClick={() => setIsForgotPassword(false)}>Retour à la connexion</p>
               </>
           ) : (
              <>
-                <h2>{loginType === 'gerant' ? (isLoginMode ? 'Espace Gérant' : 'Créer un compte') : 'Espace Équipe'}</h2>
-                {erreurLogin && (<div style={{ backgroundColor: '#ffefef', color: '#ff3b30', padding: '10px', borderRadius: '8px', fontSize: '13px', marginBottom: '15px' }}>{erreurLogin}</div>)}
+                <h2 style={{color: 'var(--text-main)', marginBottom: '24px'}}>{loginType === 'gerant' ? (isLoginMode ? 'Connexion' : 'Créer un compte') : 'Espace Équipe'}</h2>
+                {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '10px', borderRadius: '8px', fontSize: '13px', marginBottom: '15px' }}>{erreurLogin}</div>)}
                 
                 {loginType === 'gerant' ? (
                    <>
-                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '10px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
-                      <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '10px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
+                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
+                      <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
                       <input type="password" className="input-fournisseur" placeholder="Mot de passe" value={motDePasseInput} onChange={(e) => setMotDePasseInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (isLoginMode ? seConnecter() : sInscrire())} />
-                      <button className="btn-action" onClick={isLoginMode ? seConnecter : sInscrire} style={{ width: '100%', marginTop: '15px' }}>{isLoginMode ? 'Se connecter' : "S'inscrire"}</button>
-                      <div style={{display:'flex', justifyContent:'space-between', marginTop: '20px'}}>
-                         <p style={{fontSize: '13px', color: '#007aff', cursor: 'pointer', margin:0, fontWeight: '500'}} onClick={() => { setIsLoginMode(!isLoginMode); setErreurLogin(null); }}>{isLoginMode ? "Créer un compte" : "Se connecter"}</p>
-                         {isLoginMode && <p style={{fontSize: '13px', color: '#8e8e93', cursor: 'pointer', margin:0}} onClick={() => setIsForgotPassword(true)}>Oublié ?</p>}
+                      <button className="btn-action" onClick={isLoginMode ? seConnecter : sInscrire} style={{ width: '100%', marginTop: '16px' }}>{isLoginMode ? 'Se connecter' : "S'inscrire"}</button>
+                      <div style={{display:'flex', justifyContent:'space-between', marginTop: '24px'}}>
+                         <p style={{fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer', margin:0, fontWeight: '600'}} onClick={() => { setIsLoginMode(!isLoginMode); setErreurLogin(null); }}>{isLoginMode ? "Créer un compte" : "Se connecter"}</p>
+                         {isLoginMode && <p style={{fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', margin:0}} onClick={() => setIsForgotPassword(true)}>Oublié ?</p>}
                       </div>
                    </>
                 ) : (
                    <>
-                      <p style={{ fontSize: '13px', color: '#8e8e93', marginBottom: '20px' }}>Consultez votre agenda personnel.</p>
-                      <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '10px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
-                      <input type="text" className="input-fournisseur" placeholder="Votre prénom" style={{marginBottom: '10px'}} value={nomEmployeInput} onChange={(e) => setNomEmployeInput(e.target.value)} />
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px' }}>Saisissez votre code confidentiel.</p>
+                      <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
+                      <input type="text" className="input-fournisseur" placeholder="Votre prénom" style={{marginBottom: '12px'}} value={nomEmployeInput} onChange={(e) => setNomEmployeInput(e.target.value)} />
                       <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN à 4 chiffres" value={pinEmployeInput} onChange={(e) => setPinEmployeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
-                      <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '15px' }}>Accéder au Planning</button>
+                      <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '16px' }}>Accéder au Planning</button>
                    </>
                 )}
              </>
@@ -385,21 +402,35 @@ function App() {
   if (isAbonnementInactif && userRole === 'gerant') {
      return (
         <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh' }}>
-        <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '30px', border: '2px solid #a154f2' }}>
-          <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔒</div>
-          <h2 style={{color: '#1c1c1e'}}>Abonnement Requis</h2>
-          <p style={{ fontSize: '14px', color: '#3a3a3c', marginBottom: '20px', lineHeight: '1.5' }}>
+        <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '30px' }}>
+          <div style={{ fontSize: '32px', marginBottom: '16px' }}>
+             <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="var(--text-main)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h2 style={{color: 'var(--text-main)'}}>Abonnement Requis</h2>
+          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>
             Pour accéder à votre tableau de bord, gérer votre catalogue et activer les automatisations (TPE, SMS, IA Comptable), vous devez activer votre abonnement mensuel.
           </p>
-          <h1 style={{color: '#a154f2', marginBottom: '20px'}}>49.00 € <span style={{fontSize: '14px', color: '#8e8e93'}}>/ mois</span></h1>
+          <h1 style={{color: 'var(--text-main)', marginBottom: '24px'}}>49.00 € <span style={{fontSize: '14px', color: 'var(--text-secondary)'}}>/ mois</span></h1>
           
-          <button className="btn-action" onClick={lancerPaiementStripe} style={{ width: '100%', backgroundColor: '#a154f2' }}>
-            💳 Payer de manière sécurisée avec Stripe
+          <button className="btn-action" onClick={lancerPaiementStripe} style={{ width: '100%' }}>
+            Payer de manière sécurisée avec Stripe
           </button>
-          <button onClick={seDeconnecter} style={{background: 'none', border: 'none', color: '#8e8e93', marginTop: '20px', cursor: 'pointer', fontSize: '13px', textDecoration: 'underline'}}>
+          <button onClick={seDeconnecter} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', marginTop: '24px', cursor: 'pointer', fontSize: '13px', textDecoration: 'underline'}}>
              Me déconnecter
           </button>
         </div>
+        {toast && (
+          <div className="toast-container">
+            <div className={`toast ${toast.type}`}>
+              {toast.type === 'success' ? (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              )}
+              {toast.message}
+            </div>
+          </div>
+        )}
       </div>
      );
   }
@@ -463,21 +494,20 @@ function App() {
                       <h1 style={{margin: 0}}>Agenda</h1>
                       
                       <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-                          <button onClick={() => changerSemaine(-1)} style={{background: '#f2f2f7', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>◀</button>
-                          <span style={{fontSize: '14px', fontWeight: '600', color: '#1c1c1e', padding: '0 10px'}}>{joursSemaine[0].toLocaleDateString('fr-FR', {month: 'short'})} {joursSemaine[0].getFullYear()}</span>
-                          <button onClick={() => changerSemaine(1)} style={{background: '#f2f2f7', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>▶</button>
-                          <button onClick={() => setDateAgendaDebut(getMonday(new Date()))} style={{background: 'white', border: '1px solid #e5e5ea', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
+                          <button onClick={() => changerSemaine(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>◀</button>
+                          <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', padding: '0 10px'}}>{joursSemaine[0].toLocaleDateString('fr-FR', {month: 'short'})} {joursSemaine[0].getFullYear()}</span>
+                          <button onClick={() => changerSemaine(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>▶</button>
+                          <button onClick={() => setDateAgendaDebut(getMonday(new Date()))} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
                       </div>
                   </div>
                   <div style={{display: 'flex', gap: '15px', alignItems: 'center'}}>
-                      <button onClick={() => setShowModalRdv(true)} style={{background: '#007aff', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer'}}>+ Nouveau RDV</button>
+                      <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
                       {role === 'gerant' && (
                           <select className="agenda-filtre" value={filtreAgenda} onChange={(e) => setFiltreAgenda(e.target.value)}>
-                              <option value="TOUS">Tous les coiffeurs</option>
+                              <option value="TOUS">Tous les collaborateurs</option>
                               {employesListe.map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
                           </select>
                       )}
-                      <button onClick={seDeconnecter} style={{background: '#ff3b30', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer'}}>Quitter</button>
                   </div>
               </div>
 
@@ -529,74 +559,71 @@ function App() {
 
               {/* MODAL CRÉATION RDV MANUEL */}
               {showModalRdv && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-                      <div style={{ background: 'white', padding: '30px', borderRadius: '20px', width: '400px' }}>
-                          <h3>Ajouter un Rendez-vous</h3>
-                          <input type="text" className="input-fournisseur" placeholder="Nom du Client" value={formRdv.nom_client} onChange={e => setFormRdv({...formRdv, nom_client: e.target.value})} style={{marginBottom:'10px'}}/>
-                          <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'10px'}}/>
-                          <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'10px'}}>
-                              <option value="">-- Choisir un coiffeur --</option>
+                  <div className="modal-overlay">
+                      <div className="modal-content">
+                          <div className="modal-header">
+                              <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Nouveau Rendez-vous</h3>
+                              <button className="modal-close-btn" onClick={() => setShowModalRdv(false)}>
+                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                              </button>
+                          </div>
+                          <input type="text" className="input-fournisseur" placeholder="Nom du Client" value={formRdv.nom_client} onChange={e => setFormRdv({...formRdv, nom_client: e.target.value})} style={{marginBottom:'12px'}}/>
+                          <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
+                          <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
+                              <option value="">-- Choisir un collaborateur --</option>
                               {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                           </select>
-                          <input type="text" className="input-fournisseur" placeholder="Prestation (ex: Coupe Homme)" value={formRdv.prestation} onChange={e => setFormRdv({...formRdv, prestation: e.target.value})} style={{marginBottom:'10px'}}/>
-                          <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
+                          <input type="text" className="input-fournisseur" placeholder="Prestation" value={formRdv.prestation} onChange={e => setFormRdv({...formRdv, prestation: e.target.value})} style={{marginBottom:'12px'}}/>
+                          <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
                               <input type="date" className="input-fournisseur" value={formRdv.date} onChange={e => setFormRdv({...formRdv, date: e.target.value})} />
                               <input type="time" className="input-fournisseur" value={formRdv.heure} onChange={e => setFormRdv({...formRdv, heure: e.target.value})} />
                           </div>
-                          <button onClick={creerRdvManuel} className="btn-action" style={{width:'100%', marginBottom:'10px', background:'#34c759'}}>Enregistrer</button>
-                          <button onClick={() => setShowModalRdv(false)} className="btn-action" style={{width:'100%', background:'#e5e5ea', color:'#1c1c1e'}}>Annuler</button>
+                          <button onClick={creerRdvManuel} className="btn-action" style={{width:'100%'}}>Créer le rendez-vous</button>
                       </div>
                   </div>
               )}
 
               {/* Pop-up de détails, modification & annulation */}
               {rdvSelectionne && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-                      <div style={{ background: 'white', padding: '30px', borderRadius: '20px', width: '350px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+                  <div className="modal-overlay">
+                      <div className="modal-content">
+                          <div className="modal-header">
+                              <h3 style={{margin: 0, fontSize: '18px'}}>{!isEditingRdv ? "Détails du Rendez-vous" : "Modifier le Rendez-vous"}</h3>
+                              <button className="modal-close-btn" onClick={() => setRdvSelectionne(null)}>
+                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                              </button>
+                          </div>
                           
                           {!isEditingRdv ? (
                               <>
-                                  <h3 style={{marginTop: 0, marginBottom: '5px'}}>Détails du Rendez-vous</h3>
-                                  <p style={{margin: '0 0 20px 0', fontSize: '13px', color: '#8e8e93'}}>Avec {rdvSelectionne.nom_employe}</p>
-                                  
-                                  <div style={{marginBottom: '20px', padding: '15px', background: '#f8f9fa', borderRadius: '12px'}}>
-                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}><span>Client :</span> <strong>{rdvSelectionne.nom_client}</strong></div>
-                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}><span>Tel :</span> <a href={`tel:${rdvSelectionne.telephone_client}`} style={{color: '#007aff', textDecoration: 'none'}}>{rdvSelectionne.telephone_client}</a></div>
-                                      <div style={{display: 'flex', justifyContent: 'space-between'}}><span>Service :</span> <strong>{rdvSelectionne.prestation}</strong></div>
+                                  <div style={{marginBottom: '24px', padding: '16px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)'}}>
+                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Client</span> <strong style={{color: 'var(--text-main)'}}>{rdvSelectionne.nom_client}</strong></div>
+                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Téléphone</span> <strong>{rdvSelectionne.telephone_client}</strong></div>
+                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Service</span> <strong>{rdvSelectionne.prestation}</strong></div>
+                                      <div style={{display: 'flex', justifyContent: 'space-between'}}><span style={{color: 'var(--text-secondary)'}}>Collaborateur</span> <strong>{rdvSelectionne.nom_employe}</strong></div>
                                   </div>
 
-                                  <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
-                                      {role === 'gerant' && (
-                                          <button onClick={() => setIsEditingRdv(true)} style={{background: '#007aff', color: 'white', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>
-                                              Modifier le rendez-vous
-                                          </button>
-                                      )}
-                                      {rdvSelectionne.stripe_payment_id && role === 'gerant' && (
-                                          <button onClick={() => window.open(`https://dashboard.stripe.com/payments/${rdvSelectionne.stripe_payment_id}`, '_blank')} 
-                                                  style={{background: '#f2f2f7', color: '#1c1c1e', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>
-                                              Gérer l'acompte (Stripe)
-                                          </button>
-                                      )}
-                                      <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
-                                        {role === 'gerant' && <button onClick={supprimerRdvManuel} style={{flex: 1, background: '#ffefef', color: '#ff3b30', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>Supprimer</button>}
-                                        <button onClick={() => setRdvSelectionne(null)} style={{flex: 1, background: '#e5e5ea', color: '#1c1c1e', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>Fermer</button>
-                                      </div>
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                      {role === 'gerant' && <button onClick={() => setIsEditingRdv(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer', transition: 'all 0.15s'}}>Modifier l'horaire</button>}
+                                      {rdvSelectionne.stripe_payment_id && role === 'gerant' && <button onClick={() => window.open(`https://dashboard.stripe.com/payments/${rdvSelectionne.stripe_payment_id}`, '_blank')} className="btn-action">Gérer l'acompte (Stripe)</button>}
+                                      {role === 'gerant' && <button onClick={supprimerRdvManuel} style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Supprimer le rendez-vous</button>}
                                   </div>
                               </>
                           ) : (
                               <>
-                                  <h3 style={{marginTop: 0, marginBottom: '20px'}}>Modifier le Rendez-vous</h3>
-                                  <select className="input-fournisseur" value={editRdvForm.id_employe} onChange={e => setEditRdvForm({...editRdvForm, id_employe: e.target.value})} style={{marginBottom:'10px'}}>
-                                      <option value="">-- Choisir un coiffeur --</option>
+                                  <select className="input-fournisseur" value={editRdvForm.id_employe} onChange={e => setEditRdvForm({...editRdvForm, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
+                                      <option value="">-- Choisir un collaborateur --</option>
                                       {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                                   </select>
-                                  <input type="text" className="input-fournisseur" placeholder="Prestation" value={editRdvForm.prestation} onChange={e => setEditRdvForm({...editRdvForm, prestation: e.target.value})} style={{marginBottom:'10px'}}/>
-                                  <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
+                                  <input type="text" className="input-fournisseur" placeholder="Prestation" value={editRdvForm.prestation} onChange={e => setEditRdvForm({...editRdvForm, prestation: e.target.value})} style={{marginBottom:'12px'}}/>
+                                  <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
                                       <input type="date" className="input-fournisseur" value={editRdvForm.date} onChange={e => setEditRdvForm({...editRdvForm, date: e.target.value})} />
                                       <input type="time" className="input-fournisseur" value={editRdvForm.heure} onChange={e => setEditRdvForm({...editRdvForm, heure: e.target.value})} />
                                   </div>
-                                  <button onClick={sauvegarderModifRdv} className="btn-action" style={{width:'100%', marginBottom:'10px', background:'#34c759'}}>💾 Sauvegarder</button>
-                                  <button onClick={() => setIsEditingRdv(false)} className="btn-action" style={{width:'100%', background:'#e5e5ea', color:'#1c1c1e'}}>Annuler</button>
+                                  <div style={{display: 'flex', gap: '12px'}}>
+                                    <button onClick={() => setIsEditingRdv(false)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer'}}>Annuler</button>
+                                    <button onClick={sauvegarderModifRdv} className="btn-action" style={{flex: 2}}>Enregistrer</button>
+                                  </div>
                               </>
                           )}
                       </div>
@@ -610,10 +637,10 @@ function App() {
           {/* ============================================== */}
           {role === 'gerant' && activeTab === 'accueil' && (
             <>
-              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                 <h1 style={{margin: 0}}>
                   Tableau de bord
-                  <span style={{fontSize: '14px', color: '#8e8e93', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span>
+                  <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span>
                 </h1>
                 <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                   <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>
@@ -625,14 +652,17 @@ function App() {
                 </div>
               </div>
               <span className="date-subtitle">{formatDateComplete(new Date())}</span>
-              {erreur && <p style={{color: 'red'}}>❌ {erreur}</p>}
-              {!dashboardData && !erreur ? <p>Chargement...</p> : dashboardData && (
+              {erreur && <p style={{color: 'var(--color-danger)'}}>❌ {erreur}</p>}
+              {!dashboardData && !erreur ? <p style={{color: 'var(--text-secondary)'}}>Chargement de vos données...</p> : dashboardData && (
                 <>
                   {dashboardData.marketing && (
                     <div className="carte reputation-carte">
                       <div className="reputation-gauche">
-                        <h3 style={{color: '#a154f2', display: 'flex', alignItems: 'center', gap: '5px'}}><span className="icon icon-purple" style={{width: '20px', height: '20px', fontSize: '12px'}}>G</span> Google Maps</h3>
-                        <div className="reputation-note">{dashboardData.marketing.note_actuelle} <span className="reputation-etoile">★</span></div>
+                        <h3 style={{color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'}}>
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                            Google Maps
+                        </h3>
+                        <div className="reputation-note">{dashboardData.marketing.note_actuelle} <span className="reputation-etoile" style={{color: '#fbbf24'}}>★</span></div>
                         <span className="reputation-avis">Sur {dashboardData.marketing.total_avis} avis</span>
                       </div>
                       <div className="reputation-droite"><span className="tendance-label">En hausse ↗</span>{dessinerCourbe(dashboardData.marketing.tendance_6_mois)}</div>
@@ -643,7 +673,7 @@ function App() {
                     <div className="carte">
                       <div className="carte-titre-container">
                         <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
-                        <h3>Chiffre d'Aff.</h3>
+                        <h3>Chiffre d'Affaires</h3>
                       </div>
                       <p className="montant">{dashboardData.finances.chiffre_affaires_total} <span className="devise">€</span></p>
                     </div>
@@ -655,10 +685,10 @@ function App() {
                       <p className="montant">{dashboardData.finances.panier_moyen} <span className="devise">€</span></p>
                     </div>
                   </div>
-                  <div className="section-titre"><span>Top 3 Prestations</span></div>
+                  <div className="section-titre">Top 3 Prestations</div>
                   <div className="top-prestations">
                     {dashboardData.top_3_prestations.map((presta, i) => (
-                      <div className="presta-item" key={i}><div className="presta-header"><span className="presta-nom"> {presta.nom}</span>{i === 0 && <span className="badge-succes">N°1</span>}</div><div className="presta-details"><span>Total généré</span><span className="montant-presta">{presta.total_genere} €</span></div></div>
+                      <div className="presta-item" key={i}><div className="presta-header"><span className="presta-nom"> {presta.nom}</span>{i === 0 && <span className="badge-succes">N°1</span>}</div><div className="presta-details"><span>Total généré</span><span className="montant-presta">{presta.total_genere} <span className="devise" style={{fontSize:'12px'}}>€</span></span></div></div>
                     ))}
                   </div>
                 </>
@@ -671,68 +701,68 @@ function App() {
               <h1>Gestion du Salon</h1>
               <span className="date-subtitle">Remplissez votre base de données</span>
               
-              <div className="section-titre"><span>Catalogue (Prestations & Produits)</span></div>
+              <div className="section-titre">Catalogue (Prestations & Produits)</div>
               <div className="carte scan-carte">
-                <div style={{display: 'flex', gap: '10px'}}>
+                <div style={{display: 'flex', gap: '12px'}}>
                   <input type="text" className="input-fournisseur" placeholder={newArticle.type_article === 'PRODUIT_REVENTE' ? "Nom (Laissez vide si réassort)" : "Nom (ex: Coupe Homme)"} value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value})} />
                   <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value})} />
                 </div>
-                <div style={{display: 'flex', gap: '10px'}}>
+                <div style={{display: 'flex', gap: '12px'}}>
                   <select className="input-fournisseur" value={newArticle.type_article} onChange={(e) => setNewArticle({...newArticle, type_article: e.target.value, reference: '', stock_actuel: ''})}>
                     <option value="PRESTATION">Prestation (Service)</option>
                     <option value="PRODUIT_REVENTE">Produit Revente (Stock)</option>
                   </select>
                   {newArticle.type_article === 'PRODUIT_REVENTE' && (
                     <>
-                      <input type="text" className="input-fournisseur" placeholder="Réf. (min 4 car.)" style={{width: '150px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value})} />
+                      <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '150px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value})} />
                       <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '90px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value})} />
                     </>
                   )}
                 </div>
                 <button className="btn-action" onClick={ajouterArticle} disabled={(newArticle.type_article === 'PRESTATION' && (!newArticle.nom || !newArticle.prix)) || (newArticle.type_article === 'PRODUIT_REVENTE' && !newArticle.reference)}>{newArticle.type_article === 'PRODUIT_REVENTE' && !newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
-                <div style={{marginTop: '15px'}}>
+                <div style={{marginTop: '16px'}}>
                   {catalogueListe.map(art => (
-                    <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '14px'}}>
-                      <span>{art.type_article === 'PRESTATION' ? '✂️' : '🧴'} {art.nom} - {art.prix}€ {art.reference && <span style={{fontSize: '11px', color: '#8e8e93', marginLeft: '5px'}}>(Réf: {art.reference})</span>}</span>
-                      <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'red', cursor:'pointer'}}>Supprimer</button>
+                    <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
+                      <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € {art.reference && <span style={{color: 'var(--text-muted)', marginLeft: '8px'}}>(Réf: {art.reference})</span>}</span>
+                      <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="section-titre" style={{marginTop: '30px'}}><span>Équipe & Commissions</span></div>
+              <div className="section-titre" style={{marginTop: '32px'}}>Équipe & Commissions</div>
               <div className="carte scan-carte">
-                <input type="text" className="input-fournisseur" placeholder="Nom de l'employé" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN personnel (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} />
                 
-                <input type="text" maxLength="4" className="input-fournisseur" placeholder="Code PIN personnel (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} />
-                
-                <div style={{display: 'flex', gap: '10px'}}>
+                <div style={{display: 'flex', gap: '12px'}}>
                   <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
                   <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
                 </div>
-                <button className="btn-action" onClick={ajouterEmploye} disabled={!newEmploye.nom || !newEmploye.code_pin}>Ajouter un employé</button>
-                <div style={{marginTop: '15px'}}>
+                <button className="btn-action" onClick={ajouterEmploye} disabled={!newEmploye.nom || !newEmploye.code_pin}>Ajouter un collaborateur</button>
+                <div style={{marginTop: '16px'}}>
                   {employesListe.map(emp => (
-                    <div key={emp.id_employe} style={{display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '14px'}}>
-                      <span>🧑‍🎨 {emp.nom} (PIN: {emp.code_pin || '0000'})</span>
-                      <button onClick={() => supprimerEmploye(emp.id_employe)} style={{background:'none', border:'none', color:'red', cursor:'pointer'}}>Supprimer</button>
+                    <div key={emp.id_employe} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
+                      <span style={{fontWeight: '500', color: 'var(--text-main)'}}>{emp.nom} <span style={{color: 'var(--text-muted)', fontWeight: 'normal'}}>(PIN: {emp.code_pin || '0000'})</span></span>
+                      <button onClick={() => supprimerEmploye(emp.id_employe)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="section-titre" style={{marginTop: '30px'}}><span>Base Clients (CRM)</span></div>
+              <div className="section-titre" style={{marginTop: '32px'}}>Base Clients (CRM)</div>
               <div className="carte scan-carte">
                 <input type="text" className="input-fournisseur" placeholder="Nom du client" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
                 <input type="tel" className="input-fournisseur" placeholder="Téléphone (ex: +33612345678)" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
                 <button className="btn-action" onClick={ajouterClient} disabled={!newClient.nom}>Ajouter un client</button>
-                <div style={{marginTop: '15px'}}>
+                <div style={{marginTop: '16px'}}>
                   {clientsListe.map(cli => (
-                    <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '14px'}}>
-                      <span style={{cursor: 'pointer', color: '#007aff', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '5px'}} onClick={() => ouvrirFicheClient(cli)}>
-                        👤 {cli.nom} ({cli.telephone || 'Pas de numéro'})
+                    <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
+                      <span style={{cursor: 'pointer', color: 'var(--btn-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={() => ouvrirFicheClient(cli)}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        {cli.nom} <span style={{color: 'var(--text-muted)', fontWeight: 'normal'}}>({cli.telephone || 'Pas de numéro'})</span>
                       </span>
-                      <button onClick={() => supprimerClient(cli.id_client)} style={{background:'none', border:'none', color:'red', cursor:'pointer'}}>Supprimer</button>
+                      <button onClick={() => supprimerClient(cli.id_client)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
                     </div>
                   ))}
                 </div>
@@ -740,45 +770,49 @@ function App() {
 
               {/* --- MODAL FICHE CLIENT (CRM) --- */}
               {clientSelectionne && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-                      <div style={{ background: 'white', padding: '30px', borderRadius: '20px', width: '500px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
-                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px'}}>
-                              <h2 style={{margin: 0, color: '#1c1c1e'}}>Fiche de {clientSelectionne.nom}</h2>
-                              <button onClick={() => setClientSelectionne(null)} style={{background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#8e8e93'}}>✖</button>
+                  <div className="modal-overlay">
+                      <div className="modal-content">
+                          <div className="modal-header">
+                              <div>
+                                <h2 style={{margin: 0, fontSize: '20px', color: 'var(--text-main)'}}>{clientSelectionne.nom}</h2>
+                                <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>{clientSelectionne.telephone}</span>
+                              </div>
+                              <button className="modal-close-btn" onClick={() => setClientSelectionne(null)}>
+                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                              </button>
                           </div>
-                          <p style={{marginTop: 0, color: '#8e8e93', marginBottom: '25px'}}>📞 <a href={`tel:${clientSelectionne.telephone}`} style={{color: '#007aff', textDecoration: 'none'}}>{clientSelectionne.telephone}</a></p>
                           
-                          {chargementFiche ? <p style={{textAlign: 'center', color: '#8e8e93'}}>Chargement de l'historique...</p> : (
+                          {chargementFiche ? <p style={{textAlign: 'center', color: 'var(--text-secondary)'}}>Chargement des données...</p> : (
                             <>
-                              <div className="section-titre" style={{fontSize: '16px', marginBottom: '10px'}}><span>📝 Notes Techniques (Formules, etc.)</span></div>
+                              <div className="section-titre" style={{fontSize: '13px', marginTop: '16px'}}>Dossier Technique</div>
                               <textarea 
                                   className="textarea-facture" 
                                   value={clientHistorique.notes} 
                                   onChange={e => setClientHistorique({...clientHistorique, notes: e.target.value})}
-                                  placeholder="Ex: Formule couleur 6.1 + 20 vol..."
-                                  style={{minHeight: '100px', marginBottom: '10px'}}
+                                  placeholder="Saisissez vos notes techniques (ex: Formule coloration)..."
+                                  style={{marginBottom: '12px'}}
                               />
-                              <button className="btn-action" onClick={sauvegarderNotesClient} style={{width: '100%', marginBottom: '30px', background: '#1c1c1e'}}>💾 Sauvegarder les notes</button>
+                              <button className="btn-action" onClick={sauvegarderNotesClient} style={{width: '100%', marginBottom: '32px'}}>Enregistrer le dossier</button>
 
-                              <div className="section-titre" style={{fontSize: '16px', marginBottom: '10px'}}><span>✂️ Historique des Rendez-vous</span></div>
-                              {clientHistorique.rdv.length === 0 ? <p style={{fontSize: '13px', color: '#8e8e93', marginBottom: '25px'}}>Aucun rendez-vous passé.</p> : (
-                                  <div style={{marginBottom: '25px', background: '#f8f9fa', borderRadius: '12px', padding: '10px'}}>
+                              <div className="section-titre" style={{fontSize: '13px'}}>Rendez-vous passés</div>
+                              {clientHistorique.rdv.length === 0 ? <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px'}}>Aucun historique.</p> : (
+                                  <div style={{marginBottom: '32px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
                                       {clientHistorique.rdv.map((r, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '10px 5px', borderBottom: i !== clientHistorique.rdv.length - 1 ? '1px solid #e5e5ea' : 'none', fontSize: '13px'}}>
-                                              <span><strong>{new Date(r.date_heure_debut).toLocaleDateString()}</strong> - {r.prestation}</span>
-                                              <span style={{color: '#8e8e93'}}>avec {r.nom_employe}</span>
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: i !== clientHistorique.rdv.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                              <span><strong style={{color: 'var(--text-main)'}}>{new Date(r.date_heure_debut).toLocaleDateString()}</strong> - {r.prestation}</span>
+                                              <span style={{color: 'var(--text-muted)'}}>{r.nom_employe}</span>
                                           </div>
                                       ))}
                                   </div>
                               )}
 
-                              <div className="section-titre" style={{fontSize: '16px', marginBottom: '10px'}}><span>🛍️ Historique des Achats (Caisse)</span></div>
-                              {clientHistorique.achats.length === 0 ? <p style={{fontSize: '13px', color: '#8e8e93'}}>Aucun achat enregistré en caisse.</p> : (
-                                  <div style={{background: '#f8f9fa', borderRadius: '12px', padding: '10px'}}>
+                              <div className="section-titre" style={{fontSize: '13px'}}>Historique d'Achats</div>
+                              {clientHistorique.achats.length === 0 ? <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun achat en caisse.</p> : (
+                                  <div style={{background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
                                       {clientHistorique.achats.map((a, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '10px 5px', borderBottom: i !== clientHistorique.achats.length - 1 ? '1px solid #e5e5ea' : 'none', fontSize: '13px'}}>
-                                              <span><strong>{new Date(a.date_creation).toLocaleDateString()}</strong> - {a.article} <span style={{color: '#8e8e93'}}>(x{a.quantite})</span></span>
-                                              <span style={{fontWeight: 'bold', color: '#1c1c1e'}}>{parseFloat(a.prix_unitaire_ttc).toFixed(2)} €</span>
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: i !== clientHistorique.achats.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                              <span><strong style={{color: 'var(--text-main)'}}>{new Date(a.date_creation).toLocaleDateString()}</strong> - {a.article} <span style={{color: 'var(--text-muted)'}}>(x{a.quantite})</span></span>
+                                              <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{parseFloat(a.prix_unitaire_ttc).toFixed(2)} €</span>
                                           </div>
                                       ))}
                                   </div>
@@ -793,114 +827,113 @@ function App() {
 
           {role === 'gerant' && activeTab === 'parametres' && (
             <div className="admin-container">
-              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                 <h1 style={{margin: 0}}>Paramètres</h1>
-                <button onClick={() => setActiveTab('accueil')} style={{background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', padding: 0}}>✖</button>
+                <button onClick={() => setActiveTab('accueil')} style={{background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: 'var(--text-secondary)'}}>
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
-              {notificationSettings && <div className="resultat-scan" style={{marginBottom: '20px'}}><h4 style={{color: '#1c1c1e'}}>{notificationSettings}</h4></div>}
               
               <div className="carte scan-carte">
-                <h3 style={{marginBottom: '5px', color: '#1c1c1e'}}>📍 Google My Business</h3>
-                <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
+                <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Google My Business</h3>
+                <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
                 <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} />
                 <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} />
                 <input type="text" className="input-fournisseur" placeholder="Google Location ID" value={configSalon.google_location_id} onChange={(e) => setConfigSalon({...configSalon, google_location_id: e.target.value})} />
               </div>
 
-              <div className="carte scan-carte" style={{marginTop: '20px'}}>
-                <h3 style={{marginBottom: '5px', color: '#1c1c1e'}}>📅 Horaires de l'Agenda</h3>
-                <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
+              <div className="carte scan-carte">
+                <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Horaires de l'Agenda</h3>
+                <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
                 <div style={{display: 'flex', gap: '15px'}}>
                   <div style={{flex: 1}}>
-                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure d'ouverture (0-23)</label>
+                    <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Ouverture (0-23)</label>
                     <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_ouverture} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
                   </div>
                   <div style={{flex: 1}}>
-                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure de fermeture (0-23)</label>
+                    <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Fermeture (0-23)</label>
                     <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_fermeture} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
                   </div>
                 </div>
               </div>
               
-              <div className="carte scan-carte" style={{marginTop: '20px'}}>
-                <h3 style={{marginBottom: '5px', color: '#1c1c1e'}}>✉️ Boîte Mail (Robot Comptable)</h3>
-                <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
+              <div className="carte scan-carte">
+                <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Boîte Mail (Robot Comptable)</h3>
+                <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
                 <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} />
                 <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
               </div>
               
-              <div className="carte scan-carte" style={{marginTop: '20px', border: '2px solid #34c759'}}>
-                <h3 style={{marginBottom: '5px', color: '#34c759'}}>💬 Fidélisation (SMS Auto)</h3>
-                <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
+              <div className="carte scan-carte">
+                <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Fidélisation (SMS Auto)</h3>
+                <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
                 <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} />
                 <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} />
                 <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps (ex: https://g.page/...)" value={configSalon.lien_google_maps} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
               </div>
 
-              <div className="carte scan-carte" style={{marginTop: '20px', border: '2px solid #007aff'}}>
-                <h3 style={{marginBottom: '5px', color: '#007aff'}}>💳 TPE Physique (Stripe Terminal)</h3>
-                <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
+              <div className="carte scan-carte">
+                <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>TPE Physique (Stripe Terminal)</h3>
+                <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
                 <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
               </div>
 
-              <button className="btn-action" style={{marginTop: '25px', width: '100%'}} onClick={sauvegarderParametres}>💾 Enregistrer la configuration</button>
+              <button className="btn-action" style={{marginTop: '8px', width: '100%'}} onClick={sauvegarderParametres}>Enregistrer la configuration</button>
             </div>
           )}
 
           {role === 'gerant' && activeTab === 'caisse' && (
             <div className="admin-container">
-              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px'}}>
-                <h1>Caisse Tactile</h1>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                <h1 style={{margin: 0}}>Caisse Tactile</h1>
                 {posStep !== 'employee' && (
-                  <button onClick={() => { setPosStep('employee'); setPosEmploye(null); }} style={{padding:'8px 12px', borderRadius:'8px', background:'#eee', border:'none', cursor:'pointer'}}>
-                    ⬅ Changer d'opérateur ({posEmploye?.nom.split(' ')[0]})
+                  <button onClick={() => { setPosStep('employee'); setPosEmploye(null); }} style={{padding:'10px 16px', borderRadius:'var(--radius-input)', background:'var(--bg-card)', border:'1px solid var(--border-color)', cursor:'pointer', fontWeight: '500', color: 'var(--text-main)'}}>
+                    ⬅ Changer ({posEmploye?.nom.split(' ')[0]})
                   </button>
                 )}
               </div>
 
-              {notificationCaisse && <div className="resultat-scan" style={{backgroundColor: '#e6f2ff', borderColor: '#b3d9ff'}}><h4 style={{color: '#007aff'}}>{notificationCaisse}</h4></div>}
-
               {posStep === 'employee' && (
                 <div>
-                  <h3 style={{color: '#8e8e93', marginBottom: '15px'}}>1. Qui réalise la vente ?</h3>
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '15px'}}>
+                  <h3 style={{color: 'var(--text-secondary)', marginBottom: '16px', fontWeight: '500', fontSize: '14px'}}>1. Qui réalise la vente ?</h3>
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px'}}>
                     {employesListe.map((emp, index) => (
                       <div key={emp.id_employe} onClick={() => { setPosEmploye(emp); setPosStep('type'); }}
-                        style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#1c1c1e', padding: '30px', borderRadius: '16px', fontSize: '20px', fontWeight: '700', textAlign: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }}>
+                        style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#1c1c1e', padding: '32px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', border: '1px solid rgba(0,0,0,0.05)' }}>
                         {emp.nom.split(' ')[0]}
                       </div>
                     ))}
                   </div>
-                  {employesListe.length === 0 && <p style={{fontSize: '14px', color: '#8e8e93', textAlign: 'center', marginTop: '20px'}}>Aucun employé. Allez dans l'onglet "Gestion".</p>}
+                  {employesListe.length === 0 && <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '24px'}}>Aucun employé. Allez dans l'onglet "Gestion".</p>}
                 </div>
               )}
 
               {posStep === 'type' && (
                 <div>
-                  <h3 style={{color: '#8e8e93', marginBottom: '15px'}}>2. Type de transaction</h3>
-                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px'}}>
-                    <div onClick={() => { setPosType('PRESTATION'); setPosStep('items'); }} style={{ background: '#2c3e50', color: 'white', padding: '50px 20px', borderRadius: '20px', fontSize: '24px', fontWeight: '700', textAlign: 'center', cursor: 'pointer' }}>✂️ Services</div>
-                    <div onClick={() => { setPosType('PRODUIT_REVENTE'); setPosStep('items'); }} style={{ background: '#16a085', color: 'white', padding: '50px 20px', borderRadius: '20px', fontSize: '24px', fontWeight: '700', textAlign: 'center', cursor: 'pointer' }}>🧴 Produits</div>
+                  <h3 style={{color: 'var(--text-secondary)', marginBottom: '16px', fontWeight: '500', fontSize: '14px'}}>2. Type de transaction</h3>
+                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px'}}>
+                    <div onClick={() => { setPosType('PRESTATION'); setPosStep('items'); }} style={{ background: '#1f2937', color: 'white', padding: '40px 20px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer' }}>Services</div>
+                    <div onClick={() => { setPosType('PRODUIT_REVENTE'); setPosStep('items'); }} style={{ background: '#374151', color: 'white', padding: '40px 20px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer' }}>Produits</div>
                   </div>
                 </div>
               )}
 
               {posStep === 'items' && (
                 <div>
-                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: '15px'}}>
-                    <h3 style={{color: '#8e8e93', margin: 0}}>3. Sélectionner ({posType === 'PRESTATION' ? 'Services' : 'Produits'})</h3>
-                    <button onClick={() => setPosStep('type')} style={{border:'none', background:'none', color:'#007aff', cursor:'pointer', fontWeight:600}}>⬅ Changer (Service/Produit)</button>
+                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: '16px'}}>
+                    <h3 style={{color: 'var(--text-secondary)', margin: 0, fontWeight: '500', fontSize: '14px'}}>3. Sélectionner ({posType === 'PRESTATION' ? 'Services' : 'Produits'})</h3>
+                    <button onClick={() => setPosStep('type')} style={{border:'none', background:'none', color:'var(--text-main)', cursor:'pointer', fontWeight:500, textDecoration: 'underline'}}>Changer de catégorie</button>
                   </div>
 
-                  <div style={{marginBottom: '20px'}}>
+                  <div style={{marginBottom: '24px'}}>
                     <select className="input-fournisseur" value={clientCaisse} onChange={(e) => setClientCaisse(e.target.value)}>
-                      <option value="">-- Assigner un Client (Optionnel - Pour le SMS Google) --</option>
+                      <option value="">-- Assigner un Client (Optionnel) --</option>
                       {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client}>{cli.nom}</option>)}
                     </select>
                   </div>
 
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '15px'}}>
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px'}}>
                     {catalogueListe
                       .filter(art => art.type_article === posType)
                       .sort((a, b) => a.nom.localeCompare(b.nom))
@@ -908,40 +941,41 @@ function App() {
                         <div key={art.id_article} onClick={() => {
                            const total = parseFloat(art.prix);
                            lancerPaiementTPE(total, [{ id_article: art.id_article, quantite: 1, prix_unitaire: total }]);
-                        }} style={{ background: posType === 'PRESTATION' ? '#2c3e50' : '#16a085', color: 'white', padding: '25px', borderRadius: '14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '10px', textAlign: 'center' }}>
-                          <span style={{fontSize: '16px', fontWeight: '600'}}>{art.nom}</span>
-                          <span style={{fontSize: '20px', fontWeight: '800'}}>{parseFloat(art.prix).toFixed(2)} €</span>
+                        }} style={{ background: posType === 'PRESTATION' ? '#1f2937' : '#374151', color: 'white', padding: '24px', borderRadius: 'var(--radius-card)', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '8px', textAlign: 'center' }}>
+                          <span style={{fontSize: '15px', fontWeight: '500'}}>{art.nom}</span>
+                          <span style={{fontSize: '22px', fontWeight: '700'}}>{parseFloat(art.prix).toFixed(2)} €</span>
                         </div>
                     ))}
                   </div>
 
-                  {catalogueListe.filter(art => art.type_article === posType).length === 0 && <p style={{fontSize: '14px', color: '#8e8e93', textAlign: 'center', marginTop: '20px'}}>Aucun élément dans cette catégorie.</p>}
+                  {catalogueListe.filter(art => art.type_article === posType).length === 0 && <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '24px'}}>Aucun élément dans cette catégorie.</p>}
                 </div>
               )}
               
               {/* --- MODAL TICKET ÉCOLOGIQUE (LOI ANTI-GASPI) --- */}
               {ticketGenere && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-                      <div style={{ background: 'white', padding: '30px', borderRadius: '20px', width: '380px', textAlign: 'center', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
-                          <div style={{fontSize: '50px', marginBottom: '10px'}}>🍃</div>
-                          <h2 style={{marginTop: 0, marginBottom: '5px', color: '#1c1c1e'}}>Paiement Validé</h2>
-                          <h1 style={{color: '#a154f2', fontSize: '36px', margin: '10px 0'}}>{ticketGenere.montant.toFixed(2)} €</h1>
-                          <p style={{fontSize: '13px', color: '#8e8e93', marginBottom: '25px'}}>Conformément à la loi anti-gaspillage, le ticket n'est plus imprimé automatiquement.</p>
+                  <div className="modal-overlay">
+                      <div className="modal-content" style={{textAlign: 'center', padding: '40px 32px'}}>
+                          <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                              <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                          </div>
+                          <h2 style={{marginTop: 0, marginBottom: '8px', color: 'var(--text-main)', fontSize: '24px'}}>Paiement Validé</h2>
+                          <h1 style={{color: 'var(--text-main)', fontSize: '40px', margin: '0 0 24px 0', letterSpacing: '-0.02em'}}>{ticketGenere.montant.toFixed(2)} <span style={{fontSize: '24px', color: 'var(--text-secondary)'}}>€</span></h1>
                           
-                          <div style={{background: '#f8f9fa', padding: '15px', borderRadius: '12px', marginBottom: '20px', textAlign: 'left'}}>
-                              <span style={{fontSize: '12px', fontWeight: 'bold', color: '#8e8e93', display: 'block', marginBottom: '10px'}}>ENVOYER LE REÇU LÉGAL :</span>
+                          <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
+                              <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
                               
-                              <div style={{display: 'flex', gap: '10px', marginBottom: '15px'}}>
+                              <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
                                   <input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/>
-                                  <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient} style={{padding: '10px 15px', background: '#007aff'}}>📧 Email</button>
+                                  <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient}>Envoyer</button>
                               </div>
 
-                              <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id} style={{width: '100%', padding: '12px', background: ticketGenere.client_id ? '#34c759' : '#e5e5ea', color: ticketGenere.client_id ? 'white' : '#8e8e93'}}>
-                                  💬 Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Nécessite un client CRM)'}
+                              <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'white' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>
+                                  Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}
                               </button>
                           </div>
 
-                          <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: '#8e8e93', fontWeight: 'bold', cursor: 'pointer', padding: '10px'}}>Terminer sans ticket (Non recommandé)</button>
+                          <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>Fermer (Sans reçu)</button>
                       </div>
                   </div>
               )}
@@ -968,7 +1002,7 @@ function App() {
                       </div>
                     );
                 })}
-                {stocksData.length === 0 && <p style={{fontSize: '14px', color: '#8e8e93', textAlign: 'center'}}>Aucun produit en stock.</p>}
+                {stocksData.length === 0 && <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px 0'}}>Aucun produit en stock.</p>}
               </div>
             </div>
           )}
@@ -976,15 +1010,18 @@ function App() {
           {role === 'gerant' && activeTab === 'rh' && (
             <div className="admin-container">
               <h1>Ressources Humaines</h1><span className="date-subtitle">Suivi des primes et performances</span>
-              {rhData.length === 0 ? <p style={{fontSize: '14px', color: '#8e8e93', textAlign: 'center', marginTop: '20px'}}>Aucun employé. Allez dans l'onglet "Gestion".</p> : rhData.map(employe => (
+              {rhData.length === 0 ? <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20px'}}>Aucun employé. Allez dans l'onglet "Gestion".</p> : rhData.map(employe => (
                 <div className="carte rh-carte" key={employe.id_employe}>
-                  <div className="rh-header"><span className="rh-nom">🧑‍🎨 {employe.nom}</span><span className="rh-role">{employe.role}</span></div>
+                  <div className="rh-header"><span className="rh-nom">{employe.nom}</span><span className="rh-role">{employe.role}</span></div>
                   <div className="rh-stats">
                     <div className="rh-stat-item"><span className="rh-stat-valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="rh-stat-label">Clients</span></div>
                     <div className="rh-stat-item"><span className="rh-stat-valeur">{employe.performances_actuelles.produits_vendus}</span><span className="rh-stat-label">Produits</span></div>
-                    <div className="rh-stat-item"><span className="rh-stat-valeur">+{((employe.performances_actuelles.ca_genere / 10000) * 100).toFixed(1)}%</span><span className="rh-stat-label">CA suppl.</span></div>
+                    <div className="rh-stat-item"><span className="rh-stat-valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / 10000) * 100).toFixed(1)}%</span><span className="rh-stat-label">CA suppl.</span></div>
                   </div>
-                  <div className="rh-prime-box"><span className="rh-prime-label">Prime estimée</span><span className="rh-prime-montant">{employe.performances_actuelles.prime_estimee} €</span></div>
+                  <div className="rh-prime-box" style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)'}}>
+                    <span className="rh-prime-label" style={{color: 'var(--text-main)'}}>Prime estimée</span>
+                    <span className="rh-prime-montant" style={{color: 'var(--text-main)'}}>{employe.performances_actuelles.prime_estimee} <span style={{fontSize: '16px', color: 'var(--text-secondary)'}}>€</span></span>
+                  </div>
                   <div className="rh-chronogramme"><span className="chronogramme-titre">Évolution des primes (6 derniers mois)</span>{dessinerChronogramme(employe.historique_primes)}</div>
                 </div>
               ))}
@@ -995,29 +1032,33 @@ function App() {
             <div className="admin-container">
               <h1>Comptabilité Légale (NF525)</h1><span className="date-subtitle">Robot IA & Clôtures de Caisse</span>
               
-              <div style={{background: '#fff0e6', border: '1px solid #ff9500', borderRadius: '12px', padding: '20px', marginBottom: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+              <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
                  <div>
-                    <h3 style={{margin: '0 0 5px 0', color: '#1c1c1e'}}>Clôture Journalière (Z)</h3>
-                    <span style={{fontSize: '12px', color: '#8e8e93'}}>Obligatoire chaque soir pour sceller les encaissements.</span>
+                    <h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3>
+                    <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span>
                  </div>
-                 <button onClick={faireZdeCaisse} style={{background: '#ff9500', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer'}}>Générer le Z de Caisse</button>
+                 <button onClick={faireZdeCaisse} className="btn-action">Générer le Z de Caisse</button>
               </div>
 
-              <div className="carte export-carte"><div><h3 style={{margin: '0 0 5px 0', color: 'white'}}>Liasse Mensuelle</h3><span style={{fontSize: '12px', color: '#8e8e93'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
-              <div className="section-titre"><span>Historique des factures</span></div>
-              {historiqueData.length === 0 ? <p style={{fontSize: '14px', color: '#8e8e93', textAlign: 'center'}}>Aucune facture.</p> : historiqueData.map((dossier, index) => (
-                <div className="dossier-mois" key={index}><div className="dossier-header"><span className="dossier-titre">📁 {dossier.mois}</span><span className="dossier-total">{dossier.total_ttc.toFixed(2)} €</span></div>
-                  {dossier.factures.map(facture => (<div className="facture-mini" key={facture.id}><span>{facture.fournisseur} ({facture.date})</span><span style={{fontWeight: 500, color: '#3a3a3c'}}>{facture.ttc.toFixed(2)} €</span></div>))}
+              <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
+              <div className="section-titre">Historique des factures</div>
+              {historiqueData.length === 0 ? <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px 0'}}>Aucune facture.</p> : historiqueData.map((dossier, index) => (
+                <div className="dossier-mois" key={index}><div className="dossier-header"><span className="dossier-titre">{dossier.mois}</span><span className="dossier-total" style={{color: 'var(--text-main)'}}>{dossier.total_ttc.toFixed(2)} €</span></div>
+                  {dossier.factures.map(facture => (<div className="facture-mini" key={facture.id}><span>{facture.fournisseur} <span style={{color: 'var(--text-muted)'}}>({facture.date})</span></span><span style={{fontWeight: 600, color: 'var(--text-main)'}}>{facture.ttc.toFixed(2)} €</span></div>))}
                 </div>
               ))}
-              <div className="section-titre" style={{marginTop: '30px'}}><span>Scanner IA Manuel</span></div>
+              <div className="section-titre" style={{marginTop: '32px'}}>Scanner IA Manuel</div>
               <div className="carte scan-carte">
                 <input type="text" className="input-fournisseur" placeholder="Fournisseur (ex: L'Oréal)" value={nomFournisseur} onChange={(e) => setNomFournisseur(e.target.value)} />
                 <textarea className="textarea-facture" placeholder="Texte de la facture..." value={texteFacture} onChange={(e) => setTexteFacture(e.target.value)} />
-                <button className="btn-action" onClick={scannerFacture} disabled={chargementScan || !texteFacture}>🔍 Lancer l'IA Comptable</button>
+                <button className="btn-action" onClick={scannerFacture} disabled={chargementScan || !texteFacture}>Lancer l'IA Comptable</button>
                 {resultatScan && resultatScan.donnees_extraites && (
-                  <div className="resultat-scan"><h4>✅ Données extraites</h4>
-                    <div className="scan-details"><div className="scan-ligne"><span>HT :</span> <strong>{resultatScan.donnees_extraites.ht} €</strong></div><div className="scan-ligne"><span>TVA :</span> <strong>{resultatScan.donnees_extraites.tva} €</strong></div><div className="scan-ligne total"><span>TTC :</span> <strong>{resultatScan.donnees_extraites.ttc} €</strong></div></div>
+                  <div className="resultat-scan" style={{background: 'var(--bg-success)', border: '1px solid #bbf7d0', borderRadius: 'var(--radius-input)', padding: '16px', marginTop: '16px'}}>
+                    <h4 style={{color: 'var(--color-success)', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        Données extraites
+                    </h4>
+                    <div className="scan-details"><div className="scan-ligne"><span style={{color: 'var(--color-success)'}}>HT</span> <strong style={{color: 'var(--color-success)'}}>{resultatScan.donnees_extraites.ht} €</strong></div><div className="scan-ligne"><span style={{color: 'var(--color-success)'}}>TVA</span> <strong style={{color: 'var(--color-success)'}}>{resultatScan.donnees_extraites.tva} €</strong></div><div className="scan-ligne total" style={{borderTopColor: '#bbf7d0', paddingTop: '8px', marginTop: '8px'}}><span style={{color: 'var(--color-success)'}}>TTC</span> <strong style={{color: 'var(--color-success)'}}>{resultatScan.donnees_extraites.ttc} €</strong></div></div>
                   </div>
                 )}
               </div>
@@ -1025,6 +1066,20 @@ function App() {
           )}
         </div>
       </div>
+      
+      {/* --- TOAST NOTIFICATIONS JSX --- */}
+      {toast && (
+        <div className="toast-container">
+          <div className={`toast ${toast.type}`}>
+            {toast.type === 'success' ? (
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            )}
+            {toast.message}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
