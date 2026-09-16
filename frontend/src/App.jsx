@@ -517,14 +517,14 @@ function App() {
                 </div>
              </>
          )}
-
-         {/* --- BOUTON DE DECONNEXION UNIVERSEL --- */}
+         
+         {/* === LE BOUTON DE DÉCONNEXION EN BAS DE LA BARRE === */}
          <div style={{ flexGrow: 1 }}></div>
          <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)', marginBottom: '16px' }} title="Se déconnecter">
              <span className="nav-icon">
                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
              </span>
-             <span>Quitter</span>
+             <span style={{fontWeight: 500}}>Quitter</span>
          </div>
       </div>
 
