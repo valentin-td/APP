@@ -33,9 +33,14 @@ io.on('connection', (socket) => {
 });
 
 // Le Webhook Stripe a besoin du raw body, le reste utilise JSON
+
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/webhooks/') { next(); } 
-  else { express.json()(req, res, next); }
+  if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { 
+      next(); 
+  } else { 
+      express.json()(req, res, next); 
+  }
+});
 });
 
 const pool = new Pool({
