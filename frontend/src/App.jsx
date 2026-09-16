@@ -37,6 +37,11 @@ function App() {
   const [employesListe, setEmployesListe] = useState([]);
   const [clientsListe, setClientsListe] = useState([]);
   
+  // --- NOUVEAUX ÉTATS POUR LE CRM (FICHE CLIENT) ---
+  const [clientSelectionne, setClientSelectionne] = useState(null);
+  const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '' });
+  const [chargementFiche, setChargementFiche] = useState(false);
+
   const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
@@ -164,6 +169,27 @@ function App() {
           if(data.url) { window.location.href = data.url; } 
           else { alert("Erreur lors de la création du lien de paiement."); }
       } catch (e) { alert("Erreur réseau avec Stripe."); }
+  };
+
+  // --- ACTIONS CRM ---
+  const ouvrirFicheClient = async (client) => {
+      setClientSelectionne(client);
+      setChargementFiche(true);
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/clients/${client.id_client}/history`, { headers: getAuthHeaders() });
+          const data = await handleFetchError(res);
+          setClientHistorique(data);
+      } catch (e) { alert("Erreur lors du chargement de l'historique."); }
+      setChargementFiche(false);
+  };
+
+  const sauvegarderNotesClient = async () => {
+      try {
+          await fetch(`https://api-salon-backend.onrender.com/api/clients/${clientSelectionne.id_client}/notes`, {
+              method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ notes: clientHistorique.notes })
+          });
+          alert("Notes sauvegardées avec succès !");
+      } catch (e) { alert("Erreur lors de la sauvegarde des notes."); }
   };
 
   const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ nom: '', telephone: '', email: '' }); chargerTout(); } catch(e) { if(e.message !== "Abonnement inactif") alert("❌ " + e.message); }};
@@ -552,7 +578,7 @@ function App() {
                 </div>
               </div>
 
-              <div className="section-titre" style={{marginTop: '30px'}}><span>Base Clients (Pour les SMS)</span></div>
+              <div className="section-titre" style={{marginTop: '30px'}}><span>Base Clients (CRM)</span></div>
               <div className="carte scan-carte">
                 <input type="text" className="input-fournisseur" placeholder="Nom du client" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
                 <input type="tel" className="input-fournisseur" placeholder="Téléphone (ex: +33612345678)" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
@@ -560,12 +586,67 @@ function App() {
                 <div style={{marginTop: '15px'}}>
                   {clientsListe.map(cli => (
                     <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '14px'}}>
-                      <span>📱 {cli.nom} ({cli.telephone || 'Pas de numéro'})</span>
+                      {/* LE LIEN CLIQUABLE POUR OUVRIR LA FICHE CLIENT */}
+                      <span style={{cursor: 'pointer', color: '#007aff', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '5px'}} onClick={() => ouvrirFicheClient(cli)}>
+                        👤 {cli.nom} ({cli.telephone || 'Pas de numéro'})
+                      </span>
                       <button onClick={() => supprimerClient(cli.id_client)} style={{background:'none', border:'none', color:'red', cursor:'pointer'}}>Supprimer</button>
                     </div>
                   ))}
                 </div>
               </div>
+
+              {/* --- MODAL FICHE CLIENT (CRM) --- */}
+              {clientSelectionne && (
+                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+                      <div style={{ background: 'white', padding: '30px', borderRadius: '20px', width: '500px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px'}}>
+                              <h2 style={{margin: 0, color: '#1c1c1e'}}>Fiche de {clientSelectionne.nom}</h2>
+                              <button onClick={() => setClientSelectionne(null)} style={{background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#8e8e93'}}>✖</button>
+                          </div>
+                          <p style={{marginTop: 0, color: '#8e8e93', marginBottom: '25px'}}>📞 <a href={`tel:${clientSelectionne.telephone}`} style={{color: '#007aff', textDecoration: 'none'}}>{clientSelectionne.telephone}</a></p>
+                          
+                          {chargementFiche ? <p style={{textAlign: 'center', color: '#8e8e93'}}>Chargement de l'historique...</p> : (
+                            <>
+                              <div className="section-titre" style={{fontSize: '16px', marginBottom: '10px'}}><span>📝 Notes Techniques (Formules, etc.)</span></div>
+                              <textarea 
+                                  className="textarea-facture" 
+                                  value={clientHistorique.notes} 
+                                  onChange={e => setClientHistorique({...clientHistorique, notes: e.target.value})}
+                                  placeholder="Ex: Formule couleur 6.1 + 20 vol..."
+                                  style={{minHeight: '100px', marginBottom: '10px'}}
+                              />
+                              <button className="btn-action" onClick={sauvegarderNotesClient} style={{width: '100%', marginBottom: '30px', background: '#1c1c1e'}}>💾 Sauvegarder les notes</button>
+
+                              <div className="section-titre" style={{fontSize: '16px', marginBottom: '10px'}}><span>✂️ Historique des Rendez-vous</span></div>
+                              {clientHistorique.rdv.length === 0 ? <p style={{fontSize: '13px', color: '#8e8e93', marginBottom: '25px'}}>Aucun rendez-vous passé.</p> : (
+                                  <div style={{marginBottom: '25px', background: '#f8f9fa', borderRadius: '12px', padding: '10px'}}>
+                                      {clientHistorique.rdv.map((r, i) => (
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '10px 5px', borderBottom: i !== clientHistorique.rdv.length - 1 ? '1px solid #e5e5ea' : 'none', fontSize: '13px'}}>
+                                              <span><strong>{new Date(r.date_heure_debut).toLocaleDateString()}</strong> - {r.prestation}</span>
+                                              <span style={{color: '#8e8e93'}}>avec {r.nom_employe}</span>
+                                          </div>
+                                      ))}
+                                  </div>
+                              )}
+
+                              <div className="section-titre" style={{fontSize: '16px', marginBottom: '10px'}}><span>🛍️ Historique des Achats (Caisse)</span></div>
+                              {clientHistorique.achats.length === 0 ? <p style={{fontSize: '13px', color: '#8e8e93'}}>Aucun achat enregistré en caisse.</p> : (
+                                  <div style={{background: '#f8f9fa', borderRadius: '12px', padding: '10px'}}>
+                                      {clientHistorique.achats.map((a, i) => (
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '10px 5px', borderBottom: i !== clientHistorique.achats.length - 1 ? '1px solid #e5e5ea' : 'none', fontSize: '13px'}}>
+                                              <span><strong>{new Date(a.date_creation).toLocaleDateString()}</strong> - {a.article} <span style={{color: '#8e8e93'}}>(x{a.quantite})</span></span>
+                                              <span style={{fontWeight: 'bold', color: '#1c1c1e'}}>{parseFloat(a.prix_unitaire_ttc).toFixed(2)} €</span>
+                                          </div>
+                                      ))}
+                                  </div>
+                              )}
+                            </>
+                          )}
+                      </div>
+                  </div>
+              )}
+
             </div>
           )}
 
