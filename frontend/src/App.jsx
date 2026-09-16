@@ -37,12 +37,10 @@ function App() {
   const [employesListe, setEmployesListe] = useState([]);
   const [clientsListe, setClientsListe] = useState([]);
   
-  // --- ÉTATS POUR LE CRM (FICHE CLIENT) ---
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '' });
   const [chargementFiche, setChargementFiche] = useState(false);
 
-  // --- ÉTATS POUR LE TICKET ÉCOLOGIQUE ---
   const [ticketGenere, setTicketGenere] = useState(null);
   const [emailTicketClient, setEmailTicketClient] = useState('');
 
@@ -61,6 +59,8 @@ function App() {
   const [dateAgendaDebut, setDateAgendaDebut] = useState(getMonday(new Date())); 
   const [filtreAgenda, setFiltreAgenda] = useState('TOUS');
   const [rdvSelectionne, setRdvSelectionne] = useState(null); 
+  const [isEditingRdv, setIsEditingRdv] = useState(false);
+  const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '' });
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   
   const [showModalRdv, setShowModalRdv] = useState(false);
@@ -77,7 +77,8 @@ function App() {
 
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '',
-    email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: ''
+    email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '',
+    heure_ouverture: 8, heure_fermeture: 20
   });
 
   const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
@@ -140,7 +141,7 @@ function App() {
     fetch('https://api-salon-backend.onrender.com/api/rh', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setRhData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/factures/historique', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setHistoriqueData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/clients', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setClientsListe(d)).catch(e => console.log(e.message));
-    fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setConfigSalon({ google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '' })).catch(e => console.log(e.message));
+    fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setConfigSalon({ google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '', heure_ouverture: d.heure_ouverture || 8, heure_fermeture: d.heure_fermeture || 20 })).catch(e => console.log(e.message));
   };
 
   useEffect(() => {
@@ -159,7 +160,6 @@ function App() {
               const newSocket = io('https://api-salon-backend.onrender.com');
               newSocket.emit('rejoindreSalon', user.id_salon);
               newSocket.on('paiementValide', (data) => { 
-                  // On garde cette notif uniquement si on n'a pas déjà affiché la popup du ticket
                   setNotificationCaisse(`✅ ${data.message}`); 
                   if(user.role === 'gerant') chargerTout(); 
                   setTimeout(() => setNotificationCaisse(null), 5000); 
@@ -223,23 +223,16 @@ function App() {
         const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
         const data = await handleFetchError(res);
         
-        // Affichage de la popup Anti-Gaspi
         setNotificationCaisse(null);
         setTicketGenere({
-            id_ticket: data.id_ticket,
-            montant: montant,
-            client_id: clientCaisse,
+            id_ticket: data.id_ticket, montant: montant, client_id: clientCaisse,
             client_nom: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.nom : 'Client de passage',
             client_email: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email : '',
             lignes: lignes
         });
         setEmailTicketClient(clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email || '' : '');
-        
-        // Remise à zéro de l'interface de caisse
         setPosStep('employee'); setPosEmploye(null); setClientCaisse('');
-    } catch (error) { 
-        if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur de communication avec le TPE."}`); 
-    }
+    } catch (error) { if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur TPE."}`); }
   };
 
   const envoyerTicketEco = async (methode) => {
@@ -248,16 +241,16 @@ function App() {
               method: 'POST', headers: getAuthHeaders(true),
               body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, methode })
           });
-          const data = await handleFetchError(res);
+          await handleFetchError(res);
           alert(`✅ Ticket envoyé par ${methode.toUpperCase()} !`);
-          setTicketGenere(null); // Ferme la popup
+          setTicketGenere(null);
       } catch (e) { alert(`Erreur d'envoi : ${e.message}`); }
   }
 
   const declencherExport = async () => { setNotificationExport("⏳ Génération et envoi du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); setNotificationExport("✅ Liasse PDF générée et envoyée par e-mail !"); setTimeout(() => setNotificationExport(null), 5000); } catch (error) { setNotificationExport(`❌ ${error.message}`); setTimeout(() => setNotificationExport(null), 6000); }};
   const sauvegarderParametres = async () => { setNotificationSettings("⏳ Sauvegarde en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); const data = await handleFetchError(response); setNotificationSettings(`✅ ${data.message}`); chargerTout(); setTimeout(() => { setNotificationSettings(null); setActiveTab('accueil'); }, 2000); } catch (error) { if(error.message !== "Abonnement inactif") setNotificationSettings("❌ Erreur serveur."); }};
 
-  // CRÉATION MANUELLE DE RDV
+  // --- ACTIONS AGENDA DYNAMIQUE ---
   const creerRdvManuel = async () => {
       try {
           const datetime = `${formRdv.date}T${formRdv.heure}:00`;
@@ -265,6 +258,37 @@ function App() {
           if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); }
       } catch(e) { alert("Erreur de création."); }
   }
+
+  const ouvrirRdvSelectionne = (rdv) => {
+      setRdvSelectionne(rdv);
+      setIsEditingRdv(false);
+      const d = new Date(rdv.date_heure_debut);
+      setEditRdvForm({
+          date: formatDateInput(d),
+          heure: d.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
+          prestation: rdv.prestation,
+          id_employe: rdv.id_employe || ''
+      });
+  };
+
+  const sauvegarderModifRdv = async () => {
+      try {
+          const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, {
+              method: 'PUT', headers: getAuthHeaders(true),
+              body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime })
+          });
+          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); }
+      } catch(e) { alert("Erreur lors de la modification."); }
+  };
+
+  const supprimerRdvManuel = async () => {
+      if(!window.confirm("Supprimer ce rendez-vous ?")) return;
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'DELETE', headers: getAuthHeaders() });
+          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); }
+      } catch(e) { alert("Erreur lors de la suppression."); }
+  };
 
   // Z DE CAISSE LÉGAL
   const faireZdeCaisse = async () => {
@@ -374,6 +398,11 @@ function App() {
 
   const role = userRole;
 
+  // Calcul dynamique des heures de l'agenda
+  const heureDebutAgenda = parseInt(configSalon.heure_ouverture) || 8;
+  const heureFinAgenda = parseInt(configSalon.heure_fermeture) || 20;
+  const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
+
   return (
     <div style={{ display: 'flex' }}>
       <div className="navbar-sidebar">
@@ -434,7 +463,7 @@ function App() {
 
                   <div className="week-body">
                       <div className="time-column">
-                          {Array.from({ length: 13 }).map((_, i) => (<div key={i} className="time-label">{8 + i} h</div>))}
+                          {Array.from({ length: nbHeures }).map((_, i) => (<div key={i} className="time-label">{heureDebutAgenda + i} h</div>))}
                       </div>
                       <div className="days-container">
                           {joursSemaine.map((jour, indexJour) => {
@@ -449,11 +478,11 @@ function App() {
                                   <div key={indexJour} className="day-column">
                                       {rdvsDuJour.map((rdv) => {
                                           const dateDebut = new Date(rdv.date_heure_debut);
-                                          const topPosition = ((dateDebut.getHours() - 8) * 60) + dateDebut.getMinutes();
+                                          const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * 60) + dateDebut.getMinutes();
                                           const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
 
                                           return (
-                                              <div key={rdv.id_rdv} className="agenda-card" onClick={() => setRdvSelectionne(rdv)}
+                                              <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
                                                    style={{ top: `${topPosition}px`, height: `${Math.max(rdv.duree_minutes, 20)}px`, backgroundColor: backgroundColor, color: '#1c1c1e' }}>
                                                   <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
                                                   <span className="agenda-card-subtitle">{rdv.prestation}</span>
@@ -489,30 +518,56 @@ function App() {
                   </div>
               )}
 
-              {/* Pop-up de détails & annulation */}
+              {/* Pop-up de détails, modification & annulation */}
               {rdvSelectionne && (
                   <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
                       <div style={{ background: 'white', padding: '30px', borderRadius: '20px', width: '350px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
-                          <h3 style={{marginTop: 0, marginBottom: '5px'}}>Détails du Rendez-vous</h3>
-                          <p style={{margin: '0 0 20px 0', fontSize: '13px', color: '#8e8e93'}}>Avec {rdvSelectionne.nom_employe}</p>
                           
-                          <div style={{marginBottom: '20px', padding: '15px', background: '#f8f9fa', borderRadius: '12px'}}>
-                              <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}><span>Client :</span> <strong>{rdvSelectionne.nom_client}</strong></div>
-                              <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}><span>Tel :</span> <a href={`tel:${rdvSelectionne.telephone_client}`} style={{color: '#007aff', textDecoration: 'none'}}>{rdvSelectionne.telephone_client}</a></div>
-                              <div style={{display: 'flex', justifyContent: 'space-between'}}><span>Service :</span> <strong>{rdvSelectionne.prestation}</strong></div>
-                          </div>
+                          {!isEditingRdv ? (
+                              <>
+                                  <h3 style={{marginTop: 0, marginBottom: '5px'}}>Détails du Rendez-vous</h3>
+                                  <p style={{margin: '0 0 20px 0', fontSize: '13px', color: '#8e8e93'}}>Avec {rdvSelectionne.nom_employe}</p>
+                                  
+                                  <div style={{marginBottom: '20px', padding: '15px', background: '#f8f9fa', borderRadius: '12px'}}>
+                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}><span>Client :</span> <strong>{rdvSelectionne.nom_client}</strong></div>
+                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}><span>Tel :</span> <a href={`tel:${rdvSelectionne.telephone_client}`} style={{color: '#007aff', textDecoration: 'none'}}>{rdvSelectionne.telephone_client}</a></div>
+                                      <div style={{display: 'flex', justifyContent: 'space-between'}}><span>Service :</span> <strong>{rdvSelectionne.prestation}</strong></div>
+                                  </div>
 
-                          <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
-                              {rdvSelectionne.stripe_payment_id && role === 'gerant' && (
-                                  <button onClick={() => window.open(`https://dashboard.stripe.com/payments/${rdvSelectionne.stripe_payment_id}`, '_blank')} 
-                                          style={{background: '#ff3b30', color: 'white', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>
-                                      Annuler & Gérer l'acompte (Stripe)
-                                  </button>
-                              )}
-                              <button onClick={() => setRdvSelectionne(null)} style={{background: '#e5e5ea', color: '#1c1c1e', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>
-                                  Fermer
-                              </button>
-                          </div>
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
+                                      {role === 'gerant' && (
+                                          <button onClick={() => setIsEditingRdv(true)} style={{background: '#007aff', color: 'white', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>
+                                              Modifier le rendez-vous
+                                          </button>
+                                      )}
+                                      {rdvSelectionne.stripe_payment_id && role === 'gerant' && (
+                                          <button onClick={() => window.open(`https://dashboard.stripe.com/payments/${rdvSelectionne.stripe_payment_id}`, '_blank')} 
+                                                  style={{background: '#f2f2f7', color: '#1c1c1e', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>
+                                              Gérer l'acompte (Stripe)
+                                          </button>
+                                      )}
+                                      <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
+                                        {role === 'gerant' && <button onClick={supprimerRdvManuel} style={{flex: 1, background: '#ffefef', color: '#ff3b30', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>Supprimer</button>}
+                                        <button onClick={() => setRdvSelectionne(null)} style={{flex: 1, background: '#e5e5ea', color: '#1c1c1e', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer'}}>Fermer</button>
+                                      </div>
+                                  </div>
+                              </>
+                          ) : (
+                              <>
+                                  <h3 style={{marginTop: 0, marginBottom: '20px'}}>Modifier le Rendez-vous</h3>
+                                  <select className="input-fournisseur" value={editRdvForm.id_employe} onChange={e => setEditRdvForm({...editRdvForm, id_employe: e.target.value})} style={{marginBottom:'10px'}}>
+                                      <option value="">-- Choisir un coiffeur --</option>
+                                      {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                  </select>
+                                  <input type="text" className="input-fournisseur" placeholder="Prestation" value={editRdvForm.prestation} onChange={e => setEditRdvForm({...editRdvForm, prestation: e.target.value})} style={{marginBottom:'10px'}}/>
+                                  <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
+                                      <input type="date" className="input-fournisseur" value={editRdvForm.date} onChange={e => setEditRdvForm({...editRdvForm, date: e.target.value})} />
+                                      <input type="time" className="input-fournisseur" value={editRdvForm.heure} onChange={e => setEditRdvForm({...editRdvForm, heure: e.target.value})} />
+                                  </div>
+                                  <button onClick={sauvegarderModifRdv} className="btn-action" style={{width:'100%', marginBottom:'10px', background:'#34c759'}}>💾 Sauvegarder</button>
+                                  <button onClick={() => setIsEditingRdv(false)} className="btn-action" style={{width:'100%', background:'#e5e5ea', color:'#1c1c1e'}}>Annuler</button>
+                              </>
+                          )}
                       </div>
                   </div>
               )}
@@ -626,7 +681,6 @@ function App() {
                 <div style={{marginTop: '15px'}}>
                   {clientsListe.map(cli => (
                     <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '14px'}}>
-                      {/* LE LIEN CLIQUABLE POUR OUVRIR LA FICHE CLIENT */}
                       <span style={{cursor: 'pointer', color: '#007aff', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '5px'}} onClick={() => ouvrirFicheClient(cli)}>
                         👤 {cli.nom} ({cli.telephone || 'Pas de numéro'})
                       </span>
@@ -686,7 +740,6 @@ function App() {
                       </div>
                   </div>
               )}
-
             </div>
           )}
 
@@ -705,6 +758,21 @@ function App() {
                 <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} />
                 <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} />
                 <input type="text" className="input-fournisseur" placeholder="Google Location ID" value={configSalon.google_location_id} onChange={(e) => setConfigSalon({...configSalon, google_location_id: e.target.value})} />
+              </div>
+
+              <div className="carte scan-carte" style={{marginTop: '20px'}}>
+                <h3 style={{marginBottom: '5px', color: '#1c1c1e'}}>📅 Horaires de l'Agenda</h3>
+                <span style={{fontSize: '12px', color: '#8e8e93', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
+                <div style={{display: 'flex', gap: '15px'}}>
+                  <div style={{flex: 1}}>
+                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure d'ouverture</label>
+                    <input type="number" className="input-fournisseur" value={configSalon.heure_ouverture} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
+                  </div>
+                  <div style={{flex: 1}}>
+                    <label style={{fontSize: '12px', color: '#8e8e93', display: 'block', marginBottom: '5px'}}>Heure de fermeture</label>
+                    <input type="number" className="input-fournisseur" value={configSalon.heure_fermeture} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
+                  </div>
+                </div>
               </div>
               
               <div className="carte scan-carte" style={{marginTop: '20px'}}>
@@ -792,7 +860,6 @@ function App() {
                         <div key={art.id_article} onClick={() => {
                            const total = parseFloat(art.prix);
                            lancerPaiementTPE(total, [{ id_article: art.id_article, quantite: 1, prix_unitaire: total }]);
-                           // setPosStep('employee'); setPosEmploye(null); // On ne remet plus à zéro ici, c'est la fin du paiement qui s'en charge
                         }} style={{ background: posType === 'PRESTATION' ? '#2c3e50' : '#16a085', color: 'white', padding: '25px', borderRadius: '14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '10px', textAlign: 'center' }}>
                           <span style={{fontSize: '16px', fontWeight: '600'}}>{art.nom}</span>
                           <span style={{fontSize: '20px', fontWeight: '800'}}>{parseFloat(art.prix).toFixed(2)} €</span>
@@ -816,13 +883,11 @@ function App() {
                           <div style={{background: '#f8f9fa', padding: '15px', borderRadius: '12px', marginBottom: '20px', textAlign: 'left'}}>
                               <span style={{fontSize: '12px', fontWeight: 'bold', color: '#8e8e93', display: 'block', marginBottom: '10px'}}>ENVOYER LE REÇU LÉGAL :</span>
                               
-                              {/* Envoi Email */}
                               <div style={{display: 'flex', gap: '10px', marginBottom: '15px'}}>
                                   <input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/>
                                   <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient} style={{padding: '10px 15px', background: '#007aff'}}>📧 Email</button>
                               </div>
 
-                              {/* Envoi SMS (Si client connu dans la base) */}
                               <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id} style={{width: '100%', padding: '12px', background: ticketGenere.client_id ? '#34c759' : '#e5e5ea', color: ticketGenere.client_id ? 'white' : '#8e8e93'}}>
                                   💬 Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Nécessite un client CRM)'}
                               </button>
