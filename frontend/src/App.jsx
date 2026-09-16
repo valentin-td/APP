@@ -37,10 +37,14 @@ function App() {
   const [employesListe, setEmployesListe] = useState([]);
   const [clientsListe, setClientsListe] = useState([]);
   
-  // --- NOUVEAUX ÉTATS POUR LE CRM (FICHE CLIENT) ---
+  // --- ÉTATS POUR LE CRM (FICHE CLIENT) ---
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '' });
   const [chargementFiche, setChargementFiche] = useState(false);
+
+  // --- ÉTATS POUR LE TICKET ÉCOLOGIQUE ---
+  const [ticketGenere, setTicketGenere] = useState(null);
+  const [emailTicketClient, setEmailTicketClient] = useState('');
 
   const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
@@ -154,7 +158,12 @@ function App() {
           if (user && user.id_salon) {
               const newSocket = io('https://api-salon-backend.onrender.com');
               newSocket.emit('rejoindreSalon', user.id_salon);
-              newSocket.on('paiementValide', (data) => { setNotificationCaisse(`✅ ${data.message}`); if(user.role === 'gerant') chargerTout(); setTimeout(() => setNotificationCaisse(null), 5000); });
+              newSocket.on('paiementValide', (data) => { 
+                  // On garde cette notif uniquement si on n'a pas déjà affiché la popup du ticket
+                  setNotificationCaisse(`✅ ${data.message}`); 
+                  if(user.role === 'gerant') chargerTout(); 
+                  setTimeout(() => setNotificationCaisse(null), 5000); 
+              });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
               setSocket(newSocket);
               return () => newSocket.disconnect();
@@ -205,14 +214,45 @@ function App() {
 
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); } catch (error) { if(error.message !== "Abonnement inactif") setResultatScan({ erreur: "Erreur IA." }); } setChargementScan(false); };
 
+  // --- ACTIONS CAISSE & TICKET ECOLOGIQUE ---
   const lancerPaiementTPE = async (montant, lignes) => {
     if(!posEmploye) { alert("❌ Veuillez sélectionner un employé."); return; }
-    setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte du client...`);
+    setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
     try {
         const payloadTPE = { montant, id_employe: posEmploye.id_employe, id_client: clientCaisse || null, lignes };
-        await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
-    } catch (error) { if(error.message !== "Abonnement inactif") setNotificationCaisse("❌ Erreur de communication avec le TPE."); }
+        const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
+        const data = await handleFetchError(res);
+        
+        // Affichage de la popup Anti-Gaspi
+        setNotificationCaisse(null);
+        setTicketGenere({
+            id_ticket: data.id_ticket,
+            montant: montant,
+            client_id: clientCaisse,
+            client_nom: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.nom : 'Client de passage',
+            client_email: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email : '',
+            lignes: lignes
+        });
+        setEmailTicketClient(clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email || '' : '');
+        
+        // Remise à zéro de l'interface de caisse
+        setPosStep('employee'); setPosEmploye(null); setClientCaisse('');
+    } catch (error) { 
+        if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur de communication avec le TPE."}`); 
+    }
   };
+
+  const envoyerTicketEco = async (methode) => {
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', {
+              method: 'POST', headers: getAuthHeaders(true),
+              body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, methode })
+          });
+          const data = await handleFetchError(res);
+          alert(`✅ Ticket envoyé par ${methode.toUpperCase()} !`);
+          setTicketGenere(null); // Ferme la popup
+      } catch (e) { alert(`Erreur d'envoi : ${e.message}`); }
+  }
 
   const declencherExport = async () => { setNotificationExport("⏳ Génération et envoi du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); setNotificationExport("✅ Liasse PDF générée et envoyée par e-mail !"); setTimeout(() => setNotificationExport(null), 5000); } catch (error) { setNotificationExport(`❌ ${error.message}`); setTimeout(() => setNotificationExport(null), 6000); }};
   const sauvegarderParametres = async () => { setNotificationSettings("⏳ Sauvegarde en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); const data = await handleFetchError(response); setNotificationSettings(`✅ ${data.message}`); chargerTout(); setTimeout(() => { setNotificationSettings(null); setActiveTab('accueil'); }, 2000); } catch (error) { if(error.message !== "Abonnement inactif") setNotificationSettings("❌ Erreur serveur."); }};
@@ -752,7 +792,7 @@ function App() {
                         <div key={art.id_article} onClick={() => {
                            const total = parseFloat(art.prix);
                            lancerPaiementTPE(total, [{ id_article: art.id_article, quantite: 1, prix_unitaire: total }]);
-                           setPosStep('employee'); setPosEmploye(null);
+                           // setPosStep('employee'); setPosEmploye(null); // On ne remet plus à zéro ici, c'est la fin du paiement qui s'en charge
                         }} style={{ background: posType === 'PRESTATION' ? '#2c3e50' : '#16a085', color: 'white', padding: '25px', borderRadius: '14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '10px', textAlign: 'center' }}>
                           <span style={{fontSize: '16px', fontWeight: '600'}}>{art.nom}</span>
                           <span style={{fontSize: '20px', fontWeight: '800'}}>{parseFloat(art.prix).toFixed(2)} €</span>
@@ -762,6 +802,35 @@ function App() {
 
                   {catalogueListe.filter(art => art.type_article === posType).length === 0 && <p style={{fontSize: '14px', color: '#8e8e93', textAlign: 'center', marginTop: '20px'}}>Aucun élément dans cette catégorie.</p>}
                 </div>
+              )}
+              
+              {/* --- MODAL TICKET ÉCOLOGIQUE (LOI ANTI-GASPI) --- */}
+              {ticketGenere && (
+                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+                      <div style={{ background: 'white', padding: '30px', borderRadius: '20px', width: '380px', textAlign: 'center', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
+                          <div style={{fontSize: '50px', marginBottom: '10px'}}>🍃</div>
+                          <h2 style={{marginTop: 0, marginBottom: '5px', color: '#1c1c1e'}}>Paiement Validé</h2>
+                          <h1 style={{color: '#a154f2', fontSize: '36px', margin: '10px 0'}}>{ticketGenere.montant.toFixed(2)} €</h1>
+                          <p style={{fontSize: '13px', color: '#8e8e93', marginBottom: '25px'}}>Conformément à la loi anti-gaspillage, le ticket n'est plus imprimé automatiquement.</p>
+                          
+                          <div style={{background: '#f8f9fa', padding: '15px', borderRadius: '12px', marginBottom: '20px', textAlign: 'left'}}>
+                              <span style={{fontSize: '12px', fontWeight: 'bold', color: '#8e8e93', display: 'block', marginBottom: '10px'}}>ENVOYER LE REÇU LÉGAL :</span>
+                              
+                              {/* Envoi Email */}
+                              <div style={{display: 'flex', gap: '10px', marginBottom: '15px'}}>
+                                  <input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/>
+                                  <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient} style={{padding: '10px 15px', background: '#007aff'}}>📧 Email</button>
+                              </div>
+
+                              {/* Envoi SMS (Si client connu dans la base) */}
+                              <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id} style={{width: '100%', padding: '12px', background: ticketGenere.client_id ? '#34c759' : '#e5e5ea', color: ticketGenere.client_id ? 'white' : '#8e8e93'}}>
+                                  💬 Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Nécessite un client CRM)'}
+                              </button>
+                          </div>
+
+                          <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: '#8e8e93', fontWeight: 'bold', cursor: 'pointer', padding: '10px'}}>Terminer sans ticket (Non recommandé)</button>
+                      </div>
+                  </div>
               )}
             </div>
           )}
