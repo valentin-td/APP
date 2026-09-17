@@ -57,8 +57,9 @@ function App() {
   const [resetTokenUrl] = useState(urlParams.get('resetToken'));
   const [newPassword, setNewPassword] = useState('');
 
-  // --- TOAST NOTIFICATIONS ---
+  // --- TOAST NOTIFICATIONS & MODAL DANGER ---
   const [toast, setToast] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null); // Remplacement de window.confirm()
 
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
@@ -86,8 +87,43 @@ function App() {
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
   const [clientCaisse, setClientCaisse] = useState('');
 
-  const getMonday = (d) => { const date = new Date(d); const day = date.getDay(); const diff = date.getDate() - day + (day === 0 ? -6 : 1); return new Date(date.setDate(diff)); };
-  const [dateAgendaDebut, setDateAgendaDebut] = useState(getMonday(new Date())); 
+  // --- RESPONSIVE AGENDA LOGIC ---
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  useEffect(() => {
+      const handleResize = () => setWindowWidth(window.innerWidth);
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 768;
+  const isTablet = windowWidth >= 768 && windowWidth < 1024;
+  const nbJoursAffichage = isMobile ? 1 : (isTablet ? 3 : 7);
+
+  const getStartOfPeriod = (d, daysCount) => {
+      const date = new Date(d);
+      if (daysCount === 7) {
+          const day = date.getDay();
+          const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+          return new Date(date.setDate(diff));
+      }
+      return date; // Sur mobile/tablette, on commence exactement au jour cliqué
+  };
+
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const startDate = getStartOfPeriod(currentDate, nbJoursAffichage);
+  
+  const joursSemaine = Array.from({length: nbJoursAffichage}).map((_, i) => { 
+      const d = new Date(startDate); d.setDate(d.getDate() + i); return d; 
+  });
+
+  const changerPeriode = (direction) => {
+      const newDate = new Date(currentDate);
+      newDate.setDate(newDate.getDate() + (direction * nbJoursAffichage));
+      setCurrentDate(newDate);
+  };
+  
+  const resetToToday = () => setCurrentDate(new Date());
+
   const [filtreAgenda, setFiltreAgenda] = useState('TOUS');
   const [rdvSelectionne, setRdvSelectionne] = useState(null); 
   const [isEditingRdv, setIsEditingRdv] = useState(false);
@@ -97,16 +133,12 @@ function App() {
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
 
-  const joursSemaine = Array.from({length: 7}).map((_, i) => { const d = new Date(dateAgendaDebut); d.setDate(d.getDate() + i); return d; });
-
   const [texteFacture, setTexteFacture] = useState('');
   const [nomFournisseur, setNomFournisseur] = useState('');
   const [resultatScan, setResultatScan] = useState(null);
   const [chargementScan, setChargementScan] = useState(false);
   const [notificationCaisse, setNotificationCaisse] = useState(null);
   const [socket, setSocket] = useState(null);
-  const [notificationSettings, setNotificationSettings] = useState(null);
-  const [notificationExport, setNotificationExport] = useState(null);
 
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '',
@@ -117,7 +149,6 @@ function App() {
   const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
   const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const changerSemaine = (semaines) => { const nouvelleDate = new Date(dateAgendaDebut); nouvelleDate.setDate(nouvelleDate.getDate() + (semaines * 7)); setDateAgendaDebut(nouvelleDate); };
   const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); }
 
   const getAuthHeaders = (isJson = false) => { const headers = { 'Authorization': `Bearer ${token}` }; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
@@ -177,11 +208,12 @@ function App() {
 
   useEffect(() => {
       if (token && !isAbonnementInactif) {
-          const startStr = formatDateInput(joursSemaine[0]); const endStr = formatDateInput(joursSemaine[6]);
+          const startStr = formatDateInput(joursSemaine[0]); 
+          const endStr = formatDateInput(joursSemaine[joursSemaine.length - 1]);
           fetch(`https://api-salon-backend.onrender.com/api/planning?startDate=${startStr}&endDate=${endStr}`, { headers: getAuthHeaders() })
           .then(handleFetchError).then(d => setPlanningData(d)).catch(e => console.log(e.message));
       }
-  }, [dateAgendaDebut, activeTab, refreshTrigger, token, isAbonnementInactif]);
+  }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
   useEffect(() => { 
       if (token && !isAbonnementInactif) { 
@@ -241,7 +273,7 @@ function App() {
       const num = parseFloat(q); 
       if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; 
       if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; 
-      if (num >= 1) return { bg: '#fef3c7', text: '#92400e', label: 'Faible' }; 
+      if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; 
       return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; 
   };
   const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
@@ -315,22 +347,41 @@ function App() {
       } catch(e) { showToast("Erreur lors de la modification.", "error"); }
   };
 
-  const supprimerRdvManuel = async () => {
-      if(!window.confirm("Supprimer ce rendez-vous ?")) return;
+  // --- LES NOUVELLES MODALES DE CONFIRMATION (REMPLACEMENT WINDOW.CONFIRM) ---
+  const demanderSuppressionRdv = () => {
+      setConfirmDialog({
+          titre: "Supprimer le rendez-vous",
+          message: "Êtes-vous sûr de vouloir annuler ce rendez-vous ? Cette action est irréversible.",
+          btnTexte: "Supprimer le RDV",
+          action: executerSuppressionRdv
+      });
+  };
+
+  const executerSuppressionRdv = async () => {
+      setConfirmDialog(null);
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'DELETE', headers: getAuthHeaders() });
           if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous supprimé", "success"); }
       } catch(e) { showToast("Erreur lors de la suppression.", "error"); }
   };
 
-  const faireZdeCaisse = async () => {
-      if(!window.confirm("Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées.")) return;
+  const demanderZDeCaisse = () => {
+      setConfirmDialog({
+          titre: "Clôture Journalière (Z)",
+          message: "Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées de manière irréversible selon la loi NF525.",
+          btnTexte: "Générer le Z",
+          action: executerZDeCaisse
+      });
+  };
+
+  const executerZDeCaisse = async () => {
+      setConfirmDialog(null);
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
       } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
-  }
+  };
 
   // --- RENDER RESET PASSWORD ---
   if (resetTokenUrl) {
@@ -339,7 +390,7 @@ function App() {
           <ThemeToggle isFixed={true} />
           <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
             <div className="logo-container">
-                <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
+                <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
             </div>
             <h2 style={{color: 'var(--text-main)'}}>Nouveau mot de passe</h2>
             <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
@@ -376,7 +427,7 @@ function App() {
         <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
           
           <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
+              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
           </div>
 
           <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
@@ -442,7 +493,7 @@ function App() {
         <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
           
           <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
+              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
           </div>
 
           <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Abonnement Requis</h2>
@@ -518,9 +569,9 @@ function App() {
              </>
          )}
 
-         {/* --- BOUTON DE DECONNEXION UNIVERSEL --- */}
-         <div style={{ flexGrow: 1 }}></div>
-         <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)', marginBottom: '16px' }} title="Se déconnecter">
+         {/* --- BOUTON DE DECONNEXION UNIVERSEL (GÉRANT ET EMPLOYÉ) --- */}
+         <div className="navbar-spacer"></div>
+         <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter">
              <span className="nav-icon">
                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
              </span>
@@ -528,27 +579,26 @@ function App() {
          </div>
       </div>
 
-      <div style={{ flexGrow: 1, marginLeft: '90px' }}>
+      <div className="main-content">
         <div className="dashboard-container" style={{maxWidth: (activeTab === 'caisse' || activeTab === 'agenda') ? '900px' : '600px'}}>
           
           {activeTab === 'agenda' && (
             <div className="admin-container">
               <div className="agenda-header">
-                  <div style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap'}}>
                       <h1 style={{margin: 0}}>Agenda</h1>
-                      
                       <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-                          <button onClick={() => changerSemaine(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>◀</button>
+                          <button onClick={() => changerPeriode(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>◀</button>
                           <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', padding: '0 10px'}}>{joursSemaine[0].toLocaleDateString('fr-FR', {month: 'short'})} {joursSemaine[0].getFullYear()}</span>
-                          <button onClick={() => changerSemaine(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>▶</button>
-                          <button onClick={() => setDateAgendaDebut(getMonday(new Date()))} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
+                          <button onClick={() => changerPeriode(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>▶</button>
+                          <button onClick={resetToToday} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
                       </div>
                   </div>
                   <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                       <ThemeToggle />
                       <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
                       {role === 'gerant' && (
-                          <select className="agenda-filtre" value={filtreAgenda} onChange={(e) => setFiltreAgenda(e.target.value)}>
+                          <select className="agenda-filtre" value={filtreAgenda} onChange={(e) => setFiltreAgenda(e.target.value)} style={{width: 'auto'}}>
                               <option value="TOUS">Tous les collaborateurs</option>
                               {employesListe.map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
                           </select>
@@ -652,7 +702,7 @@ function App() {
                                   <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                                       {role === 'gerant' && <button onClick={() => setIsEditingRdv(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer', transition: 'all 0.15s'}}>Modifier l'horaire</button>}
                                       {rdvSelectionne.stripe_payment_id && role === 'gerant' && <button onClick={() => window.open(`https://dashboard.stripe.com/payments/${rdvSelectionne.stripe_payment_id}`, '_blank')} className="btn-action">Gérer l'acompte (Stripe)</button>}
-                                      {role === 'gerant' && <button onClick={supprimerRdvManuel} style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Supprimer le rendez-vous</button>}
+                                      {role === 'gerant' && <button onClick={demanderSuppressionRdv} style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Supprimer le rendez-vous</button>}
                                   </div>
                               </>
                           ) : (
@@ -685,12 +735,6 @@ function App() {
                   Tableau de bord
                   <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span>
                 </h1>
-                <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                  <ThemeToggle />
-                  <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                  </button>
-                </div>
               </div>
               <span className="date-subtitle">{formatDateComplete(new Date())}</span>
               {erreur && <p style={{color: 'var(--color-danger)'}}>❌ {erreur}</p>}
@@ -809,7 +853,6 @@ function App() {
                 </div>
               </div>
 
-              {/* --- MODAL FICHE CLIENT (CRM) --- */}
               {clientSelectionne && (
                   <div className="modal-overlay">
                       <div className="modal-content">
@@ -1078,7 +1121,7 @@ function App() {
                     <h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3>
                     <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span>
                  </div>
-                 <button onClick={faireZdeCaisse} className="btn-action">Générer le Z de Caisse</button>
+                 <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z de Caisse</button>
               </div>
 
               <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
@@ -1108,6 +1151,23 @@ function App() {
         </div>
       </div>
       
+      {/* --- MODALE GLOBALE DE CONFIRMATION (DANGER) --- */}
+      {confirmDialog && (
+          <div className="modal-overlay">
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
+                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  </div>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>{confirmDialog.titre}</h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>{confirmDialog.message}</p>
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => setConfirmDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
+                      <button onClick={confirmDialog.action} style={{flex: 1, background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>{confirmDialog.btnTexte}</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* --- TOAST NOTIFICATIONS JSX --- */}
       {toast && (
         <div className="toast-container">
