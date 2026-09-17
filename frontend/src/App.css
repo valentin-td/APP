@@ -4,64 +4,51 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  /* Mode Clair (Par défaut) */
   --bg-app: #f9fafb;
   --bg-card: #ffffff;
   --bg-hover: #f3f4f6;
-
   --text-main: #111827;
   --text-secondary: #6b7280;
   --text-muted: #9ca3af;
-
   --border-color: #e5e7eb;
   --border-focus: #111827;
   --grid-line: #e5e7eb;
-  
   --radius-card: 12px;
   --radius-input: 8px;
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
-  
   --color-success: #166534;
   --bg-success: #dcfce7;
   --color-danger: #991b1b;
   --bg-danger: #fee2e2;
   --color-info: #1e40af;
   --bg-info: #dbeafe;
-
   --btn-primary: #111827;
   --btn-primary-hover: #374151;
   --btn-text: #ffffff;
 }
 
-/* Mode Sombre (Activé par React) */
 body.dark-mode {
-  --bg-app: #09090b; /* Fond Zinc ultra profond */
-  --bg-card: #18181b; /* Cartes légèrement détourées */
+  --bg-app: #09090b; 
+  --bg-card: #18181b; 
   --bg-hover: #27272a; 
-  
   --text-main: #f4f4f5; 
   --text-secondary: #a1a1aa; 
   --text-muted: #52525b; 
-
   --border-color: #27272a; 
   --border-focus: #f4f4f5; 
   --grid-line: #27272a;
-
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
-  
   --color-success: #34d399; 
   --bg-success: rgba(16, 185, 129, 0.15);
   --color-danger: #f87171; 
   --bg-danger: rgba(239, 68, 68, 0.15);
   --color-info: #60a5fa; 
   --bg-info: rgba(59, 130, 246, 0.15);
-
   --btn-primary: #f4f4f5;
   --btn-primary-hover: #d4d4d8;
-  --btn-text: #09090b; /* Bouton blanc -> Texte noir */
+  --btn-text: #09090b; 
 }
 
-/* Transitions globales pour un effet smooth au changement de thème */
 body, .carte, .input-fournisseur, .navbar-sidebar, .modal-content, .toast, .week-calendar, .week-header-row, .time-column, .day-column, .btn-action, .theme-toggle-btn {
   transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }
@@ -75,102 +62,36 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--text-main);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-.dashboard-container {
-  max-width: 600px;
-  margin: 0 auto;
-  padding: 40px 20px;
-}
+.dashboard-container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+.main-content { flex-grow: 1; margin-left: 88px; transition: margin-left 0.3s ease; min-height: 100vh; }
 
-h1 {
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  margin: 0 0 8px 0;
-  color: var(--text-main);
-}
-
-.date-subtitle {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-bottom: 32px;
-  display: block;
-  font-weight: 400;
-}
-
-.section-titre {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-main);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 8px;
-}
+h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.025em; margin: 0 0 8px 0; color: var(--text-main); }
+.date-subtitle { font-size: 14px; color: var(--text-secondary); margin-bottom: 32px; display: block; font-weight: 400; }
+.section-titre { font-size: 14px; font-weight: 600; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
 
 /* ==========================================================================
    3. CARTES & CONTENEURS
    ========================================================================== */
 .carte, .top-prestations, .stock-container, .dossier-mois, .scan-carte, .reputation-carte, .export-carte {
-  background: var(--bg-card);
-  border-radius: var(--radius-card);
-  padding: 32px 24px;
-  box-shadow: var(--shadow-sm);
-  border: 1px solid var(--border-color);
-  margin-bottom: 24px;
+  background: var(--bg-card); border-radius: var(--radius-card); padding: 32px 24px; box-shadow: var(--shadow-sm); border: 1px solid var(--border-color); margin-bottom: 24px;
 }
+.logo-container { display: flex; justify-content: center; align-items: center; margin-bottom: 32px; width: 100%; }
+.app-logo { width: 100%; max-width: 260px; height: auto; object-fit: contain; border: none; box-shadow: none; background: transparent; transition: all 0.3s ease; }
+body:not(.dark-mode) .app-logo { mix-blend-mode: darken; }
+body.dark-mode .app-logo { mix-blend-mode: lighten; }
 
-.logo-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  margin-bottom: 32px;
-  width: 100%;
-}
-
-.app-logo {
-  width: 100%;
-  max-width: 260px; /* Logo beaucoup plus grand et majestueux */
-  height: auto;
-  object-fit: contain;
-  /* Suppression absolue du cadre (zéro bordure, zéro ombre) */
-  border: none;
-  box-shadow: none;
-  background: transparent;
-  transition: all 0.3s ease;
-}
-
-/* ASTUCE MAGIQUE PRO : Fusionne le fond du JPG avec la carte pour un effet transparent */
-body:not(.dark-mode) .app-logo {
-  mix-blend-mode: darken; /* Rend le fond clair du JPG invisible sur la carte blanche */
-}
-
-body.dark-mode .app-logo {
-  mix-blend-mode: lighten; /* Rend le fond foncé du JPG invisible sur la carte sombre */
-}
 /* ==========================================================================
    4. DATA VIZ (CHIFFRES & FINANCES)
    ========================================================================== */
-.cartes-financieres {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 32px;
-}
-
+.cartes-financieres { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }
 .carte-titre-container { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: var(--bg-app); border: 1px solid var(--border-color); color: var(--text-secondary); }
 .icon svg { width: 16px; height: 16px; stroke: currentColor; }
 .carte h3 { margin: 0; color: var(--text-secondary); font-size: 13px; font-weight: 500; }
 .montant { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0; color: var(--text-main); display: flex; align-items: baseline; gap: 6px; }
 .devise { font-size: 16px; color: var(--text-muted); font-weight: 500; }
-
 .badge-succes, .rh-role, .badge-discret { padding: 4px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; display: inline-flex; align-items: center; width: fit-content; }
 .badge-succes { background-color: var(--bg-success); color: var(--color-success); }
 .rh-role { background-color: var(--bg-app); color: var(--text-secondary); border: 1px solid var(--border-color); }
@@ -178,46 +99,18 @@ body.dark-mode .app-logo {
 /* ==========================================================================
    5. FORMULAIRES, BOUTONS & BOUTON THÈME
    ========================================================================== */
-.input-fournisseur, .textarea-facture, .agenda-filtre {
-  width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-input); font-size: 14px; font-family: inherit; box-sizing: border-box; outline: none; background-color: var(--bg-card); color: var(--text-main);
-}
+.input-fournisseur, .textarea-facture, .agenda-filtre { width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-input); font-size: 14px; font-family: inherit; box-sizing: border-box; outline: none; background-color: var(--bg-card); color: var(--text-main); }
 .input-fournisseur::placeholder, .textarea-facture::placeholder { color: var(--text-muted); }
 .input-fournisseur:focus, .textarea-facture:focus, .agenda-filtre:focus { border-color: var(--border-focus); box-shadow: none !important; }
 .textarea-facture { min-height: 100px; resize: vertical; }
 
-.btn-action, .btn-export {
-  background-color: var(--btn-primary); color: var(--btn-text); border: 1px solid var(--btn-primary); border-radius: var(--radius-input); padding: 10px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: none !important; transition: all 0.2s ease;
-}
+.btn-action, .btn-export { background-color: var(--btn-primary); color: var(--btn-text); border: 1px solid var(--btn-primary); border-radius: var(--radius-input); padding: 10px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: none !important; transition: all 0.2s ease; }
 .btn-action:hover, .btn-export:hover { background-color: var(--btn-primary-hover); border-color: var(--btn-primary-hover); }
 .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* --- LE BOUTON JOUR / NUIT PREMIUM --- */
-.theme-toggle-btn {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
-}
-.theme-toggle-btn:hover {
-  color: var(--text-main);
-  border-color: var(--text-main);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-}
-.theme-toggle-fixed {
-  position: fixed;
-  top: 24px;
-  right: 24px;
-  z-index: 1000;
-}
+.theme-toggle-btn { background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: var(--shadow-sm); transition: all 0.2s ease; }
+.theme-toggle-btn:hover { color: var(--text-main); border-color: var(--text-main); transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+.theme-toggle-fixed { position: fixed; top: 24px; right: 24px; z-index: 1000; }
 
 /* ==========================================================================
    6. BARRE DE NAVIGATION LATÉRALE
@@ -229,6 +122,7 @@ body.dark-mode .app-logo {
 .nav-icon { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; opacity: 0.7; }
 .nav-item.active .nav-icon { opacity: 1; }
 .nav-icon svg { width: 100%; height: 100%; stroke: currentColor; }
+.navbar-spacer { flex-grow: 1; }
 
 /* ==========================================================================
    7. LISTES
@@ -267,7 +161,7 @@ body.dark-mode .app-logo {
 /* ==========================================================================
    9. MODALS & OVERLAYS
    ========================================================================== */
-.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); display: flex; justify-content: center; align-items: center; z-index: 9999; }
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); display: flex; justify-content: center; align-items: center; z-index: 9999; padding: 16px; box-sizing: border-box; }
 .modal-content { background: var(--bg-card); padding: 32px; border-radius: var(--radius-card); width: 100%; max-width: 440px; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); position: relative; border: 1px solid var(--border-color); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
 .modal-close-btn { background: none; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); transition: color 0.15s ease; display: flex; align-items: center; justify-content: center; }
@@ -282,3 +176,30 @@ body.dark-mode .app-logo {
 .toast.success { border-left-color: var(--color-success); }
 .toast.error { border-left-color: var(--color-danger); }
 @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* ==========================================================================
+   11. RESPONSIVE DESIGN (MOBILE & TABLETTE)
+   ========================================================================== */
+@media (max-width: 768px) {
+  /* La barre latérale passe en bas (Style App iOS) */
+  .navbar-sidebar {
+    top: auto; bottom: 0; width: 100%; height: 72px; flex-direction: row; padding: 0 16px; box-sizing: border-box; border-right: none; border-top: 1px solid var(--border-color); justify-content: flex-start; overflow-x: auto; gap: 12px;
+  }
+  .navbar-sidebar::-webkit-scrollbar { display: none; }
+  .navbar-spacer { display: none; } /* Enlève l'espace pour que le bouton Quitter rejoigne les autres */
+  .nav-item { min-width: 64px; padding: 8px 4px; margin-bottom: 0 !important; }
+
+  /* Le contenu principal remonte pour laisser la place au menu du bas */
+  .main-content { margin-left: 0; margin-bottom: 72px; }
+  .dashboard-container { padding: 24px 16px; }
+  
+  /* L'en-tête de l'Agenda devient vertical */
+  .agenda-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+  .agenda-header > div { width: 100%; justify-content: space-between; }
+  
+  /* Les cartes financières s'empilent */
+  .cartes-financieres { grid-template-columns: 1fr; }
+  
+  /* Le bouton Thème se décale sur mobile pour ne pas gêner */
+  .theme-toggle-fixed { top: 16px; right: 16px; }
+}
