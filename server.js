@@ -576,5 +576,69 @@ async function executerRobotComptable() {
 cron.schedule('0 3 * * *', () => { executerRobotComptable(); });
 app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot comptable lancé." }); });
 
+const cron = require('node-cron');
+
+// Exécution tous les matins à 9h00
+cron.schedule('0 9 * * *', async () => {
+    console.log("🤖 Exécution du Robot Marketing (Fidélité & Anniversaires)");
+    try {
+        // 1. Récupérer tous les salons qui ont configuré Brevo
+        const salons = await db.query("SELECT * FROM parametres_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''");
+        
+        for (let salon of salons.rows) {
+            // -- CAMPAGNE D'INACTIVITÉ --
+            if (salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0) {
+                // Trouver les clients sans RDV futur et inactifs depuis X jours
+                const clientsInactifs = await db.query(`
+                    SELECT c.* FROM clients c
+                    LEFT JOIN rdv r ON r.id_client = c.id_client AND r.date_heure_debut >= NOW()
+                    WHERE c.id_salon = $1 
+                    AND c.derniere_visite <= NOW() - INTERVAL '${salon.fidelite_delai_sms} days'
+                    AND r.id_rdv IS NULL
+                `, [salon.id_salon]);
+
+                for (let client of clientsInactifs.rows) {
+                    if (!client.telephone) continue;
+                    let message = "";
+                    
+                    if (salon.fidelite_type === 'TAMPONS') {
+                        const restants = salon.fidelite_tampons_seuil - (client.tampons_fidelite || 0);
+                        message = `Hey ${client.nom.split(' ')[0]} ! Cela fait un moment qu'on ne t'a pas vu chez ${salon.sms_sender_name}. Plus que ${restants} passage(s) avant ta récompense ! Prends vite rendez-vous : ${salon.lien_google_maps}`;
+                    } else if (salon.fidelite_type === 'POINTS') {
+                        message = `Bonjour ${client.nom.split(' ')[0]}, votre fidélité paie ! Vous avez ${client.points_fidelite || 0} points. Venez en profiter chez ${salon.sms_sender_name}. RDV: ${salon.lien_google_maps}`;
+                    }
+
+                    if (message !== "") await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, message);
+                }
+            }
+
+            // -- CAMPAGNE ANNIVERSAIRE --
+            const anniversaires = await db.query(`
+                SELECT * FROM clients 
+                WHERE id_salon = $1 
+                AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
+                AND EXTRACT(DAY FROM date_naissance) = EXTRACT(DAY FROM NOW())
+            `, [salon.id_salon]);
+
+            for (let client of anniversaires.rows) {
+                if (client.telephone) {
+                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.nom.split(' ')[0]} ! 🎉 ${salon.sms_sender_name} a une surprise pour vous aujourd'hui. Prenez RDV : ${salon.lien_google_maps}`);
+                }
+            }
+        }
+    } catch (err) { console.error("Erreur Cron Job :", err); }
+});
+
+// Fonction d'envoi Brevo API Officielle
+async function envoyerSMS(apiKey, sender, phone, text) {
+    try {
+        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST',
+            headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': apiKey },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: true, sender: sender.substring(0, 11), recipient: phone, content: text })
+        });
+    } catch(e) { console.log("Echec SMS :", e.message); }
+}
+
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
