@@ -18,6 +18,7 @@ function App() {
       }
   }, [isDarkMode]);
 
+  // Composant Bouton Thème Premium
   const ThemeToggle = ({ isFixed }) => (
       <button onClick={() => setIsDarkMode(!isDarkMode)} className={`theme-toggle-btn ${isFixed ? 'theme-toggle-fixed' : ''}`} title="Basculer le thème">
           {isDarkMode ? (
@@ -80,12 +81,11 @@ function App() {
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
 
-  // --- ÉTAT DU SPLIT-SCREEN CAISSE ---
-  const [posEmploye, setPosEmploye] = useState('');
-  const [posType, setPosType] = useState('PRESTATION'); 
-  const [clientCaisse, setClientCaisse] = useState('');
-  const [panierCaisse, setPanierCaisse] = useState([]); // Tableau des articles dans le ticket
+  const [posStep, setPosStep] = useState('employee'); 
+  const [posEmploye, setPosEmploye] = useState(null);
+  const [posType, setPosType] = useState(null); 
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
+  const [clientCaisse, setClientCaisse] = useState('');
 
   // --- RESPONSIVE AGENDA LOGIC ---
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
@@ -140,10 +140,12 @@ function App() {
   const [notificationCaisse, setNotificationCaisse] = useState(null);
   const [socket, setSocket] = useState(null);
 
+  // --- ÉTAT GLOBAL DES PARAMÈTRES (INCLUANT LA FIDÉLITÉ) ---
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '',
     email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '',
-    heure_ouverture: 8, heure_fermeture: 20
+    heure_ouverture: 8, heure_fermeture: 20,
+    fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60
   });
 
   const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
@@ -196,7 +198,7 @@ function App() {
   const chargerTout = () => {
     const role = decodeToken(token)?.role;
     if (role === 'employe') return; 
-    setDashboardData(null); // Active le Skeleton
+    setDashboardData(null); 
     fetch('https://api-salon-backend.onrender.com/api/dashboard', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setDashboardData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/employes', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setEmployesListe(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/catalogue', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setCatalogueListe(d)).catch(e => console.log(e.message));
@@ -204,7 +206,12 @@ function App() {
     fetch('https://api-salon-backend.onrender.com/api/rh', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setRhData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/factures/historique', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setHistoriqueData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/clients', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setClientsListe(d)).catch(e => console.log(e.message));
-    fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setConfigSalon({ google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '', heure_ouverture: d.heure_ouverture || 8, heure_fermeture: d.heure_fermeture || 20 })).catch(e => console.log(e.message));
+    fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setConfigSalon({ 
+        google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', 
+        email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '', 
+        heure_ouverture: d.heure_ouverture || 8, heure_fermeture: d.heure_fermeture || 20,
+        fidelite_type: d.fidelite_type || 'NONE', fidelite_points_seuil: d.fidelite_points_seuil || 100, fidelite_points_valeur: d.fidelite_points_valeur || 10, fidelite_tampons_seuil: d.fidelite_tampons_seuil || 10, fidelite_recompense_type: d.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d.fidelite_recompense_valeur || '10', fidelite_delai_sms: d.fidelite_delai_sms || 60
+    })).catch(e => console.log(e.message));
   };
 
   useEffect(() => {
@@ -283,6 +290,8 @@ function App() {
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
   // --- NOUVELLE CAISSE ENREGISTREUSE (SPLIT SCREEN) ---
+  const [panierCaisse, setPanierCaisse] = useState([]); 
+
   const ajouterAuPanier = (article) => {
       const exist = panierCaisse.find(item => item.id_article === article.id_article);
       if (exist) {
@@ -320,7 +329,6 @@ function App() {
         });
         setEmailTicketClient(clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email || '' : '');
         
-        // Reset de la caisse
         setPanierCaisse([]);
         setClientCaisse('');
         setPosEmploye('');
@@ -340,7 +348,23 @@ function App() {
   }
 
   const declencherExport = async () => { showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
-  const sauvegarderParametres = async () => { showToast("Sauvegarde en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); const data = await handleFetchError(response); showToast(data.message, "success"); chargerTout(); setTimeout(() => { setActiveTab('accueil'); }, 1000); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }};
+  
+  const sauvegarderParametres = async () => { 
+      showToast("Sauvegarde en cours..."); 
+      try { 
+          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { 
+              method: 'POST', 
+              headers: getAuthHeaders(true), 
+              body: JSON.stringify(configSalon) 
+          }); 
+          const data = await handleFetchError(response); 
+          showToast(data.message, "success"); 
+          chargerTout(); 
+          setTimeout(() => { setActiveTab('accueil'); }, 1000); 
+      } catch (error) { 
+          if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); 
+      }
+  };
 
   const creerRdvManuel = async () => {
       try {
@@ -766,7 +790,12 @@ function App() {
                   Tableau de bord
                   <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span>
                 </h1>
-                <ThemeToggle />
+                <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                  <ThemeToggle />
+                  <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                  </button>
+                </div>
               </div>
               <span className="date-subtitle">{formatDateComplete(new Date())}</span>
               {erreur && <p style={{color: 'var(--color-danger)'}}>❌ {erreur}</p>}
@@ -976,10 +1005,67 @@ function App() {
             <div className="admin-container">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                 <h1 style={{margin: 0}}>Paramètres</h1>
-                <ThemeToggle />
+                <button onClick={() => setActiveTab('accueil')} style={{background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: 'var(--text-secondary)'}}>
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
               
+              {/* --- NOUVEAU BLOC FIDÉLITÉ --- */}
+              <div className="carte scan-carte">
+                <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
+                <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
+                
+                <select className="input-fournisseur" value={configSalon.fidelite_type} onChange={e => setConfigSalon({...configSalon, fidelite_type: e.target.value})} style={{marginBottom: '16px'}}>
+                    <option value="NONE">Désactivé</option>
+                    <option value="POINTS">Par Points (1€ = 1 point)</option>
+                    <option value="TAMPONS">Carte à Tampons (1 visite = 1 tampon)</option>
+                </select>
+
+                {configSalon.fidelite_type === 'POINTS' && (
+                    <div style={{display: 'flex', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                        <div style={{flex: 1}}>
+                            <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Points à atteindre</label>
+                            <input type="number" className="input-fournisseur" placeholder="Ex: 100" value={configSalon.fidelite_points_seuil} onChange={e => setConfigSalon({...configSalon, fidelite_points_seuil: e.target.value})} />
+                        </div>
+                        <div style={{flex: 1}}>
+                            <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Réduction offerte (€)</label>
+                            <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_points_valeur} onChange={e => setConfigSalon({...configSalon, fidelite_points_valeur: e.target.value})} />
+                        </div>
+                    </div>
+                )}
+
+                {configSalon.fidelite_type === 'TAMPONS' && (
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                        <div>
+                            <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Nombre de passages requis</label>
+                            <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_tampons_seuil} onChange={e => setConfigSalon({...configSalon, fidelite_tampons_seuil: e.target.value})} />
+                        </div>
+                        <div style={{display: 'flex', gap: '12px'}}>
+                            <div style={{flex: 1}}>
+                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Type de récompense</label>
+                                <select className="input-fournisseur" value={configSalon.fidelite_recompense_type} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_type: e.target.value})}>
+                                    <option value="MONTANT">Remise fixe (€)</option>
+                                    <option value="POURCENTAGE">Pourcentage (%)</option>
+                                    <option value="PRODUIT">Produit / Service offert</option>
+                                </select>
+                            </div>
+                            <div style={{flex: 1}}>
+                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Valeur (Ex: 20, 10, Shampoing)</label>
+                                <input type="text" className="input-fournisseur" value={configSalon.fidelite_recompense_valeur} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_valeur: e.target.value})} />
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '24px 0 8px 0'}}>📱 Relance SMS Auto</h4>
+                <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Délai d'inactivité avant relance (Jours)</label>
+                    <input type="number" className="input-fournisseur" placeholder="Ex: 60" value={configSalon.fidelite_delai_sms} onChange={e => setConfigSalon({...configSalon, fidelite_delai_sms: e.target.value})} />
+                    <p style={{fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Un SMS incitatif sera envoyé si le client ne vient pas pendant cette durée.</p>
+                </div>
+              </div>
+
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Google My Business</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
@@ -1060,15 +1146,15 @@ function App() {
                       ) : (
                         <>
                           <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
-                              <button onClick={() => setPosType('PRESTATION')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
-                              <button onClick={() => setPosType('PRODUIT_REVENTE')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
+                              <button onClick={() => setPosType('PRESTATION')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
+                              <button onClick={() => setPosType('PRODUIT_REVENTE')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
                           </div>
 
                           <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '16px'}}>
                             {catalogueListe.filter(art => art.type_article === posType).map(art => (
                                 <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '24px 16px', borderRadius: 'var(--radius-card)', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '8px', textAlign: 'center', transition: 'border-color 0.2s ease', boxShadow: 'var(--shadow-sm)' }}>
                                   <span style={{fontSize: '14px', fontWeight: '500', color: 'var(--text-main)'}}>{art.nom}</span>
-                                  <span style={{fontSize: '18px', fontWeight: '700', color: 'var(--btn-primary)'}}>{parseFloat(art.prix).toFixed(2)} €</span>
+                                  <span style={{fontSize: '18px', fontWeight: '700', color: 'var(--text-main)'}}>{parseFloat(art.prix).toFixed(2)} €</span>
                                 </div>
                             ))}
                           </div>
