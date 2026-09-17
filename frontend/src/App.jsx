@@ -18,7 +18,6 @@ function App() {
       }
   }, [isDarkMode]);
 
-  // Composant Bouton Thème Premium
   const ThemeToggle = ({ isFixed }) => (
       <button onClick={() => setIsDarkMode(!isDarkMode)} className={`theme-toggle-btn ${isFixed ? 'theme-toggle-fixed' : ''}`} title="Basculer le thème">
           {isDarkMode ? (
@@ -59,7 +58,7 @@ function App() {
 
   // --- TOAST NOTIFICATIONS & MODAL DANGER ---
   const [toast, setToast] = useState(null);
-  const [confirmDialog, setConfirmDialog] = useState(null); // Remplacement de window.confirm()
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
@@ -81,11 +80,12 @@ function App() {
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
 
-  const [posStep, setPosStep] = useState('employee'); 
-  const [posEmploye, setPosEmploye] = useState(null);
-  const [posType, setPosType] = useState(null); 
-  const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
+  // --- ÉTAT DU SPLIT-SCREEN CAISSE ---
+  const [posEmploye, setPosEmploye] = useState('');
+  const [posType, setPosType] = useState('PRESTATION'); 
   const [clientCaisse, setClientCaisse] = useState('');
+  const [panierCaisse, setPanierCaisse] = useState([]); // Tableau des articles dans le ticket
+  const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
   // --- RESPONSIVE AGENDA LOGIC ---
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
@@ -106,7 +106,7 @@ function App() {
           const diff = date.getDate() - day + (day === 0 ? -6 : 1);
           return new Date(date.setDate(diff));
       }
-      return date; // Sur mobile/tablette, on commence exactement au jour cliqué
+      return date; 
   };
 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -196,6 +196,7 @@ function App() {
   const chargerTout = () => {
     const role = decodeToken(token)?.role;
     if (role === 'employe') return; 
+    setDashboardData(null); // Active le Skeleton
     fetch('https://api-salon-backend.onrender.com/api/dashboard', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setDashboardData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/employes', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setEmployesListe(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/catalogue', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setCatalogueListe(d)).catch(e => console.log(e.message));
@@ -281,11 +282,32 @@ function App() {
 
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
+  // --- NOUVELLE CAISSE ENREGISTREUSE (SPLIT SCREEN) ---
+  const ajouterAuPanier = (article) => {
+      const exist = panierCaisse.find(item => item.id_article === article.id_article);
+      if (exist) {
+          setPanierCaisse(panierCaisse.map(item => item.id_article === article.id_article ? { ...item, quantite: item.quantite + 1 } : item));
+      } else {
+          setPanierCaisse([...panierCaisse, { ...article, quantite: 1, prix_unitaire: parseFloat(article.prix) }]);
+      }
+  };
+
+  const retirerDuPanier = (id_article) => {
+      setPanierCaisse(panierCaisse.filter(item => item.id_article !== id_article));
+  };
+
+  const validerEncaisser = () => {
+      if(!posEmploye) { showToast("Veuillez sélectionner un employé responsable.", "error"); return; }
+      if(panierCaisse.length === 0) { showToast("Le ticket est vide.", "error"); return; }
+      
+      const montantTotal = panierCaisse.reduce((acc, item) => acc + (item.prix_unitaire * item.quantite), 0);
+      lancerPaiementTPE(montantTotal, panierCaisse);
+  };
+
   const lancerPaiementTPE = async (montant, lignes) => {
-    if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
     setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
     try {
-        const payloadTPE = { montant, id_employe: posEmploye.id_employe, id_client: clientCaisse || null, lignes };
+        const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes };
         const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
         const data = await handleFetchError(res);
         
@@ -297,7 +319,11 @@ function App() {
             lignes: lignes
         });
         setEmailTicketClient(clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email || '' : '');
-        setPosStep('employee'); setPosEmploye(null); setClientCaisse('');
+        
+        // Reset de la caisse
+        setPanierCaisse([]);
+        setClientCaisse('');
+        setPosEmploye('');
     } catch (error) { if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur TPE."}`); }
   };
 
@@ -347,7 +373,6 @@ function App() {
       } catch(e) { showToast("Erreur lors de la modification.", "error"); }
   };
 
-  // --- LES NOUVELLES MODALES DE CONFIRMATION (REMPLACEMENT WINDOW.CONFIRM) ---
   const demanderSuppressionRdv = () => {
       setConfirmDialog({
           titre: "Supprimer le rendez-vous",
@@ -383,6 +408,13 @@ function App() {
       } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
   };
 
+  // --- SVG EMPTY STATE ---
+  const SvgEmptyState = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/>
+    </svg>
+  );
+
   // --- RENDER RESET PASSWORD ---
   if (resetTokenUrl) {
       return (
@@ -390,7 +422,7 @@ function App() {
           <ThemeToggle isFixed={true} />
           <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
             <div className="logo-container">
-                <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+                <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
             </div>
             <h2 style={{color: 'var(--text-main)'}}>Nouveau mot de passe</h2>
             <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
@@ -427,7 +459,7 @@ function App() {
         <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
           
           <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
           </div>
 
           <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
@@ -493,7 +525,7 @@ function App() {
         <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
           
           <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.JPG" : "/IMG_6804.JPG"} alt="STACK Logo" className="app-logo" />
+              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
           </div>
 
           <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Abonnement Requis</h2>
@@ -569,7 +601,6 @@ function App() {
              </>
          )}
 
-         {/* --- BOUTON DE DECONNEXION UNIVERSEL (GÉRANT ET EMPLOYÉ) --- */}
          <div className="navbar-spacer"></div>
          <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter">
              <span className="nav-icon">
@@ -580,7 +611,7 @@ function App() {
       </div>
 
       <div className="main-content">
-        <div className="dashboard-container" style={{maxWidth: (activeTab === 'caisse' || activeTab === 'agenda') ? '900px' : '600px'}}>
+        <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
           
           {activeTab === 'agenda' && (
             <div className="admin-container">
@@ -735,10 +766,22 @@ function App() {
                   Tableau de bord
                   <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span>
                 </h1>
+                <ThemeToggle />
               </div>
               <span className="date-subtitle">{formatDateComplete(new Date())}</span>
               {erreur && <p style={{color: 'var(--color-danger)'}}>❌ {erreur}</p>}
-              {!dashboardData && !erreur ? <p style={{color: 'var(--text-secondary)'}}>Chargement de vos données...</p> : dashboardData && (
+              
+              {!dashboardData && !erreur ? (
+                /* --- SKELETON LOADER --- */
+                <div>
+                  <div className="carte skeleton-loading" style={{height: '100px', marginBottom: '24px'}}></div>
+                  <div className="cartes-financieres">
+                      <div className="carte skeleton-loading" style={{height: '120px'}}></div>
+                      <div className="carte skeleton-loading" style={{height: '120px'}}></div>
+                  </div>
+                  <div className="carte skeleton-loading" style={{height: '200px'}}></div>
+                </div>
+              ) : dashboardData && (
                 <>
                   {dashboardData.marketing && (
                     <div className="carte reputation-carte">
@@ -772,7 +815,12 @@ function App() {
                   </div>
                   <div className="section-titre">Top 3 Prestations</div>
                   <div className="top-prestations">
-                    {dashboardData.top_3_prestations.map((presta, i) => (
+                    {dashboardData.top_3_prestations.length === 0 ? (
+                        <div className="empty-state">
+                            <SvgEmptyState />
+                            <p>Aucune prestation enregistrée.</p>
+                        </div>
+                    ) : dashboardData.top_3_prestations.map((presta, i) => (
                       <div className="presta-item" key={i}><div className="presta-header"><span className="presta-nom"> {presta.nom}</span>{i === 0 && <span className="badge-succes">N°1</span>}</div><div className="presta-details"><span>Total généré</span><span className="montant-presta">{presta.total_genere} <span className="devise" style={{fontSize:'12px'}}>€</span></span></div></div>
                     ))}
                   </div>
@@ -783,7 +831,10 @@ function App() {
 
           {role === 'gerant' && activeTab === 'gestion' && (
             <div className="admin-container">
-              <h1>Gestion du Salon</h1>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                  <h1 style={{margin: 0}}>Gestion du Salon</h1>
+                  <ThemeToggle />
+              </div>
               <span className="date-subtitle">Remplissez votre base de données</span>
               
               <div className="section-titre">Catalogue (Prestations & Produits)</div>
@@ -792,7 +843,7 @@ function App() {
                   <input type="text" className="input-fournisseur" placeholder={newArticle.type_article === 'PRODUIT_REVENTE' ? "Nom (Laissez vide si réassort)" : "Nom (ex: Coupe Homme)"} value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value})} />
                   <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value})} />
                 </div>
-                <div style={{display: 'flex', gap: '12px'}}>
+                <div style={{display: 'flex', gap: '12px', marginTop: '12px', marginBottom: '16px'}}>
                   <select className="input-fournisseur" value={newArticle.type_article} onChange={(e) => setNewArticle({...newArticle, type_article: e.target.value, reference: '', stock_actuel: ''})}>
                     <option value="PRESTATION">Prestation (Service)</option>
                     <option value="PRODUIT_REVENTE">Produit Revente (Stock)</option>
@@ -804,9 +855,11 @@ function App() {
                     </>
                   )}
                 </div>
-                <button className="btn-action" onClick={ajouterArticle} disabled={(newArticle.type_article === 'PRESTATION' && (!newArticle.nom || !newArticle.prix)) || (newArticle.type_article === 'PRODUIT_REVENTE' && !newArticle.reference)}>{newArticle.type_article === 'PRODUIT_REVENTE' && !newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
-                <div style={{marginTop: '16px'}}>
-                  {catalogueListe.map(art => (
+                <button className="btn-action" onClick={ajouterArticle} disabled={(newArticle.type_article === 'PRESTATION' && (!newArticle.nom || !newArticle.prix)) || (newArticle.type_article === 'PRODUIT_REVENTE' && !newArticle.reference)} style={{width: '100%'}}>{newArticle.type_article === 'PRODUIT_REVENTE' && !newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
+                <div style={{marginTop: '24px'}}>
+                  {catalogueListe.length === 0 ? (
+                      <div className="empty-state" style={{padding: '20px'}}><p>Catalogue vide.</p></div>
+                  ) : catalogueListe.map(art => (
                     <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
                       <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € {art.reference && <span style={{color: 'var(--text-muted)', marginLeft: '8px'}}>(Réf: {art.reference})</span>}</span>
                       <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
@@ -817,16 +870,19 @@ function App() {
 
               <div className="section-titre" style={{marginTop: '32px'}}>Équipe & Commissions</div>
               <div className="carte scan-carte">
-                <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
-                <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN personnel (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} />
-                
-                <div style={{display: 'flex', gap: '12px'}}>
+                <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                  <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                  <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
+                </div>
+                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
                   <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
                   <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
                 </div>
-                <button className="btn-action" onClick={ajouterEmploye} disabled={!newEmploye.nom || !newEmploye.code_pin}>Ajouter un collaborateur</button>
-                <div style={{marginTop: '16px'}}>
-                  {employesListe.map(emp => (
+                <button className="btn-action" onClick={ajouterEmploye} disabled={!newEmploye.nom || !newEmploye.code_pin} style={{width: '100%'}}>Ajouter un collaborateur</button>
+                <div style={{marginTop: '24px'}}>
+                  {employesListe.length === 0 ? (
+                      <div className="empty-state" style={{padding: '20px'}}><p>Aucun collaborateur.</p></div>
+                  ) : employesListe.map(emp => (
                     <div key={emp.id_employe} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
                       <span style={{fontWeight: '500', color: 'var(--text-main)'}}>{emp.nom} <span style={{color: 'var(--text-muted)', fontWeight: 'normal'}}>(PIN: {emp.code_pin || '0000'})</span></span>
                       <button onClick={() => supprimerEmploye(emp.id_employe)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
@@ -837,11 +893,15 @@ function App() {
 
               <div className="section-titre" style={{marginTop: '32px'}}>Base Clients (CRM)</div>
               <div className="carte scan-carte">
-                <input type="text" className="input-fournisseur" placeholder="Nom du client" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
-                <input type="tel" className="input-fournisseur" placeholder="Téléphone (ex: +33612345678)" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
-                <button className="btn-action" onClick={ajouterClient} disabled={!newClient.nom}>Ajouter un client</button>
-                <div style={{marginTop: '16px'}}>
-                  {clientsListe.map(cli => (
+                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                  <input type="text" className="input-fournisseur" placeholder="Nom du client" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
+                  <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
+                </div>
+                <button className="btn-action" onClick={ajouterClient} disabled={!newClient.nom} style={{width: '100%'}}>Ajouter un client</button>
+                <div style={{marginTop: '24px'}}>
+                  {clientsListe.length === 0 ? (
+                      <div className="empty-state" style={{padding: '20px'}}><p>Base client vide.</p></div>
+                  ) : clientsListe.map(cli => (
                     <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
                       <span style={{cursor: 'pointer', color: 'var(--color-info)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={() => ouvrirFicheClient(cli)}>
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -853,6 +913,7 @@ function App() {
                 </div>
               </div>
 
+              {/* --- MODAL FICHE CLIENT (CRM) --- */}
               {clientSelectionne && (
                   <div className="modal-overlay">
                       <div className="modal-content">
@@ -866,7 +927,9 @@ function App() {
                               </button>
                           </div>
                           
-                          {chargementFiche ? <p style={{textAlign: 'center', color: 'var(--text-secondary)'}}>Chargement des données...</p> : (
+                          {chargementFiche ? (
+                              <div className="skeleton-loading" style={{height: '200px'}}></div>
+                          ) : (
                             <>
                               <div className="section-titre" style={{fontSize: '13px', marginTop: '16px'}}>Dossier Technique</div>
                               <textarea 
@@ -913,17 +976,15 @@ function App() {
             <div className="admin-container">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                 <h1 style={{margin: 0}}>Paramètres</h1>
-                <button onClick={() => setActiveTab('accueil')} style={{background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: 'var(--text-secondary)'}}>
-                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
+                <ThemeToggle />
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
               
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Google My Business</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
-                <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} />
-                <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} />
+                <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
+                <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} style={{marginBottom: '12px'}}/>
                 <input type="text" className="input-fournisseur" placeholder="Google Location ID" value={configSalon.google_location_id} onChange={(e) => setConfigSalon({...configSalon, google_location_id: e.target.value})} />
               </div>
 
@@ -945,15 +1006,15 @@ function App() {
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Boîte Mail (Robot Comptable)</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
-                <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} />
+                <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
                 <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
               </div>
               
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Fidélisation (SMS Auto)</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
-                <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} />
-                <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} />
+                <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
+                <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} style={{marginBottom: '12px'}}/>
                 <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps (ex: https://g.page/...)" value={configSalon.lien_google_maps} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
               </div>
 
@@ -967,74 +1028,105 @@ function App() {
             </div>
           )}
 
+          {/* --- NOUVELLE CAISSE ENREGISTREUSE TACTILE (SPLIT SCREEN) --- */}
           {role === 'gerant' && activeTab === 'caisse' && (
             <div className="admin-container">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                <h1 style={{margin: 0}}>Caisse Tactile</h1>
-                {posStep !== 'employee' && (
-                  <button onClick={() => { setPosStep('employee'); setPosEmploye(null); }} style={{padding:'10px 16px', borderRadius:'var(--radius-input)', background:'var(--bg-card)', border:'1px solid var(--border-color)', cursor:'pointer', fontWeight: '500', color: 'var(--text-main)'}}>
-                    ⬅ Changer ({posEmploye?.nom.split(' ')[0]})
-                  </button>
-                )}
+                <h1 style={{margin: 0}}>Caisse</h1>
+                <ThemeToggle />
               </div>
 
-              {posStep === 'employee' && (
-                <div>
-                  <h3 style={{color: 'var(--text-secondary)', marginBottom: '16px', fontWeight: '500', fontSize: '14px'}}>1. Qui réalise la vente ?</h3>
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px'}}>
-                    {employesListe.map((emp, index) => (
-                      <div key={emp.id_employe} onClick={() => { setPosEmploye(emp); setPosStep('type'); }}
-                        style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '32px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', border: '1px solid rgba(0,0,0,0.05)' }}>
-                        {emp.nom.split(' ')[0]}
-                      </div>
-                    ))}
-                  </div>
-                  {employesListe.length === 0 && <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '24px'}}>Aucun employé. Allez dans l'onglet "Gestion".</p>}
-                </div>
-              )}
-
-              {posStep === 'type' && (
-                <div>
-                  <h3 style={{color: 'var(--text-secondary)', marginBottom: '16px', fontWeight: '500', fontSize: '14px'}}>2. Type de transaction</h3>
-                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px'}}>
-                    <div onClick={() => { setPosType('PRESTATION'); setPosStep('items'); }} style={{ background: '#1f2937', color: 'white', padding: '40px 20px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer' }}>Services</div>
-                    <div onClick={() => { setPosType('PRODUIT_REVENTE'); setPosStep('items'); }} style={{ background: '#374151', color: 'white', padding: '40px 20px', borderRadius: 'var(--radius-card)', fontSize: '20px', fontWeight: '600', textAlign: 'center', cursor: 'pointer' }}>Produits</div>
-                  </div>
-                </div>
-              )}
-
-              {posStep === 'items' && (
-                <div>
-                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: '16px'}}>
-                    <h3 style={{color: 'var(--text-secondary)', margin: 0, fontWeight: '500', fontSize: '14px'}}>3. Sélectionner ({posType === 'PRESTATION' ? 'Services' : 'Produits'})</h3>
-                    <button onClick={() => setPosStep('type')} style={{border:'none', background:'none', color:'var(--text-main)', cursor:'pointer', fontWeight:500, textDecoration: 'underline'}}>Changer de catégorie</button>
-                  </div>
-
-                  <div style={{marginBottom: '24px'}}>
-                    <select className="input-fournisseur" value={clientCaisse} onChange={(e) => setClientCaisse(e.target.value)}>
-                      <option value="">-- Assigner un Client (Optionnel) --</option>
-                      {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client}>{cli.nom}</option>)}
-                    </select>
-                  </div>
-
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px'}}>
-                    {catalogueListe
-                      .filter(art => art.type_article === posType)
-                      .sort((a, b) => a.nom.localeCompare(b.nom))
-                      .map(art => (
-                        <div key={art.id_article} onClick={() => {
-                           const total = parseFloat(art.prix);
-                           lancerPaiementTPE(total, [{ id_article: art.id_article, quantite: 1, prix_unitaire: total }]);
-                        }} style={{ background: posType === 'PRESTATION' ? '#1f2937' : '#374151', color: 'white', padding: '24px', borderRadius: 'var(--radius-card)', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '8px', textAlign: 'center' }}>
-                          <span style={{fontSize: '15px', fontWeight: '500'}}>{art.nom}</span>
-                          <span style={{fontSize: '22px', fontWeight: '700'}}>{parseFloat(art.prix).toFixed(2)} €</span>
+              <div className="caisse-split-container">
+                  {/* PANNEAU GAUCHE : Sélection (Employé / Type / Articles) */}
+                  <div className="caisse-left-panel">
+                      
+                      {/* Choix de l'employé (Toujours visible si non sélectionné) */}
+                      {!posEmploye ? (
+                        <div className="carte">
+                            <h3 style={{color: 'var(--text-main)', marginBottom: '16px', fontWeight: '600', fontSize: '16px'}}>1. Qui réalise la vente ?</h3>
+                            {employesListe.length === 0 ? (
+                                <div className="empty-state"><p>Aucun collaborateur enregistré.</p></div>
+                            ) : (
+                                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '16px'}}>
+                                    {employesListe.map((emp, index) => (
+                                        <div key={emp.id_employe} onClick={() => setPosEmploye(emp.id_employe)}
+                                            style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '24px 12px', borderRadius: 'var(--radius-card)', fontSize: '16px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', transition: 'transform 0.15s ease' }}>
+                                            {emp.nom.split(' ')[0]}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                    ))}
+                      ) : (
+                        <>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
+                              <button onClick={() => setPosType('PRESTATION')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
+                              <button onClick={() => setPosType('PRODUIT_REVENTE')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
+                          </div>
+
+                          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '16px'}}>
+                            {catalogueListe.filter(art => art.type_article === posType).map(art => (
+                                <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '24px 16px', borderRadius: 'var(--radius-card)', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '8px', textAlign: 'center', transition: 'border-color 0.2s ease', boxShadow: 'var(--shadow-sm)' }}>
+                                  <span style={{fontSize: '14px', fontWeight: '500', color: 'var(--text-main)'}}>{art.nom}</span>
+                                  <span style={{fontSize: '18px', fontWeight: '700', color: 'var(--btn-primary)'}}>{parseFloat(art.prix).toFixed(2)} €</span>
+                                </div>
+                            ))}
+                          </div>
+                          {catalogueListe.filter(art => art.type_article === posType).length === 0 && (
+                              <div className="empty-state">
+                                  <SvgEmptyState />
+                                  <p>Aucun élément dans cette catégorie.</p>
+                              </div>
+                          )}
+                        </>
+                      )}
                   </div>
 
-                  {catalogueListe.filter(art => art.type_article === posType).length === 0 && <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '24px'}}>Aucun élément dans cette catégorie.</p>}
-                </div>
-              )}
+                  {/* PANNEAU DROITE : Le Ticket Virtuel */}
+                  <div className="caisse-right-panel">
+                      <div className="ticket-header">
+                          <h3 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                              Ticket en cours
+                              {posEmploye && <button onClick={() => setPosEmploye('')} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
+                          </h3>
+                          <select className="input-fournisseur" value={clientCaisse} onChange={(e) => setClientCaisse(e.target.value)} style={{fontSize: '13px', padding: '8px'}}>
+                              <option value="">Client de passage (Optionnel)</option>
+                              {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client}>{cli.nom}</option>)}
+                          </select>
+                      </div>
+
+                      <div className="ticket-lignes">
+                          {panierCaisse.length === 0 ? (
+                              <p style={{fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '40px'}}>Sélectionnez des articles à gauche.</p>
+                          ) : (
+                              panierCaisse.map((item, index) => (
+                                  <div className="ticket-ligne" key={index}>
+                                      <div style={{display: 'flex', flexDirection: 'column', flex: 1}}>
+                                          <span className="ticket-ligne-nom">{item.nom}</span>
+                                          <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>{item.quantite} x {item.prix_unitaire.toFixed(2)} €</span>
+                                      </div>
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                          <span className="ticket-ligne-prix">{(item.quantite * item.prix_unitaire).toFixed(2)} €</span>
+                                          <button className="ticket-ligne-supprimer" onClick={() => retirerDuPanier(item.id_article)}>
+                                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                          </button>
+                                      </div>
+                                  </div>
+                              ))
+                          )}
+                      </div>
+
+                      <div className="ticket-footer">
+                          <div className="ticket-total">
+                              <span>Total TTC</span>
+                              <span>{panierCaisse.reduce((acc, item) => acc + (item.prix_unitaire * item.quantite), 0).toFixed(2)} €</span>
+                          </div>
+                          <button className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} onClick={validerEncaisser} disabled={panierCaisse.length === 0 || !posEmploye}>
+                              💳 Encaisser (Stripe TPE)
+                          </button>
+                      </div>
+                  </div>
+              </div>
               
               {/* --- MODAL TICKET ÉCOLOGIQUE (LOI ANTI-GASPI) --- */}
               {ticketGenere && (
@@ -1068,9 +1160,20 @@ function App() {
 
           {role === 'gerant' && activeTab === 'produits' && (
             <div className="admin-container">
-              <h1>Inventaire</h1><span className="date-subtitle">Gestion intelligente des stocks</span>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                  <div>
+                      <h1 style={{margin: 0}}>Inventaire</h1>
+                      <span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span>
+                  </div>
+                  <ThemeToggle />
+              </div>
               <div className="stock-container">
-                {stocksData.map((produit) => {
+                {stocksData.length === 0 ? (
+                    <div className="empty-state">
+                        <SvgEmptyState />
+                        <p>Aucun produit en stock.</p>
+                    </div>
+                ) : stocksData.map((produit) => {
                     const status = getStockStatus(produit.stock_actuel);
                     return (
                       <div className="stock-item" key={produit.id_article}>
@@ -1086,15 +1189,25 @@ function App() {
                       </div>
                     );
                 })}
-                {stocksData.length === 0 && <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px 0'}}>Aucun produit en stock.</p>}
               </div>
             </div>
           )}
 
           {role === 'gerant' && activeTab === 'rh' && (
             <div className="admin-container">
-              <h1>Ressources Humaines</h1><span className="date-subtitle">Suivi des primes et performances</span>
-              {rhData.length === 0 ? <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20px'}}>Aucun employé. Allez dans l'onglet "Gestion".</p> : rhData.map(employe => (
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                  <div>
+                      <h1 style={{margin: 0}}>Ressources Humaines</h1>
+                      <span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span>
+                  </div>
+                  <ThemeToggle />
+              </div>
+              {rhData.length === 0 ? (
+                  <div className="empty-state">
+                      <SvgEmptyState />
+                      <p>Aucun employé enregistré.</p>
+                  </div>
+              ) : rhData.map(employe => (
                 <div className="carte rh-carte" key={employe.id_employe}>
                   <div className="rh-header"><span className="rh-nom">{employe.nom}</span><span className="rh-role">{employe.role}</span></div>
                   <div className="rh-stats">
@@ -1114,28 +1227,39 @@ function App() {
 
           {role === 'gerant' && activeTab === 'admin' && (
             <div className="admin-container">
-              <h1>Comptabilité Légale (NF525)</h1><span className="date-subtitle">Robot IA & Clôtures de Caisse</span>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                  <div>
+                      <h1 style={{margin: 0}}>Comptabilité Légale</h1>
+                      <span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span>
+                  </div>
+                  <ThemeToggle />
+              </div>
               
               <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
                  <div>
                     <h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3>
                     <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span>
                  </div>
-                 <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z de Caisse</button>
+                 <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
               </div>
 
               <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
               <div className="section-titre">Historique des factures</div>
-              {historiqueData.length === 0 ? <p style={{fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px 0'}}>Aucune facture.</p> : historiqueData.map((dossier, index) => (
+              {historiqueData.length === 0 ? (
+                  <div className="empty-state">
+                      <SvgEmptyState />
+                      <p>Aucune facture traitée.</p>
+                  </div>
+              ) : historiqueData.map((dossier, index) => (
                 <div className="dossier-mois" key={index}><div className="dossier-header"><span className="dossier-titre">{dossier.mois}</span><span className="dossier-total" style={{color: 'var(--text-main)'}}>{dossier.total_ttc.toFixed(2)} €</span></div>
                   {dossier.factures.map(facture => (<div className="facture-mini" key={facture.id}><span>{facture.fournisseur} <span style={{color: 'var(--text-muted)'}}>({facture.date})</span></span><span style={{fontWeight: 600, color: 'var(--text-main)'}}>{facture.ttc.toFixed(2)} €</span></div>))}
                 </div>
               ))}
               <div className="section-titre" style={{marginTop: '32px'}}>Scanner IA Manuel</div>
               <div className="carte scan-carte">
-                <input type="text" className="input-fournisseur" placeholder="Fournisseur (ex: L'Oréal)" value={nomFournisseur} onChange={(e) => setNomFournisseur(e.target.value)} />
-                <textarea className="textarea-facture" placeholder="Texte de la facture..." value={texteFacture} onChange={(e) => setTexteFacture(e.target.value)} />
-                <button className="btn-action" onClick={scannerFacture} disabled={chargementScan || !texteFacture}>Lancer l'IA Comptable</button>
+                <input type="text" className="input-fournisseur" placeholder="Fournisseur (ex: L'Oréal)" value={nomFournisseur} onChange={(e) => setNomFournisseur(e.target.value)} style={{marginBottom: '12px'}}/>
+                <textarea className="textarea-facture" placeholder="Texte de la facture..." value={texteFacture} onChange={(e) => setTexteFacture(e.target.value)} style={{marginBottom: '12px'}}/>
+                <button className="btn-action" onClick={scannerFacture} disabled={chargementScan || !texteFacture} style={{width: '100%'}}>Lancer l'IA Comptable</button>
                 {resultatScan && resultatScan.donnees_extraites && (
                   <div className="resultat-scan" style={{background: 'var(--bg-success)', border: '1px solid #bbf7d0', borderRadius: 'var(--radius-input)', padding: '16px', marginTop: '16px'}}>
                     <h4 style={{color: 'var(--color-success)', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px'}}>
@@ -1162,7 +1286,7 @@ function App() {
                   <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>{confirmDialog.message}</p>
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => setConfirmDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmDialog.action} style={{flex: 1, background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>{confirmDialog.btnTexte}</button>
+                      <button onClick={confirmDialog.action} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>{confirmDialog.btnTexte}</button>
                   </div>
               </div>
           </div>
