@@ -18,7 +18,6 @@ function App() {
       }
   }, [isDarkMode]);
 
-  // Composant Bouton Thème Premium
   const ThemeToggle = ({ isFixed }) => (
       <button onClick={() => setIsDarkMode(!isDarkMode)} className={`theme-toggle-btn ${isFixed ? 'theme-toggle-fixed' : ''}`} title="Basculer le thème">
           {isDarkMode ? (
@@ -77,17 +76,20 @@ function App() {
   const [ticketGenere, setTicketGenere] = useState(null);
   const [emailTicketClient, setEmailTicketClient] = useState('');
 
-  const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '' });
+  // Ajout de la date de naissance pour le ciblage anniversaire
+  const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '', date_naissance: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
 
+  // --- ÉTAT DU SPLIT-SCREEN CAISSE & FIDELITE ---
   const [posStep, setPosStep] = useState('employee'); 
   const [posEmploye, setPosEmploye] = useState(null);
-  const [posType, setPosType] = useState(null); 
-  const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
+  const [posType, setPosType] = useState('PRESTATION'); 
   const [clientCaisse, setClientCaisse] = useState('');
+  const [panierCaisse, setPanierCaisse] = useState([]); 
+  const [remiseAppliquee, setRemiseAppliquee] = useState(false); // Flag de récompense
+  const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
-  // --- RESPONSIVE AGENDA LOGIC ---
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   useEffect(() => {
       const handleResize = () => setWindowWidth(window.innerWidth);
@@ -111,17 +113,13 @@ function App() {
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const startDate = getStartOfPeriod(currentDate, nbJoursAffichage);
-  
-  const joursSemaine = Array.from({length: nbJoursAffichage}).map((_, i) => { 
-      const d = new Date(startDate); d.setDate(d.getDate() + i); return d; 
-  });
+  const joursSemaine = Array.from({length: nbJoursAffichage}).map((_, i) => { const d = new Date(startDate); d.setDate(d.getDate() + i); return d; });
 
   const changerPeriode = (direction) => {
       const newDate = new Date(currentDate);
       newDate.setDate(newDate.getDate() + (direction * nbJoursAffichage));
       setCurrentDate(newDate);
   };
-  
   const resetToToday = () => setCurrentDate(new Date());
 
   const [filtreAgenda, setFiltreAgenda] = useState('TOUS');
@@ -129,7 +127,6 @@ function App() {
   const [isEditingRdv, setIsEditingRdv] = useState(false);
   const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '' });
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
 
@@ -140,11 +137,9 @@ function App() {
   const [notificationCaisse, setNotificationCaisse] = useState(null);
   const [socket, setSocket] = useState(null);
 
-  // --- ÉTAT GLOBAL DES PARAMÈTRES (INCLUANT LA FIDÉLITÉ) ---
+  // --- CONFIGURATION INCLUANT LA FIDÉLITÉ ---
   const [configSalon, setConfigSalon] = useState({
-    google_api_key: '', google_account_id: '', google_location_id: '',
-    email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '',
-    heure_ouverture: 8, heure_fermeture: 20,
+    google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60
   });
 
@@ -152,19 +147,14 @@ function App() {
   const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); }
-
   const getAuthHeaders = (isJson = false) => { const headers = { 'Authorization': `Bearer ${token}` }; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
   const handleFetchError = async (res) => { if (res.status === 401 || res.status === 403) { seDeconnecter(); throw new Error("Session expirée"); } if (res.status === 402) { setIsAbonnementInactif(true); throw new Error("Abonnement inactif"); } const data = await res.json(); if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); return data; };
 
   const sInscrire = async () => {
     try {
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput })
-      });
+      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput }) });
       const data = await response.json();
-      if (response.ok) { localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); setIsAbonnementInactif(true); setUserRole('gerant'); } 
-      else { setErreurLogin(data.erreur); }
+      if (response.ok) { localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); setIsAbonnementInactif(true); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Erreur de connexion au serveur."); }
   };
 
@@ -207,9 +197,7 @@ function App() {
     fetch('https://api-salon-backend.onrender.com/api/factures/historique', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setHistoriqueData(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/clients', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setClientsListe(d)).catch(e => console.log(e.message));
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() }).then(handleFetchError).then(d => setConfigSalon({ 
-        google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', 
-        email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '', 
-        heure_ouverture: d.heure_ouverture || 8, heure_fermeture: d.heure_fermeture || 20,
+        google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '', heure_ouverture: d.heure_ouverture || 8, heure_fermeture: d.heure_fermeture || 20,
         fidelite_type: d.fidelite_type || 'NONE', fidelite_points_seuil: d.fidelite_points_seuil || 100, fidelite_points_valeur: d.fidelite_points_valeur || 10, fidelite_tampons_seuil: d.fidelite_tampons_seuil || 10, fidelite_recompense_type: d.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d.fidelite_recompense_valeur || '10', fidelite_delai_sms: d.fidelite_delai_sms || 60
     })).catch(e => console.log(e.message));
   };
@@ -230,10 +218,7 @@ function App() {
           if (user && user.id_salon) {
               const newSocket = io('https://api-salon-backend.onrender.com');
               newSocket.emit('rejoindreSalon', user.id_salon);
-              newSocket.on('paiementValide', (data) => { 
-                  showToast(data.message, "success"); 
-                  if(user.role === 'gerant') chargerTout(); 
-              });
+              newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
               setSocket(newSocket);
               return () => newSocket.disconnect();
@@ -263,35 +248,25 @@ function App() {
 
   const sauvegarderNotesClient = async () => {
       try {
-          await fetch(`https://api-salon-backend.onrender.com/api/clients/${clientSelectionne.id_client}/notes`, {
-              method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ notes: clientHistorique.notes })
-          });
+          await fetch(`https://api-salon-backend.onrender.com/api/clients/${clientSelectionne.id_client}/notes`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ notes: clientHistorique.notes }) });
           showToast("Notes sauvegardées avec succès !", "success");
       } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
   };
 
-  const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ nom: '', telephone: '', email: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
   const ajouterEmploye = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
   const ajouterArticle = async () => { if (newArticle.type_article === 'PRODUIT_REVENTE') { if (!newArticle.reference || newArticle.reference.trim().length < 4) { showToast("Veuillez saisir une référence d'au moins 4 caractères.", "error"); return; } } try { const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); const data = await handleFetchError(res); if (data.message && data.message.includes("Stock mis à jour")) { showToast(data.message, "success"); } setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' }); chargerTout(); showToast("Catalogue mis à jour.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerArticle = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
 
-  const getStockStatus = (q) => { 
-      const num = parseFloat(q); 
-      if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; 
-      if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; 
-      if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; 
-      return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; 
-  };
+  const getStockStatus = (q) => { const num = parseFloat(q); if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; };
   const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
   const dessinerChronogramme = (d) => { const max = Math.max(...d) * 1.2; return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="var(--btn-primary)" rx="2" />)}</svg>); };
 
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
-  // --- NOUVELLE CAISSE ENREGISTREUSE (SPLIT SCREEN) ---
-  const [panierCaisse, setPanierCaisse] = useState([]); 
-
+  // --- LOGIQUE DE LA CAISSE (AVEC FIDÉLITÉ) ---
   const ajouterAuPanier = (article) => {
       const exist = panierCaisse.find(item => item.id_article === article.id_article);
       if (exist) {
@@ -300,23 +275,35 @@ function App() {
           setPanierCaisse([...panierCaisse, { ...article, quantite: 1, prix_unitaire: parseFloat(article.prix) }]);
       }
   };
+  const retirerDuPanier = (id_article) => { setPanierCaisse(panierCaisse.filter(item => item.id_article !== id_article)); };
 
-  const retirerDuPanier = (id_article) => {
-      setPanierCaisse(panierCaisse.filter(item => item.id_article !== id_article));
-  };
+  const sousTotalCaisse = panierCaisse.reduce((acc, item) => acc + (item.prix_unitaire * item.quantite), 0);
+  let totalCaisse = sousTotalCaisse;
+  
+  // Calcul de la remise si demandée
+  if (remiseAppliquee) {
+      if (configSalon.fidelite_type === 'POINTS') {
+          totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur));
+      } else if (configSalon.fidelite_type === 'TAMPONS') {
+          if (configSalon.fidelite_recompense_type === 'MONTANT') {
+              totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur));
+          } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
+              totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur) / 100));
+          }
+          // Si type = PRODUIT, le montant ne change pas mathématiquement, on offre l'objet physique
+      }
+  }
 
   const validerEncaisser = () => {
       if(!posEmploye) { showToast("Veuillez sélectionner un employé responsable.", "error"); return; }
       if(panierCaisse.length === 0) { showToast("Le ticket est vide.", "error"); return; }
-      
-      const montantTotal = panierCaisse.reduce((acc, item) => acc + (item.prix_unitaire * item.quantite), 0);
-      lancerPaiementTPE(montantTotal, panierCaisse);
+      lancerPaiementTPE(totalCaisse, panierCaisse);
   };
 
   const lancerPaiementTPE = async (montant, lignes) => {
     setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
     try {
-        const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes };
+        const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee };
         const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
         const data = await handleFetchError(res);
         
@@ -332,15 +319,14 @@ function App() {
         setPanierCaisse([]);
         setClientCaisse('');
         setPosEmploye('');
+        setRemiseAppliquee(false);
+        chargerTout(); // Actualise les points du client dans le CRM
     } catch (error) { if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur TPE."}`); }
   };
 
   const envoyerTicketEco = async (methode) => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', {
-              method: 'POST', headers: getAuthHeaders(true),
-              body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, methode })
-          });
+          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, methode }) });
           await handleFetchError(res);
           showToast(`Ticket envoyé par ${methode.toUpperCase()} !`, "success");
           setTicketGenere(null);
@@ -352,18 +338,12 @@ function App() {
   const sauvegarderParametres = async () => { 
       showToast("Sauvegarde en cours..."); 
       try { 
-          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { 
-              method: 'POST', 
-              headers: getAuthHeaders(true), 
-              body: JSON.stringify(configSalon) 
-          }); 
+          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); 
           const data = await handleFetchError(response); 
           showToast(data.message, "success"); 
           chargerTout(); 
           setTimeout(() => { setActiveTab('accueil'); }, 1000); 
-      } catch (error) { 
-          if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); 
-      }
+      } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
   };
 
   const creerRdvManuel = async () => {
@@ -389,23 +369,14 @@ function App() {
   const sauvegarderModifRdv = async () => {
       try {
           const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, {
-              method: 'PUT', headers: getAuthHeaders(true),
-              body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime })
-          });
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime }) });
           if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); }
       } catch(e) { showToast("Erreur lors de la modification.", "error"); }
   };
 
   const demanderSuppressionRdv = () => {
-      setConfirmDialog({
-          titre: "Supprimer le rendez-vous",
-          message: "Êtes-vous sûr de vouloir annuler ce rendez-vous ? Cette action est irréversible.",
-          btnTexte: "Supprimer le RDV",
-          action: executerSuppressionRdv
-      });
+      setConfirmDialog({ titre: "Supprimer le rendez-vous", message: "Êtes-vous sûr de vouloir annuler ce rendez-vous ? Cette action est irréversible.", btnTexte: "Supprimer le RDV", action: executerSuppressionRdv });
   };
-
   const executerSuppressionRdv = async () => {
       setConfirmDialog(null);
       try {
@@ -415,14 +386,8 @@ function App() {
   };
 
   const demanderZDeCaisse = () => {
-      setConfirmDialog({
-          titre: "Clôture Journalière (Z)",
-          message: "Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées de manière irréversible selon la loi NF525.",
-          btnTexte: "Générer le Z",
-          action: executerZDeCaisse
-      });
+      setConfirmDialog({ titre: "Clôture Journalière (Z)", message: "Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées de manière irréversible selon la loi NF525.", btnTexte: "Générer le Z", action: executerZDeCaisse });
   };
-
   const executerZDeCaisse = async () => {
       setConfirmDialog(null);
       try {
@@ -432,59 +397,55 @@ function App() {
       } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
   };
 
-  // --- SVG EMPTY STATE ---
   const SvgEmptyState = () => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/>
-    </svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
   );
 
-  // --- RENDER RESET PASSWORD ---
+  // Détection d'éligibilité Fidélité au comptoir
+  let clientCaisseObj = null;
+  let isEligibleFidelite = false;
+  let texteRecompense = '';
+
+  if (clientCaisse) {
+      clientCaisseObj = clientsListe.find(c => c.id_client.toString() === clientCaisse);
+      if (clientCaisseObj && configSalon.fidelite_type !== 'NONE') {
+          if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= configSalon.fidelite_points_seuil) {
+              isEligibleFidelite = true;
+              texteRecompense = `-${configSalon.fidelite_points_valeur}€ offerts`;
+          } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= configSalon.fidelite_tampons_seuil) {
+              isEligibleFidelite = true;
+              texteRecompense = configSalon.fidelite_recompense_type === 'MONTANT' ? `-${configSalon.fidelite_recompense_valeur}€ offerts` : 
+                                configSalon.fidelite_recompense_type === 'POURCENTAGE' ? `-${configSalon.fidelite_recompense_valeur}% appliqués` : 
+                                `Cadeau: ${configSalon.fidelite_recompense_valeur}`;
+          }
+      }
+  }
+
+  // --- RENDERS DE CONNEXION ---
   if (resetTokenUrl) {
       return (
         <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh', position: 'relative' }}>
           <ThemeToggle isFixed={true} />
           <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
-            <div className="logo-container">
-                <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
-            </div>
+            <div className="logo-container"><img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" /></div>
             <h2 style={{color: 'var(--text-main)'}}>Nouveau mot de passe</h2>
             <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
             <input type="password" placeholder="Votre nouveau mot de passe" className="input-fournisseur" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
             <button className="btn-action" style={{ width: '100%', marginTop: '16px' }} onClick={async () => {
-               const res = await fetch('https://api-salon-backend.onrender.com/api/reset-password', {
-                  method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword})
-               });
-               if(res.ok) { showToast("Mot de passe mis à jour !", "success"); setTimeout(() => window.location.href = '/', 2000); }
-               else { showToast("Lien expiré ou invalide.", "error"); }
+               const res = await fetch('https://api-salon-backend.onrender.com/api/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword}) });
+               if(res.ok) { showToast("Mot de passe mis à jour !", "success"); setTimeout(() => window.location.href = '/', 2000); } else { showToast("Lien expiré ou invalide.", "error"); }
             }}>Confirmer la modification</button>
           </div>
-          {toast && (
-            <div className="toast-container">
-              <div className={`toast ${toast.type}`}>
-                {toast.type === 'success' ? (
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                )}
-                {toast.message}
-              </div>
-            </div>
-          )}
         </div>
       )
   }
 
-  // --- RENDER LOGIN ---
   if (!token) {
     return (
       <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
         <ThemeToggle isFixed={true} />
         <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
-          
-          <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
-          </div>
+          <div className="logo-container"><img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" /></div>
 
           <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
              <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Gérant</button>
@@ -503,7 +464,6 @@ function App() {
           ) : (
              <>
                 {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500' }}>{erreurLogin}</div>)}
-                
                 {loginType === 'gerant' ? (
                    <>
                       {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
@@ -526,18 +486,6 @@ function App() {
              </>
           )}
         </div>
-        {toast && (
-          <div className="toast-container">
-            <div className={`toast ${toast.type}`}>
-              {toast.type === 'success' ? (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-              ) : (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              )}
-              {toast.message}
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -547,42 +495,18 @@ function App() {
         <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
         <ThemeToggle isFixed={true} />
         <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
-          
-          <div className="logo-container">
-              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
-          </div>
-
+          <div className="logo-container"><img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" /></div>
           <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Abonnement Requis</h2>
-          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>
-            Pour accéder à votre tableau de bord, gérer votre catalogue et activer les automatisations, vous devez activer votre abonnement mensuel.
-          </p>
+          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>Pour accéder à votre tableau de bord, gérer votre catalogue et activer les automatisations, vous devez activer votre abonnement mensuel.</p>
           <h1 style={{color: 'var(--text-main)', marginBottom: '24px'}}>49.00 <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>€ / mois</span></h1>
-          
-          <button className="btn-action" onClick={lancerPaiementStripe} style={{ width: '100%' }}>
-            Payer de manière sécurisée avec Stripe
-          </button>
-          <button onClick={seDeconnecter} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', marginTop: '24px', cursor: 'pointer', fontSize: '13px', textDecoration: 'underline'}}>
-             Me déconnecter
-          </button>
+          <button className="btn-action" onClick={lancerPaiementStripe} style={{ width: '100%' }}>Payer de manière sécurisée avec Stripe</button>
+          <button onClick={seDeconnecter} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', marginTop: '24px', cursor: 'pointer', fontSize: '13px', textDecoration: 'underline'}}>Me déconnecter</button>
         </div>
-        {toast && (
-          <div className="toast-container">
-            <div className={`toast ${toast.type}`}>
-              {toast.type === 'success' ? (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-              ) : (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              )}
-              {toast.message}
-            </div>
-          </div>
-        )}
       </div>
      );
   }
 
   const role = userRole;
-
   const heureDebutAgenda = Math.max(0, Math.min(23, parseInt(configSalon.heure_ouverture) || 8));
   const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
   const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
@@ -591,47 +515,20 @@ function App() {
     <div style={{ display: 'flex' }}>
       <div className="navbar-sidebar">
          {role === 'gerant' && (
-             <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}>
-                 <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
-                 <span>Bord</span>
-             </div>
+             <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>
          )}
-         <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')}>
-             <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
-             <span>Agenda</span>
-         </div>
+         <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span></div>
          {role === 'gerant' && (
              <>
-                <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')}>
-                    <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span>
-                    <span>Caisse</span>
-                </div>
-                <div className={`nav-item ${activeTab === 'gestion' ? 'active' : ''}`} onClick={() => setActiveTab('gestion')}>
-                    <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
-                    <span>Gestion</span>
-                </div>
-                <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')}>
-                    <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
-                    <span>Stocks</span>
-                </div>
-                <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => setActiveTab('rh')}>
-                    <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-                    <span>Équipe</span>
-                </div>
-                <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}>
-                    <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
-                    <span>Compta</span>
-                </div>
+                <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
+                <div className={`nav-item ${activeTab === 'gestion' ? 'active' : ''}`} onClick={() => setActiveTab('gestion')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span>Gestion</span></div>
+                <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span></div>
+                <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => setActiveTab('rh')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span></div>
+                <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span></div>
              </>
          )}
-
          <div className="navbar-spacer"></div>
-         <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter">
-             <span className="nav-icon">
-                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-             </span>
-             <span style={{fontWeight: 500}}>Quitter</span>
-         </div>
+         <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
       </div>
 
       <div className="main-content">
@@ -671,7 +568,6 @@ function App() {
                           </div>
                       ))}
                   </div>
-
                   <div className="week-body">
                       <div className="time-column">
                           {Array.from({ length: nbHeures }).map((_, i) => (<div key={i} className="time-label">{heureDebutAgenda + i} h</div>))}
@@ -681,10 +577,8 @@ function App() {
                               const dateStringJour = formatDateInput(jour);
                               const rdvsDuJour = planningData.filter(rdv => {
                                   const rdvDateStr = rdv.date_heure_debut.split('T')[0];
-                                  return rdvDateStr === dateStringJour && 
-                                         (role === 'employe' || filtreAgenda === 'TOUS' || rdv.nom_employe === filtreAgenda);
+                                  return rdvDateStr === dateStringJour && (role === 'employe' || filtreAgenda === 'TOUS' || rdv.nom_employe === filtreAgenda);
                               });
-
                               return (
                                   <div key={indexJour} className="day-column">
                                       {rdvsDuJour.map((rdv) => {
@@ -696,8 +590,7 @@ function App() {
                                           const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
 
                                           return (
-                                              <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
-                                                   style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
+                                              <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)} style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
                                                   <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
                                                   <span className="agenda-card-subtitle">{rdv.prestation}</span>
                                               </div>
@@ -715,9 +608,7 @@ function App() {
                       <div className="modal-content">
                           <div className="modal-header">
                               <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Nouveau Rendez-vous</h3>
-                              <button className="modal-close-btn" onClick={() => setShowModalRdv(false)}>
-                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                              </button>
+                              <button className="modal-close-btn" onClick={() => setShowModalRdv(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                           </div>
                           <input type="text" className="input-fournisseur" placeholder="Nom du Client" value={formRdv.nom_client} onChange={e => setFormRdv({...formRdv, nom_client: e.target.value})} style={{marginBottom:'12px'}}/>
                           <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
@@ -740,9 +631,7 @@ function App() {
                       <div className="modal-content">
                           <div className="modal-header">
                               <h3 style={{margin: 0, fontSize: '18px'}}>{!isEditingRdv ? "Détails du Rendez-vous" : "Modifier le Rendez-vous"}</h3>
-                              <button className="modal-close-btn" onClick={() => setRdvSelectionne(null)}>
-                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                              </button>
+                              <button className="modal-close-btn" onClick={() => setRdvSelectionne(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                           </div>
                           
                           {!isEditingRdv ? (
@@ -753,7 +642,6 @@ function App() {
                                       <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Service</span> <strong>{rdvSelectionne.prestation}</strong></div>
                                       <div style={{display: 'flex', justifyContent: 'space-between'}}><span style={{color: 'var(--text-secondary)'}}>Collaborateur</span> <strong>{rdvSelectionne.nom_employe}</strong></div>
                                   </div>
-
                                   <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                                       {role === 'gerant' && <button onClick={() => setIsEditingRdv(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer', transition: 'all 0.15s'}}>Modifier l'horaire</button>}
                                       {rdvSelectionne.stripe_payment_id && role === 'gerant' && <button onClick={() => window.open(`https://dashboard.stripe.com/payments/${rdvSelectionne.stripe_payment_id}`, '_blank')} className="btn-action">Gérer l'acompte (Stripe)</button>}
@@ -793,7 +681,7 @@ function App() {
                 <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                   <ThemeToggle />
                   <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                   </button>
                 </div>
               </div>
@@ -801,13 +689,9 @@ function App() {
               {erreur && <p style={{color: 'var(--color-danger)'}}>❌ {erreur}</p>}
               
               {!dashboardData && !erreur ? (
-                /* --- SKELETON LOADER --- */
                 <div>
                   <div className="carte skeleton-loading" style={{height: '100px', marginBottom: '24px'}}></div>
-                  <div className="cartes-financieres">
-                      <div className="carte skeleton-loading" style={{height: '120px'}}></div>
-                      <div className="carte skeleton-loading" style={{height: '120px'}}></div>
-                  </div>
+                  <div className="cartes-financieres"><div className="carte skeleton-loading" style={{height: '120px'}}></div><div className="carte skeleton-loading" style={{height: '120px'}}></div></div>
                   <div className="carte skeleton-loading" style={{height: '200px'}}></div>
                 </div>
               ) : dashboardData && (
@@ -815,10 +699,7 @@ function App() {
                   {dashboardData.marketing && (
                     <div className="carte reputation-carte">
                       <div className="reputation-gauche">
-                        <h3 style={{color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'}}>
-                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                            Google Maps
-                        </h3>
+                        <h3 style={{color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'}}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> Google Maps</h3>
                         <div className="reputation-note">{dashboardData.marketing.note_actuelle} <span className="reputation-etoile" style={{color: '#fbbf24'}}>★</span></div>
                         <span className="reputation-avis">Sur {dashboardData.marketing.total_avis} avis</span>
                       </div>
@@ -828,27 +709,18 @@ function App() {
                   
                   <div className="cartes-financieres">
                     <div className="carte">
-                      <div className="carte-titre-container">
-                        <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
-                        <h3>Chiffre d'Affaires</h3>
-                      </div>
+                      <div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><h3>Chiffre d'Affaires</h3></div>
                       <p className="montant">{dashboardData.finances.chiffre_affaires_total} <span className="devise">€</span></p>
                     </div>
                     <div className="carte">
-                      <div className="carte-titre-container">
-                        <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
-                        <h3>Panier Moyen</h3>
-                      </div>
+                      <div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div><h3>Panier Moyen</h3></div>
                       <p className="montant">{dashboardData.finances.panier_moyen} <span className="devise">€</span></p>
                     </div>
                   </div>
                   <div className="section-titre">Top 3 Prestations</div>
                   <div className="top-prestations">
                     {dashboardData.top_3_prestations.length === 0 ? (
-                        <div className="empty-state">
-                            <SvgEmptyState />
-                            <p>Aucune prestation enregistrée.</p>
-                        </div>
+                        <div className="empty-state"><SvgEmptyState /><p>Aucune prestation enregistrée.</p></div>
                     ) : dashboardData.top_3_prestations.map((presta, i) => (
                       <div className="presta-item" key={i}><div className="presta-header"><span className="presta-nom"> {presta.nom}</span>{i === 0 && <span className="badge-succes">N°1</span>}</div><div className="presta-details"><span>Total généré</span><span className="montant-presta">{presta.total_genere} <span className="devise" style={{fontSize:'12px'}}>€</span></span></div></div>
                     ))}
@@ -926,6 +798,7 @@ function App() {
                   <input type="text" className="input-fournisseur" placeholder="Nom du client" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
                   <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
                 </div>
+                <input type="date" className="input-fournisseur" placeholder="Date de naissance (Pour Bonus Anniversaire)" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} style={{marginBottom: '16px'}}/>
                 <button className="btn-action" onClick={ajouterClient} disabled={!newClient.nom} style={{width: '100%'}}>Ajouter un client</button>
                 <div style={{marginTop: '24px'}}>
                   {clientsListe.length === 0 ? (
@@ -942,7 +815,6 @@ function App() {
                 </div>
               </div>
 
-              {/* --- MODAL FICHE CLIENT (CRM) --- */}
               {clientSelectionne && (
                   <div className="modal-overlay">
                       <div className="modal-content">
@@ -951,23 +823,26 @@ function App() {
                                 <h2 style={{margin: 0, fontSize: '20px', color: 'var(--text-main)'}}>{clientSelectionne.nom}</h2>
                                 <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>{clientSelectionne.telephone}</span>
                               </div>
-                              <button className="modal-close-btn" onClick={() => setClientSelectionne(null)}>
-                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                              </button>
+                              <button className="modal-close-btn" onClick={() => setClientSelectionne(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                           </div>
                           
                           {chargementFiche ? (
                               <div className="skeleton-loading" style={{height: '200px'}}></div>
                           ) : (
                             <>
-                              <div className="section-titre" style={{fontSize: '13px', marginTop: '16px'}}>Dossier Technique</div>
-                              <textarea 
-                                  className="textarea-facture" 
-                                  value={clientHistorique.notes} 
-                                  onChange={e => setClientHistorique({...clientHistorique, notes: e.target.value})}
-                                  placeholder="Saisissez vos notes techniques (ex: Formule coloration)..."
-                                  style={{marginBottom: '12px'}}
-                              />
+                              {/* Affichage de la fidélité dans le CRM */}
+                              {configSalon.fidelite_type !== 'NONE' && (
+                                  <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '24px'}}>
+                                      <h4 style={{margin: '0 0 8px 0', fontSize: '13px', color: 'var(--text-main)'}}>🎁 Programme Fidélité</h4>
+                                      <div style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between'}}>
+                                          <span>{configSalon.fidelite_type === 'POINTS' ? 'Points accumulés :' : 'Tampons accumulés :'}</span>
+                                          <strong style={{color: 'var(--color-info)'}}>{configSalon.fidelite_type === 'POINTS' ? (clientSelectionne.points_fidelite || 0) : (clientSelectionne.tampons_fidelite || 0)} / {configSalon.fidelite_type === 'POINTS' ? configSalon.fidelite_points_seuil : configSalon.fidelite_tampons_seuil}</strong>
+                                      </div>
+                                  </div>
+                              )}
+
+                              <div className="section-titre" style={{fontSize: '13px'}}>Dossier Technique</div>
+                              <textarea className="textarea-facture" value={clientHistorique.notes} onChange={e => setClientHistorique({...clientHistorique, notes: e.target.value})} placeholder="Saisissez vos notes techniques (ex: Formule coloration)..." style={{marginBottom: '12px'}}/>
                               <button className="btn-action" onClick={sauvegarderNotesClient} style={{width: '100%', marginBottom: '32px'}}>Enregistrer le dossier</button>
 
                               <div className="section-titre" style={{fontSize: '13px'}}>Rendez-vous passés</div>
@@ -1005,9 +880,7 @@ function App() {
             <div className="admin-container">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                 <h1 style={{margin: 0}}>Paramètres</h1>
-                <button onClick={() => setActiveTab('accueil')} style={{background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: 'var(--text-secondary)'}}>
-                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
+                <button onClick={() => setActiveTab('accueil')} style={{background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: 'var(--text-secondary)'}}><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
               
@@ -1114,7 +987,6 @@ function App() {
             </div>
           )}
 
-          {/* --- NOUVELLE CAISSE ENREGISTREUSE TACTILE (SPLIT SCREEN) --- */}
           {role === 'gerant' && activeTab === 'caisse' && (
             <div className="admin-container">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
@@ -1123,10 +995,8 @@ function App() {
               </div>
 
               <div className="caisse-split-container">
-                  {/* PANNEAU GAUCHE : Sélection (Employé / Type / Articles) */}
+                  {/* PANNEAU GAUCHE */}
                   <div className="caisse-left-panel">
-                      
-                      {/* Choix de l'employé (Toujours visible si non sélectionné) */}
                       {!posEmploye ? (
                         <div className="carte">
                             <h3 style={{color: 'var(--text-main)', marginBottom: '16px', fontWeight: '600', fontSize: '16px'}}>1. Qui réalise la vente ?</h3>
@@ -1168,18 +1038,39 @@ function App() {
                       )}
                   </div>
 
-                  {/* PANNEAU DROITE : Le Ticket Virtuel */}
+                  {/* PANNEAU DROITE */}
                   <div className="caisse-right-panel">
                       <div className="ticket-header">
                           <h3 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                               Ticket en cours
                               {posEmploye && <button onClick={() => setPosEmploye('')} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
                           </h3>
-                          <select className="input-fournisseur" value={clientCaisse} onChange={(e) => setClientCaisse(e.target.value)} style={{fontSize: '13px', padding: '8px'}}>
+                          <select className="input-fournisseur" value={clientCaisse} onChange={(e) => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{fontSize: '13px', padding: '8px'}}>
                               <option value="">Client de passage (Optionnel)</option>
                               {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client}>{cli.nom}</option>)}
                           </select>
                       </div>
+
+                      {/* --- ALERTE INTELLIGENTE FIDÉLITÉ --- */}
+                      {isEligibleFidelite && (
+                          <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
+                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                  <div>
+                                      <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>
+                                          {configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}
+                                      </span>
+                                      <span style={{fontSize: '12px', color: 'var(--color-info)'}}>🎁 {texteRecompense}</span>
+                                  </div>
+                                  {!remiseAppliquee ? (
+                                      <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>
+                                          Appliquer
+                                      </button>
+                                  ) : (
+                                      <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>✅ Appliquée</span>
+                                  )}
+                              </div>
+                          </div>
+                      )}
 
                       <div className="ticket-lignes">
                           {panierCaisse.length === 0 ? (
@@ -1200,12 +1091,18 @@ function App() {
                                   </div>
                               ))
                           )}
+                          {remiseAppliquee && configSalon.fidelite_type !== 'NONE' && (
+                              <div className="ticket-ligne" style={{color: 'var(--color-success)'}}>
+                                  <span className="ticket-ligne-nom">🎁 Remise Fidélité</span>
+                                  <span className="ticket-ligne-prix">-{Math.max(0, sousTotalCaisse - totalCaisse).toFixed(2)} €</span>
+                              </div>
+                          )}
                       </div>
 
                       <div className="ticket-footer">
                           <div className="ticket-total">
                               <span>Total TTC</span>
-                              <span>{panierCaisse.reduce((acc, item) => acc + (item.prix_unitaire * item.quantite), 0).toFixed(2)} €</span>
+                              <span>{totalCaisse.toFixed(2)} €</span>
                           </div>
                           <button className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} onClick={validerEncaisser} disabled={panierCaisse.length === 0 || !posEmploye}>
                               💳 Encaisser (Stripe TPE)
@@ -1214,7 +1111,6 @@ function App() {
                   </div>
               </div>
               
-              {/* --- MODAL TICKET ÉCOLOGIQUE (LOI ANTI-GASPI) --- */}
               {ticketGenere && (
                   <div className="modal-overlay">
                       <div className="modal-content" style={{textAlign: 'center', padding: '40px 32px'}}>
