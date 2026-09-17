@@ -579,7 +579,7 @@ app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(
 const cron = require('node-cron');
 
 // Exécution tous les matins à 9h00
-cron.schedule('0 9 * * *', async () => {
+cron.schedule('* * * * *', async () => {
     console.log("🤖 Exécution du Robot Marketing (Fidélité & Anniversaires)");
     try {
         // 1. Récupérer tous les salons qui ont configuré Brevo
