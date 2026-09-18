@@ -1,10 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
   <head>
     <meta charset="UTF-8" />
+    <!-- L'icône de l'onglet classique sur ordinateur -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    
+    <!-- Contrôle strict du zoom : crucial pour une application POS (Caisse) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    
+    <title>STACK Caisse</title>
+
+    <!-- 1. Connexion au Manifest (Android & Standards) -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- 2. Couleur de la barre de statut (Heure/Batterie) -->
+    <meta name="theme-color" content="#111827" />
+
+    <!-- 3. Balises spécifiques Apple / iOS -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="STACK" />
+    
+    <!-- L'icône exacte qui sera générée sur l'écran d'accueil iPhone -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>
