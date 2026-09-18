@@ -631,13 +631,18 @@ cron.schedule('* * * * *', async () => {
 
 // Fonction d'envoi Brevo API Officielle
 async function envoyerSMS(apiKey, sender, phone, text) {
+    console.log(`📱 [TEST GRATUIT] SMS prêt pour ${phone} (${sender}) : "${text}"`);
     try {
-        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+        const res = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
             method: 'POST',
             headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': apiKey },
             body: JSON.stringify({ type: 'transactional', unicodeEnabled: true, sender: sender.substring(0, 11), recipient: phone, content: text })
         });
-    } catch(e) { console.log("Echec SMS :", e.message); }
+        const data = await res.json();
+        console.log("📡 Réponse Brevo API :", data);
+    } catch(e) { 
+        console.log("❌ Erreur d'appel API :", e.message); 
+    }
 }
 
 const PORT = process.env.PORT || 3000; 
