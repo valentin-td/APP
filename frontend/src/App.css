@@ -64,7 +64,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* On utilise max-width 1200px pour la caisse split-screen */
 .dashboard-container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
 .dashboard-container.wide { max-width: 1100px; }
 .main-content { flex-grow: 1; margin-left: 88px; transition: margin-left 0.3s ease; min-height: 100vh; }
@@ -99,7 +98,6 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 .badge-succes { background-color: var(--bg-success); color: var(--color-success); }
 .rh-role { background-color: var(--bg-app); color: var(--text-secondary); border: 1px solid var(--border-color); }
 
-/* Animation de chargement (Skeleton) */
 .skeleton-loading {
   background: linear-gradient(90deg, var(--bg-hover) 25%, var(--border-color) 50%, var(--bg-hover) 75%);
   background-size: 200% 100%;
@@ -357,26 +355,26 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 @media (max-width: 768px) {
   /* La barre latérale passe en bas, HORIZONTALE et protégée de la zone iPhone */
   .navbar-sidebar { 
-      flex-direction: row !important; /* <-- LA CORRECTION EST ICI */
+      flex-direction: row !important; 
       align-items: center !important;
-      top: auto; 
-      bottom: 0; 
-      width: 100%; 
+      top: auto !important; 
+      bottom: 0 !important; 
+      width: 100% !important; 
       height: 90px !important; 
       padding: 0 16px 20px 16px !important; 
-      box-sizing: border-box; 
-      border-right: none; 
-      border-top: 1px solid var(--border-color); 
-      justify-content: space-between; 
-      overflow-x: auto; 
-      gap: 4px; 
+      box-sizing: border-box !important; 
+      border-right: none !important; 
+      border-top: 1px solid var(--border-color) !important; 
+      justify-content: space-between !important; 
+      overflow-x: auto !important; 
+      gap: 4px !important; 
   }
   .navbar-sidebar::-webkit-scrollbar { display: none; }
-  .navbar-spacer { display: none; }
-  .nav-item { min-width: 60px; padding: 8px 4px; margin-bottom: 0 !important; width: auto; }
+  .navbar-spacer { display: none !important; }
+  .nav-item { min-width: 60px !important; padding: 8px 4px !important; margin-bottom: 0 !important; width: auto !important; }
 
   /* Le contenu principal remonte pour laisser la place au menu du bas */
-  .main-content { margin-left: 0; margin-bottom: 90px !important; }
+  .main-content { margin-left: 0 !important; margin-bottom: 90px !important; }
   
   /* L'en-tête de l'Agenda devient vertical */
   .agenda-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
@@ -384,9 +382,6 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   
   /* Les cartes financières et Split-Screen s'empilent */
   .cartes-financieres { grid-template-columns: 1fr; }
-  .caisse-split-container { flex-direction: column; }
-  .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
-}
   .caisse-split-container { flex-direction: column; }
   .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
 }
