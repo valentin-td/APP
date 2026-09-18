@@ -87,7 +87,10 @@ function App() {
   const [panierCaisse, setPanierCaisse] = useState([]); 
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
   const [methodePaiement, setMethodePaiement] = useState('CARTE');
-  const [clientSuggere, setClientSuggere] = useState(null); // POPUP SUGGESTION CLIENT
+  
+  // NOUVEAU : Un tableau au lieu d'un seul objet pour gérer les clients multiples
+  const [clientsSuggeres, setClientsSuggeres] = useState([]); 
+  
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
@@ -270,16 +273,18 @@ function App() {
       setPosEmploye(id_employe);
       
       const now = new Date();
-      let closestClient = null;
+      let matches = [];
 
       const rdvsToday = planningData.filter(r => r.id_employe === id_employe && isToday(new Date(r.date_heure_debut)));
+      // Tri du plus récent au plus ancien
       rdvsToday.sort((a, b) => new Date(b.date_heure_debut) - new Date(a.date_heure_debut));
 
+      // Cherche TOUS les rendez-vous qui ont eu lieu dans les 2h30 précédentes
       for (let rdv of rdvsToday) {
           const rdvStart = new Date(rdv.date_heure_debut);
           const diffMinutes = (now - rdvStart) / 60000; 
           
-          if (diffMinutes > -15 && diffMinutes < 150) { 
+          if (diffMinutes > -30 && diffMinutes < 150) { // Tolérance de 30 mins avant et 2h30 après
               let clientInCRM = null;
               if (rdv.telephone_client) {
                   clientInCRM = clientsListe.find(c => c.telephone === rdv.telephone_client);
@@ -288,15 +293,15 @@ function App() {
                   clientInCRM = clientsListe.find(c => c.nom.toLowerCase() === rdv.nom_client.toLowerCase());
               }
               
-              if (clientInCRM) {
-                  closestClient = clientInCRM;
-                  break;
+              // On l'ajoute à la liste des suggestions s'il n'y est pas déjà
+              if (clientInCRM && !matches.find(m => m.id_client === clientInCRM.id_client)) {
+                  matches.push({ ...clientInCRM, prestation_rdv: rdv.prestation });
               }
           }
       }
 
-      if (closestClient) {
-          setClientSuggere(closestClient);
+      if (matches.length > 0) {
+          setClientsSuggeres(matches); // Ouvre la popup avec un ou plusieurs clients
       } else {
           setClientCaisse('');
           setPosStep('type');
@@ -715,7 +720,7 @@ function App() {
                 <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                   <ThemeToggle />
                   <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                   </button>
                 </div>
               </div>
@@ -1108,7 +1113,7 @@ function App() {
                       <div className="ticket-header">
                           <h3 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                               Ticket en cours
-                              {posEmploye && <button onClick={() => { setPosEmploye(null); setClientSuggere(null); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
+                              {posEmploye && <button onClick={() => { setPosEmploye(null); setClientsSuggeres([]); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
                           </h3>
                           <select className="input-fournisseur" value={clientCaisse} onChange={(e) => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{fontSize: '13px', padding: '8px'}}>
                               <option value="">Client de passage (Optionnel)</option>
@@ -1184,21 +1189,28 @@ function App() {
                   </div>
               </div>
               
-              {/* --- MODAL SUGGESTION DE CLIENT (SMART POS) --- */}
-              {clientSuggere && (
+              {/* --- MODAL SUGGESTION DE CLIENT (SMART POS MULTIPLE) --- */}
+              {clientsSuggeres.length > 0 && (
                   <div className="modal-overlay">
                       <div className="modal-content" style={{textAlign: 'center'}}>
                           <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
                               <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                           </div>
-                          <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>Encaisser {clientSuggere.nom} ?</h2>
-                          <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>D'après l'agenda, c'est le client que vous venez de coiffer.</p>
+                          <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>
+                              {clientsSuggeres.length === 1 ? `Encaisser ${clientsSuggeres[0].nom} ?` : "Quel client encaissez-vous ?"}
+                          </h2>
+                          <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
+                              {clientsSuggeres.length === 1 ? "D'après l'agenda, c'est le client que vous venez de coiffer." : "Plusieurs rendez-vous ont eu lieu récemment avec vous."}
+                          </p>
                           <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                              <button onClick={() => { setClientCaisse(clientSuggere.id_client.toString()); setClientSuggere(null); setPosStep('type'); }} className="btn-action" style={{padding: '12px'}}>
-                                  ✅ Oui, c'est bien {clientSuggere.nom.split(' ')[0]}
-                              </button>
-                              <button onClick={() => { setClientCaisse(''); setClientSuggere(null); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
-                                  ❌ Non, client de passage
+                              {clientsSuggeres.map(client => (
+                                  <button key={client.id_client} onClick={() => { setClientCaisse(client.id_client.toString()); setClientsSuggeres([]); setPosStep('type'); }} className="btn-action" style={{padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+                                      <span style={{fontSize: '16px'}}>✅ {client.nom}</span>
+                                      <span style={{fontSize: '12px', opacity: 0.8}}>{client.prestation_rdv}</span>
+                                  </button>
+                              ))}
+                              <button onClick={() => { setClientCaisse(''); setClientsSuggeres([]); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', marginTop: '8px'}}>
+                                  ❌ Aucun / Client de passage
                               </button>
                           </div>
                       </div>
