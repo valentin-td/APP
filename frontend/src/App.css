@@ -56,7 +56,7 @@ body, .carte, .input-fournisseur, .navbar-sidebar, .modal-content, .toast, .week
 /* ==========================================================================
    2. DESIGN GLOBAL & TYPOGRAPHIE
    ========================================================================== */
-body {eme-toggle-fixed { position: fixed; top: 24px; right: 24
+body {
   margin: 0;
   background-color: var(--bg-app);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -65,7 +65,7 @@ body {eme-toggle-fixed { position: fixed; top: 24px; right: 24
 }
 
 /* On utilise max-width 1200px pour la caisse split-screen */
-.dashboard-container { max-width: 600px; margin: 0 auto; padding: max(40px, env(safe-area-inset-top)) 20px 40px 20px; }
+.dashboard-container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
 .dashboard-container.wide { max-width: 1100px; }
 .main-content { flex-grow: 1; margin-left: 88px; transition: margin-left 0.3s ease; min-height: 100vh; }
 
@@ -158,7 +158,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 
 .theme-toggle-btn { background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: var(--shadow-sm); transition: all 0.2s ease; }
 .theme-toggle-btn:hover { color: var(--text-main); border-color: var(--text-main); transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-.theme-toggle-fixed { position: fixed; top: max(24px, env(safe-area-inset-top)); right: 24px; z-index: 1000; }
+.theme-toggle-fixed { position: fixed; top: 24px; right: 24px; z-index: 1000; }
 
 /* ==========================================================================
    7. BARRE DE NAVIGATION LATÉRALE
@@ -192,7 +192,6 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
     border-radius: var(--radius-card);
     border: 1px solid var(--border-color);
     box-shadow: var(--shadow-sm);
-    /* Ne pas forcer le overflow hidden ici, laisser le body scroller */
 }
 .week-header-row { display: flex; border-bottom: 1px solid var(--border-color); background: var(--bg-app); }
 .time-spacer { width: 64px; flex-shrink: 0; border-right: 1px solid var(--border-color); }
@@ -203,7 +202,6 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 .day-header.today .day-number { background: var(--text-main); color: var(--bg-card); border-radius: 4px; padding: 2px 8px; }
 .week-body {
     position: relative;
-    /* Retirer le min-height fixe qui casse l'affichage */
 }
 .time-column { width: 64px; flex-shrink: 0; border-right: 1px solid var(--border-color); background: var(--bg-app); }
 .time-label { height: 80px; font-size: 11px; color: var(--text-secondary); text-align: right; padding-right: 10px; box-sizing: border-box; transform: translateY(-7px); font-weight: 500; }
@@ -212,7 +210,6 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
     flex: 1;
     border-right: 1px solid var(--border-color);
     position: relative;
-    /* La grille visuelle (lignes horizontales) */
     background-image: linear-gradient(to bottom, var(--border-color) 1px, transparent 1px);
     background-size: 100% 80px; 
 }
@@ -221,7 +218,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
     border-radius: 6px;
     padding: 6px 8px;
     cursor: pointer;
-    border-left: 4px solid rgba(0,0,0,0.3); /* Un peu plus sombre pour le contraste */
+    border-left: 4px solid rgba(0,0,0,0.3);
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     transition: all 0.2s ease;
     overflow: hidden;
@@ -258,7 +255,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
    12. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
 @media (max-width: 768px) {
-  /* La barre latérale passe en bas, protégée de la ligne d'accueil iPhone */
+  /* La barre latérale passe en bas */
   .navbar-sidebar { top: auto; bottom: 0; width: 100%; height: calc(72px + env(safe-area-inset-bottom)); padding: 0 16px env(safe-area-inset-bottom) 16px; box-sizing: border-box; border-right: none; border-top: 1px solid var(--border-color); justify-content: space-between; overflow-x: auto; gap: 4px; }
   .navbar-sidebar::-webkit-scrollbar { display: none; }
   .navbar-spacer { display: none; }
@@ -266,7 +263,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 
   /* Le contenu principal remonte pour laisser la place au menu du bas */
   .main-content { margin-left: 0; margin-bottom: calc(72px + env(safe-area-inset-bottom)); }
-  .dashboard-container { padding: calc(24px + env(safe-area-inset-top)) 16px 24px 16px !important; }
+  .dashboard-container { padding: 24px 16px !important; }
   
   /* L'en-tête de l'Agenda devient vertical */
   .agenda-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
@@ -277,8 +274,8 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   .caisse-split-container { flex-direction: column; }
   .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
   
-  /* Le bouton Thème protégé sous l'encoche */
-  .theme-toggle-fixed { top: calc(16px + env(safe-area-inset-top)) !important; right: 16px; }
+  /* Le bouton Thème se décale sur mobile */
+  .theme-toggle-fixed { top: 16px !important; right: 16px; }
 }
 
 /* ==========================================================================
@@ -379,26 +376,4 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
     font-size: 20px;
     font-weight: 700;
     color: var(--color-success);
-}
-
-
-       
-  /* Force un espacement fixe pour l'encoche (Notch) en haut */
-  .dashboard-container { 
-      padding-top: 70px !important; /* 47px encoche + 23px aération */
-  }
-  
-  .theme-toggle-fixed { 
-      top: 55px !important; /* Sous l'encoche */
-  }
-
-  /* Force un espacement fixe pour la barre de balayage (Home Indicator) en bas */
-  .navbar-sidebar { 
-      height: 96px !important; /* 72px menu + 24px marge de sécurité */
-      padding-bottom: 24px !important; 
-  }
-  
-  .main-content { 
-      margin-bottom: 96px !important; 
-  }
 }
