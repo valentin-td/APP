@@ -5,7 +5,6 @@ import './App.css';
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   
-  // --- GESTION DU THÈME SOMBRE ET DES LOGOS ---
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
 
   useEffect(() => {
@@ -75,11 +74,11 @@ function App() {
   const [ticketGenere, setTicketGenere] = useState(null);
   const [emailTicketClient, setEmailTicketClient] = useState('');
 
-  const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '', date_naissance: '' });
+  // Ajout du Prénom
+  const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
 
-  // --- ÉTAT DU SPLIT-SCREEN CAISSE & FIDELITE ---
   const [posStep, setPosStep] = useState('employee'); 
   const [posEmploye, setPosEmploye] = useState(null);
   const [posType, setPosType] = useState('PRESTATION'); 
@@ -87,8 +86,6 @@ function App() {
   const [panierCaisse, setPanierCaisse] = useState([]); 
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
   const [methodePaiement, setMethodePaiement] = useState('CARTE');
-  
-  // NOUVEAU : Un tableau au lieu d'un seul objet pour gérer les clients multiples
   const [clientsSuggeres, setClientsSuggeres] = useState([]); 
   
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
@@ -151,6 +148,13 @@ function App() {
   const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); }
   const getAuthHeaders = (isJson = false) => { const headers = { 'Authorization': `Bearer ${token}` }; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
   const handleFetchError = async (res) => { if (res.status === 401 || res.status === 403) { seDeconnecter(); throw new Error("Session expirée"); } if (res.status === 402) { setIsAbonnementInactif(true); throw new Error("Abonnement inactif"); } const data = await res.json(); if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); return data; };
+
+  // Helper pour afficher le nom du client avec le prénom (s'il existe)
+  const formatNomClient = (client) => {
+      if (!client) return 'Client inconnu';
+      if (client.prenom && client.nom) return `${client.prenom} ${client.nom}`;
+      return client.nom || 'Client sans nom';
+  };
 
   const sInscrire = async () => {
     try {
@@ -255,7 +259,7 @@ function App() {
       } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
   };
 
-  const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
   const ajouterEmploye = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
@@ -268,23 +272,19 @@ function App() {
 
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
-  // --- LOGIQUE DE LA CAISSE (SMART POS & FIDÉLITÉ) ---
+  // --- LOGIQUE DE LA CAISSE ---
   const handleSelectEmployeCaisse = (id_employe) => {
       setPosEmploye(id_employe);
-      
       const now = new Date();
       let matches = [];
 
       const rdvsToday = planningData.filter(r => r.id_employe === id_employe && isToday(new Date(r.date_heure_debut)));
-      // Tri du plus récent au plus ancien
       rdvsToday.sort((a, b) => new Date(b.date_heure_debut) - new Date(a.date_heure_debut));
 
-      // Cherche TOUS les rendez-vous qui ont eu lieu dans les 2h30 précédentes
       for (let rdv of rdvsToday) {
           const rdvStart = new Date(rdv.date_heure_debut);
           const diffMinutes = (now - rdvStart) / 60000; 
-          
-          if (diffMinutes > -30 && diffMinutes < 150) { // Tolérance de 30 mins avant et 2h30 après
+          if (diffMinutes > -30 && diffMinutes < 150) { 
               let clientInCRM = null;
               if (rdv.telephone_client) {
                   clientInCRM = clientsListe.find(c => c.telephone === rdv.telephone_client);
@@ -292,8 +292,6 @@ function App() {
               if (!clientInCRM && rdv.nom_client) {
                   clientInCRM = clientsListe.find(c => c.nom.toLowerCase() === rdv.nom_client.toLowerCase());
               }
-              
-              // On l'ajoute à la liste des suggestions s'il n'y est pas déjà
               if (clientInCRM && !matches.find(m => m.id_client === clientInCRM.id_client)) {
                   matches.push({ ...clientInCRM, prestation_rdv: rdv.prestation });
               }
@@ -301,7 +299,7 @@ function App() {
       }
 
       if (matches.length > 0) {
-          setClientsSuggeres(matches); // Ouvre la popup avec un ou plusieurs clients
+          setClientsSuggeres(matches);
       } else {
           setClientCaisse('');
           setPosStep('type');
@@ -349,7 +347,7 @@ function App() {
         setNotificationCaisse(null);
         setTicketGenere({
             id_ticket: data.id_ticket, montant: montant, client_id: clientCaisse,
-            client_nom: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.nom : 'Client de passage',
+            client_nom: clientCaisse ? formatNomClient(clientsListe.find(c => c.id_client.toString() === clientCaisse)) : 'Client de passage',
             client_email: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email : '',
             lignes: lignes
         });
@@ -386,9 +384,15 @@ function App() {
       } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
   };
 
+  // --- CORRECTION DU BUG DES +2 HEURES ---
+  // On fige l'heure locale en créant une date précise qu'on exporte en chaîne standard (ISOString)
   const creerRdvManuel = async () => {
       try {
-          const datetime = `${formRdv.date}T${formRdv.heure}:00`;
+          const [yyyy, mm, dd] = formRdv.date.split('-');
+          const [hh, min] = formRdv.heure.split(':');
+          const localDate = new Date(yyyy, mm - 1, dd, hh, min, 0);
+          const datetime = localDate.toISOString();
+          
           const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime}) });
           if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); }
       } catch(e) { showToast("Erreur de création.", "error"); }
@@ -408,7 +412,11 @@ function App() {
 
   const sauvegarderModifRdv = async () => {
       try {
-          const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
+          const [yyyy, mm, dd] = editRdvForm.date.split('-');
+          const [hh, min] = editRdvForm.heure.split(':');
+          const localDate = new Date(yyyy, mm - 1, dd, hh, min, 0);
+          const datetime = localDate.toISOString();
+
           const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime }) });
           if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); }
       } catch(e) { showToast("Erreur lors de la modification.", "error"); }
@@ -597,6 +605,7 @@ function App() {
                   </div>
               </div>
 
+              {/* --- GRILLE AGENDA 100% DYNAMIQUE --- */}
               <div className="week-calendar">
                   <div className="week-header-row">
                       <div className="time-spacer"></div>
@@ -608,39 +617,46 @@ function App() {
                       ))}
                   </div>
 
-                  <div className="week-body">
-                      <div className="time-column">
-                          {Array.from({ length: nbHeures }).map((_, i) => (<div key={i} className="time-label">{heureDebutAgenda + i} h</div>))}
-                      </div>
-                      <div className="days-container">
-                          {joursSemaine.map((jour, indexJour) => {
-                              const dateStringJour = formatDateInput(jour);
-                              const rdvsDuJour = planningData.filter(rdv => {
-                                  const rdvDateStr = rdv.date_heure_debut.split('T')[0];
-                                  return rdvDateStr === dateStringJour && (role === 'employe' || filtreAgenda === 'TOUS' || rdv.nom_employe === filtreAgenda);
-                              });
-
-                              return (
-                                  <div key={indexJour} className="day-column">
-                                      {rdvsDuJour.map((rdv) => {
-                                          const dateDebut = new Date(rdv.date_heure_debut);
-                                          const ECHELLE_HEURE = 80;
-                                          const dureeReelle = rdv.duree_minutes || 30;
-                                          const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (dateDebut.getMinutes() * (ECHELLE_HEURE / 60));
-                                          const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
-                                          const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
-
-                                          return (
-                                              <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
-                                                   style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
-                                                  <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
-                                                  <span className="agenda-card-subtitle">{rdv.prestation}</span>
-                                              </div>
-                                          );
-                                      })}
+                  <div className="week-body" style={{ overflowY: 'auto', background: 'var(--bg-card)' }}>
+                      <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
+                          <div className="time-column" style={{ width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+                              {Array.from({ length: nbHeures }).map((_, i) => (
+                                  <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>
+                                      {heureDebutAgenda + i} h
                                   </div>
-                              );
-                          })}
+                              ))}
+                          </div>
+                          
+                          <div className="days-container" style={{ display: 'flex', flex: 1, position: 'relative' }}>
+                              {joursSemaine.map((jour, indexJour) => {
+                                  const dateStringJour = formatDateInput(jour);
+                                  const rdvsDuJour = planningData.filter(rdv => {
+                                      const rdvDateStr = rdv.date_heure_debut.split('T')[0];
+                                      return rdvDateStr === dateStringJour && (role === 'employe' || filtreAgenda === 'TOUS' || rdv.nom_employe === filtreAgenda);
+                                  });
+
+                                  return (
+                                      <div key={indexJour} className="day-column" style={{ flex: 1, borderRight: '1px solid var(--border-color)', position: 'relative', backgroundImage: 'linear-gradient(to bottom, var(--border-color) 1px, transparent 1px)', backgroundSize: '100% 80px' }}>
+                                          {rdvsDuJour.map((rdv) => {
+                                              const dateDebut = new Date(rdv.date_heure_debut);
+                                              const ECHELLE_HEURE = 80;
+                                              const dureeReelle = rdv.duree_minutes || 30;
+                                              const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (dateDebut.getMinutes() * (ECHELLE_HEURE / 60));
+                                              const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
+                                              const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
+
+                                              return (
+                                                  <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
+                                                       style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
+                                                      <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
+                                                      <span className="agenda-card-subtitle">{rdv.prestation}</span>
+                                                  </div>
+                                              );
+                                          })}
+                                      </div>
+                                  );
+                              })}
+                          </div>
                       </div>
                   </div>
               </div>
@@ -833,11 +849,14 @@ function App() {
 
               <div className="section-titre" style={{marginTop: '32px'}}>Base Clients (CRM)</div>
               <div className="carte scan-carte">
-                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                  <input type="text" className="input-fournisseur" placeholder="Nom du client" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
-                  <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
+                <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                  <input type="text" className="input-fournisseur" placeholder="Prénom" value={newClient.prenom} onChange={(e) => setNewClient({...newClient, prenom: e.target.value})} />
+                  <input type="text" className="input-fournisseur" placeholder="Nom" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
                 </div>
-                <input type="date" className="input-fournisseur" placeholder="Date de naissance (Pour Bonus Anniversaire)" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} style={{marginBottom: '16px'}}/>
+                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                  <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
+                  <input type="date" className="input-fournisseur" placeholder="Date de naissance" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} />
+                </div>
                 <button className="btn-action" onClick={ajouterClient} disabled={!newClient.nom} style={{width: '100%'}}>Ajouter un client</button>
                 <div style={{marginTop: '24px'}}>
                   {clientsListe.length === 0 ? (
@@ -846,7 +865,7 @@ function App() {
                     <div key={cli.id_client} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
                       <span style={{cursor: 'pointer', color: 'var(--color-info)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={() => ouvrirFicheClient(cli)}>
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                        {cli.nom} <span style={{color: 'var(--text-muted)', fontWeight: 'normal'}}>({cli.telephone || 'Pas de numéro'})</span>
+                        {formatNomClient(cli)} <span style={{color: 'var(--text-muted)', fontWeight: 'normal'}}>({cli.telephone || 'Pas de numéro'})</span>
                       </span>
                       <button onClick={() => supprimerClient(cli.id_client)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
                     </div>
@@ -860,7 +879,7 @@ function App() {
                       <div className="modal-content">
                           <div className="modal-header">
                               <div>
-                                <h2 style={{margin: 0, fontSize: '20px', color: 'var(--text-main)'}}>{clientSelectionne.nom}</h2>
+                                <h2 style={{margin: 0, fontSize: '20px', color: 'var(--text-main)'}}>{formatNomClient(clientSelectionne)}</h2>
                                 <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>{clientSelectionne.telephone}</span>
                               </div>
                               <button className="modal-close-btn" onClick={() => setClientSelectionne(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -1117,7 +1136,7 @@ function App() {
                           </h3>
                           <select className="input-fournisseur" value={clientCaisse} onChange={(e) => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{fontSize: '13px', padding: '8px'}}>
                               <option value="">Client de passage (Optionnel)</option>
-                              {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client.toString()}>{cli.nom}</option>)}
+                              {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client.toString()}>{formatNomClient(cli)}</option>)}
                           </select>
                       </div>
 
@@ -1197,7 +1216,7 @@ function App() {
                               <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                           </div>
                           <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>
-                              {clientsSuggeres.length === 1 ? `Encaisser ${clientsSuggeres[0].nom} ?` : "Quel client encaissez-vous ?"}
+                              {clientsSuggeres.length === 1 ? `Encaisser ${formatNomClient(clientsSuggeres[0])} ?` : "Quel client encaissez-vous ?"}
                           </h2>
                           <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
                               {clientsSuggeres.length === 1 ? "D'après l'agenda, c'est le client que vous venez de coiffer." : "Plusieurs rendez-vous ont eu lieu récemment avec vous."}
@@ -1205,7 +1224,7 @@ function App() {
                           <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                               {clientsSuggeres.map(client => (
                                   <button key={client.id_client} onClick={() => { setClientCaisse(client.id_client.toString()); setClientsSuggeres([]); setPosStep('type'); }} className="btn-action" style={{padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
-                                      <span style={{fontSize: '16px'}}>✅ {client.nom}</span>
+                                      <span style={{fontSize: '16px'}}>✅ {formatNomClient(client)}</span>
                                       <span style={{fontSize: '12px', opacity: 0.8}}>{client.prestation_rdv}</span>
                                   </button>
                               ))}
