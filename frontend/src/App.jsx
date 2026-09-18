@@ -56,7 +56,6 @@ function App() {
   const [resetTokenUrl] = useState(urlParams.get('resetToken'));
   const [newPassword, setNewPassword] = useState('');
 
-  // --- TOAST NOTIFICATIONS & MODAL DANGER ---
   const [toast, setToast] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
@@ -87,9 +86,9 @@ function App() {
   const [clientCaisse, setClientCaisse] = useState('');
   const [panierCaisse, setPanierCaisse] = useState([]); 
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
+  const [methodePaiement, setMethodePaiement] = useState('CARTE'); // Nouveau : Gestion Espèces/Carte/Chèque
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
-  // --- RESPONSIVE AGENDA LOGIC ---
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   useEffect(() => {
       const handleResize = () => setWindowWidth(window.innerWidth);
@@ -299,9 +298,10 @@ function App() {
   };
 
   const lancerPaiementTPE = async (montant, lignes) => {
-    setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
+    // Si on demande la CB, on prévient du TPE. Sinon, on encaisse directement.
+    if (methodePaiement === 'CARTE') setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
     try {
-        const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee };
+        const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement };
         const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
         const data = await handleFetchError(res);
         
@@ -318,6 +318,7 @@ function App() {
         setClientCaisse('');
         setPosEmploye('');
         setRemiseAppliquee(false);
+        setMethodePaiement('CARTE');
         chargerTout(); 
     } catch (error) { if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur TPE."}`); }
   };
@@ -678,7 +679,7 @@ function App() {
                 <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                   <ThemeToggle />
                   <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                   </button>
                 </div>
               </div>
@@ -911,7 +912,6 @@ function App() {
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
               
-              {/* --- NOUVEAU BLOC FIDÉLITÉ --- */}
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
@@ -1132,8 +1132,16 @@ function App() {
                               <span>Total TTC</span>
                               <span>{totalCaisse.toFixed(2)} €</span>
                           </div>
+                          
+                          {/* CHOIX DU MOYEN DE PAIEMENT */}
+                          <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
+                              <button onClick={() => setMethodePaiement('CARTE')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600'}}>💳 TPE</button>
+                              <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'ESPECES' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600'}}>💶 Espèces</button>
+                              <button onClick={() => setMethodePaiement('CHEQUE')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'CHEQUE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CHEQUE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600'}}>📝 Chèque</button>
+                          </div>
+
                           <button className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} onClick={validerEncaisser} disabled={panierCaisse.length === 0 || !posEmploye}>
-                              💳 Encaisser (Stripe TPE)
+                              Encaisser
                           </button>
                       </div>
                   </div>
