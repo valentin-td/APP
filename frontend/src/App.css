@@ -56,7 +56,7 @@ body, .carte, .input-fournisseur, .navbar-sidebar, .modal-content, .toast, .week
 /* ==========================================================================
    2. DESIGN GLOBAL & TYPOGRAPHIE
    ========================================================================== */
-body {
+body {eme-toggle-fixed { position: fixed; top: 24px; right: 24
   margin: 0;
   background-color: var(--bg-app);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -65,7 +65,7 @@ body {
 }
 
 /* On utilise max-width 1200px pour la caisse split-screen */
-.dashboard-container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+.dashboard-container { max-width: 600px; margin: 0 auto; padding: max(40px, env(safe-area-inset-top)) 20px 40px 20px; }
 .dashboard-container.wide { max-width: 1100px; }
 .main-content { flex-grow: 1; margin-left: 88px; transition: margin-left 0.3s ease; min-height: 100vh; }
 
@@ -158,7 +158,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 
 .theme-toggle-btn { background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: var(--shadow-sm); transition: all 0.2s ease; }
 .theme-toggle-btn:hover { color: var(--text-main); border-color: var(--text-main); transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-.theme-toggle-fixed { position: fixed; top: 24px; right: 24px; z-index: 1000; }
+.theme-toggle-fixed { position: fixed; top: max(24px, env(safe-area-inset-top)); right: 24px; z-index: 1000; }
 
 /* ==========================================================================
    7. BARRE DE NAVIGATION LATÉRALE
@@ -258,15 +258,15 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
    12. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
 @media (max-width: 768px) {
-  /* La barre latérale passe en bas (Style App iOS) */
-  .navbar-sidebar { top: auto; bottom: 0; width: 100%; height: 72px; flex-direction: row; padding: 0 16px; box-sizing: border-box; border-right: none; border-top: 1px solid var(--border-color); justify-content: space-between; overflow-x: auto; gap: 4px; }
+  /* La barre latérale passe en bas, protégée de la ligne d'accueil iPhone */
+  .navbar-sidebar { top: auto; bottom: 0; width: 100%; height: calc(72px + env(safe-area-inset-bottom)); padding: 0 16px env(safe-area-inset-bottom) 16px; box-sizing: border-box; border-right: none; border-top: 1px solid var(--border-color); justify-content: space-between; overflow-x: auto; gap: 4px; }
   .navbar-sidebar::-webkit-scrollbar { display: none; }
   .navbar-spacer { display: none; }
   .nav-item { min-width: 60px; padding: 8px 4px; margin-bottom: 0 !important; width: auto; }
 
   /* Le contenu principal remonte pour laisser la place au menu du bas */
-  .main-content { margin-left: 0; margin-bottom: 72px; }
-  .dashboard-container { padding: 24px 16px; }
+  .main-content { margin-left: 0; margin-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .dashboard-container { padding: calc(24px + env(safe-area-inset-top)) 16px 24px 16px; }
   
   /* L'en-tête de l'Agenda devient vertical */
   .agenda-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
@@ -277,8 +277,8 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   .caisse-split-container { flex-direction: column; }
   .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
   
-  /* Le bouton Thème se décale sur mobile pour ne pas gêner */
-  .theme-toggle-fixed { top: 16px; right: 16px; }
+  /* Le bouton Thème protégé sous l'encoche */
+  .theme-toggle-fixed { top: calc(16px + env(safe-area-inset-top)); right: 16px; }
 }
 
 /* ==========================================================================
