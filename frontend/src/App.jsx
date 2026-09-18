@@ -5,7 +5,6 @@ import './App.css';
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   
-  // --- GESTION DU THÈME SOMBRE ET DES LOGOS ---
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
 
   useEffect(() => {
@@ -76,10 +75,9 @@ function App() {
   const [emailTicketClient, setEmailTicketClient] = useState('');
 
   const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
-  const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
+  const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
 
-  // --- ÉTAT DU SPLIT-SCREEN CAISSE & FIDELITE ---
   const [posStep, setPosStep] = useState('employee'); 
   const [posEmploye, setPosEmploye] = useState(null);
   const [posType, setPosType] = useState('PRESTATION'); 
@@ -154,6 +152,17 @@ function App() {
       if (!client) return 'Client inconnu';
       if (client.prenom && client.nom) return `${client.prenom} ${client.nom}`;
       return client.nom || 'Client sans nom';
+  };
+
+  const handleImageUpload = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+              setNewEmploye({ ...newEmploye, photo_url: reader.result });
+          };
+          reader.readAsDataURL(file);
+      }
   };
 
   const sInscrire = async () => {
@@ -259,7 +268,6 @@ function App() {
       } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
   };
 
-  // --- NOUVEAU : FONCTION D'ANNULATION D'UN PAIEMENT ---
   const annulerTicket = async (id_ticket) => {
       if (!window.confirm("Êtes-vous sûr de vouloir annuler ce paiement ? Le produit sera remis en stock et les points retirés.")) return;
       try {
@@ -268,8 +276,8 @@ function App() {
           });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
-          ouvrirFicheClient(clientSelectionne); // Rafraîchit l'historique
-          chargerTout(); // Rafraîchit les stocks et le CA global
+          ouvrirFicheClient(clientSelectionne);
+          chargerTout();
       } catch (error) {
           showToast(error.message, "error");
       }
@@ -277,7 +285,7 @@ function App() {
 
   const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
-  const ajouterEmploye = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterEmploye = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
   const ajouterArticle = async () => { if (newArticle.type_article === 'PRODUIT_REVENTE') { if (!newArticle.reference || newArticle.reference.trim().length < 4) { showToast("Veuillez saisir une référence d'au moins 4 caractères.", "error"); return; } } try { const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); const data = await handleFetchError(res); if (data.message && data.message.includes("Stock mis à jour")) { showToast(data.message, "success"); } setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' }); chargerTout(); showToast("Catalogue mis à jour.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerArticle = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
@@ -288,7 +296,6 @@ function App() {
 
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
-  // --- LOGIQUE DE LA CAISSE ---
   const handleSelectEmployeCaisse = (id_employe) => {
       setPosEmploye(id_employe);
       const now = new Date();
@@ -402,7 +409,6 @@ function App() {
       } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
   };
 
-  // --- CORRECTION DU BUG DES +2 HEURES DE FUSEAU HORAIRE ---
   const creerRdvManuel = async () => {
       try {
           const [yyyy, mm, dd] = formRdv.date.split('-');
@@ -485,7 +491,6 @@ function App() {
       }
   }
 
-  // --- RENDERS DE CONNEXION ---
   if (resetTokenUrl) {
       return (
         <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh', position: 'relative' }}>
@@ -847,6 +852,20 @@ function App() {
                   <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
                   <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
                 </div>
+
+                {/* NOUVEAU : UPLOAD IMAGE EN BASE64 */}
+                <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo de profil (Optionnel)</label>
+                <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                    <div className="rh-avatar" style={{width: '40px', height: '40px', flexShrink: 0, border: 'none', background: 'transparent'}}>
+                        {newEmploye.photo_url ? (
+                            <img src={newEmploye.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
+                        ) : (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--text-muted)', width: '24px', height: '24px'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        )}
+                    </div>
+                    <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleImageUpload} style={{fontSize: '12px', color: 'var(--text-main)'}} />
+                </div>
+
                 <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
                   <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
                   <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
@@ -947,7 +966,6 @@ function App() {
                                   </div>
                               )}
 
-                              {/* --- HISTORIQUE DES RÉCOMPENSES --- */}
                               <div className="section-titre" style={{fontSize: '13px'}}>Historique des Cadeaux / Récompenses</div>
                               {!clientHistorique.gains || clientHistorique.gains.length === 0 ? (
                                   <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px'}}>Aucune récompense utilisée pour le moment.</p>
@@ -962,7 +980,6 @@ function App() {
                                   </div>
                               )}
 
-                              {/* --- NOUVEAU : HISTORIQUE D'ACHATS AVEC BOUTON ANNULER --- */}
                               <div className="section-titre" style={{fontSize: '13px'}}>Historique d'Achats (Caisse)</div>
                               {clientHistorique.achats.length === 0 ? <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun achat en caisse.</p> : (
                                   <div style={{background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
@@ -1334,6 +1351,7 @@ function App() {
             </div>
           )}
 
+          {/* --- NOUVELLE PAGE RH (ÉQUIPE) --- */}
           {role === 'gerant' && activeTab === 'rh' && (
             <div className="admin-container">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
@@ -1343,26 +1361,60 @@ function App() {
                   </div>
                   <ThemeToggle />
               </div>
+              
               {rhData.length === 0 ? (
                   <div className="empty-state">
                       <SvgEmptyState />
                       <p>Aucun employé enregistré.</p>
                   </div>
-              ) : rhData.map(employe => (
-                <div className="carte rh-carte" key={employe.id_employe}>
-                  <div className="rh-header"><span className="rh-nom">{employe.nom}</span><span className="rh-role">{employe.role}</span></div>
-                  <div className="rh-stats">
-                    <div className="rh-stat-item"><span className="rh-stat-valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="rh-stat-label">Clients</span></div>
-                    <div className="rh-stat-item"><span className="rh-stat-valeur">{employe.performances_actuelles.produits_vendus}</span><span className="rh-stat-label">Produits</span></div>
-                    <div className="rh-stat-item"><span className="rh-stat-valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / 10000) * 100).toFixed(1)}%</span><span className="rh-stat-label">CA suppl.</span></div>
-                  </div>
-                  <div className="rh-prime-box" style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)'}}>
-                    <span className="rh-prime-label" style={{color: 'var(--text-main)'}}>Prime estimée</span>
-                    <span className="rh-prime-montant" style={{color: 'var(--text-main)'}}>{employe.performances_actuelles.prime_estimee} <span style={{fontSize: '16px', color: 'var(--text-secondary)'}}>€</span></span>
-                  </div>
-                  <div className="rh-chronogramme"><span className="chronogramme-titre">Évolution des primes (6 derniers mois)</span>{dessinerChronogramme(employe.historique_primes)}</div>
+              ) : (
+                <div className="rh-grid">
+                  {rhData.map(employe => (
+                    <div className="rh-carte" key={employe.id_employe}>
+                      
+                      <div className="rh-header-profil">
+                        <div className="rh-avatar">
+                          {employe.photo_url ? (
+                            <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                          ) : (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                          )}
+                        </div>
+                        <div className="rh-identite">
+                          <h3>{employe.nom}</h3>
+                          <span className="rh-role-badge">{employe.role}</span>
+                        </div>
+                      </div>
+
+                      <div className="rh-stats-row">
+                        <div className="rh-stat-bloc">
+                          <span className="valeur">{employe.performances_actuelles.clients_coiffes}</span>
+                          <span className="label">Clients</span>
+                        </div>
+                        <div className="rh-stat-bloc">
+                          <span className="valeur">{employe.performances_actuelles.produits_vendus}</span>
+                          <span className="label">Produits</span>
+                        </div>
+                        <div className="rh-stat-bloc">
+                          <span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span>
+                          <span className="label">CA Généré</span>
+                        </div>
+                      </div>
+
+                      <div className="rh-prime-box">
+                        <span className="label">Prime estimée</span>
+                        <span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span>
+                      </div>
+
+                      <div style={{marginTop: '8px'}}>
+                        <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
+                        {dessinerChronogramme(employe.historique_primes)}
+                      </div>
+
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           )}
 
