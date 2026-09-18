@@ -352,7 +352,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 }
 
 /* ==========================================================================
-   13. RESPONSIVE DESIGN (MOBILE & TABLETTE) PWA PURE
+   13. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
 @media (max-width: 768px) {
   /* La barre latérale passe en bas avec hauteur fixe de 90px pour protéger la barre de swipe iPhone */
