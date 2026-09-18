@@ -98,7 +98,7 @@ function App() {
 
   const isMobile = windowWidth < 768;
   const isTablet = windowWidth >= 768 && windowWidth < 1024;
-  const nbJoursAffichage = isMobile ? 1 : (isTablet ? 3 : 7);
+  const nbJoursAffichage = isMobile ? 3 : (isTablet ? 4 : 7);
 
   const getStartOfPeriod = (d, daysCount) => {
       const date = new Date(d);
