@@ -355,8 +355,10 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
    13. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
 @media (max-width: 768px) {
-  /* La barre latérale passe en bas avec hauteur fixe de 90px pour protéger la barre de swipe iPhone */
+  /* La barre latérale passe en bas, HORIZONTALE et protégée de la zone iPhone */
   .navbar-sidebar { 
+      flex-direction: row !important; /* <-- LA CORRECTION EST ICI */
+      align-items: center !important;
       top: auto; 
       bottom: 0; 
       width: 100%; 
@@ -382,6 +384,9 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   
   /* Les cartes financières et Split-Screen s'empilent */
   .cartes-financieres { grid-template-columns: 1fr; }
+  .caisse-split-container { flex-direction: column; }
+  .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
+}
   .caisse-split-container { flex-direction: column; }
   .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
 }
