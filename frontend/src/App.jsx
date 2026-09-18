@@ -86,7 +86,8 @@ function App() {
   const [clientCaisse, setClientCaisse] = useState('');
   const [panierCaisse, setPanierCaisse] = useState([]); 
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
-  const [methodePaiement, setMethodePaiement] = useState('CARTE'); // Nouveau : Gestion Espèces/Carte/Chèque
+  const [methodePaiement, setMethodePaiement] = useState('CARTE');
+  const [clientSuggere, setClientSuggere] = useState(null); // POPUP SUGGESTION CLIENT
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
@@ -136,7 +137,6 @@ function App() {
   const [notificationCaisse, setNotificationCaisse] = useState(null);
   const [socket, setSocket] = useState(null);
 
-  // --- CONFIGURATION INCLUANT LA FIDÉLITÉ ---
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60
@@ -265,7 +265,44 @@ function App() {
 
   const scannerFacture = async () => { if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
 
-  // --- LOGIQUE DE LA CAISSE (AVEC FIDÉLITÉ) ---
+  // --- LOGIQUE DE LA CAISSE (SMART POS & FIDÉLITÉ) ---
+  const handleSelectEmployeCaisse = (id_employe) => {
+      setPosEmploye(id_employe);
+      
+      const now = new Date();
+      let closestClient = null;
+
+      const rdvsToday = planningData.filter(r => r.id_employe === id_employe && isToday(new Date(r.date_heure_debut)));
+      rdvsToday.sort((a, b) => new Date(b.date_heure_debut) - new Date(a.date_heure_debut));
+
+      for (let rdv of rdvsToday) {
+          const rdvStart = new Date(rdv.date_heure_debut);
+          const diffMinutes = (now - rdvStart) / 60000; 
+          
+          if (diffMinutes > -15 && diffMinutes < 150) { 
+              let clientInCRM = null;
+              if (rdv.telephone_client) {
+                  clientInCRM = clientsListe.find(c => c.telephone === rdv.telephone_client);
+              }
+              if (!clientInCRM && rdv.nom_client) {
+                  clientInCRM = clientsListe.find(c => c.nom.toLowerCase() === rdv.nom_client.toLowerCase());
+              }
+              
+              if (clientInCRM) {
+                  closestClient = clientInCRM;
+                  break;
+              }
+          }
+      }
+
+      if (closestClient) {
+          setClientSuggere(closestClient);
+      } else {
+          setClientCaisse('');
+          setPosStep('type');
+      }
+  };
+
   const ajouterAuPanier = (article) => {
       const exist = panierCaisse.find(item => item.id_article === article.id_article);
       if (exist) {
@@ -298,7 +335,6 @@ function App() {
   };
 
   const lancerPaiementTPE = async (montant, lignes) => {
-    // Si on demande la CB, on prévient du TPE. Sinon, on encaisse directement.
     if (methodePaiement === 'CARTE') setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
     try {
         const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement };
@@ -679,7 +715,7 @@ function App() {
                 <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                   <ThemeToggle />
                   <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                   </button>
                 </div>
               </div>
@@ -912,6 +948,7 @@ function App() {
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
               
+              {/* --- NOUVEAU BLOC FIDÉLITÉ --- */}
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
@@ -1033,7 +1070,7 @@ function App() {
                             ) : (
                                 <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '16px'}}>
                                     {employesListe.map((emp, index) => (
-                                        <div key={emp.id_employe} onClick={() => setPosEmploye(emp.id_employe)}
+                                        <div key={emp.id_employe} onClick={() => handleSelectEmployeCaisse(emp.id_employe)}
                                             style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '24px 12px', borderRadius: 'var(--radius-card)', fontSize: '16px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', transition: 'transform 0.15s ease' }}>
                                             {emp.nom.split(' ')[0]}
                                         </div>
@@ -1071,11 +1108,11 @@ function App() {
                       <div className="ticket-header">
                           <h3 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                               Ticket en cours
-                              {posEmploye && <button onClick={() => setPosEmploye('')} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
+                              {posEmploye && <button onClick={() => { setPosEmploye(null); setClientSuggere(null); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
                           </h3>
                           <select className="input-fournisseur" value={clientCaisse} onChange={(e) => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{fontSize: '13px', padding: '8px'}}>
                               <option value="">Client de passage (Optionnel)</option>
-                              {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client}>{cli.nom}</option>)}
+                              {clientsListe.map(cli => <option key={cli.id_client} value={cli.id_client.toString()}>{cli.nom}</option>)}
                           </select>
                       </div>
 
@@ -1147,6 +1184,27 @@ function App() {
                   </div>
               </div>
               
+              {/* --- MODAL SUGGESTION DE CLIENT (SMART POS) --- */}
+              {clientSuggere && (
+                  <div className="modal-overlay">
+                      <div className="modal-content" style={{textAlign: 'center'}}>
+                          <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                              <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                          </div>
+                          <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>Encaisser {clientSuggere.nom} ?</h2>
+                          <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>D'après l'agenda, c'est le client que vous venez de coiffer.</p>
+                          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                              <button onClick={() => { setClientCaisse(clientSuggere.id_client.toString()); setClientSuggere(null); setPosStep('type'); }} className="btn-action" style={{padding: '12px'}}>
+                                  ✅ Oui, c'est bien {clientSuggere.nom.split(' ')[0]}
+                              </button>
+                              <button onClick={() => { setClientCaisse(''); setClientSuggere(null); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
+                                  ❌ Non, client de passage
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+              )}
+
               {/* --- MODAL TICKET ÉCOLOGIQUE (LOI ANTI-GASPI) --- */}
               {ticketGenere && (
                   <div className="modal-overlay">
