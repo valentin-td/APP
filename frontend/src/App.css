@@ -380,3 +380,30 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
     font-weight: 700;
     color: var(--color-success);
 }
+
+
+      /* ==========================================================================
+   14. FIX iOS PWA ENCOCHE & BARRE DU BAS (MODE APPLICATION INSTALLÉE)
+   ========================================================================== */
+@media (display-mode: standalone) and (max-width: 768px), 
+       (display-mode: fullscreen) and (max-width: 768px) {
+       
+  /* Force un espacement fixe pour l'encoche (Notch) en haut */
+  .dashboard-container { 
+      padding-top: 70px !important; /* 47px encoche + 23px aération */
+  }
+  
+  .theme-toggle-fixed { 
+      top: 55px !important; /* Sous l'encoche */
+  }
+
+  /* Force un espacement fixe pour la barre de balayage (Home Indicator) en bas */
+  .navbar-sidebar { 
+      height: 96px !important; /* 72px menu + 24px marge de sécurité */
+      padding-bottom: 24px !important; 
+  }
+  
+  .main-content { 
+      margin-bottom: 96px !important; 
+  }
+}
