@@ -382,11 +382,6 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 }
 
 
-      /* ==========================================================================
-   14. FIX iOS PWA ENCOCHE & BARRE DU BAS (MODE APPLICATION INSTALLÉE)
-   ========================================================================== */
-@media (display-mode: standalone) and (max-width: 768px), 
-       (display-mode: fullscreen) and (max-width: 768px) {
        
   /* Force un espacement fixe pour l'encoche (Notch) en haut */
   .dashboard-container { 
