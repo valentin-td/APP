@@ -266,7 +266,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 
   /* Le contenu principal remonte pour laisser la place au menu du bas */
   .main-content { margin-left: 0; margin-bottom: calc(72px + env(safe-area-inset-bottom)); }
-  .dashboard-container { padding: calc(24px + env(safe-area-inset-top)) 16px 24px 16px; }
+  .dashboard-container { padding: calc(24px + env(safe-area-inset-top)) 16px 24px 16px !important; }
   
   /* L'en-tête de l'Agenda devient vertical */
   .agenda-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
@@ -278,7 +278,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
   
   /* Le bouton Thème protégé sous l'encoche */
-  .theme-toggle-fixed { top: calc(16px + env(safe-area-inset-top)); right: 16px; }
+  .theme-toggle-fixed { top: calc(16px + env(safe-area-inset-top)) !important; right: 16px; }
 }
 
 /* ==========================================================================
