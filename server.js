@@ -31,11 +31,12 @@ io.on('connection', (socket) => {
     });
 });
 
+// IMPORTANT : On augmente la limite JSON à 10mb pour accepter les photos de profil (Base64)
 app.use((req, res, next) => {
   if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { 
       next(); 
   } else { 
-      express.json()(req, res, next); 
+      express.json({ limit: '10mb' })(req, res, next); 
   }
 });
 
@@ -212,7 +213,8 @@ pool.query(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recompense_utilisee BOOLEAN DEFAULT FALSE;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
-`).then(() => console.log("✅ Base de données prête (Structure NF525 et CRM à jour)")).catch((e) => console.error("❌ Erreur Auto-healing:", e));
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
+`).then(() => console.log("✅ Base de données prête (Paiement, Annulation et Photos à jour)")).catch((e) => console.error("❌ Erreur Auto-healing:", e));
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
     const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture } = req.body; 
@@ -351,7 +353,6 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
         let reader = null;
         let paymentIntentId = null;
 
-        // On ne fait appel à Stripe QUE si la méthode est CARTE et que le montant est > 0
         if (methode === 'CARTE' && montant > 0) {
             const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
             const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
@@ -448,17 +449,14 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
         if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable ou déjà annulé.");
         const ticket = ticketRes.rows[0];
 
-        // 1. Marquer comme annulé et retirer les commissions
         await clientDB.query("UPDATE tickets SET statut = 'ANNULE' WHERE id_ticket = $1", [id_ticket]);
         await clientDB.query("UPDATE commissions SET montant_commission = 0 WHERE id_ticket = $1", [id_ticket]);
 
-        // 2. Remettre en stock
         const lignes = await clientDB.query("SELECT id_article, quantite FROM lignes_ticket WHERE id_ticket = $1", [id_ticket]);
         for (let ligne of lignes.rows) {
             await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [ligne.quantite, ligne.id_article]);
         }
 
-        // 3. Retirer les points de fidélité liés à cet achat
         if (ticket.id_client && !ticket.recompense_utilisee) {
             await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - 1) WHERE id_client = $2", [Math.floor(ticket.total_ttc), ticket.id_client]);
         }
@@ -521,8 +519,15 @@ app.get('/api/clients', verifierToken, async (req, res) => { try { const result 
 app.post('/api/clients', verifierToken, async (req, res) => { const { prenom, nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (prenom, nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [prenom || '', nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
 app.delete('/api/clients/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }});
 
+// --- AJOUT DE LA GESTION PHOTO (BASE64) POUR LES EMPLOYÉS ---
 app.get('/api/employes', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM employes WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }});
-app.post('/api/employes', verifierToken, async (req, res) => { const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin } = req.body; try { await pool.query('INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [nom, role || 'Employé', taux_commission_prestation || 0, taux_commission_produit || 0, code_pin || '0000', req.user.id_salon]); res.status(201).json({message: "Employé ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
+app.post('/api/employes', verifierToken, async (req, res) => { 
+    const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url } = req.body; 
+    try { 
+        await pool.query('INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7)', [nom, role || 'Employé', taux_commission_prestation || 0, taux_commission_produit || 0, code_pin || '0000', photo_url || null, req.user.id_salon]); 
+        res.status(201).json({message: "Employé ajouté"}); 
+    } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
+});
 app.delete('/api/employes/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }});
 
 app.get('/api/catalogue', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur catalogue."}); }});
@@ -530,7 +535,7 @@ app.post('/api/catalogue', verifierToken, async (req, res) => { const { nom, typ
 app.delete('/api/catalogue/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }});
 
 app.get('/api/stocks', verifierToken, async (req, res) => { try { const stockResult = await pool.query(`SELECT id_article, nom, stock_actuel, seuil_alerte, type_article FROM catalogue WHERE id_salon = $1 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') ORDER BY nom ASC`, [req.user.id_salon]); res.json(stockResult.rows); } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }});
-app.get('/api/rh', verifierToken, async (req, res) => { const id_salon = req.user.id_salon; try { const rhQuery = `SELECT e.id_employe, e.nom, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.role ORDER BY e.id_employe;`; const rhResult = await pool.query(rhQuery, [id_salon]); const employesData = await Promise.all(rhResult.rows.map(async (emp) => { const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`; const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]); let historique = histoResult.rows.map(r => parseFloat(r.total_prime)); while(historique.length < 6) historique.unshift(0); if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0]; return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6) }; })); res.json(employesData); } catch (erreur) { res.status(500).json({ erreur: "Erreur requête RH." }); }});
+app.get('/api/rh', verifierToken, async (req, res) => { const id_salon = req.user.id_salon; try { const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`; const rhResult = await pool.query(rhQuery, [id_salon]); const employesData = await Promise.all(rhResult.rows.map(async (emp) => { const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`; const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]); let historique = histoResult.rows.map(r => parseFloat(r.total_prime)); while(historique.length < 6) historique.unshift(0); if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0]; return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6) }; })); res.json(employesData); } catch (erreur) { res.status(500).json({ erreur: "Erreur requête RH." }); }});
 
 app.get('/api/dashboard', verifierToken, async (req, res) => { 
     const id_salon = req.user.id_salon; 
