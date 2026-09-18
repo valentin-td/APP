@@ -409,12 +409,11 @@ function App() {
       } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
   };
 
+  // --- CORRECTION DU BUG DES +2 HEURES DE FUSEAU HORAIRE ---
+  // On envoie directement la chaîne "YYYY-MM-DDTHH:mm:00" sans la convertir en format UTC pour éviter les décalages horaires.
   const creerRdvManuel = async () => {
       try {
-          const [yyyy, mm, dd] = formRdv.date.split('-');
-          const [hh, min] = formRdv.heure.split(':');
-          const localDate = new Date(yyyy, mm - 1, dd, hh, min, 0);
-          const datetime = localDate.toISOString();
+          const datetime = `${formRdv.date}T${formRdv.heure}:00`;
           
           const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime}) });
           if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); }
@@ -435,10 +434,7 @@ function App() {
 
   const sauvegarderModifRdv = async () => {
       try {
-          const [yyyy, mm, dd] = editRdvForm.date.split('-');
-          const [hh, min] = editRdvForm.heure.split(':');
-          const localDate = new Date(yyyy, mm - 1, dd, hh, min, 0);
-          const datetime = localDate.toISOString();
+          const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
 
           const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime }) });
           if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); }
@@ -980,6 +976,7 @@ function App() {
                                   </div>
                               )}
 
+                              {/* --- NOUVEAU : HISTORIQUE D'ACHATS AVEC BOUTON ANNULER --- */}
                               <div className="section-titre" style={{fontSize: '13px'}}>Historique d'Achats (Caisse)</div>
                               {clientHistorique.achats.length === 0 ? <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun achat en caisse.</p> : (
                                   <div style={{background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
@@ -1016,6 +1013,7 @@ function App() {
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
               
+              {/* --- NOUVEAU BLOC FIDÉLITÉ --- */}
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
