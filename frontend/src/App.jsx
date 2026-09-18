@@ -5,6 +5,7 @@ import './App.css';
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   
+  // --- GESTION DU THÈME SOMBRE ET DES LOGOS ---
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
 
   useEffect(() => {
@@ -74,11 +75,11 @@ function App() {
   const [ticketGenere, setTicketGenere] = useState(null);
   const [emailTicketClient, setEmailTicketClient] = useState('');
 
-  // Ajout du Prénom
   const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
 
+  // --- ÉTAT DU SPLIT-SCREEN CAISSE & FIDELITE ---
   const [posStep, setPosStep] = useState('employee'); 
   const [posEmploye, setPosEmploye] = useState(null);
   const [posType, setPosType] = useState('PRESTATION'); 
@@ -149,7 +150,6 @@ function App() {
   const getAuthHeaders = (isJson = false) => { const headers = { 'Authorization': `Bearer ${token}` }; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
   const handleFetchError = async (res) => { if (res.status === 401 || res.status === 403) { seDeconnecter(); throw new Error("Session expirée"); } if (res.status === 402) { setIsAbonnementInactif(true); throw new Error("Abonnement inactif"); } const data = await res.json(); if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); return data; };
 
-  // Helper pour afficher le nom du client avec le prénom (s'il existe)
   const formatNomClient = (client) => {
       if (!client) return 'Client inconnu';
       if (client.prenom && client.nom) return `${client.prenom} ${client.nom}`;
@@ -259,6 +259,22 @@ function App() {
       } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
   };
 
+  // --- NOUVEAU : FONCTION D'ANNULATION D'UN PAIEMENT ---
+  const annulerTicket = async (id_ticket) => {
+      if (!window.confirm("Êtes-vous sûr de vouloir annuler ce paiement ? Le produit sera remis en stock et les points retirés.")) return;
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/caisse/annuler-ticket/${id_ticket}`, { 
+              method: 'PUT', headers: getAuthHeaders() 
+          });
+          const data = await handleFetchError(res);
+          showToast(data.message, "success");
+          ouvrirFicheClient(clientSelectionne); // Rafraîchit l'historique
+          chargerTout(); // Rafraîchit les stocks et le CA global
+      } catch (error) {
+          showToast(error.message, "error");
+      }
+  };
+
   const ajouterClient = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
   const ajouterEmploye = async () => { try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
@@ -278,11 +294,11 @@ function App() {
       const now = new Date();
       let matches = [];
 
-      const rdvsToday = planningData.filter(r => r.id_employe === id_employe && isToday(new Date(r.date_heure_debut)));
-      rdvsToday.sort((a, b) => new Date(b.date_heure_debut) - new Date(a.date_heure_debut));
+      const rdvsToday = planningData.filter(r => r.id_employe === id_employe && isToday(new Date(r.date_heure_debut.replace('Z', ''))));
+      rdvsToday.sort((a, b) => new Date(b.date_heure_debut.replace('Z', '')) - new Date(a.date_heure_debut.replace('Z', '')));
 
       for (let rdv of rdvsToday) {
-          const rdvStart = new Date(rdv.date_heure_debut);
+          const rdvStart = new Date(rdv.date_heure_debut.replace('Z', ''));
           const diffMinutes = (now - rdvStart) / 60000; 
           if (diffMinutes > -30 && diffMinutes < 150) { 
               let clientInCRM = null;
@@ -338,7 +354,7 @@ function App() {
   };
 
   const lancerPaiementTPE = async (montant, lignes) => {
-    if (methodePaiement === 'CARTE') setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
+    if (methodePaiement === 'CARTE' && montant > 0) setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
     try {
         const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement };
         const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
@@ -359,7 +375,9 @@ function App() {
         setRemiseAppliquee(false);
         setMethodePaiement('CARTE');
         chargerTout(); 
-    } catch (error) { if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur TPE."}`); }
+    } catch (error) { 
+        if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur Caisse."}`); 
+    }
   };
 
   const envoyerTicketEco = async (methode) => {
@@ -384,8 +402,7 @@ function App() {
       } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
   };
 
-  // --- CORRECTION DU BUG DES +2 HEURES ---
-  // On fige l'heure locale en créant une date précise qu'on exporte en chaîne standard (ISOString)
+  // --- CORRECTION DU BUG DES +2 HEURES DE FUSEAU HORAIRE ---
   const creerRdvManuel = async () => {
       try {
           const [yyyy, mm, dd] = formRdv.date.split('-');
@@ -401,7 +418,7 @@ function App() {
   const ouvrirRdvSelectionne = (rdv) => {
       setRdvSelectionne(rdv);
       setIsEditingRdv(false);
-      const d = new Date(rdv.date_heure_debut);
+      const d = new Date(rdv.date_heure_debut.replace('Z', ''));
       setEditRdvForm({
           date: formatDateInput(d),
           heure: d.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
@@ -605,7 +622,7 @@ function App() {
                   </div>
               </div>
 
-              {/* --- GRILLE AGENDA 100% DYNAMIQUE --- */}
+              {/* --- GRILLE AGENDA 100% DYNAMIQUE & CORRECTION BUG CSS --- */}
               <div className="week-calendar">
                   <div className="week-header-row">
                       <div className="time-spacer"></div>
@@ -631,14 +648,14 @@ function App() {
                               {joursSemaine.map((jour, indexJour) => {
                                   const dateStringJour = formatDateInput(jour);
                                   const rdvsDuJour = planningData.filter(rdv => {
-                                      const rdvDateStr = rdv.date_heure_debut.split('T')[0];
+                                      const rdvDateStr = rdv.date_heure_debut.replace('Z', '').split('T')[0];
                                       return rdvDateStr === dateStringJour && (role === 'employe' || filtreAgenda === 'TOUS' || rdv.nom_employe === filtreAgenda);
                                   });
 
                                   return (
                                       <div key={indexJour} className="day-column" style={{ flex: 1, borderRight: '1px solid var(--border-color)', position: 'relative', backgroundImage: 'linear-gradient(to bottom, var(--border-color) 1px, transparent 1px)', backgroundSize: '100% 80px' }}>
                                           {rdvsDuJour.map((rdv) => {
-                                              const dateDebut = new Date(rdv.date_heure_debut);
+                                              const dateDebut = new Date(rdv.date_heure_debut.replace('Z', ''));
                                               const ECHELLE_HEURE = 80;
                                               const dureeReelle = rdv.duree_minutes || 30;
                                               const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (dateDebut.getMinutes() * (ECHELLE_HEURE / 60));
@@ -646,10 +663,10 @@ function App() {
                                               const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
 
                                               return (
-                                                  <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
-                                                       style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
-                                                      <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
-                                                      <span className="agenda-card-subtitle">{rdv.prestation}</span>
+                                                  <div key={rdv.id_rdv} onClick={() => ouvrirRdvSelectionne(rdv)}
+                                                       style={{ position: 'absolute', left: '4px', right: '4px', width: 'calc(100% - 8px)', top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827', borderRadius: '6px', padding: '6px 8px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', cursor: 'pointer', zIndex: 5 }}>
+                                                      <div style={{fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</div>
+                                                      <div style={{fontSize: '10px', opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.prestation}</div>
                                                   </div>
                                               );
                                           })}
@@ -923,7 +940,7 @@ function App() {
                                   <div style={{marginBottom: '32px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
                                       {clientHistorique.rdv.map((r, i) => (
                                           <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: i !== clientHistorique.rdv.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
-                                              <span><strong style={{color: 'var(--text-main)'}}>{new Date(r.date_heure_debut).toLocaleDateString()}</strong> - {r.prestation}</span>
+                                              <span><strong style={{color: 'var(--text-main)'}}>{new Date(r.date_heure_debut.replace('Z','')).toLocaleDateString()}</strong> - {r.prestation}</span>
                                               <span style={{color: 'var(--text-muted)'}}>{r.nom_employe}</span>
                                           </div>
                                       ))}
@@ -945,13 +962,23 @@ function App() {
                                   </div>
                               )}
 
+                              {/* --- NOUVEAU : HISTORIQUE D'ACHATS AVEC BOUTON ANNULER --- */}
                               <div className="section-titre" style={{fontSize: '13px'}}>Historique d'Achats (Caisse)</div>
                               {clientHistorique.achats.length === 0 ? <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun achat en caisse.</p> : (
                                   <div style={{background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
                                       {clientHistorique.achats.map((a, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: i !== clientHistorique.achats.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
-                                              <span><strong style={{color: 'var(--text-main)'}}>{new Date(a.date_creation).toLocaleDateString()}</strong> - {a.article} <span style={{color: 'var(--text-muted)'}}>(x{a.quantite})</span></span>
-                                              <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{parseFloat(a.prix_unitaire_ttc).toFixed(2)} €</span>
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: i !== clientHistorique.achats.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                              <span style={{opacity: a.statut === 'ANNULE' ? 0.5 : 1}}>
+                                                  <strong style={{color: 'var(--text-main)'}}>{new Date(a.date_creation).toLocaleDateString()}</strong> - {a.article} <span style={{color: 'var(--text-muted)'}}>(x{a.quantite})</span>
+                                              </span>
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                  <span style={{fontWeight: '600', color: 'var(--text-main)', textDecoration: a.statut === 'ANNULE' ? 'line-through' : 'none'}}>{parseFloat(a.prix_unitaire_ttc).toFixed(2)} €</span>
+                                                  {a.statut === 'ANNULE' ? (
+                                                      <span style={{fontSize: '11px', fontWeight: 'bold', color: 'var(--color-danger)'}}>ANNULÉ</span>
+                                                  ) : (
+                                                      <button onClick={() => annulerTicket(a.id_ticket)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '14px'}} title="Annuler ce paiement">❌</button>
+                                                  )}
+                                              </div>
                                           </div>
                                       ))}
                                   </div>
@@ -972,7 +999,6 @@ function App() {
               </div>
               <span className="date-subtitle">Configuration de votre salon</span>
               
-              {/* --- NOUVEAU BLOC FIDÉLITÉ --- */}
               <div className="carte scan-carte">
                 <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
                 <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
@@ -1129,6 +1155,13 @@ function App() {
 
                   {/* PANNEAU DROITE */}
                   <div className="caisse-right-panel">
+                      {/* --- AFFICHAGE DES ERREURS DE PAIEMENT --- */}
+                      {notificationCaisse && (
+                          <div style={{padding: '12px', background: 'var(--bg-danger)', color: 'var(--color-danger)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', fontWeight: '600'}}>
+                              {notificationCaisse}
+                          </div>
+                      )}
+
                       <div className="ticket-header">
                           <h3 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                               Ticket en cours
