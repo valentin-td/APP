@@ -70,13 +70,12 @@ function App() {
   const [clientsListe, setClientsListe] = useState([]);
   
   const [clientSelectionne, setClientSelectionne] = useState(null);
-  const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '' });
+  const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '', gains: [] });
   const [chargementFiche, setChargementFiche] = useState(false);
 
   const [ticketGenere, setTicketGenere] = useState(null);
   const [emailTicketClient, setEmailTicketClient] = useState('');
 
-  // Ajout de la date de naissance pour le ciblage anniversaire
   const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '', date_naissance: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '' });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
@@ -87,9 +86,10 @@ function App() {
   const [posType, setPosType] = useState('PRESTATION'); 
   const [clientCaisse, setClientCaisse] = useState('');
   const [panierCaisse, setPanierCaisse] = useState([]); 
-  const [remiseAppliquee, setRemiseAppliquee] = useState(false); // Flag de récompense
+  const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
+  // --- RESPONSIVE AGENDA LOGIC ---
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   useEffect(() => {
       const handleResize = () => setWindowWidth(window.innerWidth);
@@ -280,7 +280,6 @@ function App() {
   const sousTotalCaisse = panierCaisse.reduce((acc, item) => acc + (item.prix_unitaire * item.quantite), 0);
   let totalCaisse = sousTotalCaisse;
   
-  // Calcul de la remise si demandée
   if (remiseAppliquee) {
       if (configSalon.fidelite_type === 'POINTS') {
           totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur));
@@ -290,7 +289,6 @@ function App() {
           } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
               totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur) / 100));
           }
-          // Si type = PRODUIT, le montant ne change pas mathématiquement, on offre l'objet physique
       }
   }
 
@@ -320,7 +318,7 @@ function App() {
         setClientCaisse('');
         setPosEmploye('');
         setRemiseAppliquee(false);
-        chargerTout(); // Actualise les points du client dans le CRM
+        chargerTout(); 
     } catch (error) { if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur TPE."}`); }
   };
 
@@ -401,7 +399,6 @@ function App() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
   );
 
-  // Détection d'éligibilité Fidélité au comptoir
   let clientCaisseObj = null;
   let isEligibleFidelite = false;
   let texteRecompense = '';
@@ -568,6 +565,7 @@ function App() {
                           </div>
                       ))}
                   </div>
+
                   <div className="week-body">
                       <div className="time-column">
                           {Array.from({ length: nbHeures }).map((_, i) => (<div key={i} className="time-label">{heureDebutAgenda + i} h</div>))}
@@ -579,6 +577,7 @@ function App() {
                                   const rdvDateStr = rdv.date_heure_debut.split('T')[0];
                                   return rdvDateStr === dateStringJour && (role === 'employe' || filtreAgenda === 'TOUS' || rdv.nom_employe === filtreAgenda);
                               });
+
                               return (
                                   <div key={indexJour} className="day-column">
                                       {rdvsDuJour.map((rdv) => {
@@ -590,7 +589,8 @@ function App() {
                                           const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
 
                                           return (
-                                              <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)} style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
+                                              <div key={rdv.id_rdv} className="agenda-card" onClick={() => ouvrirRdvSelectionne(rdv)}
+                                                   style={{ top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827' }}>
                                                   <span className="agenda-card-title">{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</span>
                                                   <span className="agenda-card-subtitle">{rdv.prestation}</span>
                                               </div>
@@ -674,10 +674,7 @@ function App() {
           {role === 'gerant' && activeTab === 'accueil' && (
             <>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                <h1 style={{margin: 0}}>
-                  Tableau de bord
-                  <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span>
-                </h1>
+                <h1 style={{margin: 0}}>Tableau de bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span></h1>
                 <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                   <ThemeToggle />
                   <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
@@ -815,6 +812,7 @@ function App() {
                 </div>
               </div>
 
+              {/* --- MODAL FICHE CLIENT (CRM) --- */}
               {clientSelectionne && (
                   <div className="modal-overlay">
                       <div className="modal-content">
@@ -830,14 +828,28 @@ function App() {
                               <div className="skeleton-loading" style={{height: '200px'}}></div>
                           ) : (
                             <>
-                              {/* Affichage de la fidélité dans le CRM */}
+                              {/* --- BARRE DE PROGRESSION FIDÉLITÉ --- */}
                               {configSalon.fidelite_type !== 'NONE' && (
-                                  <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '24px'}}>
-                                      <h4 style={{margin: '0 0 8px 0', fontSize: '13px', color: 'var(--text-main)'}}>🎁 Programme Fidélité</h4>
-                                      <div style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between'}}>
-                                          <span>{configSalon.fidelite_type === 'POINTS' ? 'Points accumulés :' : 'Tampons accumulés :'}</span>
-                                          <strong style={{color: 'var(--color-info)'}}>{configSalon.fidelite_type === 'POINTS' ? (clientSelectionne.points_fidelite || 0) : (clientSelectionne.tampons_fidelite || 0)} / {configSalon.fidelite_type === 'POINTS' ? configSalon.fidelite_points_seuil : configSalon.fidelite_tampons_seuil}</strong>
-                                      </div>
+                                  <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '24px'}}>
+                                      <h4 style={{margin: '0 0 12px 0', fontSize: '14px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>🎁 Programme Fidélité</h4>
+                                      {(() => {
+                                          const current = configSalon.fidelite_type === 'POINTS' ? (clientSelectionne.points_fidelite || 0) : (clientSelectionne.tampons_fidelite || 0);
+                                          const max = configSalon.fidelite_type === 'POINTS' ? configSalon.fidelite_points_seuil : configSalon.fidelite_tampons_seuil;
+                                          const percentage = Math.min(100, (current / max) * 100);
+                                          const label = configSalon.fidelite_type === 'POINTS' ? 'Points' : 'Tampons';
+                                          return (
+                                              <>
+                                                  <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px'}}>
+                                                      <span>Progression ({label})</span>
+                                                      <strong style={{color: 'var(--text-main)'}}>{current} / {max}</strong>
+                                                  </div>
+                                                  <div style={{height: '10px', background: 'var(--border-color)', borderRadius: '10px', overflow: 'hidden'}}>
+                                                      <div style={{height: '100%', width: `${percentage}%`, background: percentage >= 100 ? 'var(--color-success)' : 'var(--color-info)', transition: 'width 0.5s ease'}} />
+                                                  </div>
+                                                  {percentage >= 100 && <p style={{margin: '8px 0 0 0', fontSize: '12px', color: 'var(--color-success)', fontWeight: '600'}}>✅ Récompense débloquée !</p>}
+                                              </>
+                                          )
+                                      })()}
                                   </div>
                               )}
 
@@ -857,7 +869,22 @@ function App() {
                                   </div>
                               )}
 
-                              <div className="section-titre" style={{fontSize: '13px'}}>Historique d'Achats</div>
+                              {/* --- HISTORIQUE DES RÉCOMPENSES --- */}
+                              <div className="section-titre" style={{fontSize: '13px'}}>Historique des Cadeaux / Récompenses</div>
+                              {!clientHistorique.gains || clientHistorique.gains.length === 0 ? (
+                                  <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px'}}>Aucune récompense utilisée pour le moment.</p>
+                              ) : (
+                                  <div style={{marginBottom: '32px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
+                                      {clientHistorique.gains.map((g, i) => (
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: i !== clientHistorique.gains.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                              <span style={{display: 'flex', alignItems: 'center', gap: '8px'}}><span style={{fontSize: '14px'}}>🎁</span> <strong style={{color: 'var(--text-main)'}}>{new Date(g.date_creation).toLocaleDateString()}</strong></span>
+                                              <span style={{color: 'var(--color-success)', fontWeight: '600'}}>Récompense appliquée</span>
+                                          </div>
+                                      ))}
+                                  </div>
+                              )}
+
+                              <div className="section-titre" style={{fontSize: '13px'}}>Historique d'Achats (Caisse)</div>
                               {clientHistorique.achats.length === 0 ? <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun achat en caisse.</p> : (
                                   <div style={{background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', padding: '0 12px'}}>
                                       {clientHistorique.achats.map((a, i) => (
@@ -987,6 +1014,7 @@ function App() {
             </div>
           )}
 
+          {/* --- NOUVELLE CAISSE ENREGISTREUSE TACTILE (SPLIT SCREEN) --- */}
           {role === 'gerant' && activeTab === 'caisse' && (
             <div className="admin-container">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
@@ -1111,6 +1139,7 @@ function App() {
                   </div>
               </div>
               
+              {/* --- MODAL TICKET ÉCOLOGIQUE (LOI ANTI-GASPI) --- */}
               {ticketGenere && (
                   <div className="modal-overlay">
                       <div className="modal-content" style={{textAlign: 'center', padding: '40px 32px'}}>
