@@ -198,13 +198,18 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 // =========================================================================
-// --- CRM : AUTO-HEALING & CONFIGURATION ---
+// --- CRM : AUTO-HEALING & CONFIGURATION FIDÉLITÉ ---
 // =========================================================================
 pool.query(`
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS date_naissance DATE;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS points_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS tampons_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS derniere_visite DATE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
-`).then(() => console.log("✅ Base de données prête (CRM & Agenda à jour)")).catch(() => {});
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recompense_utilisee BOOLEAN DEFAULT FALSE;
+`).then(() => console.log("✅ Base de données prête (CRM, Agenda & Fidélité à jour)")).catch(() => {});
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
     const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture } = req.body; 
@@ -222,6 +227,7 @@ app.get('/api/settings', verifierToken, async (req, res) => {
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }
 });
 
+// HISTORIQUE CLIENT : RENVOIE DÉSORMAIS L'HISTORIQUE DES GAINS DE FIDÉLITÉ
 app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
     const id_client = req.params.id; const id_salon = req.user.id_salon;
     try {
@@ -230,8 +236,9 @@ app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
         
         const achatsRes = await pool.query(`SELECT t.date_creation, c.nom as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
         const rdvRes = await pool.query(`SELECT date_heure_debut, prestation, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.telephone_client = $1 AND r.id_salon = $2 ORDER BY r.date_heure_debut DESC LIMIT 20`, [clientRes.rows[0].telephone, id_salon]);
+        const gainsRes = await pool.query(`SELECT date_creation, total_ttc FROM tickets WHERE id_client = $1 AND id_salon = $2 AND recompense_utilisee = TRUE ORDER BY date_creation DESC LIMIT 20`, [id_client, id_salon]);
 
-        res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows });
+        res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows, gains: gainsRes.rows });
     } catch (e) { res.status(500).json({ erreur: "Erreur historique." }); }
 });
 
@@ -297,7 +304,6 @@ app.post('/api/rdv', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur création RDV." }); }
 });
 
-// ROUTE DYNAMIQUE : Modification d'un rendez-vous existant
 app.put('/api/rdv/:id', verifierToken, async (req, res) => {
     const { id_employe, prestation, date_heure_debut } = req.body;
     try {
@@ -310,7 +316,6 @@ app.put('/api/rdv/:id', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur modification RDV." }); }
 });
 
-// ROUTE DYNAMIQUE : Suppression manuelle d'un rendez-vous
 app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
     try {
         await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
@@ -332,10 +337,10 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 });
 
 // =========================================================================
-// --- L'ENCAISSEMENT TPE TEMPS RÉEL (NF525) & TICKET ÉCOLOGIQUE ---
+// --- L'ENCAISSEMENT TPE TEMPS RÉEL & LOGIQUE DE FIDÉLITÉ (SMART POS) ---
 // =========================================================================
 app.post('/api/caisse/payer', verifierToken, async (req, res) => {
-    const { montant, id_employe, id_client, lignes } = req.body;
+    const { montant, id_employe, id_client, lignes, recompense_appliquee } = req.body;
     const id_salon = req.user.id_salon;
     const clientDB = await pool.connect();
 
@@ -356,8 +361,8 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
         const numeroTicket = 'TPE-' + Date.now();
         
         const ticketResult = await clientDB.query(
-            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon) VALUES ($1, $2, $3, $4, $5) RETURNING id_ticket;`, 
-            [numeroTicket, id_client || null, id_employe, montant, id_salon]
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_ticket;`, 
+            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false]
         );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
 
@@ -386,6 +391,31 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
                 }
             }
         }
+
+        // --- ENREGISTREMENT ET CALCUL DES POINTS DE FIDÉLITÉ ---
+        if (id_client) {
+            await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1`, [id_client]);
+            const configRes = await clientDB.query(`SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1`, [id_salon]);
+            
+            if (configRes.rowCount > 0) {
+                const config = configRes.rows[0];
+                if (recompense_appliquee) {
+                    if (config.fidelite_type === 'POINTS') {
+                        await clientDB.query(`UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1) WHERE id_client = $2`, [config.fidelite_points_seuil, id_client]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = GREATEST(0, tampons_fidelite - $1) WHERE id_client = $2`, [config.fidelite_tampons_seuil, id_client]);
+                    }
+                } else {
+                    if (config.fidelite_type === 'POINTS') {
+                        const pointsToAdd = Math.floor(montant);
+                        await clientDB.query(`UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2`, [pointsToAdd, id_client]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = tampons_fidelite + 1 WHERE id_client = $2`, [id_client]);
+                    }
+                }
+            }
+        }
+
         await clientDB.query('COMMIT');
         io.to(id_salon.toString()).emit('paiementValide', { message: `Paiement validé (Ticket #${idNouveauTicket})` });
         
@@ -443,7 +473,7 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
 // --- ROUTES CRUD & STATS ---
 // =========================================================================
 app.get('/api/clients', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM clients WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur clients."}); }});
-app.post('/api/clients', verifierToken, async (req, res) => { const { nom, telephone, email } = req.body; try { await pool.query('INSERT INTO clients (nom, telephone, email, id_salon) VALUES ($1, $2, $3, $4)', [nom, telephone, email, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
+app.post('/api/clients', verifierToken, async (req, res) => { const { nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5)', [nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
 app.delete('/api/clients/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }});
 
 app.get('/api/employes', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM employes WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }});
@@ -576,22 +606,23 @@ async function executerRobotComptable() {
 cron.schedule('0 3 * * *', () => { executerRobotComptable(); });
 app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot comptable lancé." }); });
 
-const cron = require('node-cron');
 
-// Exécution tous les matins à 9h00
+// =========================================================================
+// --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES ---
+// =========================================================================
+// TEST : Exécution toutes les minutes ('* * * * *'). 
+// ⚠️ IMPORTANT : À remettre sur '0 9 * * *' (tous les jours à 9h) après avoir reçu ton SMS !
 cron.schedule('* * * * *', async () => {
     console.log("🤖 Exécution du Robot Marketing (Fidélité & Anniversaires)");
     try {
-        // 1. Récupérer tous les salons qui ont configuré Brevo
-        const salons = await db.query("SELECT * FROM parametres_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''");
+        const salons = await pool.query("SELECT * FROM configuration_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''");
         
         for (let salon of salons.rows) {
             // -- CAMPAGNE D'INACTIVITÉ --
             if (salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0) {
-                // Trouver les clients sans RDV futur et inactifs depuis X jours
-                const clientsInactifs = await db.query(`
+                const clientsInactifs = await pool.query(`
                     SELECT c.* FROM clients c
-                    LEFT JOIN rdv r ON r.id_client = c.id_client AND r.date_heure_debut >= NOW()
+                    LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
                     WHERE c.id_salon = $1 
                     AND c.derniere_visite <= NOW() - INTERVAL '${salon.fidelite_delai_sms} days'
                     AND r.id_rdv IS NULL
@@ -613,7 +644,7 @@ cron.schedule('* * * * *', async () => {
             }
 
             // -- CAMPAGNE ANNIVERSAIRE --
-            const anniversaires = await db.query(`
+            const anniversaires = await pool.query(`
                 SELECT * FROM clients 
                 WHERE id_salon = $1 
                 AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
@@ -629,19 +660,25 @@ cron.schedule('* * * * *', async () => {
     } catch (err) { console.error("Erreur Cron Job :", err); }
 });
 
-// Fonction d'envoi Brevo API Officielle
+// Fonction d'envoi API Brevo (ENVOI RÉEL)
 async function envoyerSMS(apiKey, sender, phone, text) {
-    console.log(`📱 [TEST GRATUIT] SMS prêt pour ${phone} (${sender}) : "${text}"`);
+    console.log(`🚀 [ENVOI RÉEL] Tentative d'envoi SMS à ${phone}...`);
     try {
         const res = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
             method: 'POST',
             headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': apiKey },
             body: JSON.stringify({ type: 'transactional', unicodeEnabled: true, sender: sender.substring(0, 11), recipient: phone, content: text })
         });
+        
         const data = await res.json();
-        console.log("📡 Réponse Brevo API :", data);
+        
+        if (res.ok) {
+            console.log("✅ SMS envoyé avec succès via Brevo !", data);
+        } else {
+            console.log("❌ Erreur retournée par Brevo :", data);
+        }
     } catch(e) { 
-        console.log("❌ Erreur d'appel API :", e.message); 
+        console.log("❌ Erreur fatale d'appel API :", e.message); 
     }
 }
 
