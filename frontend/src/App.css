@@ -385,3 +385,25 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   .caisse-split-container { flex-direction: column; }
   .caisse-right-panel { position: relative; top: 0; height: auto; border-top: 2px solid var(--btn-primary); }
 }
+
+/* ==========================================================================
+   PASTILLES DE NOTIFICATION IA
+   ========================================================================== */
+.badge-ia-rouge {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  width: 10px;
+  height: 10px;
+  background-color: var(--color-danger);
+  border-radius: 50%;
+  border: 2px solid var(--bg-card);
+  z-index: 10;
+  animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
