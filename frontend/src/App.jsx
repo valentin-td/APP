@@ -57,8 +57,11 @@ function App() {
   const [rhData, setRhData] = useState([]);
   const [historiqueData, setHistoriqueData] = useState([]);
   const [planningData, setPlanningData] = useState([]); 
+  
+  // ÉTATS DE L'IA AUTOMATIQUE EN ARRIÈRE-PLAN
   const [tachesIA, setTachesIA] = useState([]);
   const [modalIA, setModalIA] = useState(null);
+  
   const [erreur, setErreur] = useState(null);
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -96,6 +99,7 @@ function App() {
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
   const [methodePaiement, setMethodePaiement] = useState('ESPECES');
   const [clientsSuggeres, setClientsSuggeres] = useState([]); 
+  const [socket, setSocket] = useState(null);
   
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
@@ -138,7 +142,6 @@ function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
-  const [socket, setSocket] = useState(null);
 
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
@@ -174,6 +177,7 @@ function App() {
       }
   };
 
+  // --- MÉCANIQUE OFFLINE ANTI-BUG iOS ---
   useEffect(() => {
       const handleOnline = () => { setIsOffline(false); syncOfflineTickets(); };
       const handleOffline = () => { setIsOffline(true); setMethodePaiement('ESPECES'); }; 
@@ -251,7 +255,7 @@ function App() {
     fetchAndCache('/api/rh', setRhData, 'rhData');
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA');
+    fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA'); // CHARGEMENT DES TÂCHES IA
     
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
@@ -299,13 +303,13 @@ function App() {
       } 
   }, [token, isAbonnementInactif, isOffline]);
 
-  // Pop-up automatique de l'IA quand on change d'onglet
+  // LOGIQUE DU POP-UP INTELLIGENT DE L'IA QUAND ON CHANGE D'ONGLET
   useEffect(() => {
-      if (activeTab === 'produits' && !modalIA && tachesIA.length > 0) {
+      if (activeTab === 'produits' && !modalIA && tachesIA && tachesIA.length > 0) {
           const tacheStock = tachesIA.find(t => t.type_tache === 'STOCK');
           if (tacheStock) setModalIA(tacheStock);
       }
-      if (activeTab === 'agenda' && !modalIA && tachesIA.length > 0) {
+      if (activeTab === 'agenda' && !modalIA && tachesIA && tachesIA.length > 0) {
           const tacheClient = tachesIA.find(t => t.type_tache === 'CLIENT');
           if (tacheClient) setModalIA(tacheClient);
       }
@@ -767,16 +771,16 @@ function App() {
                       {modalIA.type_tache === 'STOCK' && (
                           <>
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Article commandé</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom_produit} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom_produit || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
                               
                               <div style={{display: 'flex', gap: '12px'}}>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité reçue</label>
-                                      <input type="number" className="input-fournisseur" value={modalIA.donnees.quantite} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
+                                      <input type="number" className="input-fournisseur" value={modalIA.donnees.quantite || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
                                   </div>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Référence</label>
-                                      <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees.reference} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
+                                      <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees.reference || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
                                   </div>
                               </div>
                           </>
@@ -784,10 +788,10 @@ function App() {
                       {modalIA.type_tache === 'CLIENT' && (
                           <>
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Nom du client</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom: e.target.value}})} />
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom: e.target.value}})} />
                               
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
-                              <input className="input-fournisseur" value={modalIA.donnees.telephone} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
+                              <input className="input-fournisseur" value={modalIA.donnees.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
                           </>
                       )}
                   </div>
@@ -809,7 +813,7 @@ function App() {
              )}
              
              <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
-                 {tachesIA.some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
+                 {tachesIA && tachesIA.some(t => t.type_tache === 'CLIENT') && <span style={{ position: 'absolute', top: '6px', right: '12px', width: '10px', height: '10px', backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--bg-card)', zIndex: 10 }}></span>}
                  <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
              </div>
              
@@ -819,7 +823,7 @@ function App() {
                     <div className={`nav-item ${activeTab === 'gestion' ? 'active' : ''}`} onClick={() => setActiveTab('gestion')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span>Gestion</span></div>
                     
                     <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
-                        {tachesIA.some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
+                        {tachesIA && tachesIA.some(t => t.type_tache === 'STOCK') && <span style={{ position: 'absolute', top: '6px', right: '12px', width: '10px', height: '10px', backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--bg-card)', zIndex: 10 }}></span>}
                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
                     </div>
                     
@@ -858,7 +862,6 @@ function App() {
                       </div>
                   </div>
 
-                  {/* --- GRILLE AGENDA 100% DYNAMIQUE & CORRECTION BUG CSS --- */}
                   <div className="week-calendar">
                       <div className="week-header-row">
                           <div className="time-spacer"></div>
