@@ -7,7 +7,7 @@ function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   
-  // NOUVEAU : Détection du réseau
+  // Détection du réseau
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   useEffect(() => {
@@ -862,6 +862,7 @@ function App() {
                       </div>
                   </div>
 
+                  {/* --- GRILLE AGENDA 100% DYNAMIQUE & CORRECTION BUG CSS --- */}
                   <div className="week-calendar">
                       <div className="week-header-row">
                           <div className="time-spacer"></div>
