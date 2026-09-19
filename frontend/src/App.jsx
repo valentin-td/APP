@@ -178,18 +178,32 @@ function App() {
       }
   };
 
-  // --- NOUVEAU : MÉCANIQUE OFFLINE & SYNCHRONISATION ---
+  // --- NOUVEAU : MÉCANIQUE OFFLINE ANTI-BUG iOS ---
   useEffect(() => {
       const handleOnline = () => { setIsOffline(false); syncOfflineTickets(); };
-      const handleOffline = () => { setIsOffline(true); setMethodePaiement('ESPECES'); }; // Force espèces en coupure
+      const handleOffline = () => { setIsOffline(true); setMethodePaiement('ESPECES'); }; 
       
+      // Vérification agressive quand l'appli revient au premier plan sur iOS
+      const checkNetworkAggressively = () => {
+          const currentOfflineStatus = !navigator.onLine;
+          if (isOffline !== currentOfflineStatus) {
+              setIsOffline(currentOfflineStatus);
+              if (!currentOfflineStatus) syncOfflineTickets();
+          }
+      };
+
       window.addEventListener('online', handleOnline);
       window.addEventListener('offline', handleOffline);
+      document.addEventListener('visibilitychange', checkNetworkAggressively);
+      window.addEventListener('focus', checkNetworkAggressively);
+
       return () => {
           window.removeEventListener('online', handleOnline);
           window.removeEventListener('offline', handleOffline);
+          document.removeEventListener('visibilitychange', checkNetworkAggressively);
+          window.removeEventListener('focus', checkNetworkAggressively);
       };
-  }, [token]);
+  }, [token, isOffline]);
 
   const syncOfflineTickets = async () => {
       if (!token) return;
@@ -244,7 +258,6 @@ function App() {
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     
-    // Settings custom
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
         .then(async (d) => {
@@ -283,7 +296,6 @@ function App() {
       } 
   }, [token, isAbonnementInactif, isOffline]);
 
-  // --- Authentification ---
   const sInscrire = async () => {
     try {
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput }) });
@@ -328,7 +340,6 @@ function App() {
       } catch (e) { showToast("Erreur réseau avec Stripe.", "error"); }
   };
 
-  // --- CRM & Catalogue (Bloqués si offline, car écriture serveur) ---
   const ouvrirFicheClient = async (client) => {
       if(isOffline) return showToast("L'historique client est désactivé hors-ligne.", "error");
       setClientSelectionne(client);
@@ -432,19 +443,26 @@ function App() {
       }
   }
 
-  // --- NOUVEAU : SYSTÈME DE CAISSE OFFLINE ---
+  // --- SYSTÈME DE CAISSE OFFLINE ULTRA-BLINDÉ ---
   const validerEncaisser = () => {
-      if(!posEmploye) { showToast("Veuillez sélectionner un employé responsable.", "error"); return; }
+      if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
       if(panierCaisse.length === 0) { showToast("Le ticket est vide.", "error"); return; }
-      if(isOffline && methodePaiement === 'CARTE') { showToast("Le TPE (Carte) nécessite une connexion.", "error"); return; }
+      
+      const vraimentHorsLigne = isOffline || !navigator.onLine;
+      if (vraimentHorsLigne && methodePaiement === 'CARTE') { showToast("Le TPE (Carte) nécessite une connexion.", "error"); return; }
+      
       lancerPaiementTPE(totalCaisse, panierCaisse);
   };
 
   const lancerPaiementTPE = async (montant, lignes) => {
+    // Vérification de dernière seconde de l'état du réseau
+    const vraimentHorsLigne = isOffline || !navigator.onLine;
+    if (vraimentHorsLigne !== isOffline) setIsOffline(vraimentHorsLigne);
+
     const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement };
 
-    if (isOffline) {
-        // Enregistrement dans IndexedDB
+    // Fonction interne pour forcer la sauvegarde locale
+    const forcerSauvegardeLocale = async () => {
         const offlineTicketId = `TKT-OFFLINE-${Date.now()}`;
         const offlineTicket = { ...payloadTPE, _id_temp: offlineTicketId, date_creation: new Date().toISOString() };
         
@@ -462,10 +480,16 @@ function App() {
         
         setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES');
         showToast("Ticket sauvegardé localement (Mode Hors-Ligne)", "success");
+    };
+
+    // Si on sait déjà qu'on est hors-ligne, on sauvegarde direct
+    if (vraimentHorsLigne) {
+        await forcerSauvegardeLocale();
         return;
     }
 
     if (methodePaiement === 'CARTE' && montant > 0) setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
+    
     try {
         const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
         const data = await handleFetchError(res);
@@ -482,12 +506,18 @@ function App() {
         setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('CARTE');
         chargerTout(); 
     } catch (error) { 
-        if(error.message !== "Abonnement inactif") setNotificationCaisse(`❌ ${error.message || "Erreur Caisse."}`); 
+        // SI LE FETCH ECHOUE CAR LE RESEAU A COUPE SANS PREVENIR (Bug Safari)
+        if(error.message === "Load failed" || error.message === "Failed to fetch" || !navigator.onLine) {
+            setIsOffline(true);
+            await forcerSauvegardeLocale();
+        } else if(error.message !== "Abonnement inactif") {
+            setNotificationCaisse(`❌ ${error.message || "Erreur Caisse."}`); 
+        }
     }
   };
 
   const envoyerTicketEco = async (methode) => {
-      if(isOffline) return showToast("Envoi impossible sans réseau.", "error");
+      if(isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error");
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, methode }) });
           await handleFetchError(res);
@@ -496,10 +526,10 @@ function App() {
       } catch (e) { showToast(`Erreur d'envoi : ${e.message}`, "error"); }
   }
 
-  const declencherExport = async () => { if(isOffline) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
+  const declencherExport = async () => { if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
   
   const sauvegarderParametres = async () => { 
-      if(isOffline) return showToast("Action impossible hors-ligne.", "error");
+      if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       showToast("Sauvegarde en cours..."); 
       try { 
           const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); 
@@ -511,7 +541,7 @@ function App() {
   };
 
   const creerRdvManuel = async () => {
-      if(isOffline) return showToast("Impossible de créer un RDV hors-ligne.", "error");
+      if(isOffline || !navigator.onLine) return showToast("Impossible de créer un RDV hors-ligne.", "error");
       try {
           const datetime = `${formRdv.date}T${formRdv.heure}:00`;
           const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime}) });
@@ -532,7 +562,7 @@ function App() {
   };
 
   const sauvegarderModifRdv = async () => {
-      if(isOffline) return showToast("Action impossible hors-ligne.", "error");
+      if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       try {
           const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
           const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime }) });
@@ -544,7 +574,7 @@ function App() {
       setConfirmDialog({ titre: "Supprimer le rendez-vous", message: "Êtes-vous sûr de vouloir annuler ce rendez-vous ? Cette action est irréversible.", btnTexte: "Supprimer le RDV", action: executerSuppressionRdv });
   };
   const executerSuppressionRdv = async () => {
-      if(isOffline) { setConfirmDialog(null); return showToast("Action impossible hors-ligne.", "error"); }
+      if(isOffline || !navigator.onLine) { setConfirmDialog(null); return showToast("Action impossible hors-ligne.", "error"); }
       setConfirmDialog(null);
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'DELETE', headers: getAuthHeaders() });
@@ -556,7 +586,7 @@ function App() {
       setConfirmDialog({ titre: "Clôture Journalière (Z)", message: "Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées de manière irréversible selon la loi NF525.", btnTexte: "Générer le Z", action: executerZDeCaisse });
   };
   const executerZDeCaisse = async () => {
-      if(isOffline) { setConfirmDialog(null); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
+      if(isOffline || !navigator.onLine) { setConfirmDialog(null); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
       setConfirmDialog(null);
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders() });
@@ -1350,13 +1380,13 @@ function App() {
                               
                               {/* CHOIX DU MOYEN DE PAIEMENT */}
                               <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
-                                  <button onClick={() => setMethodePaiement('CARTE')} disabled={isOffline} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: isOffline ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', opacity: isOffline ? 0.5 : 1}}>💳 TPE</button>
+                                  <button onClick={() => setMethodePaiement('CARTE')} disabled={isOffline || !navigator.onLine} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: (isOffline || !navigator.onLine) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', opacity: (isOffline || !navigator.onLine) ? 0.5 : 1}}>💳 TPE</button>
                                   <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'ESPECES' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600'}}>💶 Espèces</button>
                                   <button onClick={() => setMethodePaiement('CHEQUE')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'CHEQUE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CHEQUE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600'}}>📝 Chèque</button>
                               </div>
 
                               <button className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} onClick={validerEncaisser} disabled={panierCaisse.length === 0 || !posEmploye}>
-                                  Encaisser {isOffline ? '(Hors-Ligne)' : ''}
+                                  Encaisser {(isOffline || !navigator.onLine) ? '(Hors-Ligne)' : ''}
                               </button>
                           </div>
                       </div>
@@ -1406,10 +1436,10 @@ function App() {
                                   
                                   <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
                                       <input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/>
-                                      <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline}>Envoyer</button>
+                                      <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline || !navigator.onLine}>Envoyer</button>
                                   </div>
 
-                                  <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>
+                                  <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>
                                       Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}
                                   </button>
                               </div>
@@ -1557,7 +1587,7 @@ function App() {
                   <div className="carte scan-carte">
                     <input type="text" className="input-fournisseur" placeholder="Fournisseur (ex: L'Oréal)" value={nomFournisseur} onChange={(e) => setNomFournisseur(e.target.value)} style={{marginBottom: '12px'}}/>
                     <textarea className="textarea-facture" placeholder="Texte de la facture..." value={texteFacture} onChange={(e) => setTexteFacture(e.target.value)} style={{marginBottom: '12px'}}/>
-                    <button className="btn-action" onClick={scannerFacture} disabled={chargementScan || !texteFacture} style={{width: '100%'}}>Lancer l'IA Comptable</button>
+                    <button className="btn-action" onClick={scannerFacture} disabled={chargementScan || !texteFacture || isOffline || !navigator.onLine} style={{width: '100%'}}>Lancer l'IA Comptable</button>
                     {resultatScan && resultatScan.donnees_extraites && (
                       <div className="resultat-scan" style={{background: 'var(--bg-success)', border: '1px solid #bbf7d0', borderRadius: 'var(--radius-input)', padding: '16px', marginTop: '16px'}}>
                         <h4 style={{color: 'var(--color-success)', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px'}}>
