@@ -1669,7 +1669,7 @@ function App() {
                      </div>
                      <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
                   </div>
-
+              
                   <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
                   <div className="section-titre">Historique des factures</div>
                   {historiqueData.length === 0 ? (
