@@ -813,7 +813,7 @@ function App() {
              )}
              
              <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
-                 {tachesIA && tachesIA.some(t => t.type_tache === 'CLIENT') && <span style={{ position: 'absolute', top: '6px', right: '12px', width: '10px', height: '10px', backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--bg-card)', zIndex: 10 }}></span>}
+                 {tachesIA && tachesIA.some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
                  <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
              </div>
              
@@ -823,7 +823,7 @@ function App() {
                     <div className={`nav-item ${activeTab === 'gestion' ? 'active' : ''}`} onClick={() => setActiveTab('gestion')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span>Gestion</span></div>
                     
                     <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
-                        {tachesIA && tachesIA.some(t => t.type_tache === 'STOCK') && <span style={{ position: 'absolute', top: '6px', right: '12px', width: '10px', height: '10px', backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--bg-card)', zIndex: 10 }}></span>}
+                        {tachesIA && tachesIA.some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
                     </div>
                     
