@@ -556,6 +556,7 @@ async function analyserEmailAvecIA(sujet, texte) {
     try {
         const completion = await groq.chat.completions.create({
             model: 'qwen/qwen3.8-27b',
+            max_tokens: 200, // <-- LIGNE À AJOUTER POUR NE PLUS AVOIR L'ERREUR 429
             temperature: 0,
             response_format: { type: 'json_object' },
             messages: [
