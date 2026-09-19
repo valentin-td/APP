@@ -41,13 +41,17 @@ app.use((req, res, next) => {
 });
 
 const pool = new Pool({
-    user: process.env.DB_USER, 
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME, 
-    password: process.env.DB_PASSWORD, 
-    port: process.env.DB_PORT,
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT
 });
 
+// Ajout de la colonne pour le TPE Stripe
+pool.query(`ALTER TABLE parametres_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);`)
+  .then(() => console.log("✅ Colonne stripe_reader_id vérifiée/ajoutée avec succès."))
+  .catch(err => console.error("Erreur lors de l'ajout de la colonne :", err));
 // =========================================================================
 // --- SÉCURITÉ : MIDDLEWARES ---
 // =========================================================================
