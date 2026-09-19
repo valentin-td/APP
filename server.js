@@ -738,10 +738,16 @@ async function executerRobotComptable() {
                 try {
                     for await (let message of imapClient.fetch({ unseen: true }, { source: true })) {
                         const mailParsi = await simpleParser(message.source);
-                        const texteEmail = mailParsi.text || "";
-                        const sujetEmail = mailParsi.subject || "";
-                        const expediteur = mailParsi.from?.value[0]?.name || mailParsi.from?.value[0]?.address || 'Expéditeur Inconnu';
-
+                        
+                        // SECURITE : Prendre le texte, sinon le HTML, sinon vide
+                        const texteEmail = mailParsi.text || mailParsi.html || ""; 
+                        const sujetEmail = mailParsi.subject || "Sans Sujet";
+                        
+                        // MOUCHARDS POUR COMPRENDRE CE QUI SE PASSE
+                        console.log(`\n=========================================`);
+                        console.log(`📧 EMAIL DÉTECTÉ : "${sujetEmail}"`);
+                        console.log(`📝 EXTRAIT : "${texteEmail.substring(0, 150).replace(/\n/g, ' ')}..."`);
+                        
                         // 1. Scan classique de la TVA
                         const matchTTC = texteEmail.match(/TTC[\s:a-zA-Z]*([\d.,]+)/i);
                         if (matchTTC) {
@@ -749,7 +755,7 @@ async function executerRobotComptable() {
                             const matchTVA = texteEmail.match(/TVA[\s:a-zA-Z]*([\d.,]+)/i);
                             const tva = matchTVA ? parseFloat(matchTVA[1].replace(',', '.')) : parseFloat((ttc * 0.20).toFixed(2));
                             const ht = parseFloat((ttc - tva).toFixed(2));
-                            await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [expediteur, ht, tva, ttc, salon.id_salon]);
+                            await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [sujetEmail, ht, tva, ttc, salon.id_salon]);
                         }
 
                         // 2. Scan sémantique (IA via Groq)
@@ -767,11 +773,14 @@ async function executerRobotComptable() {
                     }
                 } finally { lock.release(); }
                 await imapClient.logout();
-            } catch (errConnect) {}
+            } catch (errConnect) {
+                console.log("Erreur de connexion IMAP :", errConnect.message);
+            }
         }
-    } catch (erreur) {} finally { clientDB.release(); }
+    } catch (erreur) {
+        console.log("Erreur globale robot :", erreur.message);
+    } finally { clientDB.release(); }
 }
-
 cron.schedule('0 */3 * * *', () => { executerRobotComptable(); });
 app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot IA & Comptable lancé." }); });
 
