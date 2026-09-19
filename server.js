@@ -31,7 +31,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// IMPORTANT : On augmente la limite JSON à 10mb pour accepter les photos de profil (Base64)
 app.use((req, res, next) => {
   if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { 
       next(); 
@@ -48,14 +47,32 @@ const pool = new Pool({
   port: process.env.DB_PORT
 });
 
-// Ajout de la colonne pour le TPE Stripe
-pool.query(`ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);`)
-  .then(() => console.log("✅ Colonne stripe_reader_id vérifiée/ajoutée avec succès."))
-  .catch(err => console.error("Erreur lors de l'ajout de la colonne :", err));
-
 // =========================================================================
-// --- SÉCURITÉ : MIDDLEWARES ---
+// --- CRM : AUTO-HEALING & CONFIGURATION FIDÉLITÉ & IA ---
 // =========================================================================
+pool.query(`
+    CREATE TABLE IF NOT EXISTS ia_taches_attente (
+        id_tache SERIAL PRIMARY KEY,
+        id_salon INT,
+        type_tache VARCHAR(50),
+        donnees JSONB,
+        statut VARCHAR(20) DEFAULT 'ATTENTE',
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS date_naissance DATE;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS points_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS tampons_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS derniere_visite DATE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recompense_utilisee BOOLEAN DEFAULT FALSE;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
+`).then(() => console.log("✅ Base de données prête (Paiement, IA, CRM)")).catch((e) => console.error("❌ Erreur Auto-healing:", e));
 
 const verifierToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -189,7 +206,7 @@ app.post('/api/creer-checkout', async (req, res) => {
 
 app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, res) => {
     const signature = req.headers['stripe-signature'];
-    if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(500).send("Clé secrète Webhook manquante.");
+    if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(500).send("Clé secrète manquante.");
     let event;
     try { event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET); } 
     catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
@@ -202,24 +219,6 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
     }
     res.json({received: true});
 });
-
-// =========================================================================
-// --- CRM : AUTO-HEALING & CONFIGURATION FIDÉLITÉ ---
-// =========================================================================
-pool.query(`
-    ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
-    ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
-    ALTER TABLE clients ADD COLUMN IF NOT EXISTS date_naissance DATE;
-    ALTER TABLE clients ADD COLUMN IF NOT EXISTS points_fidelite INT DEFAULT 0;
-    ALTER TABLE clients ADD COLUMN IF NOT EXISTS tampons_fidelite INT DEFAULT 0;
-    ALTER TABLE clients ADD COLUMN IF NOT EXISTS derniere_visite DATE;
-    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
-    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
-    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recompense_utilisee BOOLEAN DEFAULT FALSE;
-    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
-    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
-    ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
-`).then(() => console.log("✅ Base de données prête (Paiement, Annulation et Photos à jour)")).catch((e) => console.error("❌ Erreur Auto-healing:", e));
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
     const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture } = req.body; 
@@ -256,52 +255,6 @@ app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
         await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', [req.body.notes, req.params.id, req.user.id_salon]);
         res.json({ message: "Notes sauvegardées" });
     } catch (e) { res.status(500).json({ erreur: "Erreur sauvegarde." }); }
-});
-
-// =========================================================================
-// --- WEBHOOKS & AGENDA (PLANNING) ---
-// =========================================================================
-app.post('/api/webhooks/synchronisation-clients', async (req, res) => {
-    const { nom, telephone, email, id_salon } = req.body;
-    if (!id_salon || !nom || !telephone) return res.status(400).json({ erreur: "Données manquantes." });
-    try {
-        const checkClient = await pool.query('SELECT id_client FROM clients WHERE telephone = $1 AND id_salon = $2', [telephone, id_salon]);
-        if (checkClient.rowCount === 0) {
-            await pool.query('INSERT INTO clients (nom, telephone, email, id_salon) VALUES ($1, $2, $3, $4)', [nom, telephone, email || null, id_salon]);
-            res.status(201).json({ message: "Client synchronisé." });
-        } else { res.status(200).json({ message: "Client existe." }); }
-    } catch (error) { res.status(500).json({ erreur: "Erreur sync." }); }
-});
-
-app.post('/api/webhooks/nouveau-rdv', async (req, res) => {
-    const { id_salon, nom_client, telephone_client, nom_employe, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id } = req.body;
-    try {
-        let id_client = null;
-        if (telephone_client) {
-            const clientRes = await pool.query('SELECT id_client FROM clients WHERE telephone = $1 AND id_salon = $2', [telephone_client, id_salon]);
-            if (clientRes.rowCount > 0) { id_client = clientRes.rows[0].id_client; } 
-            else {
-                const newClient = await pool.query('INSERT INTO clients (nom, telephone, id_salon) VALUES ($1, $2, $3) RETURNING id_client', [nom_client, telephone_client, id_salon]);
-                id_client = newClient.rows[0].id_client;
-            }
-        }
-        const empRes = await pool.query('SELECT id_employe FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
-        const id_employe = empRes.rowCount > 0 ? empRes.rows[0].id_employe : null;
-        await pool.query(
-            `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes, planity_ref, _payment_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
-            [id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30, planity_ref || null, _payment_id || null]
-        );
-        io.to(id_salon.toString()).emit('nouveauRDV');
-        res.status(201).json({ success: true, message: "RDV enregistré." });
-    } catch (error) { res.status(500).json({ erreur: "Erreur Webhook RDV." }); }
-});
-
-app.post('/api/webhooks/annuler-rdv', async (req, res) => {
-    const { id_salon, planity_ref } = req.body;
-    try {
-        await pool.query('DELETE FROM rendez_vous WHERE planity_ref = $1 AND id_salon = $2', [planity_ref, id_salon]);
-        io.to(id_salon.toString()).emit('nouveauRDV'); res.json({ message: "RDV annulé." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur annulation." }); }
 });
 
 app.post('/api/rdv', verifierToken, async (req, res) => {
@@ -443,7 +396,6 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
     } finally { clientDB.release(); }
 });
 
-// --- ANNULER UN TICKET (RETOUR PRODUIT / ERREUR) ---
 app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
     const id_ticket = req.params.id;
     const id_salon = req.user.id_salon;
@@ -524,7 +476,6 @@ app.get('/api/clients', verifierToken, async (req, res) => { try { const result 
 app.post('/api/clients', verifierToken, async (req, res) => { const { prenom, nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (prenom, nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [prenom || '', nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
 app.delete('/api/clients/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }});
 
-// --- AJOUT DE LA GESTION PHOTO (BASE64) POUR LES EMPLOYÉS ---
 app.get('/api/employes', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM employes WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }});
 app.post('/api/employes', verifierToken, async (req, res) => { 
     const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url } = req.body; 
@@ -576,11 +527,101 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 });
 
 // =========================================================================
-// --- IA COMPTABLE ET EXPORT PDF ---
+// --- L'INTELLIGENCE ARTIFICIELLE (ANALYSE D'EMAILS) ---
 // =========================================================================
+function analyserEmailAvecIA(sujet, texte) {
+    let taches = [];
+    const contenu = (sujet + " " + texte).toLowerCase();
 
-app.post('/api/factures/scan', verifierToken, async (req, res) => { const { texte_facture, nom_fournisseur } = req.body; try { const matchTTC = texte_facture.match(/TTC[\s:a-zA-Z]*([\d.,]+)/i); const matchTVA = texte_facture.match(/TVA[\s:a-zA-Z]*([\d.,]+)/i); if (!matchTTC || !matchTVA) return res.status(400).json({ erreur: "Montants introuvables." }); const ttc = parseFloat(matchTTC[1].replace(',', '.')); const tva = parseFloat(matchTVA[1].replace(',', '.')); const ht = parseFloat((ttc - tva).toFixed(2)); await pool.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [nom_fournisseur || 'Inconnu', ht, tva, ttc, req.user.id_salon]); res.status(201).json({ message: "Succès !", donnees_extraites: { ht, tva, ttc } }); } catch (erreur) { res.status(500).json({ erreur: "Erreur traitement facture." }); }});
-app.get('/api/factures/historique', verifierToken, async (req, res) => { try { const histoQuery = `SELECT TO_CHAR(DATE_TRUNC('month', date_traitement), 'MM/YYYY') as mois_annee, SUM(montant_ttc) as total_ttc, json_agg(json_build_object('id', id_facture, 'fournisseur', nom_fournisseur, 'date', TO_CHAR(date_traitement, 'DD/MM/YYYY'), 'ttc', montant_ttc)) as factures FROM factures_fournisseurs WHERE id_salon = $1 GROUP BY DATE_TRUNC('month', date_traitement), mois_annee ORDER BY DATE_TRUNC('month', date_traitement) DESC;`; const result = await pool.query(histoQuery, [req.user.id_salon]); let historique = result.rows.map(row => ({ mois: "Mois " + row.mois_annee, total_ttc: parseFloat(row.total_ttc), factures: row.factures })); res.json(historique); } catch (erreur) { res.status(500).json({ erreur: "Erreur Historique" }); }});
+    // 1. Recherche de factures / commandes de stock
+    if (contenu.includes("facture") || contenu.includes("commande")) {
+        const regexStock = /(\d+)\s+([a-zÀ-ÿ]{3,20})/g;
+        const exclusions = ['euro', 'euros', 'jour', 'jours', 'mois', 'ans', 'heure', 'heures', 'min', 'minutes', 'janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre', 'tva', 'ttc', 'ht', 'mg', 'ml', 'kg', 'gr', 'g'];
+        
+        let match;
+        while ((match = regexStock.exec(contenu)) !== null) {
+            const quantite = parseInt(match[1]);
+            const mot = match[2];
+            if (!exclusions.includes(mot) && quantite > 0) {
+                taches.push({
+                    type_tache: 'STOCK',
+                    donnees: { quantite: quantite, nom_produit: mot, reference: '', prix: 0 }
+                });
+            }
+        }
+    }
+
+    // 2. Recherche de nouveaux clients ou de demandes de rendez-vous
+    if (contenu.includes("nouveau client") || contenu.includes("rendez-vous") || contenu.includes("rdv")) {
+        const regexClient = /(?:nom|client)\s*[:\-]?\s*([a-zÀ-ÿ\s]+).*?(?:t[eé]l[eé]phone|tel|au)\s*[:\-]?\s*([\d\s]{10,14})/i;
+        const match = contenu.match(regexClient);
+        if (match) {
+            taches.push({
+                type_tache: 'CLIENT',
+                donnees: { nom: match[1].trim(), telephone: match[2].trim().replace(/\s/g, ''), prenom: '' }
+            });
+        }
+    }
+
+    return taches;
+}
+
+app.get('/api/ia/taches', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM ia_taches_attente WHERE id_salon = $1 AND statut = 'ATTENTE' ORDER BY date_creation DESC", [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur IA" }); }
+});
+
+app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
+    const { id } = req.params;
+    const donnees = req.body;
+    const id_salon = req.user.id_salon;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const tacheRes = await clientDB.query("SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2", [id, id_salon]);
+        if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
+        const type_tache = tacheRes.rows[0].type_tache;
+
+        if (type_tache === 'STOCK') {
+            const check = await clientDB.query("SELECT id_article FROM catalogue WHERE (nom ILIKE $1 OR reference = $2) AND id_salon = $3", [donnees.nom_produit, donnees.reference || null, id_salon]);
+            if (check.rowCount > 0) {
+                await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [donnees.quantite, check.rows[0].id_article]);
+            } else {
+                await clientDB.query("INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, id_salon) VALUES ($1, 'PRODUIT_REVENTE', $2, $3, $4, $5)", [donnees.nom_produit, donnees.prix || 0, donnees.quantite, donnees.reference || null, id_salon]);
+            }
+        } else if (type_tache === 'CLIENT') {
+            await clientDB.query("INSERT INTO clients (nom, prenom, telephone, id_salon) VALUES ($1, $2, $3, $4)", [donnees.nom, donnees.prenom || '', donnees.telephone, id_salon]);
+        }
+
+        await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
+        await clientDB.query('COMMIT');
+        res.json({ message: "Action IA validée !" });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message });
+    } finally { clientDB.release(); }
+});
+
+app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
+    try {
+        await pool.query("UPDATE ia_taches_attente SET statut = 'IGNORE' WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Tâche ignorée." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur" }); }
+});
+
+// =========================================================================
+// --- LECTURE DES MAILS & EXPORT PDF ---
+// =========================================================================
+app.get('/api/factures/historique', verifierToken, async (req, res) => { 
+    try { 
+        const histoQuery = `SELECT TO_CHAR(DATE_TRUNC('month', date_traitement), 'MM/YYYY') as mois_annee, SUM(montant_ttc) as total_ttc, json_agg(json_build_object('id', id_facture, 'fournisseur', nom_fournisseur, 'date', TO_CHAR(date_traitement, 'DD/MM/YYYY'), 'ttc', montant_ttc)) as factures FROM factures_fournisseurs WHERE id_salon = $1 GROUP BY DATE_TRUNC('month', date_traitement), mois_annee ORDER BY DATE_TRUNC('month', date_traitement) DESC;`; 
+        const result = await pool.query(histoQuery, [req.user.id_salon]); 
+        let historique = result.rows.map(row => ({ mois: "Mois " + row.mois_annee, total_ttc: parseFloat(row.total_ttc), factures: row.factures })); 
+        res.json(historique); 
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur Historique" }); }
+});
 
 app.get('/api/export-pdf', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
@@ -650,18 +691,34 @@ async function executerRobotComptable() {
                 await imapClient.connect();
                 let lock = await imapClient.getMailboxLock('INBOX');
                 try {
-                    for await (let message of imapClient.fetch({ unseen: true, subject: 'facture' }, { source: true })) {
+                    for await (let message of imapClient.fetch({ unseen: true }, { source: true })) {
                         const mailParsi = await simpleParser(message.source);
-                        const matchTTC = (mailParsi.text || "").match(/TTC[\s:a-zA-Z]*([\d.,]+)/i);
+                        const texteEmail = mailParsi.text || "";
+                        const sujetEmail = mailParsi.subject || "";
+                        const expediteur = mailParsi.from?.value[0]?.name || mailParsi.from?.value[0]?.address || 'Expéditeur Inconnu';
+
+                        // 1. Scan classique de la TVA
+                        const matchTTC = texteEmail.match(/TTC[\s:a-zA-Z]*([\d.,]+)/i);
                         if (matchTTC) {
                             const ttc = parseFloat(matchTTC[1].replace(',', '.'));
-                            const matchTVA = (mailParsi.text || "").match(/TVA[\s:a-zA-Z]*([\d.,]+)/i);
+                            const matchTVA = texteEmail.match(/TVA[\s:a-zA-Z]*([\d.,]+)/i);
                             const tva = matchTVA ? parseFloat(matchTVA[1].replace(',', '.')) : parseFloat((ttc * 0.20).toFixed(2));
                             const ht = parseFloat((ttc - tva).toFixed(2));
-                            await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, 
-                                [mailParsi.from?.value[0]?.name || 'Expéditeur Inconnu', ht, tva, ttc, salon.id_salon]);
-                            await imapClient.messageFlagsAdd({seq: message.seq}, ['\\Seen']);
+                            await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [expediteur, ht, tva, ttc, salon.id_salon]);
                         }
+
+                        // 2. Scan sémantique (IA)
+                        const tachesTrouvees = analyserEmailAvecIA(sujetEmail, texteEmail);
+                        for (let t of tachesTrouvees) {
+                            await clientDB.query(
+                                `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
+                                [salon.id_salon, t.type_tache, JSON.stringify(t.donnees)]
+                            );
+                            io.to(salon.id_salon.toString()).emit('nouvelleTacheIA');
+                        }
+
+                        // Marquer l'email comme lu
+                        await imapClient.messageFlagsAdd({seq: message.seq}, ['\\Seen']);
                     }
                 } finally { lock.release(); }
                 await imapClient.logout();
@@ -669,15 +726,15 @@ async function executerRobotComptable() {
         }
     } catch (erreur) {} finally { clientDB.release(); }
 }
-cron.schedule('0 3 * * *', () => { executerRobotComptable(); });
-app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot comptable lancé." }); });
+
+cron.schedule('0 */3 * * *', () => { executerRobotComptable(); });
+app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot IA & Comptable lancé." }); });
 
 
 // =========================================================================
 // --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES ---
 // =========================================================================
 cron.schedule('0 9 * * *', async () => {
-    console.log("🤖 Exécution du Robot Marketing (Fidélité & Anniversaires)");
     try {
         const salons = await pool.query("SELECT * FROM configuration_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''");
         for (let salon of salons.rows) {
@@ -716,7 +773,7 @@ cron.schedule('0 9 * * *', async () => {
                 }
             }
         }
-    } catch (err) { console.error("Erreur Cron Job :", err); }
+    } catch (err) {}
 });
 
 async function envoyerSMS(apiKey, sender, phone, text) {
