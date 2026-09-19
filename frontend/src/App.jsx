@@ -285,11 +285,20 @@ function App() {
       if (token && !isAbonnementInactif) { 
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
           chargerTout(); 
-          if (user && user.id_salon && !isOffline) {
-              const newSocket = io('https://api-salon-backend.onrender.com');
+          // On revérifie navigator.onLine en plus de l'état React isOffline :
+          // juste après un retour réseau, isOffline peut avoir un tour de
+          // retard et tenter d'ouvrir un socket qui va échouer bruyamment.
+          if (user && user.id_salon && !isOffline && navigator.onLine) {
+              const newSocket = io('https://api-salon-backend.onrender.com', {
+                  reconnectionAttempts: Infinity,
+                  timeout: 5000,
+              });
               newSocket.emit('rejoindreSalon', user.id_salon);
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
+              // Sans ce handler, une coupure Wi-Fi brutale du salon fait
+              // remonter des erreurs socket.io non gérées dans la console.
+              newSocket.on('connect_error', () => {});
               setSocket(newSocket);
               return () => newSocket.disconnect();
           }
