@@ -552,7 +552,7 @@ async function analyserEmailAvecIA(sujet, texte) {
 
     try {
         const completion = await groq.chat.completions.create({
-            model: 'llama3-70b-8192',
+            model: 'llama-3.1-70b-versatile',
             temperature: 0,
             response_format: { type: 'json_object' },
             messages: [
