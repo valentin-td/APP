@@ -49,7 +49,7 @@ const pool = new Pool({
 });
 
 // Ajout de la colonne pour le TPE Stripe
-pool.query(`ALTER TABLE parametres_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);`)
+pool.query(`ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);`)
   .then(() => console.log("✅ Colonne stripe_reader_id vérifiée/ajoutée avec succès."))
   .catch(err => console.error("Erreur lors de l'ajout de la colonne :", err));
 
