@@ -57,6 +57,8 @@ function App() {
   const [rhData, setRhData] = useState([]);
   const [historiqueData, setHistoriqueData] = useState([]);
   const [planningData, setPlanningData] = useState([]); 
+  const [tachesIA, setTachesIA] = useState([]);
+  const [modalIA, setModalIA] = useState(null);
   const [erreur, setErreur] = useState(null);
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -136,12 +138,6 @@ function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
-
-  const [texteFacture, setTexteFacture] = useState('');
-  const [nomFournisseur, setNomFournisseur] = useState('');
-  const [resultatScan, setResultatScan] = useState(null);
-  const [chargementScan, setChargementScan] = useState(false);
-  const [notificationCaisse, setNotificationCaisse] = useState(null);
   const [socket, setSocket] = useState(null);
 
   const [configSalon, setConfigSalon] = useState({
@@ -178,12 +174,10 @@ function App() {
       }
   };
 
-  // --- NOUVEAU : MÉCANIQUE OFFLINE ANTI-BUG iOS ---
   useEffect(() => {
       const handleOnline = () => { setIsOffline(false); syncOfflineTickets(); };
       const handleOffline = () => { setIsOffline(true); setMethodePaiement('ESPECES'); }; 
       
-      // Vérification agressive quand l'appli revient au premier plan sur iOS
       const checkNetworkAggressively = () => {
           const currentOfflineStatus = !navigator.onLine;
           if (isOffline !== currentOfflineStatus) {
@@ -257,6 +251,7 @@ function App() {
     fetchAndCache('/api/rh', setRhData, 'rhData');
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
+    fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA');
     
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
@@ -285,9 +280,6 @@ function App() {
       if (token && !isAbonnementInactif) { 
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
           chargerTout(); 
-          // On revérifie navigator.onLine en plus de l'état React isOffline :
-          // juste après un retour réseau, isOffline peut avoir un tour de
-          // retard et tenter d'ouvrir un socket qui va échouer bruyamment.
           if (user && user.id_salon && !isOffline && navigator.onLine) {
               const newSocket = io('https://api-salon-backend.onrender.com', {
                   reconnectionAttempts: Infinity,
@@ -296,14 +288,52 @@ function App() {
               newSocket.emit('rejoindreSalon', user.id_salon);
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-              // Sans ce handler, une coupure Wi-Fi brutale du salon fait
-              // remonter des erreurs socket.io non gérées dans la console.
+              newSocket.on('nouvelleTacheIA', () => { 
+                  showToast("🤖 L'IA a détecté une nouvelle action !", "success");
+                  if(user.role === 'gerant') chargerTout();
+              });
               newSocket.on('connect_error', () => {});
               setSocket(newSocket);
               return () => newSocket.disconnect();
           }
       } 
   }, [token, isAbonnementInactif, isOffline]);
+
+  // Pop-up automatique de l'IA quand on change d'onglet
+  useEffect(() => {
+      if (activeTab === 'produits' && !modalIA && tachesIA.length > 0) {
+          const tacheStock = tachesIA.find(t => t.type_tache === 'STOCK');
+          if (tacheStock) setModalIA(tacheStock);
+      }
+      if (activeTab === 'agenda' && !modalIA && tachesIA.length > 0) {
+          const tacheClient = tachesIA.find(t => t.type_tache === 'CLIENT');
+          if (tacheClient) setModalIA(tacheClient);
+      }
+  }, [activeTab, tachesIA, modalIA]);
+
+  const validerTacheIA = async (tache) => {
+      try {
+          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/valider`, {
+              method: 'POST',
+              headers: getAuthHeaders(true),
+              body: JSON.stringify(tache.donnees)
+          });
+          showToast("Action de l'IA confirmée !", "success");
+          setModalIA(null);
+          chargerTout();
+      } catch (e) { showToast("Erreur lors de la validation.", "error"); }
+  };
+
+  const ignorerTacheIA = async (tache) => {
+      try {
+          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
+              method: 'POST',
+              headers: getAuthHeaders()
+          });
+          setModalIA(null);
+          chargerTout();
+      } catch (e) { showToast("Erreur serveur.", "error"); }
+  };
 
   const sInscrire = async () => {
     try {
@@ -392,8 +422,6 @@ function App() {
   const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
   const dessinerChronogramme = (d) => { const max = Math.max(...d) * 1.2; return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="var(--btn-primary)" rx="2" />)}</svg>); };
 
-  const scannerFacture = async () => { if(isOffline) return showToast("IA indisponible sans réseau.", "error"); if (!texteFacture) return; setChargementScan(true); setResultatScan(null); try { const response = await fetch('https://api-salon-backend.onrender.com/api/factures/scan', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ texte_facture: texteFacture, nom_fournisseur: nomFournisseur }) }); setResultatScan(await handleFetchError(response)); showToast("Facture analysée", "success"); } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur IA.", "error"); } setChargementScan(false); };
-
   const handleSelectEmployeCaisse = (id_employe) => {
       setPosEmploye(id_employe);
       const now = new Date();
@@ -452,7 +480,6 @@ function App() {
       }
   }
 
-  // --- SYSTÈME DE CAISSE OFFLINE ULTRA-BLINDÉ ---
   const validerEncaisser = () => {
       if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
       if(panierCaisse.length === 0) { showToast("Le ticket est vide.", "error"); return; }
@@ -464,13 +491,11 @@ function App() {
   };
 
   const lancerPaiementTPE = async (montant, lignes) => {
-    // Vérification de dernière seconde de l'état du réseau
     const vraimentHorsLigne = isOffline || !navigator.onLine;
     if (vraimentHorsLigne !== isOffline) setIsOffline(vraimentHorsLigne);
 
     const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement };
 
-    // Fonction interne pour forcer la sauvegarde locale
     const forcerSauvegardeLocale = async () => {
         const offlineTicketId = `TKT-OFFLINE-${Date.now()}`;
         const offlineTicket = { ...payloadTPE, _id_temp: offlineTicketId, date_creation: new Date().toISOString() };
@@ -491,7 +516,6 @@ function App() {
         showToast("Ticket sauvegardé localement (Mode Hors-Ligne)", "success");
     };
 
-    // Si on sait déjà qu'on est hors-ligne, on sauvegarde direct
     if (vraimentHorsLigne) {
         await forcerSauvegardeLocale();
         return;
@@ -515,7 +539,6 @@ function App() {
         setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('CARTE');
         chargerTout(); 
     } catch (error) { 
-        // SI LE FETCH ECHOUE CAR LE RESEAU A COUPE SANS PREVENIR (Bug Safari)
         if(error.message === "Load failed" || error.message === "Failed to fetch" || !navigator.onLine) {
             setIsOffline(true);
             await forcerSauvegardeLocale();
@@ -726,17 +749,80 @@ function App() {
         </div>
       )}
 
+      {/* POP-UP INTELLIGENT DE L'IA (STOCK & CLIENT) */}
+      {modalIA && (
+          <div className="modal-overlay">
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
+                  <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                      <span style={{fontSize: '48px'}}>🤖</span>
+                  </div>
+                  <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>
+                      {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : "Nouveau client détecté"}
+                  </h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
+                      {modalIA.type_tache === 'STOCK' ? "L'IA a lu vos emails et trouvé une facture." : "L'IA a trouvé une demande de rendez-vous."}
+                  </p>
+                  
+                  <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px'}}>
+                      {modalIA.type_tache === 'STOCK' && (
+                          <>
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Article commandé</label>
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom_produit} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
+                              
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité reçue</label>
+                                      <input type="number" className="input-fournisseur" value={modalIA.donnees.quantite} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
+                                  </div>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Référence</label>
+                                      <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees.reference} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
+                                  </div>
+                              </div>
+                          </>
+                      )}
+                      {modalIA.type_tache === 'CLIENT' && (
+                          <>
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Nom du client</label>
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom: e.target.value}})} />
+                              
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
+                              <input className="input-fournisseur" value={modalIA.donnees.telephone} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
+                          </>
+                      )}
+                  </div>
+                  
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => ignorerTacheIA(modalIA)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Ignorer</button>
+                      <button onClick={() => validerTacheIA(modalIA)} className="btn-action" style={{flex: 2}}>
+                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : "Ajouter au CRM"}
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <div className="navbar-sidebar" style={isMobile ? { flexDirection: 'row', top: 'auto', bottom: 0, width: '100%', height: '90px', padding: '10px 16px 20px 16px', boxSizing: 'border-box', borderRight: 'none', borderTop: '1px solid var(--border-color)', justifyContent: 'space-between', overflowX: 'auto', zIndex: 1000 } : {}}>
              {role === 'gerant' && (
                  <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>
              )}
-             <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span></div>
+             
+             <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
+                 {tachesIA.some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
+                 <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
+             </div>
+             
              {role === 'gerant' && (
                  <>
                     <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
                     <div className={`nav-item ${activeTab === 'gestion' ? 'active' : ''}`} onClick={() => setActiveTab('gestion')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span>Gestion</span></div>
-                    <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span></div>
+                    
+                    <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
+                        {tachesIA.some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
+                        <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
+                    </div>
+                    
                     <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => setActiveTab('rh')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span></div>
                     <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span></div>
                  </>
@@ -1592,21 +1678,6 @@ function App() {
                       {dossier.factures.map(facture => (<div className="facture-mini" key={facture.id}><span>{facture.fournisseur} <span style={{color: 'var(--text-muted)'}}>({facture.date})</span></span><span style={{fontWeight: 600, color: 'var(--text-main)'}}>{facture.ttc.toFixed(2)} €</span></div>))}
                     </div>
                   ))}
-                  <div className="section-titre" style={{marginTop: '32px'}}>Scanner IA Manuel</div>
-                  <div className="carte scan-carte">
-                    <input type="text" className="input-fournisseur" placeholder="Fournisseur (ex: L'Oréal)" value={nomFournisseur} onChange={(e) => setNomFournisseur(e.target.value)} style={{marginBottom: '12px'}}/>
-                    <textarea className="textarea-facture" placeholder="Texte de la facture..." value={texteFacture} onChange={(e) => setTexteFacture(e.target.value)} style={{marginBottom: '12px'}}/>
-                    <button className="btn-action" onClick={scannerFacture} disabled={chargementScan || !texteFacture || isOffline || !navigator.onLine} style={{width: '100%'}}>Lancer l'IA Comptable</button>
-                    {resultatScan && resultatScan.donnees_extraites && (
-                      <div className="resultat-scan" style={{background: 'var(--bg-success)', border: '1px solid #bbf7d0', borderRadius: 'var(--radius-input)', padding: '16px', marginTop: '16px'}}>
-                        <h4 style={{color: 'var(--color-success)', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                            Données extraites
-                        </h4>
-                        <div className="scan-details"><div className="scan-ligne"><span style={{color: 'var(--color-success)'}}>HT</span> <strong style={{color: 'var(--color-success)'}}>{resultatScan.donnees_extraites.ht} €</strong></div><div className="scan-ligne"><span style={{color: 'var(--color-success)'}}>TVA</span> <strong style={{color: 'var(--color-success)'}}>{resultatScan.donnees_extraites.tva} €</strong></div><div className="scan-ligne total" style={{borderTopColor: '#bbf7d0', paddingTop: '8px', marginTop: '8px'}}><span style={{color: 'var(--color-success)'}}>TTC</span> <strong style={{color: 'var(--color-success)'}}>{resultatScan.donnees_extraites.ttc} €</strong></div></div>
-                      </div>
-                    )}
-                  </div>
                 </div>
               )}
             </div>
