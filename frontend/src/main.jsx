@@ -1,11 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
+import './index.css';
 
-// Import du module hors-ligne (Service Worker)
+// Import du module PWA
 import { registerSW } from 'virtual:pwa-register';
 
-// Lancement immédiat de la mise en cache de l'application
+// Enregistrement immédiat du Service Worker
 registerSW({ immediate: true });
 
 ReactDOM.createRoot(document.getElementById('root')).render(
