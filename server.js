@@ -537,7 +537,10 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 // =========================================================================
 // --- L'INTELLIGENCE ARTIFICIELLE (ANALYSE D'EMAILS) ---
 // =========================================================================
-const PROMPT_SYSTEME_IA = `Tu es une IA de gestion pour salon de coiffure. Analyse cet e-mail. S'il s'agit d'une facture ou commande fournisseur, renvoie un JSON strict : {"type": "STOCK", "donnees": {"nom_produit": "string", "quantite": number, "reference": "string"}}. S'il s'agit d'une demande de rendez-vous d'un client, renvoie : {"type": "CLIENT", "donnees": {"nom": "string", "telephone": "string"}}. Sinon, renvoie {"type": "NONE"}.`;
+const PROMPT_SYSTEME_IA = `Tu es un assistant IA pour un salon de coiffure. Analyse cet email et extrais les donnees en JSON strict.
+CAS 1 - STOCK : Si le texte parle de livraison, commande, achat, facture ou réassort de produits. -> Renvoie {"type": "STOCK", "donnees": {"nom_produit": "nom du produit", "quantite": entier, "reference": ""}}
+CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "CLIENT", "donnees": {"nom": "nom complet", "telephone": "numero"}}
+CAS 3 - AUTRE : Pour tout le reste (pubs, alertes sécurité, etc.) -> Renvoie {"type": "NONE"}`;
 
 async function analyserEmailAvecIA(sujet, texte) {
     if (!process.env.GROQ_API_KEY) {
