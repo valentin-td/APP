@@ -566,9 +566,12 @@ async function analyserEmailAvecIA(sujet, texte) {
 
         let analyse;
         try {
-            analyse = JSON.parse(brut);
+            // Nettoyage des balises markdown que Llama 3 ajoute souvent
+            const jsonNettoye = brut.replace(/```json/gi, '').replace(/```/g, '').trim();
+            analyse = JSON.parse(jsonNettoye);
+            console.log("✅ L'IA a compris :", analyse);
         } catch (erreurParsing) {
-            console.error("❌ Réponse Groq non-JSON :", brut);
+            console.error("❌ Réponse Groq illisible :", brut);
             return [];
         }
 
