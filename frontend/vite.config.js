@@ -10,16 +10,17 @@ export default defineConfig({
       injectRegister: 'auto',
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        navigateFallback: '/index.html', // LA LIGNE CRITIQUE : Redirige tout vers l'app React en hors-ligne
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/api-salon-backend\.onrender\.com\/api\/.*/i,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
-              networkTimeoutSeconds: 5,
+              networkTimeoutSeconds: 3, // Détecte la coupure très vite (3 sec)
               expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 24 * 60 * 60 // Garde le cache 24h
+                maxEntries: 200,
+                maxAgeSeconds: 24 * 60 * 60
               },
               cacheableResponse: {
                 statuses: [0, 200]
