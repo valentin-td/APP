@@ -14,6 +14,14 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const OpenAI = require('openai');
+
+// Le SDK "openai" est utilisé comme simple client HTTP compatible : on le
+// pointe vers l'API de Groq (gratuite, très rapide) plutôt que vers OpenAI.
+const groq = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: 'https://api.groq.com/openai/v1',
+});
 
 const http = require('http');
 const { Server } = require('socket.io');
@@ -529,41 +537,72 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 // =========================================================================
 // --- L'INTELLIGENCE ARTIFICIELLE (ANALYSE D'EMAILS) ---
 // =========================================================================
-function analyserEmailAvecIA(sujet, texte) {
-    let taches = [];
-    const contenu = (sujet + " " + texte).toLowerCase();
+const PROMPT_SYSTEME_IA = `Tu es une IA de gestion pour salon de coiffure. Analyse cet e-mail. S'il s'agit d'une facture ou commande fournisseur, renvoie un JSON strict : {"type": "STOCK", "donnees": {"nom_produit": "string", "quantite": number, "reference": "string"}}. S'il s'agit d'une demande de rendez-vous d'un client, renvoie : {"type": "CLIENT", "donnees": {"nom": "string", "telephone": "string"}}. Sinon, renvoie {"type": "NONE"}.`;
 
-    // 1. Recherche de factures / commandes de stock
-    if (contenu.includes("facture") || contenu.includes("commande")) {
-        const regexStock = /(\d+)\s+([a-zÀ-ÿ]{3,20})/g;
-        const exclusions = ['euro', 'euros', 'jour', 'jours', 'mois', 'ans', 'heure', 'heures', 'min', 'minutes', 'janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre', 'tva', 'ttc', 'ht', 'mg', 'ml', 'kg', 'gr', 'g'];
-        
-        let match;
-        while ((match = regexStock.exec(contenu)) !== null) {
-            const quantite = parseInt(match[1]);
-            const mot = match[2];
-            if (!exclusions.includes(mot) && quantite > 0) {
-                taches.push({
-                    type_tache: 'STOCK',
-                    donnees: { quantite: quantite, nom_produit: mot, reference: '', prix: 0 }
-                });
-            }
-        }
+async function analyserEmailAvecIA(sujet, texte) {
+    if (!process.env.GROQ_API_KEY) {
+        console.error("❌ GROQ_API_KEY manquante : analyse IA des e-mails désactivée.");
+        return [];
     }
 
-    // 2. Recherche de nouveaux clients ou de demandes de rendez-vous
-    if (contenu.includes("nouveau client") || contenu.includes("rendez-vous") || contenu.includes("rdv")) {
-        const regexClient = /(?:nom|client)\s*[:\-]?\s*([a-zÀ-ÿ\s]+).*?(?:t[eé]l[eé]phone|tel|au)\s*[:\-]?\s*([\d\s]{10,14})/i;
-        const match = contenu.match(regexClient);
-        if (match) {
-            taches.push({
+    // On tronque le corps de l'e-mail : évite d'envoyer des pièces jointes
+    // encodées en base64 ou des signatures HTML géantes au modèle, et reste
+    // largement dans la fenêtre de contexte du modèle.
+    const texteTronque = (texte || '').substring(0, 8000);
+
+    try {
+        const completion = await groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            temperature: 0,
+            response_format: { type: 'json_object' },
+            messages: [
+                { role: 'system', content: PROMPT_SYSTEME_IA },
+                { role: 'user', content: `Sujet : ${sujet}\n\nCorps de l'e-mail :\n${texteTronque}` }
+            ]
+        });
+
+        const brut = completion.choices?.[0]?.message?.content;
+        if (!brut) return [];
+
+        let analyse;
+        try {
+            analyse = JSON.parse(brut);
+        } catch (erreurParsing) {
+            console.error("❌ Réponse Groq non-JSON :", brut);
+            return [];
+        }
+
+        if (analyse.type === 'STOCK' && analyse.donnees && analyse.donnees.nom_produit) {
+            const quantite = parseInt(analyse.donnees.quantite, 10);
+            if (!quantite || quantite <= 0) return [];
+            return [{
+                type_tache: 'STOCK',
+                donnees: {
+                    nom_produit: String(analyse.donnees.nom_produit).trim().substring(0, 100),
+                    quantite,
+                    reference: analyse.donnees.reference ? String(analyse.donnees.reference).trim().substring(0, 100) : '',
+                    prix: 0
+                }
+            }];
+        }
+
+        if (analyse.type === 'CLIENT' && analyse.donnees && analyse.donnees.nom) {
+            return [{
                 type_tache: 'CLIENT',
-                donnees: { nom: match[1].trim(), telephone: match[2].trim().replace(/\s/g, ''), prenom: '' }
-            });
+                donnees: {
+                    nom: String(analyse.donnees.nom).trim().substring(0, 100),
+                    prenom: '',
+                    telephone: analyse.donnees.telephone ? String(analyse.donnees.telephone).replace(/[^\d+]/g, '').substring(0, 20) : ''
+                }
+            }];
         }
-    }
 
-    return taches;
+        // {"type": "NONE"} ou toute autre réponse : rien à faire.
+        return [];
+    } catch (erreurIA) {
+        console.error("❌ Erreur appel API Groq :", erreurIA.message);
+        return [];
+    }
 }
 
 app.get('/api/ia/taches', verifierToken, async (req, res) => {
@@ -707,8 +746,8 @@ async function executerRobotComptable() {
                             await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [expediteur, ht, tva, ttc, salon.id_salon]);
                         }
 
-                        // 2. Scan sémantique (IA)
-                        const tachesTrouvees = analyserEmailAvecIA(sujetEmail, texteEmail);
+                        // 2. Scan sémantique (IA via Groq)
+                        const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail);
                         for (let t of tachesTrouvees) {
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
