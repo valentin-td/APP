@@ -360,20 +360,39 @@ function App() {
               body: JSON.stringify(tache.donnees)
           });
           
-          // Sécurité : Si la base de données rejette le RDV, on déclenche une erreur
           if (!res.ok) {
               const err = await res.json();
               throw new Error(err.erreur || "Erreur base de données");
           }
           
           showToast("Action de l'IA confirmée !", "success");
+          
+          // CORRECTION : On efface la tâche de la mémoire locale immédiatement avant de fermer le pop-up
+          setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
           setModalIA(null);
-          verifierTachesIAEnBase(); // Force la lecture des suivantes
+          
+          verifierTachesIAEnBase();
           chargerTout();
-          setRefreshTrigger(prev => prev + 1); // Force l'Agenda à se recharger instantanément
+          setRefreshTrigger(prev => prev + 1);
       } catch (e) { 
           showToast(`Erreur : ${e.message}`, "error"); 
       }
+  };
+
+  const ignorerTacheIA = async (tache) => {
+      try {
+          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
+              method: 'POST',
+              headers: getAuthHeaders()
+          });
+          
+          // CORRECTION : Effacement immédiat de la mémoire locale
+          setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
+          setModalIA(null);
+          
+          verifierTachesIAEnBase();
+          chargerTout();
+      } catch (e) { showToast("Erreur serveur.", "error"); }
   };
 
   const ignorerTacheIA = async (tache) => {
