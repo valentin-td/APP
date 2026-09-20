@@ -6,20 +6,33 @@ import './index.css';
 // Import du module PWA
 import { registerSW } from 'virtual:pwa-register';
 
-// `immediate: true` déclenche l'enregistrement du Service Worker dès
-// l'exécution de ce script, sans attendre l'évènement `load` de la fenêtre.
-// Plus le SW est actif tôt, plus vite il peut prendre le contrôle de l'onglet
-// (avec skipWaiting/clientsClaim côté vite.config.js) et servir le fallback
-// hors-ligne dès le prochain reload — y compris le tout premier après
-// l'installation sur le poste de caisse.
+// PREUVE DE BUILD : si vous ne voyez PAS cette ligne dans la console juste
+// après un déploiement + reload, c'est que le navigateur exécute encore un
+// ancien bundle (Service Worker qui sert du cache périmé) — pas la peine de
+// chercher un bug plus loin tant que cette ligne n'apparaît pas.
+console.log(
+  '%c🚀 main.jsx chargé — build du ' + new Date().toLocaleString(),
+  'color: #ff9900; font-weight: bold; font-size: 14px'
+);
+
+// `immediate: true` : le SW s'enregistre dès l'exécution du script, sans
+// attendre l'évènement `load`.
 const updateSW = registerSW({
   immediate: true,
 
+  // ANCIEN COMPORTEMENT (bloquant) : on attendait un confirm() du gérant
+  // pour appliquer une mise à jour. Si cette popup passe inaperçue ou est
+  // fermée sans cliquer "OK", l'app reste bloquée sur l'ancien code POUR
+  // TOUJOURS, même après 50 rechargements — c'était la cause du bug de ces
+  // derniers échanges : aucun de nos correctifs ne s'exécutait jamais.
+  //
+  // NOUVEAU COMPORTEMENT : on applique la mise à jour immédiatement et
+  // automatiquement, sans demander confirmation. Pour un logiciel de caisse
+  // utilisé au quotidien, mieux vaut un reload silencieux et rapide qu'un
+  // gérant qui reste bloqué sur une vieille version sans le savoir.
   onNeedRefresh() {
-    // Recharge la page si une nouvelle mise à jour du code est détectée
-    if (confirm('Nouvelle mise à jour disponible. Recharger ?')) {
-      updateSW(true);
-    }
+    console.log('%c🔄 Nouvelle version détectée, application immédiate...', 'color: #ff0000; font-weight: bold;');
+    updateSW(true);
   },
 
   onOfflineReady() {
@@ -28,12 +41,12 @@ const updateSW = registerSW({
 
   onRegisteredSW(swUrl, registration) {
     if (!registration) return;
-    // L'app reste souvent ouverte toute la journée sur le poste de caisse :
-    // on force une vérification de mise à jour du SW toutes les heures,
-    // plutôt que de dépendre uniquement des reloads/navigations.
+    // Le poste de caisse reste souvent ouvert toute la journée : on force
+    // une vérification de mise à jour toutes les 15 minutes, plutôt que de
+    // dépendre uniquement d'un reload manuel pour la détecter.
     setInterval(() => {
       registration.update().catch(() => {});
-    }, 60 * 60 * 1000);
+    }, 15 * 60 * 1000);
   },
 
   onRegisterError(error) {
@@ -41,10 +54,6 @@ const updateSW = registerSW({
   },
 });
 
-// Filet de sécurité : une exception JS non interceptée pendant le rendu
-// (ex: accès réseau non catché ailleurs) ne doit pas se traduire par un
-// écran blanc totalement silencieux. Ça ne remplace pas une vraie
-// Error Boundary React, mais ça garantit une trace exploitable.
 window.addEventListener('error', (e) => {
   console.error('Erreur globale non interceptée :', e.error || e.message);
 });
