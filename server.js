@@ -389,6 +389,11 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
             paymentIntentId = paymentIntent.id;
             reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
 
+            // --- AUTO-SIMULATION : Bip la carte virtuellement (Uniquement en mode test) ---
+            if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
+                try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
+            }
+
             // --- NOUVELLE LOGIQUE : ATTENTE DE LA CARTE DU CLIENT ---
             let intentStatus = paymentIntent.status;
             let attempts = 0;
