@@ -61,11 +61,6 @@ function App() {
   // ÉTATS DE L'IA AUTOMATIQUE EN ARRIÈRE-PLAN
   const [tachesIA, setTachesIA] = useState([]);
   const [modalIA, setModalIA] = useState(null);
-
-  // MOUCHARD D'ÉTAT IA
-  useEffect(() => {
-      console.log('%c📋 tachesIA mis à jour :', 'color: #00aa00; font-weight: bold; font-size: 14px', tachesIA);
-  }, [tachesIA]);
   
   const [erreur, setErreur] = useState(null);
 
@@ -260,11 +255,7 @@ function App() {
     fetchAndCache('/api/rh', setRhData, 'rhData');
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    // Lecture directe et forcée de la base de données (aucun cache toléré)
-    fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
-        .then(res => res.json())
-        .then(data => setTachesIA(data))
-        .catch(() => {});
+    // CORRECTION : L'IA est retirée du cache ici, elle a son propre moteur asynchrone ci-dessous
     
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
@@ -289,83 +280,71 @@ function App() {
       }
   }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
-  useEffect(() => {
-      if (!(token && !isAbonnementInactif)) return;
-      const user = decodeToken(token);
-      setUserRole(user?.role || 'gerant');
-      chargerTout();
-      if (!user || !user.id_salon || isOffline || !navigator.onLine || user.role !== 'gerant') return;
-
-      // 1. ANCIEN CANAL (Gardé pour Paiements & RDV)
-      const newSocket = io('https://api-salon-backend.onrender.com', { transports: ['websocket'], reconnectionAttempts: Infinity, timeout: 5000 });
-      newSocket.on('connect', () => { newSocket.emit('rejoindreSalon', user.id_salon); });
-      newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); chargerTout(); });
-      newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-      setSocket(newSocket);
-
-      // 2. NOUVEAU CANAL BLINDÉ (SSE) POUR L'IA
-      let eventSource = null;
-      let watchdogId = null;
-      let dernierSignal = Date.now();
-      
-      const ouvrirConnexionSSE = () => {
-          if (eventSource) eventSource.close();
-          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}?token=${encodeURIComponent(token)}`;
-          eventSource = new EventSource(url);
-          dernierSignal = Date.now();
-          
-          eventSource.addEventListener('connected', () => {
-              console.log('%c📡 SSE connecté', 'color: #00aa00; font-weight: bold;');
-              dernierSignal = Date.now();
-          });
-          eventSource.addEventListener('heartbeat', () => {
-              dernierSignal = Date.now();
-          });
-          eventSource.addEventListener('nouvelleTacheIA', () => {
-              console.log('%c🤖 Event nouvelleTacheIA REÇU côté client, à ' + new Date().toLocaleTimeString(), 'color: #ff0000; font-weight: bold; font-size: 14px');
-              dernierSignal = Date.now();
-              showToast("🤖 L'IA a détecté une nouvelle action !", "success");
-              chargerTout();
-          });
-      };
-      
-      ouvrirConnexionSSE();
-      
-      watchdogId = setInterval(() => {
-          if (Date.now() - dernierSignal > 40000) {
-              console.log('%c⚠️ Aucun signal SSE depuis 40s, reconnexion forcée', 'color: #ff9900; font-weight: bold;');
-              ouvrirConnexionSSE();
+  // CORRECTION : SOCKET.IO SEULEMENT POUR RDV & PAIEMENT
+  useEffect(() => { 
+      if (token && !isAbonnementInactif) { 
+          const user = decodeToken(token); setUserRole(user?.role || 'gerant');
+          chargerTout(); 
+          if (user && user.id_salon && !isOffline && navigator.onLine) {
+              const newSocket = io('https://api-salon-backend.onrender.com', {
+                  transports: ['websocket'],
+                  reconnectionAttempts: Infinity,
+                  timeout: 5000,
+              });
+              newSocket.on('connect', () => {
+                  newSocket.emit('rejoindreSalon', user.id_salon);
+              });
+              newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
+              newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
+              newSocket.on('connect_error', () => {});
+              setSocket(newSocket);
+              return () => newSocket.disconnect();
           }
-      }, 10000);
-      
-      return () => {
-          clearInterval(watchdogId);
-          if (eventSource) eventSource.close();
-          newSocket.disconnect();
-      };
+      } 
   }, [token, isAbonnementInactif, isOffline]);
 
-  // FILET DE SÉCURITÉ ULTIME (Anti-Cache)
-  useEffect(() => {
-      if (!token || isAbonnementInactif) return;
-      if (decodeToken(token)?.role !== 'gerant') return;
-      const intervalId = setInterval(async () => {
-          try {
-              const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' });
+  // =========================================================================
+  // NOUVEAU MOTEUR IA : 100% INFAILLIBLE, 0% CACHE
+  // =========================================================================
+  const verifierTachesIAEnBase = async () => {
+      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { 
+              headers: getAuthHeaders(), 
+              cache: 'no-store',
+              pragma: 'no-cache'
+          });
+          if(res.ok) {
               const data = await res.json();
               setTachesIA(data);
-          } catch (e) {}
-      }, 30000);
-      return () => clearInterval(intervalId);
+          }
+      } catch (e) {
+          console.error("Erreur lecture IA", e);
+      }
+  };
+
+  useEffect(() => {
+      verifierTachesIAEnBase();
+      const onFocus = () => verifierTachesIAEnBase();
+      window.addEventListener('focus', onFocus);
+      window.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') verifierTachesIAEnBase();
+      });
+      const intervalId = setInterval(verifierTachesIAEnBase, 10000);
+      return () => {
+          window.removeEventListener('focus', onFocus);
+          window.removeEventListener('visibilitychange', () => {});
+          clearInterval(intervalId);
+      };
   }, [token, isAbonnementInactif]);
 
-  // LOGIQUE DU POP-UP INTELLIGENT GLOBAL (S'ouvre instantanément)
+  // LOGIQUE DU POP-UP INTELLIGENT GLOBAL (S'ouvre instantanément sans condition)
   useEffect(() => {
       if (!modalIA && tachesIA && tachesIA.length > 0) {
-          // Attrape la première tâche stockée en base de données et l'affiche tout de suite
           setModalIA(tachesIA[0]);
       }
   }, [tachesIA, modalIA]);
+  // =========================================================================
 
   const validerTacheIA = async (tache) => {
       try {
@@ -376,6 +355,7 @@ function App() {
           });
           showToast("Action de l'IA confirmée !", "success");
           setModalIA(null);
+          verifierTachesIAEnBase(); // Force la lecture des suivantes
           chargerTout();
       } catch (e) { showToast("Erreur lors de la validation.", "error"); }
   };
@@ -387,6 +367,7 @@ function App() {
               headers: getAuthHeaders()
           });
           setModalIA(null);
+          verifierTachesIAEnBase(); // Force la lecture des suivantes
           chargerTout();
       } catch (e) { showToast("Erreur serveur.", "error"); }
   };
