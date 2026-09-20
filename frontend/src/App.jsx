@@ -285,41 +285,43 @@ function App() {
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
           chargerTout(); 
           if (user && user.id_salon && !isOffline && navigator.onLine) {
-             const newSocket = io('https://api-salon-backend.onrender.com', {
-                      reconnectionAttempts: Infinity,
-                      timeout: 5000,
-                  });
-                  
-                  // DOUBLE SÉCURITÉ : Immédiat + À la reconnexion
-                  newSocket.emit('rejoindreSalon', user.id_salon);
-                  newSocket.on('connect', () => {
-                      newSocket.emit('rejoindreSalon', user.id_salon);
-                      chargerTout(); // resynchronise tout après une reconnexion (réveil d'instance, coupure réseau, etc.)
-                  });
+                // CORRECTION : Forcer le mode WebSocket pur pour contourner le blocage Render
+                const newSocket = io('https://api-salon-backend.onrender.com', {
+                    transports: ['websocket'],
+                    reconnectionAttempts: Infinity,
+                    timeout: 5000,
+                });
+                
+                newSocket.on('connect', () => {
+                    newSocket.emit('rejoindreSalon', user.id_salon);
+                    chargerTout();
+                });
 
-                  newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
-                  newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-                  newSocket.on('nouvelleTacheIA', () => { 
-                      showToast("🤖 L'IA a détecté une nouvelle action !", "success");
-                      if(user.role === 'gerant') chargerTout();
-                  });
-                  newSocket.on('connect_error', () => {});
-                  setSocket(newSocket);
-                  return () => newSocket.disconnect();
-              }
-      } 
-  }, [token, isAbonnementInactif, isOffline]);
-  // Filet de sécurité : si l'event socket est raté pendant le réveil de Render
-  useEffect(() => {
-      if (!token || isAbonnementInactif) return;
-      if (decodeToken(token)?.role !== 'gerant') return;
-      
-      const intervalId = setInterval(() => {
-          fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA');
-      }, 30000);
-      
-      return () => clearInterval(intervalId);
-  }, [token, isAbonnementInactif]);
+                newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
+                newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
+                newSocket.on('nouvelleTacheIA', () => { 
+                    console.log("⚡ Signal IA reçu en direct !");
+                    showToast("🤖 L'IA a détecté une nouvelle action !", "success");
+                    if(user.role === 'gerant') chargerTout();
+                });
+                newSocket.on('connect_error', () => {});
+                setSocket(newSocket);
+                return () => newSocket.disconnect();
+            }
+        } 
+    }, [token, isAbonnementInactif, isOffline]);
+
+    // FILET DE SÉCURITÉ : Si Socket.io gèle, on va lire la base de données toutes les 5 secondes
+    useEffect(() => {
+        if (!token || isAbonnementInactif) return;
+        if (decodeToken(token)?.role !== 'gerant') return;
+        
+        const intervalId = setInterval(() => {
+            fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA');
+        }, 5000);
+        
+        return () => clearInterval(intervalId);
+    }, [token, isAbonnementInactif]);
 
   // LOGIQUE DU POP-UP INTELLIGENT DE L'IA QUAND ON CHANGE D'ONGLET
   useEffect(() => {
