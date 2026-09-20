@@ -859,6 +859,14 @@ async function envoyerSMS(apiKey, sender, phone, text) {
         });
     } catch(e) {}
 }
-
+app.get('/api/admin/nettoyer-fantomes', async (req, res) => {
+    try {
+        // On efface les identifiants e-mail de TOUS les salons, SAUF le tien (le 38)
+        await pool.query('UPDATE configuration_salon SET email_reception_factures = NULL, mot_de_passe_app_email = NULL WHERE id_salon != 38');
+        res.json({ message: "🧹 Fantômes nettoyés ! Seul le salon 38 a désormais accès au robot." });
+    } catch (e) {
+        res.status(500).json({ erreur: e.message });
+    }
+});
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
