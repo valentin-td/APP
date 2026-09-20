@@ -358,6 +358,7 @@ function App() {
           setModalIA(null);
           verifierTachesIAEnBase(); // Force la lecture des suivantes
           chargerTout();
+          setRefreshTrigger(prev => prev + 1); // <-- CORRECTION : Force l'Agenda à se recharger instantanément
       } catch (e) { showToast("Erreur lors de la validation.", "error"); }
   };
 
