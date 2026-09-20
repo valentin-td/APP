@@ -260,7 +260,11 @@ function App() {
     fetchAndCache('/api/rh', setRhData, 'rhData');
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA'); // CHARGEMENT DES TÂCHES IA
+    // Lecture directe et forcée de la base de données (aucun cache toléré)
+    fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
+        .then(res => res.json())
+        .then(data => setTachesIA(data))
+        .catch(() => {});
     
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
