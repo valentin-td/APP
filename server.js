@@ -730,16 +730,17 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 async function executerRobotComptable() {
     const clientDB = await pool.connect();
     try {
-        // 1. CRÉATION DE LA MÉMOIRE DU ROBOT
+        // 1. MÉMOIRE MULTI-SALONS (Bloque les comptes fantômes)
         await clientDB.query(`
-            CREATE TABLE IF NOT EXISTS robot_emails_traites (
-                message_id VARCHAR(255) PRIMARY KEY,
-                date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS robot_memoire_emails (
+                message_id VARCHAR(255),
+                id_salon INT,
+                date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (message_id, id_salon)
             )
         `);
 
-        // 2. AUTO-NETTOYAGE : On vide la mémoire des e-mails vieux de plus de 7 jours
-        await clientDB.query(`DELETE FROM robot_emails_traites WHERE date_traitement < NOW() - INTERVAL '7 days'`);
+        await clientDB.query(`DELETE FROM robot_memoire_emails WHERE date_traitement < NOW() - INTERVAL '7 days'`);
 
         const salonsResult = await clientDB.query('SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL');
         for (let salon of salonsResult.rows) {
@@ -748,28 +749,23 @@ async function executerRobotComptable() {
                 await imapClient.connect();
                 let lock = await imapClient.getMailboxLock('INBOX');
                 try {
-                    // Limite de recherche aux 24 dernières heures
                     const dateLimite = new Date(Date.now() - 24 * 60 * 60 * 1000);
                     
-                    // Lecture de tous les e-mails (lus et non lus) depuis 24h
                     for await (let message of imapClient.fetch({ since: dateLimite }, { source: true, uid: true })) {
                         const mailParsi = await simpleParser(message.source);
-                        
-                        // 3. VÉRIFICATION ANTI-DOUBLON
                         const idUnique = mailParsi.messageId || message.uid.toString();
-                        const dejaTraite = await clientDB.query('SELECT message_id FROM robot_emails_traites WHERE message_id = $1', [idUnique]);
                         
-                        if (dejaTraite.rows.length > 0) {
-                            continue; // Le robot connaît déjà cet e-mail, il passe directement au suivant
-                        }
+                        // VÉRIFICATION ISOLÉE POUR CE SALON
+                        const dejaTraite = await clientDB.query('SELECT message_id FROM robot_memoire_emails WHERE message_id = $1 AND id_salon = $2', [idUnique, salon.id_salon]);
+                        
+                        if (dejaTraite.rows.length > 0) continue;
 
                         const texteEmail = mailParsi.text || mailParsi.html || ""; 
                         const sujetEmail = mailParsi.subject || "Sans Sujet";
                         
                         console.log(`\n=========================================`);
-                        console.log(`📧 NOUVEL EMAIL DÉTECTÉ : "${sujetEmail}"`);
+                        console.log(`📧 EMAIL DÉTECTÉ (Salon ${salon.id_salon}) : "${sujetEmail}"`);
                         
-                        // Traitement classique de la TVA par mots-clés
                         const matchTTC = texteEmail.match(/TTC[\s:a-zA-Z]*([\d.,]+)/i);
                         if (matchTTC) {
                             const ttc = parseFloat(matchTTC[1].replace(',', '.'));
@@ -779,23 +775,23 @@ async function executerRobotComptable() {
                             await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [sujetEmail, ht, tva, ttc, salon.id_salon]);
                         }
 
-                        // Traitement sémantique IA (Groq)
                         const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail);
                         for (let t of tachesTrouvees) {
+                            // CORRECTION MAJEURE : PAS DE JSON.STRINGIFY ICI
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
-                                [salon.id_salon, t.type || t.type_tache, JSON.stringify(t.donnees)] // <-- CORRECTION APPLIQUÉE
+                                [salon.id_salon, t.type_tache, t.donnees] 
                             );
                             io.to(salon.id_salon.toString()).emit('nouvelleTacheIA');
                         }
 
-                        // 4. MÉMORISATION : On note qu'on l'a traité pour ne plus jamais le refaire
-                        await clientDB.query('INSERT INTO robot_emails_traites (message_id) VALUES ($1)', [idUnique]);
+                        // SAUVEGARDE DANS LA BONNE TABLE MULTI-SALON
+                        await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
                     }
                 } finally { lock.release(); }
                 await imapClient.logout();
             } catch (errConnect) {
-                console.log("Erreur de connexion IMAP :", errConnect.message);
+                console.log(`Erreur IMAP Salon ${salon.id_salon} :`, errConnect.message);
             }
         }
     } catch (erreur) {
