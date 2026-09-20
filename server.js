@@ -597,24 +597,18 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 // =========================================================================
 const PROMPT_SYSTEME_IA = `Tu es un assistant IA pour un salon de coiffure. Analyse cet email et extrais les donnees en JSON strict.
 CAS 1 - STOCK : Si le texte parle de livraison, commande, achat, facture ou réassort de produits. -> Renvoie {"type": "STOCK", "donnees": {"nom_produit": "nom du produit", "quantite": entier, "reference": ""}}
-CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "CLIENT", "donnees": {"nom": "nom complet", "telephone": "numero"}}
-CAS 3 - AUTRE : Pour tout le reste (pubs, alertes sécurité, etc.) -> Renvoie {"type": "NONE"}`;
+CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe, couleur...", "date_heure": "YYYY-MM-DDTHH:MM"}}
+CAS 3 - AUTRE : Pour tout le reste (pubs, spam, etc.) -> Renvoie {"type": "NONE"}`;
 
 async function analyserEmailAvecIA(sujet, texte) {
-    if (!process.env.GROQ_API_KEY) {
-        console.error("❌ GROQ_API_KEY manquante : analyse IA des e-mails désactivée.");
-        return [];
-    }
+    if (!process.env.GROQ_API_KEY) return [];
 
-    // On tronque le corps de l'e-mail : évite d'envoyer des pièces jointes
-    // encodées en base64 ou des signatures HTML géantes au modèle, et reste
-    // largement dans la fenêtre de contexte du modèle.
     const texteTronque = (texte || '').substring(0, 8000);
 
     try {
         const completion = await groq.chat.completions.create({
             model: 'qwen/qwen3.8-27b',
-            max_tokens: 200, // <-- LIGNE À AJOUTER POUR NE PLUS AVOIR L'ERREUR 429
+            max_tokens: 250,
             temperature: 0,
             response_format: { type: 'json_object' },
             messages: [
@@ -628,14 +622,10 @@ async function analyserEmailAvecIA(sujet, texte) {
 
         let analyse;
         try {
-            // Nettoyage des balises markdown que Llama 3 ajoute souvent
             const jsonNettoye = brut.replace(/```json/gi, '').replace(/```/g, '').trim();
             analyse = JSON.parse(jsonNettoye);
             console.log("✅ L'IA a compris :", analyse);
-        } catch (erreurParsing) {
-            console.error("❌ Réponse Groq illisible :", brut);
-            return [];
-        }
+        } catch (erreurParsing) { return []; }
 
         if (analyse.type === 'STOCK' && analyse.donnees && analyse.donnees.nom_produit) {
             const quantite = parseInt(analyse.donnees.quantite, 10);
@@ -651,23 +641,21 @@ async function analyserEmailAvecIA(sujet, texte) {
             }];
         }
 
-        if (analyse.type === 'CLIENT' && analyse.donnees && analyse.donnees.nom) {
+        if (analyse.type === 'RDV' && analyse.donnees && analyse.donnees.nom_client) {
             return [{
-                type_tache: 'CLIENT',
+                type_tache: 'RDV',
                 donnees: {
-                    nom: String(analyse.donnees.nom).trim().substring(0, 100),
-                    prenom: '',
-                    telephone: analyse.donnees.telephone ? String(analyse.donnees.telephone).replace(/[^\d+]/g, '').substring(0, 20) : ''
+                    nom_client: String(analyse.donnees.nom_client).trim().substring(0, 100),
+                    telephone: analyse.donnees.telephone ? String(analyse.donnees.telephone).replace(/[^\d+]/g, '').substring(0, 20) : '',
+                    prestation: analyse.donnees.prestation ? String(analyse.donnees.prestation).trim().substring(0, 100) : 'Prestation à définir',
+                    date_heure_debut: analyse.donnees.date_heure || '',
+                    id_employe: ''
                 }
             }];
         }
 
-        // {"type": "NONE"} ou toute autre réponse : rien à faire.
         return [];
-    } catch (erreurIA) {
-        console.error("❌ Erreur appel API Groq :", erreurIA.message);
-        return [];
-    }
+    } catch (erreurIA) { return []; }
 }
 
 app.get('/api/ia/taches', verifierToken, async (req, res) => {
