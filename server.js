@@ -700,6 +700,15 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             );
         }
 
+        await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
+        await clientDB.query('COMMIT');
+        res.json({ message: "Action IA validée !" });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message });
+    } finally { clientDB.release(); }
+});
+
 app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
     try {
         await pool.query("UPDATE ia_taches_attente SET statut = 'IGNORE' WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
