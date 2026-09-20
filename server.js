@@ -685,7 +685,10 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             }
         } else if (type_tache === 'RDV') {
             const datetime = donnees.date_heure_debut ? donnees.date_heure_debut : new Date().toISOString();
-            const idEmploye = donnees.id_employe ? parseInt(donnees.id_employe) : null;
+            
+            // CORRECTION : Sécurité si aucun collaborateur n'est choisi dans le menu
+            const rawEmployeId = parseInt(donnees.id_employe);
+            const idEmploye = isNaN(rawEmployeId) ? null : rawEmployeId;
             
             // Ajoute le RDV
             await clientDB.query(
@@ -698,6 +701,9 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
                 "INSERT INTO clients (nom, telephone, id_salon) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
                 [donnees.nom_client, donnees.telephone, id_salon]
             );
+
+            // CORRECTION : Prévient tous les appareils connectés d'actualiser leur agenda
+            io.to(id_salon.toString()).emit('nouveauRDV');
         }
 
         await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
