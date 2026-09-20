@@ -606,13 +606,16 @@ async function analyserEmailAvecIA(sujet, texte) {
     const texteTronque = (texte || '').substring(0, 8000);
 
     try {
+        const anneeEnCours = new Date().getFullYear();
+        const dateDuJour = new Date().toLocaleDateString('fr-FR');
+        
         const completion = await groq.chat.completions.create({
             model: 'qwen/qwen3.8-27b',
             max_tokens: 250,
             temperature: 0,
             response_format: { type: 'json_object' },
             messages: [
-                { role: 'system', content: PROMPT_SYSTEME_IA },
+                { role: 'system', content: `${PROMPT_SYSTEME_IA}\nINFO : La date du jour est le ${dateDuJour}. Si l'e-mail ne précise pas l'année, utilise obligatoirement ${anneeEnCours}.` },
                 { role: 'user', content: `Sujet : ${sujet}\n\nCorps de l'e-mail :\n${texteTronque}` }
             ]
         });
