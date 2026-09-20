@@ -802,10 +802,14 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
     } catch (erreur) { res.status(500).send("Erreur lors de la génération du PDF."); }
 });
 
+let isRobotRunning = false; // VERROU ANTI-CLONES
+
 async function executerRobotComptable() {
+    if (isRobotRunning) return;
+    isRobotRunning = true;
+
     const clientDB = await pool.connect();
     try {
-        // 1. MÉMOIRE MULTI-SALONS (Bloque les comptes fantômes)
         await clientDB.query(`
             CREATE TABLE IF NOT EXISTS robot_memoire_emails (
                 message_id VARCHAR(255),
@@ -830,10 +834,11 @@ async function executerRobotComptable() {
                         const mailParsi = await simpleParser(message.source);
                         const idUnique = mailParsi.messageId || message.uid.toString();
                         
-                        // VÉRIFICATION ISOLÉE POUR CE SALON
                         const dejaTraite = await clientDB.query('SELECT message_id FROM robot_memoire_emails WHERE message_id = $1 AND id_salon = $2', [idUnique, salon.id_salon]);
-                        
                         if (dejaTraite.rows.length > 0) continue;
+
+                        // SÉCURITÉ ABSOLUE : On grave dans la mémoire AVANT d'appeler l'IA pour bloquer les clones
+                        await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
 
                         const texteEmail = mailParsi.text || mailParsi.html || ""; 
                         const sujetEmail = mailParsi.subject || "Sans Sujet";
@@ -852,18 +857,12 @@ async function executerRobotComptable() {
 
                         const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail);
                         for (let t of tachesTrouvees) {
-                            // CORRECTION : On insère t.donnees directement pour garder le format objet
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
                                 [salon.id_salon, t.type_tache || t.type, t.donnees] 
                             );
-                            
-                            // NOUVEAU CANAL SSE
                             envoyerEvenementSSE(salon.id_salon, 'nouvelleTacheIA');
                         }
-
-                        // SAUVEGARDE DANS LA BONNE TABLE MULTI-SALON
-                        await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
                     }
                 } finally { lock.release(); }
                 await imapClient.logout();
@@ -873,7 +872,10 @@ async function executerRobotComptable() {
         }
     } catch (erreur) {
         console.log("Erreur globale robot :", erreur.message);
-    } finally { clientDB.release(); }
+    } finally { 
+        clientDB.release(); 
+        isRobotRunning = false; // On retire le verrou
+    }
 }
 cron.schedule('0 */3 * * *', () => { executerRobotComptable(); });
 app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot IA & Comptable lancé." }); });
