@@ -703,7 +703,7 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
                 [id_salon, donnees.nom_client, donnees.telephone, donnees.prestation, datetime, idEmploye]
             );
             
-            // 2. Crée le profil client dans le CRM (seulement si le numéro existe)
+            // 2. Crée le profil client dans le CRM (seulement si le numéro existe) 
             if (donnees.telephone && donnees.telephone.trim() !== '') {
                 await clientDB.query(
                     "INSERT INTO clients (nom, telephone, id_salon) SELECT $1::varchar, $2::varchar, $3::int WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
