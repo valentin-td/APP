@@ -784,7 +784,7 @@ async function executerRobotComptable() {
                         for (let t of tachesTrouvees) {
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
-                                [salon.id_salon, t.type_tache, JSON.stringify(t.donnees)]
+                                [salon.id_salon, t.type || t.type_tache, JSON.stringify(t.donnees)] // <-- CORRECTION APPLIQUÉE
                             );
                             io.to(salon.id_salon.toString()).emit('nouvelleTacheIA');
                         }
