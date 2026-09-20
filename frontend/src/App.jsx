@@ -300,7 +300,7 @@ function App() {
                 newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
                 newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
                 newSocket.on('nouvelleTacheIA', () => { 
-                    console.log("⚡ Signal IA reçu en direct !");
+                    console.log('%c🤖 Event nouvelleTacheIA REÇU côté client, à ' + new Date().toLocaleTimeString(), 'color: #ff0000; font-weight: bold; font-size: 14px');
                     showToast("🤖 L'IA a détecté une nouvelle action !", "success");
                     if(user.role === 'gerant') chargerTout();
                 });
