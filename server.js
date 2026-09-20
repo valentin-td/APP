@@ -730,6 +730,17 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 async function executerRobotComptable() {
     const clientDB = await pool.connect();
     try {
+        // 1. CRÉATION DE LA MÉMOIRE DU ROBOT
+        await clientDB.query(`
+            CREATE TABLE IF NOT EXISTS robot_emails_traites (
+                message_id VARCHAR(255) PRIMARY KEY,
+                date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // 2. AUTO-NETTOYAGE : On vide la mémoire des e-mails vieux de plus de 7 jours
+        await clientDB.query(`DELETE FROM robot_emails_traites WHERE date_traitement < NOW() - INTERVAL '7 days'`);
+
         const salonsResult = await clientDB.query('SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL');
         for (let salon of salonsResult.rows) {
             const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: salon.email_reception_factures, pass: salon.mot_de_passe_app_email }, logger: false });
@@ -737,23 +748,28 @@ async function executerRobotComptable() {
                 await imapClient.connect();
                 let lock = await imapClient.getMailboxLock('INBOX');
                 try {
-                    // 1. Calculer la date exacte d'il y a 24 heures
+                    // Limite de recherche aux 24 dernières heures
                     const dateLimite = new Date(Date.now() - 24 * 60 * 60 * 1000);
                     
-                    // 2. Ajouter 'since: dateLimite' pour ignorer les vieux e-mails
-                    for await (let message of imapClient.fetch({ unseen: true, since: dateLimite }, { source: true })) {
+                    // Lecture de tous les e-mails (lus et non lus) depuis 24h
+                    for await (let message of imapClient.fetch({ since: dateLimite }, { source: true, uid: true })) {
                         const mailParsi = await simpleParser(message.source);
                         
-                        // SECURITE : Prendre le texte, sinon le HTML, sinon vide
+                        // 3. VÉRIFICATION ANTI-DOUBLON
+                        const idUnique = mailParsi.messageId || message.uid.toString();
+                        const dejaTraite = await clientDB.query('SELECT message_id FROM robot_emails_traites WHERE message_id = $1', [idUnique]);
+                        
+                        if (dejaTraite.rows.length > 0) {
+                            continue; // Le robot connaît déjà cet e-mail, il passe directement au suivant
+                        }
+
                         const texteEmail = mailParsi.text || mailParsi.html || ""; 
                         const sujetEmail = mailParsi.subject || "Sans Sujet";
                         
-                        // MOUCHARDS POUR COMPRENDRE CE QUI SE PASSE
                         console.log(`\n=========================================`);
-                        console.log(`📧 EMAIL DÉTECTÉ : "${sujetEmail}"`);
-                        console.log(`📝 EXTRAIT : "${texteEmail.substring(0, 150).replace(/\n/g, ' ')}..."`);
+                        console.log(`📧 NOUVEL EMAIL DÉTECTÉ : "${sujetEmail}"`);
                         
-                        // 1. Scan classique de la TVA
+                        // Traitement classique de la TVA par mots-clés
                         const matchTTC = texteEmail.match(/TTC[\s:a-zA-Z]*([\d.,]+)/i);
                         if (matchTTC) {
                             const ttc = parseFloat(matchTTC[1].replace(',', '.'));
@@ -763,7 +779,7 @@ async function executerRobotComptable() {
                             await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [sujetEmail, ht, tva, ttc, salon.id_salon]);
                         }
 
-                        // 2. Scan sémantique (IA via Groq)
+                        // Traitement sémantique IA (Groq)
                         const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail);
                         for (let t of tachesTrouvees) {
                             await clientDB.query(
@@ -773,8 +789,8 @@ async function executerRobotComptable() {
                             io.to(salon.id_salon.toString()).emit('nouvelleTacheIA');
                         }
 
-                        // Marquer l'email comme lu
-                        await imapClient.messageFlagsAdd({seq: message.seq}, ['\\Seen']);
+                        // 4. MÉMORISATION : On note qu'on l'a traité pour ne plus jamais le refaire
+                        await clientDB.query('INSERT INTO robot_emails_traites (message_id) VALUES ($1)', [idUnique]);
                     }
                 } finally { lock.release(); }
                 await imapClient.logout();
