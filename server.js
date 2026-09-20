@@ -706,7 +706,9 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
     } catch (e) {
         await clientDB.query('ROLLBACK');
         res.status(500).json({ erreur: e.message });
-    } finally { clientDB.release(); }
+    } finally { 
+        clientDB.release(); 
+    }
 });
 
 app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
