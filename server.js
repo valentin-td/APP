@@ -777,11 +777,12 @@ async function executerRobotComptable() {
 
                         const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail);
                         for (let t of tachesTrouvees) {
-                            // CORRECTION MAJEURE : PAS DE JSON.STRINGIFY ICI
+                            // CORRECTION : On insère t.donnees directement pour garder le format objet
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
                                 [salon.id_salon, t.type_tache, t.donnees] 
                             );
+                            
                             const room = salon.id_salon.toString();
                             const nbClientsDansLaRoom = io.sockets.adapter.rooms.get(room)?.size || 0;
                             console.log(`📡 Emission 'nouvelleTacheIA' -> room "${room}" (${nbClientsDansLaRoom} client(s) connecté(s))`);
