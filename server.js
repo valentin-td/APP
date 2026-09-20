@@ -683,18 +683,22 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             } else {
                 await clientDB.query("INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, id_salon) VALUES ($1, 'PRODUIT_REVENTE', $2, $3, $4, $5)", [donnees.nom_produit, donnees.prix || 0, donnees.quantite, donnees.reference || null, id_salon]);
             }
-        } else if (type_tache === 'CLIENT') {
-            await clientDB.query("INSERT INTO clients (nom, prenom, telephone, id_salon) VALUES ($1, $2, $3, $4)", [donnees.nom, donnees.prenom || '', donnees.telephone, id_salon]);
+        } else if (type_tache === 'RDV') {
+            const datetime = donnees.date_heure_debut ? donnees.date_heure_debut : new Date().toISOString();
+            const idEmploye = donnees.id_employe ? parseInt(donnees.id_employe) : null;
+            
+            // Ajoute le RDV
+            await clientDB.query(
+                `INSERT INTO rendez_vous (id_salon, nom_client, telephone_client, prestation, date_heure_debut, id_employe, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, 30)`, 
+                [id_salon, donnees.nom_client, donnees.telephone, donnees.prestation, datetime, idEmploye]
+            );
+            
+            // Crée le profil client dans le CRM s'il n'existe pas
+            await clientDB.query(
+                "INSERT INTO clients (nom, telephone, id_salon) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
+                [donnees.nom_client, donnees.telephone, id_salon]
+            );
         }
-
-        await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
-        await clientDB.query('COMMIT');
-        res.json({ message: "Action IA validée !" });
-    } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: e.message });
-    } finally { clientDB.release(); }
-});
 
 app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
     try {
