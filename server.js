@@ -684,25 +684,30 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
                 await clientDB.query("INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, id_salon) VALUES ($1, 'PRODUIT_REVENTE', $2, $3, $4, $5)", [donnees.nom_produit, donnees.prix || 0, donnees.quantite, donnees.reference || null, id_salon]);
             }
         } else if (type_tache === 'RDV') {
-            const datetime = donnees.date_heure_debut ? donnees.date_heure_debut : new Date().toISOString();
+            let datetime = new Date().toISOString();
+            if (donnees.date_heure_debut) {
+                datetime = donnees.date_heure_debut;
+                // Si l'input n'a pas mis les secondes, on les rajoute pour PostgreSQL
+                if (datetime.length === 16) datetime += ':00'; 
+            }
             
-            // CORRECTION : Sécurité si aucun collaborateur n'est choisi dans le menu
             const rawEmployeId = parseInt(donnees.id_employe);
             const idEmploye = isNaN(rawEmployeId) ? null : rawEmployeId;
             
-            // Ajoute le RDV
+            // 1. Ajoute le RDV
             await clientDB.query(
                 `INSERT INTO rendez_vous (id_salon, nom_client, telephone_client, prestation, date_heure_debut, id_employe, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, 30)`, 
                 [id_salon, donnees.nom_client, donnees.telephone, donnees.prestation, datetime, idEmploye]
             );
             
-            // Crée le profil client dans le CRM s'il n'existe pas
-            await clientDB.query(
-                "INSERT INTO clients (nom, telephone, id_salon) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
-                [donnees.nom_client, donnees.telephone, id_salon]
-            );
+            // 2. Crée le profil client dans le CRM (seulement si le numéro existe)
+            if (donnees.telephone && donnees.telephone.trim() !== '') {
+                await clientDB.query(
+                    "INSERT INTO clients (nom, telephone, id_salon) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
+                    [donnees.nom_client, donnees.telephone, id_salon]
+                );
+            }
 
-            // CORRECTION : Prévient tous les appareils connectés d'actualiser leur agenda
             io.to(id_salon.toString()).emit('nouveauRDV');
         }
 
