@@ -737,7 +737,11 @@ async function executerRobotComptable() {
                 await imapClient.connect();
                 let lock = await imapClient.getMailboxLock('INBOX');
                 try {
-                    for await (let message of imapClient.fetch({ unseen: true }, { source: true })) {
+                    // 1. Calculer la date exacte d'il y a 24 heures
+                    const dateLimite = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                    
+                    // 2. Ajouter 'since: dateLimite' pour ignorer les vieux e-mails
+                    for await (let message of imapClient.fetch({ unseen: true, since: dateLimite }, { source: true })) {
                         const mailParsi = await simpleParser(message.source);
                         
                         // SECURITE : Prendre le texte, sinon le HTML, sinon vide
