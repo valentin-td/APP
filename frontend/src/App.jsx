@@ -412,13 +412,9 @@ function App() {
           
           showToast("Action de l'IA confirmée !", "success");
           
-          // CORRECTION : On efface la tâche de la mémoire locale immédiatement avant de fermer le pop-up
-          setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
           setModalIA(null);
-          
-          verifierTachesIAEnBase();
-          chargerTout();
-          setRefreshTrigger(prev => prev + 1);
+          setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
+          setRefreshTrigger(prev => prev + 1); // Recharge l'Agenda discrètement
       } catch (e) { 
           showToast(`Erreur : ${e.message}`, "error"); 
       }
@@ -431,24 +427,10 @@ function App() {
               headers: getAuthHeaders()
           });
           
-          // CORRECTION : Effacement immédiat de la mémoire locale
+          showToast("Tâche ignorée", "info");
+          setModalIA(null);
           setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
-          setModalIA(null);
-          
-          verifierTachesIAEnBase();
-          chargerTout();
-      } catch (e) { showToast("Erreur serveur.", "error"); }
-  };
-
-  const ignorerTacheIA = async (tache) => {
-      try {
-          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
-              method: 'POST',
-              headers: getAuthHeaders()
-          });
-          setModalIA(null);
-          verifierTachesIAEnBase(); // Force la lecture des suivantes
-          chargerTout();
+          // On évite d'appeler chargerTout() ici pour ne pas provoquer un double rendu
       } catch (e) { showToast("Erreur serveur.", "error"); }
   };
 
