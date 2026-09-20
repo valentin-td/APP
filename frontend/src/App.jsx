@@ -61,6 +61,11 @@ function App() {
   // ÉTATS DE L'IA AUTOMATIQUE EN ARRIÈRE-PLAN
   const [tachesIA, setTachesIA] = useState([]);
   const [modalIA, setModalIA] = useState(null);
+
+  // MOUCHARD D'ÉTAT IA
+  useEffect(() => {
+      console.log('%c📋 tachesIA mis à jour :', 'color: #00aa00; font-weight: bold; font-size: 14px', tachesIA);
+  }, [tachesIA]);
   
   const [erreur, setErreur] = useState(null);
 
