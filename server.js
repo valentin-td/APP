@@ -381,13 +381,35 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
             const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
             const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
 
-            if (!readerId) return res.status(400).json({ erreur: "Aucun lecteur TPE configuré." });
+            if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
 
             const paymentIntent = await stripe.paymentIntents.create({
               amount: Math.round(montant * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
             });
             paymentIntentId = paymentIntent.id;
             reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
+
+            // --- NOUVELLE LOGIQUE : ATTENTE DE LA CARTE DU CLIENT ---
+            let intentStatus = paymentIntent.status;
+            let attempts = 0;
+            
+            // Le serveur vérifie Stripe toutes les 2 secondes (pendant 1 minute max)
+            while (intentStatus === 'requires_payment_method' && attempts < 30) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+                intentStatus = checkIntent.status;
+                attempts++;
+            }
+
+            if (intentStatus === 'requires_capture') {
+                // Le TPE a validé la carte, on capture l'argent définitivement !
+                await stripe.paymentIntents.capture(paymentIntentId);
+            } else {
+                // Timeout ou abandon du client -> on annule l'ordre sur le TPE physique
+                try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
+                throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
+            }
+            // --------------------------------------------------------
         }
 
         await clientDB.query('BEGIN'); 
