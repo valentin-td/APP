@@ -309,6 +309,17 @@ function App() {
               }
       } 
   }, [token, isAbonnementInactif, isOffline]);
+  // Filet de sécurité : si l'event socket est raté pendant le réveil de Render
+  useEffect(() => {
+      if (!token || isAbonnementInactif) return;
+      if (decodeToken(token)?.role !== 'gerant') return;
+      
+      const intervalId = setInterval(() => {
+          fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA');
+      }, 30000);
+      
+      return () => clearInterval(intervalId);
+  }, [token, isAbonnementInactif]);
 
   // LOGIQUE DU POP-UP INTELLIGENT DE L'IA QUAND ON CHANGE D'ONGLET
   useEffect(() => {
