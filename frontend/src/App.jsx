@@ -235,7 +235,12 @@ function App() {
 
   const fetchAndCache = async (url, setter, cacheKey) => {
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com${url}`, { headers: getAuthHeaders() });
+          // Anti-cache radical : On force le navigateur à toujours interroger le serveur
+          const cacheBuster = url.includes('?') ? `&_=${Date.now()}` : `?_=${Date.now()}`;
+          const res = await fetch(`https://api-salon-backend.onrender.com${url}${cacheBuster}`, { 
+              headers: getAuthHeaders(),
+              cache: 'no-store'
+          });
           const data = await handleFetchError(res);
           setter(data);
           await localforage.setItem(cacheKey, data);
@@ -349,17 +354,26 @@ function App() {
 
   const validerTacheIA = async (tache) => {
       try {
-          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/valider`, {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/valider`, {
               method: 'POST',
               headers: getAuthHeaders(true),
               body: JSON.stringify(tache.donnees)
           });
+          
+          // Sécurité : Si la base de données rejette le RDV, on déclenche une erreur
+          if (!res.ok) {
+              const err = await res.json();
+              throw new Error(err.erreur || "Erreur base de données");
+          }
+          
           showToast("Action de l'IA confirmée !", "success");
           setModalIA(null);
           verifierTachesIAEnBase(); // Force la lecture des suivantes
           chargerTout();
-          setRefreshTrigger(prev => prev + 1); // <-- CORRECTION : Force l'Agenda à se recharger instantanément
-      } catch (e) { showToast("Erreur lors de la validation.", "error"); }
+          setRefreshTrigger(prev => prev + 1); // Force l'Agenda à se recharger instantanément
+      } catch (e) { 
+          showToast(`Erreur : ${e.message}`, "error"); 
+      }
   };
 
   const ignorerTacheIA = async (tache) => {
