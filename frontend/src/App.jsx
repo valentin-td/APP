@@ -294,6 +294,7 @@ function App() {
                   newSocket.emit('rejoindreSalon', user.id_salon);
                   newSocket.on('connect', () => {
                       newSocket.emit('rejoindreSalon', user.id_salon);
+                      chargerTout(); // resynchronise tout après une reconnexion (réveil d'instance, coupure réseau, etc.)
                   });
 
                   newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
