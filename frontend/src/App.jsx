@@ -289,7 +289,12 @@ function App() {
                   reconnectionAttempts: Infinity,
                   timeout: 5000,
               });
-              newSocket.emit('rejoindreSalon', user.id_salon);
+              
+              // CORRECTION : S'assurer de rejoindre le salon à CHAQUE reconnexion
+              newSocket.on('connect', () => {
+                  newSocket.emit('rejoindreSalon', user.id_salon);
+              });
+
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
               newSocket.on('nouvelleTacheIA', () => { 
