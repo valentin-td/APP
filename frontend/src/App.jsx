@@ -100,6 +100,7 @@ function App() {
   const [methodePaiement, setMethodePaiement] = useState('ESPECES');
   const [clientsSuggeres, setClientsSuggeres] = useState([]); 
   const [socket, setSocket] = useState(null);
+  const [clientsSuggeres, setClientsSugger
   
   const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
 
@@ -786,7 +787,7 @@ function App() {
         </div>
       )}
 
-      {/* POP-UP INTELLIGENT DE L'IA (STOCK & CLIENT) */}
+      {/* POP-UP INTELLIGENT DE L'IA (STOCK & RDV) */}
       {modalIA && (
           <div className="modal-overlay">
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
@@ -794,10 +795,10 @@ function App() {
                       <span style={{fontSize: '48px'}}>🤖</span>
                   </div>
                   <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>
-                      {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : "Nouveau client détecté"}
+                      {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : "Nouvelle action"}
                   </h2>
                   <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
-                      {modalIA.type_tache === 'STOCK' ? "L'IA a lu vos emails et trouvé une facture." : "L'IA a trouvé une demande de rendez-vous."}
+                      {modalIA.type_tache === 'STOCK' ? "L'IA a extrait cette facture :" : "L'IA a lu cet e-mail de réservation :"}
                   </p>
                   
                   <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px'}}>
@@ -808,7 +809,7 @@ function App() {
                               
                               <div style={{display: 'flex', gap: '12px'}}>
                                   <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité reçue</label>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité</label>
                                       <input type="number" className="input-fournisseur" value={modalIA.donnees.quantite || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
                                   </div>
                                   <div style={{flex: 1}}>
@@ -818,13 +819,36 @@ function App() {
                               </div>
                           </>
                       )}
-                      {modalIA.type_tache === 'CLIENT' && (
+                      
+                      {modalIA.type_tache === 'RDV' && (
                           <>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Nom du client</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom: e.target.value}})} />
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Client</label>
+                                      <input className="input-fournisseur" value={modalIA.donnees.nom_client || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_client: e.target.value}})} />
+                                  </div>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
+                                      <input className="input-fournisseur" value={modalIA.donnees.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
+                                  </div>
+                              </div>
                               
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
-                              <input className="input-fournisseur" value={modalIA.donnees.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Prestation demandée</label>
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.prestation || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, prestation: e.target.value}})} />
+
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Date et Heure</label>
+                                      <input type="datetime-local" className="input-fournisseur" value={modalIA.donnees.date_heure_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_heure_debut: e.target.value}})} />
+                                  </div>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Coiffeur</label>
+                                      <select className="input-fournisseur" value={modalIA.donnees.id_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, id_employe: e.target.value}})}>
+                                          <option value="">-- Choisir --</option>
+                                          {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                      </select>
+                                  </div>
+                              </div>
                           </>
                       )}
                   </div>
@@ -832,7 +856,7 @@ function App() {
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => ignorerTacheIA(modalIA)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Ignorer</button>
                       <button onClick={() => validerTacheIA(modalIA)} className="btn-action" style={{flex: 2}}>
-                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : "Ajouter au CRM"}
+                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : "Ajouter à l'Agenda"}
                       </button>
                   </div>
               </div>
