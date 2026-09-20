@@ -359,17 +359,13 @@ function App() {
       return () => clearInterval(intervalId);
   }, [token, isAbonnementInactif]);
 
-  // LOGIQUE DU POP-UP INTELLIGENT DE L'IA QUAND ON CHANGE D'ONGLET
+  // LOGIQUE DU POP-UP INTELLIGENT GLOBAL (S'ouvre instantanément)
   useEffect(() => {
-      if (activeTab === 'produits' && !modalIA && tachesIA && tachesIA.length > 0) {
-          const tacheStock = tachesIA.find(t => t.type_tache === 'STOCK');
-          if (tacheStock) setModalIA(tacheStock);
+      if (!modalIA && tachesIA && tachesIA.length > 0) {
+          // Attrape la première tâche stockée en base de données et l'affiche tout de suite
+          setModalIA(tachesIA[0]);
       }
-      if (activeTab === 'agenda' && !modalIA && tachesIA && tachesIA.length > 0) {
-          const tacheClient = tachesIA.find(t => t.type_tache === 'CLIENT');
-          if (tacheClient) setModalIA(tacheClient);
-      }
-  }, [activeTab, tachesIA, modalIA]);
+  }, [tachesIA, modalIA]);
 
   const validerTacheIA = async (tache) => {
       try {
