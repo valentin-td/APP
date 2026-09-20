@@ -782,7 +782,10 @@ async function executerRobotComptable() {
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
                                 [salon.id_salon, t.type_tache, t.donnees] 
                             );
-                            io.to(salon.id_salon.toString()).emit('nouvelleTacheIA');
+                            const room = salon.id_salon.toString();
+                            const nbClientsDansLaRoom = io.sockets.adapter.rooms.get(room)?.size || 0;
+                            console.log(`📡 Emission 'nouvelleTacheIA' -> room "${room}" (${nbClientsDansLaRoom} client(s) connecté(s))`);
+                            io.to(room).emit('nouvelleTacheIA');
                         }
 
                         // SAUVEGARDE DANS LA BONNE TABLE MULTI-SALON
