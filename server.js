@@ -877,7 +877,11 @@ async function executerRobotComptable() {
         isRobotRunning = false; // On retire le verrou
     }
 }
-cron.schedule('0 */3 * * *', () => { executerRobotComptable(); });
+// Le robot passe toutes les 10 minutes de 08h00 à 19h50
+cron.schedule('*/10 8-19 * * *', () => { executerRobotComptable(); });
+
+// Le robot passe une seule fois la nuit (à 02h00 du matin)
+cron.schedule('0 2 * * *', () => { executerRobotComptable(); });
 app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot IA & Comptable lancé." }); });
 
 
