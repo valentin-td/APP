@@ -285,48 +285,75 @@ function App() {
       }
   }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
-  useEffect(() => { 
-      if (token && !isAbonnementInactif) { 
-          const user = decodeToken(token); setUserRole(user?.role || 'gerant');
-          chargerTout(); 
-          if (user && user.id_salon && !isOffline && navigator.onLine) {
-                // CORRECTION : Forcer le mode WebSocket pur pour contourner le blocage Render
-                const newSocket = io('https://api-salon-backend.onrender.com', {
-                    transports: ['websocket'],
-                    reconnectionAttempts: Infinity,
-                    timeout: 5000,
-                });
-                
-                newSocket.on('connect', () => {
-                    newSocket.emit('rejoindreSalon', user.id_salon);
-                    chargerTout();
-                });
+  useEffect(() => {
+      if (!(token && !isAbonnementInactif)) return;
+      const user = decodeToken(token);
+      setUserRole(user?.role || 'gerant');
+      chargerTout();
+      if (!user || !user.id_salon || isOffline || !navigator.onLine || user.role !== 'gerant') return;
 
-                newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
-                newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-                newSocket.on('nouvelleTacheIA', () => { 
-                    console.log('%c🤖 Event nouvelleTacheIA REÇU côté client, à ' + new Date().toLocaleTimeString(), 'color: #ff0000; font-weight: bold; font-size: 14px');
-                    showToast("🤖 L'IA a détecté une nouvelle action !", "success");
-                    if(user.role === 'gerant') chargerTout();
-                });
-                newSocket.on('connect_error', () => {});
-                setSocket(newSocket);
-                return () => newSocket.disconnect();
-            }
-        } 
-    }, [token, isAbonnementInactif, isOffline]);
+      // 1. ANCIEN CANAL (Gardé pour Paiements & RDV)
+      const newSocket = io('https://api-salon-backend.onrender.com', { transports: ['websocket'], reconnectionAttempts: Infinity, timeout: 5000 });
+      newSocket.on('connect', () => { newSocket.emit('rejoindreSalon', user.id_salon); });
+      newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); chargerTout(); });
+      newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
+      setSocket(newSocket);
 
-    // FILET DE SÉCURITÉ : Si Socket.io gèle, on va lire la base de données toutes les 5 secondes
-    useEffect(() => {
-        if (!token || isAbonnementInactif) return;
-        if (decodeToken(token)?.role !== 'gerant') return;
-        
-        const intervalId = setInterval(() => {
-            fetchAndCache('/api/ia/taches', setTachesIA, 'tachesIA');
-        }, 5000);
-        
-        return () => clearInterval(intervalId);
-    }, [token, isAbonnementInactif]);
+      // 2. NOUVEAU CANAL BLINDÉ (SSE) POUR L'IA
+      let eventSource = null;
+      let watchdogId = null;
+      let dernierSignal = Date.now();
+      
+      const ouvrirConnexionSSE = () => {
+          if (eventSource) eventSource.close();
+          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}?token=${encodeURIComponent(token)}`;
+          eventSource = new EventSource(url);
+          dernierSignal = Date.now();
+          
+          eventSource.addEventListener('connected', () => {
+              console.log('%c📡 SSE connecté', 'color: #00aa00; font-weight: bold;');
+              dernierSignal = Date.now();
+          });
+          eventSource.addEventListener('heartbeat', () => {
+              dernierSignal = Date.now();
+          });
+          eventSource.addEventListener('nouvelleTacheIA', () => {
+              console.log('%c🤖 Event nouvelleTacheIA REÇU côté client, à ' + new Date().toLocaleTimeString(), 'color: #ff0000; font-weight: bold; font-size: 14px');
+              dernierSignal = Date.now();
+              showToast("🤖 L'IA a détecté une nouvelle action !", "success");
+              chargerTout();
+          });
+      };
+      
+      ouvrirConnexionSSE();
+      
+      watchdogId = setInterval(() => {
+          if (Date.now() - dernierSignal > 40000) {
+              console.log('%c⚠️ Aucun signal SSE depuis 40s, reconnexion forcée', 'color: #ff9900; font-weight: bold;');
+              ouvrirConnexionSSE();
+          }
+      }, 10000);
+      
+      return () => {
+          clearInterval(watchdogId);
+          if (eventSource) eventSource.close();
+          newSocket.disconnect();
+      };
+  }, [token, isAbonnementInactif, isOffline]);
+
+  // FILET DE SÉCURITÉ ULTIME (Anti-Cache)
+  useEffect(() => {
+      if (!token || isAbonnementInactif) return;
+      if (decodeToken(token)?.role !== 'gerant') return;
+      const intervalId = setInterval(async () => {
+          try {
+              const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' });
+              const data = await res.json();
+              setTachesIA(data);
+          } catch (e) {}
+      }, 30000);
+      return () => clearInterval(intervalId);
+  }, [token, isAbonnementInactif]);
 
   // LOGIQUE DU POP-UP INTELLIGENT DE L'IA QUAND ON CHANGE D'ONGLET
   useEffect(() => {
