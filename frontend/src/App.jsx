@@ -310,7 +310,7 @@ function App() {
   }, [token, isAbonnementInactif, isOffline]);
 
   // =========================================================================
-  // NOUVEAU MOTEUR IA : 100% INFAILLIBLE, 0% CACHE
+  // NOUVEAU MOTEUR IA : 100% INFAILLIBLE, 0% CACHE + SSE INSTANTANÉ
   // =========================================================================
   const verifierTachesIAEnBase = async () => {
       if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
@@ -324,23 +324,68 @@ function App() {
               const data = await res.json();
               setTachesIA(data);
           }
-      } catch (e) {
-          console.error("Erreur lecture IA", e);
-      }
+      } catch (e) { console.error("Erreur lecture IA", e); }
   };
 
   useEffect(() => {
+      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
+      
+      const user = decodeToken(token);
+      let eventSource = null;
+      let watchdogId = null;
+      let dernierSignal = Date.now();
+      
+      // 1. Ouvre le canal SSE pour être prévenu instantanément par le serveur
+      const ouvrirConnexionSSE = () => {
+          if (eventSource) eventSource.close();
+          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}?token=${encodeURIComponent(token)}`;
+          eventSource = new EventSource(url);
+          dernierSignal = Date.now();
+          
+          eventSource.addEventListener('connected', () => {
+              console.log('%c📡 SSE connecté', 'color: #00aa00; font-weight: bold;');
+              dernierSignal = Date.now();
+          });
+          eventSource.addEventListener('heartbeat', () => {
+              dernierSignal = Date.now();
+          });
+          
+          // LA LIGNE MAGIQUE : Le serveur dit qu'une tâche est prête, on lit la DB tout de suite !
+          eventSource.addEventListener('nouvelleTacheIA', () => {
+              console.log('%c🤖 Event nouvelleTacheIA REÇU côté client', 'color: #ff0000; font-weight: bold; font-size: 14px');
+              dernierSignal = Date.now();
+              showToast("🤖 L'IA a détecté une nouvelle action !", "success");
+              verifierTachesIAEnBase(); // <-- Ouvre le pop-up instantanément
+              chargerTout();
+          });
+      };
+      
+      ouvrirConnexionSSE();
+      
+      // Relance la connexion si le réseau coupe
+      watchdogId = setInterval(() => {
+          if (Date.now() - dernierSignal > 40000) {
+              ouvrirConnexionSSE();
+          }
+      }, 10000);
+
+      // 2. Vérifications de base (Au démarrage et au Focus)
       verifierTachesIAEnBase();
       const onFocus = () => verifierTachesIAEnBase();
       window.addEventListener('focus', onFocus);
       window.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'visible') verifierTachesIAEnBase();
       });
-      const intervalId = setInterval(verifierTachesIAEnBase, 10000);
+
+      // 3. Filet de sécurité classique (Toutes les 15s)
+      const intervalId = setInterval(verifierTachesIAEnBase, 15000);
+
       return () => {
           window.removeEventListener('focus', onFocus);
           window.removeEventListener('visibilitychange', () => {});
           clearInterval(intervalId);
+          clearInterval(watchdogId);
+          if (eventSource) eventSource.close();
       };
   }, [token, isAbonnementInactif]);
 
