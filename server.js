@@ -138,7 +138,67 @@ pool.query(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
     ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
-`).then(() => console.log("✅ Base de données prête (Paiement, IA, CRM)")).catch((e) => console.error("❌ Erreur Auto-healing:", e));
+
+    -- =====================================================================
+    -- --- NF525 / ISCA : Inaltérabilité, Journal des Événements Techniques,
+    -- --- Clôtures scellées et Grand Total perpétuel.
+    -- =====================================================================
+
+    -- 1. Écritures de compensation (le ticket d'origine n'est JAMAIS modifié
+    --    dans ses montants ; on lui ajoute seulement un marqueur non-fiscal
+    --    et on crée un ticket négatif lié).
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type_ticket VARCHAR(20) DEFAULT 'VENTE';
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_ticket_origine INT REFERENCES tickets(id_ticket);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS motif_annulation TEXT;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS est_compense BOOLEAN DEFAULT FALSE;
+
+    -- 2. Snapshot des lignes (nom, prix TTC, taux de TVA figés au moment de
+    --    la vente : une modification ultérieure du catalogue ne doit jamais
+    --    réécrire l'historique).
+    ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS nom_article_snapshot VARCHAR(255);
+    ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS taux_tva_snapshot NUMERIC(5,2) DEFAULT 20.00;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS taux_tva NUMERIC(5,2) DEFAULT 20.00;
+
+    -- 3. Journal des Événements Techniques (JET), chaîné par hash comme les
+    --    tickets (chaque ligne référence le hash de la précédente).
+    CREATE TABLE IF NOT EXISTS jet_logs (
+        id_jet SERIAL PRIMARY KEY,
+        id_salon INT NOT NULL,
+        action VARCHAR(50) NOT NULL,
+        details JSONB,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        hash_precedent VARCHAR(64),
+        hash_jet VARCHAR(64)
+    );
+    CREATE INDEX IF NOT EXISTS idx_jet_logs_salon_date ON jet_logs (id_salon, date_creation);
+
+    -- 4. Clôtures : on fige un jour civil par salon (blocage Z), on scelle
+    --    le cumul perpétuel, et on chaîne les Z entre eux.
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS id_cloture SERIAL;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS date_cloture DATE;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+`).then(async () => {
+    // Backfill de date_cloture à partir de date_creation pour les Z déjà existants,
+    // AVANT de poser la contrainte d'unicité (sinon un DEFAULT CURRENT_DATE
+    // matérialisé sur d'anciennes lignes provoquerait de faux doublons).
+    try {
+        await pool.query(`UPDATE clotures_caisse SET date_cloture = DATE(date_creation) WHERE date_cloture IS NULL;`);
+        await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_DATE;`);
+        await pool.query(`
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN
+                    ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture);
+                END IF;
+            END $$;
+        `);
+        console.log("✅ Base de données prête (Paiement, IA, CRM, NF525/ISCA)");
+    } catch (e) {
+        // Si votre table clotures_caisse ne possède pas de colonne "date_creation",
+        // adaptez cette étape de backfill au nom réel de votre colonne de date.
+        console.error("❌ Erreur backfill date_cloture (NF525):", e);
+    }
+}).catch((e) => console.error("❌ Erreur Auto-healing:", e));
 
 const verifierToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -158,6 +218,76 @@ const verifierToken = (req, res, next) => {
             next(); 
         } catch (e) { return res.status(500).json({ erreur: "Erreur vérification." }); }
     });
+};
+
+// =========================================================================
+// --- NF525 / ISCA : JOURNAL DES ÉVÉNEMENTS TECHNIQUES (JET) ---
+// =========================================================================
+// Chaque événement est haché avec le hash de l'événement précédent du même
+// salon (chaînage), à la manière du hash_ticket déjà utilisé sur les tickets.
+// Un verrou consultatif Postgres (pg_advisory_xact_lock) évite qu'une écriture
+// concurrente sur le même salon ne casse la chaîne (deux requêtes lisant le
+// même "hash précédent" en même temps).
+async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
+    try {
+        await dbClient.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+        const dernier = await dbClient.query(
+            'SELECT hash_jet FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet DESC LIMIT 1',
+            [id_salon]
+        );
+        const hashPrecedent = dernier.rowCount > 0 ? dernier.rows[0].hash_jet : 'GENESIS_JET';
+        const dateISO = new Date().toISOString();
+        const detailsJSON = JSON.stringify(details || {});
+        const hashJet = crypto.createHash('sha256')
+            .update(`${id_salon}-${action}-${detailsJSON}-${dateISO}-${hashPrecedent}`)
+            .digest('hex');
+        await dbClient.query(
+            'INSERT INTO jet_logs (id_salon, action, details, date_creation, hash_precedent, hash_jet) VALUES ($1, $2, $3, $4, $5, $6)',
+            [id_salon, action, detailsJSON, dateISO, hashPrecedent, hashJet]
+        );
+        return hashJet;
+    } catch (e) {
+        // Le JET ne doit jamais faire planter une action métier : on logue et on continue.
+        console.error(`❌ Erreur JET (${action}):`, e.message);
+        return null;
+    }
+}
+// NOTE IMPORTANTE : pg_advisory_xact_lock ne se libère qu'à la fin de la
+// transaction en cours. Quand enregistrerJET est appelé avec un client déjà
+// "BEGIN" (clientDB), le verrou tient jusqu'au COMMIT/ROLLBACK de cette
+// transaction : c'est voulu, cela protège aussi les JET liés à un ticket.
+// Quand il est appelé avec le pool nu (hors transaction), le verrou est libéré
+// dès la fin de cette requête unique.
+
+// =========================================================================
+// --- NF525 : BLOCAGE Z — interdit l'encaissement si un jour antérieur
+// --- n'a pas fait l'objet d'une clôture (Z). ---
+// =========================================================================
+const verifierClotureZ = async (req, res, next) => {
+    const id_salon = req.user.id_salon;
+    try {
+        const jourBloquant = await pool.query(
+            `SELECT MIN(DATE(t.date_creation)) as jour
+             FROM tickets t
+             WHERE t.id_salon = $1
+               AND DATE(t.date_creation) < CURRENT_DATE
+               AND NOT EXISTS (
+                   SELECT 1 FROM clotures_caisse c
+                   WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
+               )`,
+            [id_salon]
+        );
+        if (jourBloquant.rowCount > 0 && jourBloquant.rows[0].jour) {
+            return res.status(423).json({
+                erreur: `Clôture (Z) manquante pour le ${new Date(jourBloquant.rows[0].jour).toLocaleDateString()}. Effectuez la clôture journalière avant de continuer à encaisser.`,
+                z_manquant: jourBloquant.rows[0].jour
+            });
+        }
+        next();
+    } catch (e) {
+        console.error("❌ Erreur vérification blocage Z:", e);
+        res.status(500).json({ erreur: "Erreur vérification clôture." });
+    }
 };
 
 // =========================================================================
@@ -203,8 +333,12 @@ app.post('/api/login', async (req, res) => {
             const match = await bcrypt.compare(mot_de_passe, mot_de_passe_hash);
             if (match) {
                 const token = jwt.sign({ id_salon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+                await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { email, role: 'gerant' });
                 res.json({ message: "Connexion réussie", token, statut_abonnement });
-            } else { res.status(401).json({ erreur: "Mot de passe incorrect." }); }
+            } else {
+                await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { email, raison: 'mot_de_passe_incorrect' });
+                res.status(401).json({ erreur: "Mot de passe incorrect." });
+            }
         } else { res.status(401).json({ erreur: "Aucun compte trouvé avec cet e-mail." }); }
     } catch (error) { res.status(500).json({ erreur: "Erreur serveur." }); }
 });
@@ -215,8 +349,12 @@ app.post('/api/employes/login-pin', async (req, res) => {
         const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
         if (result.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable." });
         const emp = result.rows[0];
-        if (emp.code_pin !== code_pin) return res.status(401).json({ erreur: "Code PIN invalide." });
+        if (emp.code_pin !== code_pin) {
+            await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { nom_employe, raison: 'pin_incorrect' });
+            return res.status(401).json({ erreur: "Code PIN invalide." });
+        }
         const token = jwt.sign({ id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe }, process.env.JWT_SECRET, { expiresIn: '12h' });
+        await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { nom_employe: emp.nom, role: 'employe', id_employe: emp.id_employe });
         res.json({ message: "Accès employé autorisé", token, employe: { id: emp.id_employe, nom: emp.nom } });
     } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
 });
@@ -291,6 +429,9 @@ app.post('/api/settings', verifierToken, async (req, res) => {
     try { 
         const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11 WHERE id_salon = $12`; 
         await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, req.user.id_salon]); 
+        // On journalise uniquement la LISTE des champs modifiés, jamais leur valeur
+        // (certains, comme mot_de_passe_email, sont des secrets).
+        await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
 });
@@ -308,9 +449,13 @@ app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
         const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
         if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
         
-        const achatsRes = await pool.query(`SELECT t.id_ticket, t.statut, t.date_creation, c.nom as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
+        // On lit désormais le nom "figé" au moment de la vente (nom_article_snapshot)
+        // plutôt que le nom actuel du catalogue, et on dérive l'affichage "ANNULE"
+        // du flag non-fiscal est_compense (le ticket d'origine n'est jamais modifié
+        // dans ses montants : voir écritures de compensation).
+        const achatsRes = await pool.query(`SELECT t.id_ticket, (CASE WHEN t.est_compense THEN 'ANNULE' ELSE 'VALIDE' END) as statut, t.date_creation, COALESCE(lt.nom_article_snapshot, c.nom) as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 AND t.type_ticket != 'ANNULATION' ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
         const rdvRes = await pool.query(`SELECT date_heure_debut, prestation, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.telephone_client = $1 AND r.id_salon = $2 ORDER BY r.date_heure_debut DESC LIMIT 20`, [clientRes.rows[0].telephone, id_salon]);
-        const gainsRes = await pool.query(`SELECT date_creation, total_ttc FROM tickets WHERE id_client = $1 AND id_salon = $2 AND recompense_utilisee = TRUE AND statut != 'ANNULE' ORDER BY date_creation DESC LIMIT 20`, [id_client, id_salon]);
+        const gainsRes = await pool.query(`SELECT date_creation, total_ttc FROM tickets WHERE id_client = $1 AND id_salon = $2 AND recompense_utilisee = TRUE AND statut != 'ANNULE' AND est_compense = FALSE ORDER BY date_creation DESC LIMIT 20`, [id_client, id_salon]);
 
         res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows, gains: gainsRes.rows });
     } catch (e) { res.status(500).json({ erreur: "Erreur historique." }); }
@@ -367,7 +512,7 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 // =========================================================================
 // --- L'ENCAISSEMENT & MÉTHODES DE PAIEMENT (SMART POS) ---
 // =========================================================================
-app.post('/api/caisse/payer', verifierToken, async (req, res) => {
+app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
     const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement } = req.body;
     const id_salon = req.user.id_salon;
     const methode = methode_paiement || 'CARTE';
@@ -437,8 +582,17 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
         if (lignes && lignes.length > 0) {
             for (let ligne of lignes) {
                 const total_ligne = ligne.quantite * ligne.prix_unitaire;
-                await clientDB.query(`INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon) VALUES ($1, $2, $3, $4, $5, $6);`, 
-                [idNouveauTicket, ligne.id_article, ligne.quantite, ligne.prix_unitaire, total_ligne, id_salon]);
+
+                // --- Snapshot NF525 : on fige le nom et le taux de TVA de l'article
+                // tels qu'ils sont AU MOMENT DE LA VENTE. Une modification ou une
+                // suppression ultérieure du catalogue ne doit jamais réécrire
+                // l'historique des tickets déjà émis.
+                const articleSnapshot = await clientDB.query('SELECT nom, taux_tva FROM catalogue WHERE id_article = $1 AND id_salon = $2', [ligne.id_article, id_salon]);
+                const nomSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].nom : (ligne.nom || 'Article supprimé');
+                const tvaSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].taux_tva : 20.00;
+
+                await clientDB.query(`INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`, 
+                [idNouveauTicket, ligne.id_article, ligne.quantite, ligne.prix_unitaire, total_ligne, id_salon, nomSnapshot, tvaSnapshot]);
                 
                 const updateStockQuery = `UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') RETURNING nom, stock_actuel, type_article;`;
                 const stockResult = await clientDB.query(updateStockQuery, [ligne.quantite, ligne.id_article, id_salon]);
@@ -492,27 +646,83 @@ app.post('/api/caisse/payer', verifierToken, async (req, res) => {
 app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
     const id_ticket = req.params.id;
     const id_salon = req.user.id_salon;
+    const { motif } = req.body;
+    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Un motif d'annulation est obligatoire." });
+
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
-        const ticketRes = await clientDB.query("SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND statut != 'ANNULE'", [id_ticket, id_salon]);
+
+        // Le ticket d'origine ne doit JAMAIS être modifié dans ses montants
+        // (inaltérabilité NF525). On vérifie seulement qu'il existe, qu'il
+        // s'agit bien d'une vente, et qu'il n'a pas déjà été compensé.
+        const ticketRes = await clientDB.query(
+            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION' AND est_compense = FALSE",
+            [id_ticket, id_salon]
+        );
         if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable ou déjà annulé.");
         const ticket = ticketRes.rows[0];
 
-        await clientDB.query("UPDATE tickets SET statut = 'ANNULE' WHERE id_ticket = $1", [id_ticket]);
-        await clientDB.query("UPDATE commissions SET montant_commission = 0 WHERE id_ticket = $1", [id_ticket]);
+        const lignesOrigine = await clientDB.query(
+            "SELECT id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, nom_article_snapshot, taux_tva_snapshot FROM lignes_ticket WHERE id_ticket = $1",
+            [id_ticket]
+        );
 
-        const lignes = await clientDB.query("SELECT id_article, quantite FROM lignes_ticket WHERE id_ticket = $1", [id_ticket]);
-        for (let ligne of lignes.rows) {
+        // --- Génération du ticket de compensation (montant et quantités inversés) ---
+        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
+        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
+        const numeroCompensation = `TKT-AN-` + Date.now();
+        const montantCompensation = -parseFloat(ticket.total_ttc);
+
+        const compensationResult = await clientDB.query(
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
+             VALUES ($1, $2, $3, $4, $5, FALSE, $6, 'VALIDE', 'ANNULATION', $7, $8) RETURNING id_ticket;`,
+            [numeroCompensation, ticket.id_client, ticket.id_employe, montantCompensation, id_salon, ticket.methode_paiement, id_ticket, motif.trim()]
+        );
+        const idTicketCompensation = compensationResult.rows[0].id_ticket;
+
+        const newHash = crypto.createHash('sha256').update(`${idTicketCompensation}-${numeroCompensation}-${montantCompensation}-${previousHash}`).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idTicketCompensation]);
+
+        // On marque l'origine comme "compensée" : un flag de suivi non-fiscal,
+        // qui ne touche ni au montant, ni aux dates, ni aux lignes du ticket.
+        await clientDB.query("UPDATE tickets SET est_compense = TRUE WHERE id_ticket = $1", [id_ticket]);
+
+        // Lignes de compensation : mêmes snapshots (nom, prix TTC, taux de TVA),
+        // quantités et montants inversés.
+        for (const ligne of lignesOrigine.rows) {
+            await clientDB.query(
+                `INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
+                [idTicketCompensation, ligne.id_article, -ligne.quantite, ligne.prix_unitaire_ttc, -ligne.total_ligne_ttc, id_salon, ligne.nom_article_snapshot, ligne.taux_tva_snapshot]
+            );
             await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [ligne.quantite, ligne.id_article]);
+        }
+
+        // Commissions : écriture de compensation négative plutôt qu'une
+        // réécriture de la commission d'origine.
+        const commissionsOrigine = await clientDB.query("SELECT * FROM commissions WHERE id_ticket = $1", [id_ticket]);
+        for (const c of commissionsOrigine.rows) {
+            await clientDB.query(
+                `INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [c.id_employe, idTicketCompensation, -c.montant_vente, -c.montant_commission, c.type_vente, id_salon]
+            );
         }
 
         if (ticket.id_client && !ticket.recompense_utilisee) {
             await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - 1) WHERE id_client = $2", [Math.floor(ticket.total_ttc), ticket.id_client]);
         }
-        
+
+        await enregistrerJET(id_salon, 'ANNULATION_TICKET', {
+            id_ticket_origine: parseInt(id_ticket),
+            id_ticket_compensation: idTicketCompensation,
+            montant: montantCompensation,
+            motif: motif.trim()
+        }, clientDB);
+
         await clientDB.query('COMMIT');
-        res.json({ message: "Paiement annulé, stock et fidélité restaurés." });
+        res.json({ message: "Annulation enregistrée sous forme d'écriture de compensation. Stock et fidélité restaurés." });
     } catch (err) {
         await clientDB.query('ROLLBACK');
         res.status(500).json({ erreur: err.message });
@@ -553,13 +763,114 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
+    const clientDB = await pool.connect();
     try {
-        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = CURRENT_DATE AND statut != 'ANNULE'`, [id_salon]);
+        await clientDB.query('BEGIN');
+        // Verrou : deux Z ne peuvent pas être générés en même temps pour ce salon
+        // (évite une course sur le hash_precedent et sur le cumul perpétuel).
+        await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+
+        // La contrainte UNIQUE (id_salon, date_cloture) empêche un double Z pour
+        // le même jour civil : on vérifie d'abord explicitement pour renvoyer un
+        // message clair plutôt qu'une erreur SQL brute.
+        const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
+        if (dejaCloture.rowCount > 0) throw new Error("La caisse a déjà été clôturée aujourd'hui.");
+
+        const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = CURRENT_DATE AND statut != 'ANNULE'`, [id_salon]);
         const totalJour = caResult.rows[0].total;
-        const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${totalJour}-${Date.now()}`).digest('hex');
-        await pool.query('INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash) VALUES ($1, $2, $3)', [id_salon, totalJour, signature]);
-        res.json({ message: `Caisse clôturée avec succès. Total : ${totalJour} €`, signature });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la clôture." }); }
+
+        // Grand Total : cumul global et perpétuel du chiffre d'affaires depuis
+        // l'ouverture du salon (ventes + écritures de compensation, qui se
+        // nettent naturellement puisqu'elles sont négatives).
+        const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
+        const grandTotalPerpetuel = grandTotalResult.rows[0].total;
+
+        // Chaînage des Z entre eux, comme pour les tickets et le JET.
+        const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1', [id_salon]);
+        const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
+        const dateISO = new Date().toISOString();
+        const signature = crypto.createHash('sha256')
+            .update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO}`)
+            .digest('hex');
+
+        await clientDB.query(
+            'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent) VALUES ($1, $2, $3, CURRENT_DATE, $4, $5)',
+            [id_salon, totalJour, signature, grandTotalPerpetuel, hashPrecedent]
+        );
+
+        await enregistrerJET(id_salon, 'CLOTURE_Z', { total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
+
+        await clientDB.query('COMMIT');
+        res.json({ message: `Caisse clôturée avec succès. Total du jour : ${totalJour} € — Cumul perpétuel : ${grandTotalPerpetuel} €`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message || "Erreur lors de la clôture." });
+    } finally { clientDB.release(); }
+});
+
+// =========================================================================
+// --- NF525 : ARCHIVE FISCALE (export CSV signé) ---
+// =========================================================================
+app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const { date_debut, date_fin } = req.query;
+    if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
+
+    try {
+        const ticketsRes = await pool.query(
+            `SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.type_ticket, t.total_ttc, t.methode_paiement, t.statut, t.est_compense, t.id_ticket_origine, t.motif_annulation, t.hash_ticket,
+                    lt.id_article, COALESCE(lt.nom_article_snapshot, 'N/A') as nom_article, lt.quantite, lt.prix_unitaire_ttc, lt.taux_tva_snapshot, lt.total_ligne_ttc
+             FROM tickets t
+             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
+             WHERE t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3
+             ORDER BY t.id_ticket ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
+        const jetRes = await pool.query(
+            `SELECT id_jet, action, details, date_creation, hash_precedent, hash_jet
+             FROM jet_logs WHERE id_salon = $1 AND DATE(date_creation) BETWEEN $2 AND $3
+             ORDER BY id_jet ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
+        const echapper = (val) => {
+            if (val === null || val === undefined) return '';
+            const str = String(val).replace(/"/g, '""');
+            return `"${str}"`;
+        };
+
+        let csv = 'TICKETS\r\n';
+        csv += ['id_ticket','numero_ticket','date_creation','type_ticket','statut','est_compense','id_ticket_origine','motif_annulation','methode_paiement','total_ttc','id_article','nom_article','quantite','prix_unitaire_ttc','taux_tva','total_ligne_ttc','hash_ticket'].join(';') + '\r\n';
+        for (const r of ticketsRes.rows) {
+            csv += [r.id_ticket, r.numero_ticket_caisse, new Date(r.date_creation).toISOString(), r.type_ticket, r.statut, r.est_compense, r.id_ticket_origine || '', r.motif_annulation || '', r.methode_paiement, r.total_ttc, r.id_article || '', r.nom_article, r.quantite, r.prix_unitaire_ttc, r.taux_tva_snapshot, r.total_ligne_ttc, r.hash_ticket]
+                .map(echapper).join(';') + '\r\n';
+        }
+
+        csv += '\r\nJOURNAL_DES_EVENEMENTS_TECHNIQUES\r\n';
+        csv += ['id_jet','action','details','date_creation','hash_precedent','hash_jet'].join(';') + '\r\n';
+        for (const j of jetRes.rows) {
+            csv += [j.id_jet, j.action, JSON.stringify(j.details), new Date(j.date_creation).toISOString(), j.hash_precedent, j.hash_jet]
+                .map(echapper).join(';') + '\r\n';
+        }
+
+        // Signature cryptographique globale de l'archive (HMAC-SHA256), pour
+        // prouver a posteriori que le fichier exporté n'a pas été altéré.
+        // ⚠️ Nécessite une variable d'environnement dédiée ARCHIVE_SIGNING_SECRET
+        // (ne réutilisez pas JWT_SECRET pour ne pas mélanger les usages).
+        const secret = process.env.ARCHIVE_SIGNING_SECRET || process.env.JWT_SECRET;
+        const signatureArchive = crypto.createHmac('sha256', secret).update(csv).digest('hex');
+        csv += `\r\nSIGNATURE_ARCHIVE;${signatureArchive}\r\n`;
+
+        await enregistrerJET(id_salon, 'EXPORT_ARCHIVE_FISCALE', { date_debut, date_fin, nb_lignes_tickets: ticketsRes.rowCount, nb_lignes_jet: jetRes.rowCount, signature: signatureArchive });
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="archive-fiscale-${id_salon}-${date_debut}_${date_fin}.csv"`);
+        res.send('\uFEFF' + csv); // BOM pour un bon rendu des accents dans Excel
+    } catch (e) {
+        console.error("❌ Erreur export archive fiscale:", e);
+        res.status(500).json({ erreur: "Erreur lors de la génération de l'archive fiscale." });
+    }
 });
 
 // =========================================================================
@@ -580,8 +891,8 @@ app.post('/api/employes', verifierToken, async (req, res) => {
 app.delete('/api/employes/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }});
 
 app.get('/api/catalogue', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur catalogue."}); }});
-app.post('/api/catalogue', verifierToken, async (req, res) => { const { nom, type_article, prix, stock_actuel, reference } = req.body; try { const typeArticleFormatte = type_article || 'PRESTATION'; const prixFormatte = parseFloat((prix || "0").toString().replace(',', '.')) || 0; const stockFormatte = parseInt(stock_actuel) || 0; const refFormattee = reference ? reference.trim() : null; if (typeArticleFormatte === 'PRODUIT_REVENTE') { if (!refFormattee || refFormattee.length < 4) { return res.status(400).json({ erreur: "Réf valide requise." }); } } const checkQuery = `SELECT * FROM catalogue WHERE (nom ILIKE $1 OR (reference = $2 AND reference IS NOT NULL)) AND id_salon = $3`; const checkResult = await pool.query(checkQuery, [nom, refFormattee, req.user.id_salon]); if (checkResult.rowCount > 0) { const art = checkResult.rows[0]; if (refFormattee && art.reference === refFormattee && typeArticleFormatte === 'PRODUIT_REVENTE') { if (!nom || nom.trim() === '') { await pool.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2', [stockFormatte, art.id_article]); return res.status(200).json({ message: `Stock mis à jour (+${stockFormatte})` }); } else if (nom.trim().toLowerCase() !== art.nom.toLowerCase()) { return res.status(400).json({ erreur: `Référence déjà utilisée.` }); } } if (art.nom.toLowerCase() === nom.trim().toLowerCase()) { return res.status(400).json({ erreur: `L'article existe déjà.` }); } } await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, req.user.id_salon]); res.status(201).json({ message: "Article ajouté avec succès !" }); } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }});
-app.delete('/api/catalogue/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }});
+app.post('/api/catalogue', verifierToken, async (req, res) => { const { nom, type_article, prix, stock_actuel, reference, taux_tva } = req.body; try { const typeArticleFormatte = type_article || 'PRESTATION'; const prixFormatte = parseFloat((prix || "0").toString().replace(',', '.')) || 0; const stockFormatte = parseInt(stock_actuel) || 0; const refFormattee = reference ? reference.trim() : null; const tvaFormattee = (taux_tva !== undefined && taux_tva !== null && taux_tva !== '') ? parseFloat(taux_tva.toString().replace(',', '.')) : 20.00; if (typeArticleFormatte === 'PRODUIT_REVENTE') { if (!refFormattee || refFormattee.length < 4) { return res.status(400).json({ erreur: "Réf valide requise." }); } } const checkQuery = `SELECT * FROM catalogue WHERE (nom ILIKE $1 OR (reference = $2 AND reference IS NOT NULL)) AND id_salon = $3`; const checkResult = await pool.query(checkQuery, [nom, refFormattee, req.user.id_salon]); if (checkResult.rowCount > 0) { const art = checkResult.rows[0]; if (refFormattee && art.reference === refFormattee && typeArticleFormatte === 'PRODUIT_REVENTE') { if (!nom || nom.trim() === '') { await pool.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2', [stockFormatte, art.id_article]); await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: art.id_article, action: 'REAPPRO_STOCK', ajout: stockFormatte }); return res.status(200).json({ message: `Stock mis à jour (+${stockFormatte})` }); } else if (nom.trim().toLowerCase() !== art.nom.toLowerCase()) { return res.status(400).json({ erreur: `Référence déjà utilisée.` }); } } if (art.nom.toLowerCase() === nom.trim().toLowerCase()) { return res.status(400).json({ erreur: `L'article existe déjà.` }); } } const inserted = await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, taux_tva, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_article', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, tvaFormattee, req.user.id_salon]); await enregistrerJET(req.user.id_salon, 'CREATION_ARTICLE', { id_article: inserted.rows[0].id_article, nom, type_article: typeArticleFormatte, prix: prixFormatte, taux_tva: tvaFormattee }); res.status(201).json({ message: "Article ajouté avec succès !" }); } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }});
+app.delete('/api/catalogue/:id', verifierToken, async (req, res) => { try { const articleRes = await pool.query('SELECT nom, type_article, prix FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); if (articleRes.rowCount > 0) { await enregistrerJET(req.user.id_salon, 'SUPPRESSION_ARTICLE', { id_article: req.params.id, ...articleRes.rows[0] }); } res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }});
 
 app.get('/api/stocks', verifierToken, async (req, res) => { try { const stockResult = await pool.query(`SELECT id_article, nom, stock_actuel, seuil_alerte, type_article FROM catalogue WHERE id_salon = $1 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') ORDER BY nom ASC`, [req.user.id_salon]); res.json(stockResult.rows); } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }});
 app.get('/api/rh', verifierToken, async (req, res) => { const id_salon = req.user.id_salon; try { const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`; const rhResult = await pool.query(rhQuery, [id_salon]); const employesData = await Promise.all(rhResult.rows.map(async (emp) => { const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`; const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]); let historique = histoResult.rows.map(r => parseFloat(r.total_prime)); while(historique.length < 6) historique.unshift(0); if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0]; return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6) }; })); res.json(employesData); } catch (erreur) { res.status(500).json({ erreur: "Erreur requête RH." }); }});
