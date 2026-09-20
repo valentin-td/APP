@@ -39,6 +39,64 @@ io.on('connection', (socket) => {
     });
 });
 
+// =========================================================================
+// --- CANAL SSE POUR LES ÉVÉNEMENTS IA (remplace Socket.io pour ce flux) ---
+// =========================================================================
+const abonnesSSE = new Map(); // id_salon (string) -> Set<res>
+
+function envoyerEvenementSSE(id_salon, nomEvenement, data = {}) {
+    const room = id_salon.toString();
+    const clients = abonnesSSE.get(room);
+    if (!clients || clients.size === 0) {
+        console.log(`📡 [SSE] Aucun client abonné pour le salon ${room}, événement '${nomEvenement}' perdu.`);
+        return;
+    }
+    const payload = `event: ${nomEvenement}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of clients) res.write(payload);
+    console.log(`📡 [SSE] '${nomEvenement}' envoyé -> salon ${room} (${clients.size} client(s))`);
+}
+
+// Route d'abonnement au flux
+app.get('/api/events/:id_salon', (req, res) => {
+    const { token } = req.query;
+    let user;
+    try {
+        user = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (e) {
+        return res.status(401).end();
+    }
+    if (String(user.id_salon) !== req.params.id_salon) return res.status(403).end();
+    const room = req.params.id_salon;
+
+    req.setTimeout(0);
+    res.socket.setTimeout(0);
+    res.socket.setNoDelay(true);
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders();
+
+    if (!abonnesSSE.has(room)) abonnesSSE.set(room, new Set());
+    abonnesSSE.get(room).add(res);
+    console.log(`📡 [SSE] Connexion ouverte pour salon ${room} (${abonnesSSE.get(room).size} client(s))`);
+
+    res.write(`event: connected\ndata: {}\n\n`);
+
+    const heartbeat = setInterval(() => {
+        res.write(`event: heartbeat\ndata: {}\n\n`);
+    }, 15000);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        abonnesSSE.get(room)?.delete(res);
+        console.log(`📡 [SSE] Connexion fermée pour salon ${room}`);
+    });
+});
+// =========================================================================
+
 app.use((req, res, next) => {
   if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { 
       next(); 
@@ -780,13 +838,11 @@ async function executerRobotComptable() {
                             // CORRECTION : On insère t.donnees directement pour garder le format objet
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
-                                [salon.id_salon, t.type_tache, t.donnees] 
+                                [salon.id_salon, t.type_tache || t.type, t.donnees] 
                             );
                             
-                            const room = salon.id_salon.toString();
-                            const nbClientsDansLaRoom = io.sockets.adapter.rooms.get(room)?.size || 0;
-                            console.log(`📡 Emission 'nouvelleTacheIA' -> room "${room}" (${nbClientsDansLaRoom} client(s) connecté(s))`);
-                            io.to(room).emit('nouvelleTacheIA');
+                            // NOUVEAU CANAL SSE
+                            envoyerEvenementSSE(salon.id_salon, 'nouvelleTacheIA');
                         }
 
                         // SAUVEGARDE DANS LA BONNE TABLE MULTI-SALON
@@ -859,6 +915,7 @@ async function envoyerSMS(apiKey, sender, phone, text) {
         });
     } catch(e) {}
 }
+
 app.get('/api/admin/nettoyer-fantomes', async (req, res) => {
     try {
         // On efface les identifiants e-mail de TOUS les salons, SAUF le tien (le 38)
@@ -868,5 +925,6 @@ app.get('/api/admin/nettoyer-fantomes', async (req, res) => {
         res.status(500).json({ erreur: e.message });
     }
 });
+
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
