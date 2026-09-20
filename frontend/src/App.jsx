@@ -285,26 +285,27 @@ function App() {
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
           chargerTout(); 
           if (user && user.id_salon && !isOffline && navigator.onLine) {
-              const newSocket = io('https://api-salon-backend.onrender.com', {
-                  reconnectionAttempts: Infinity,
-                  timeout: 5000,
-              });
-              
-              // CORRECTION : S'assurer de rejoindre le salon à CHAQUE reconnexion
-              newSocket.on('connect', () => {
+             const newSocket = io('https://api-salon-backend.onrender.com', {
+                      reconnectionAttempts: Infinity,
+                      timeout: 5000,
+                  });
+                  
+                  // DOUBLE SÉCURITÉ : Immédiat + À la reconnexion
                   newSocket.emit('rejoindreSalon', user.id_salon);
-              });
+                  newSocket.on('connect', () => {
+                      newSocket.emit('rejoindreSalon', user.id_salon);
+                  });
 
-              newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
-              newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-              newSocket.on('nouvelleTacheIA', () => { 
-                  showToast("🤖 L'IA a détecté une nouvelle action !", "success");
-                  if(user.role === 'gerant') chargerTout();
-              });
-              newSocket.on('connect_error', () => {});
-              setSocket(newSocket);
-              return () => newSocket.disconnect();
-          }
+                  newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
+                  newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
+                  newSocket.on('nouvelleTacheIA', () => { 
+                      showToast("🤖 L'IA a détecté une nouvelle action !", "success");
+                      if(user.role === 'gerant') chargerTout();
+                  });
+                  newSocket.on('connect_error', () => {});
+                  setSocket(newSocket);
+                  return () => newSocket.disconnect();
+              }
       } 
   }, [token, isAbonnementInactif, isOffline]);
 
