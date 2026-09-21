@@ -1074,6 +1074,9 @@ function App() {
                  <>
                     <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
                     <div className={`nav-item ${activeTab === 'gestion' ? 'active' : ''}`} onClick={() => setActiveTab('gestion')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span>Gestion</span></div>
+                    <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => setActiveTab('protocoles')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
+                        <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span>
+                    </div>
                     
                     <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
                         {tachesIA && tachesIA.some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
@@ -1097,6 +1100,7 @@ function App() {
              <div className="navbar-spacer" style={isMobile ? { display: 'none' } : {}}></div>
              <div className="nav-item" onClick={seDeconnecter} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto', color: 'var(--color-danger)' } : { color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
           </div>
+          
 
           <div className="main-content" style={{ overflowY: 'auto', flex: 1, ...(isMobile ? { paddingTop: '65px', paddingBottom: '110px' } : {}) }}>
             <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
@@ -1457,38 +1461,42 @@ function App() {
                   )}
                 </>
               )}
-
-              {role === 'gerant' && activeTab === 'gestion' && (
+              {/* ========================================================= */}
+              {/* --- NOUVEL ONGLET DÉDIÉ : L'ACADÉMIE (PROTOCOLES) --- */}
+              {/* ========================================================= */}
+              {role === 'gerant' && activeTab === 'protocoles' && (
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <h1 style={{margin: 0}}>Gestion du Salon</h1>
+                      <div>
+                          <h1 style={{margin: 0}}>L'Académie & Protocoles</h1>
+                          <span className="date-subtitle" style={{margin: 0}}>Fiches techniques et prédiction des stocks</span>
+                      </div>
                       <ThemeToggle />
                   </div>
-                  <span className="date-subtitle">Remplissez votre base de données</span>
 
-                  {/* ========================================================= */}
-                  {/* --- NOUVEAU MODULE : PROTOCOLES & RECETTES (BOM) --- */}
-                  {/* ========================================================= */}
-                  <div className="section-titre" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                      Fiches Techniques & Protocoles
-                  </div>
                   <div className="carte scan-carte">
-                      <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px'}}>Associez des produits du stock à une prestation. L'IA déduira les stocks automatiquement à l'encaissement et prévoira les ruptures avec l'agenda.</p>
+                      <h3 style={{marginBottom: '16px', color: 'var(--text-main)'}}>Créer une Fiche Technique</h3>
                       
                       {/* FORMULAIRE CRÉATION PROTOCOLE */}
                       <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '24px'}}>
                           <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
                               <div style={{flex: 2}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Nom de la Prestation (Exactement comme dans le catalogue)</label>
-                                  <input type="text" className="input-fournisseur" placeholder="Ex: Balayage Californien" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})} />
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur fiable)</label>
+                                  {/* CORRECTION UX 1 : LE MENU DÉROULANT AU LIEU DU CHAMP TEXTE */}
+                                  <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
+                                      <option value="">-- Choisir une prestation du catalogue --</option>
+                                      {catalogueListe.filter(a => a.type_article === 'PRESTATION').map(p => (
+                                          <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>
+                                      ))}
+                                  </select>
                               </div>
                               <div style={{flex: 1}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Délai livraison (Jours)</label>
-                                  <input type="number" className="input-fournisseur" value={nouveauProtocole.delai_livraison_jours} onChange={e => setNouveauProtocole({...nouveauProtocole, delai_livraison_jours: parseInt(e.target.value)})} title="L'IA vous alertera X jours avant si le stock manque pour un RDV" />
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Alerte rupture (Jours)</label>
+                                  <input type="number" className="input-fournisseur" value={nouveauProtocole.delai_livraison_jours} onChange={e => setNouveauProtocole({...nouveauProtocole, delai_livraison_jours: parseInt(e.target.value)})} title="L'IA vous alertera X jours avant un RDV si le stock manque" />
                               </div>
                           </div>
 
-                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Déroulé / Pas-à-pas pour l'employé</label>
+                          <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Déroulé / Pas-à-pas pour l'employé</label>
                           <textarea className="input-fournisseur" rows="3" placeholder="Étape 1: Appliquer la poudre..." value={nouveauProtocole.description} onChange={e => setNouveauProtocole({...nouveauProtocole, description: e.target.value})} style={{marginBottom: '12px', resize: 'vertical'}} />
                           
                           <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
@@ -1503,12 +1511,12 @@ function App() {
                               )}
                           </div>
 
-                          <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '16px 0 8px 0'}}>Ingrédients (Produits à déstocker)</h4>
+                          <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '16px 0 8px 0'}}>Ingrédients (Produits à déstocker automatiquement)</h4>
                           <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
                               <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
-                                  <option value="">-- Choisir un produit du stock --</option>
+                                  <option value="">-- Choisir un produit du stock (Conso/Revente) --</option>
                                   {catalogueListe.filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => (
-                                      <option key={a.id_article} value={a.id_article}>{a.nom} (En stock: {a.stock_actuel})</option>
+                                      <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€/unité)</option>
                                   ))}
                               </select>
                               <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
@@ -1524,24 +1532,55 @@ function App() {
                               ))}
                           </div>
 
-                          <button className="btn-action" style={{width: '100%'}} onClick={creerProtocole}>Enregistrer la fiche technique</button>
+                          {/* CALCULATEUR DE RENTABILITÉ ERP (Marge Brute Dynamique) */}
+                          {(() => {
+                              const prestaChoisie = catalogueListe.find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
+                              const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
+                              const coutProduits = nouveauProtocole.ingredients.reduce((acc, ing) => {
+                                  const art = catalogueListe.find(a => a.id_article === ing.id_article);
+                                  // NB: art.prix correspond ici au coût unitaire du consommable déclaré dans le catalogue
+                                  return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0);
+                              }, 0);
+                              
+                              const margeValeur = prixVente - coutProduits;
+                              const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
+                              const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
+
+                              return (nouveauProtocole.nom_prestation && (
+                                  <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+                                          <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité de la prestation</span>
+                                          <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
+                                          <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
+                                      </div>
+                                      <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
+                                          <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
+                                          <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                              <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
+                                              <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
+                                          </div>
+                                      </div>
+                                  </div>
+                              ));
+                          })()}
+
+                          <button className="btn-action" style={{width: '100%'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Enregistrer la fiche technique</button>
                       </div>
 
-                      {/* LISTE DES PROTOCOLES EXISTANTS (VUE GRILLE) */}
+                      {/* LISTE DES PROTOCOLES EXISTANTS */}
+                      <div className="section-titre" style={{marginTop: '32px'}}>Bibliothèque du Salon</div>
                       <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
                           {protocolesListe.map(proto => {
                               let stockSuffisant = true;
                               proto.ingredients.forEach(ing => {
                                   const articleDuStock = catalogueListe.find(a => a.id_article === ing.id_article);
-                                  if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) {
-                                      stockSuffisant = false;
-                                  }
+                                  if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
                               });
 
                               return (
-                                  <div key={proto.id_protocole} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden', display: 'flex', flexDirection: 'column'}}>
+                                  <div key={proto.id_protocole} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-sm)'}}>
                                       {proto.photo_url ? (
-                                          <div style={{height: '100px', width: '100%', background: '#ccc'}}>
+                                          <div style={{height: '140px', width: '100%', background: '#ccc'}}>
                                               <img src={proto.photo_url} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                                           </div>
                                       ) : (
@@ -1552,17 +1591,34 @@ function App() {
                                               <h4 style={{margin: 0, fontSize: '15px', color: 'var(--text-main)', lineHeight: '1.2'}}>{proto.nom_prestation}</h4>
                                               <span style={{display: 'flex', alignItems: 'center', justifyContent: 'center', width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock suffisant" : "Risque de rupture"}></span>
                                           </div>
-                                          <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>{proto.ingredients.length} ingrédient(s) requis</span>
-                                          <p style={{fontSize: '13px', color: 'var(--text-muted)', marginTop: '8px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'}}>{proto.description}</p>
+                                          <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>{proto.ingredients.length} produit(s) lié(s)</span>
+                                          <p style={{fontSize: '13px', color: 'var(--text-muted)', marginTop: '8px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical'}}>{proto.description}</p>
                                       </div>
                                       <div style={{borderTop: '1px solid var(--border-color)', display: 'flex'}}>
+                                          <button onClick={() => setProtocoleVisible(proto)} style={{flex: 1, padding: '10px', background: 'none', border: 'none', borderRight: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: '600', cursor: 'pointer', fontSize: '13px', transition: 'background 0.2s'}} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'none'}>Ouvrir</button>
                                           <button onClick={() => supprimerProtocole(proto.id_protocole)} style={{flex: 1, padding: '10px', background: 'none', border: 'none', color: 'var(--color-danger)', fontWeight: '600', cursor: 'pointer', fontSize: '13px', transition: 'background 0.2s'}} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'none'}>Supprimer</button>
                                       </div>
                                   </div>
                               );
                           })}
+                          {protocolesListe.length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide. Créez votre première recette !</p></div>}
                       </div>
                   </div>
+                </div>
+              )}
+
+              {role === 'gerant' && activeTab === 'gestion' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <h1 style={{margin: 0}}>Gestion du Salon</h1>
+                      <ThemeToggle />
+                  </div>
+                  <span className="date-subtitle">Remplissez votre base de données</span>
+
+                  {/* ========================================================= */}
+                  {/* --- NOUVEAU MODULE : PROTOCOLES & RECETTES (BOM) --- */}
+                  {/* ========================================================= */}
+                  
                   
                   <div className="section-titre" style={{marginTop: '32px'}}>Catalogue (Prestations & Produits)</div>
                   <div className="carte scan-carte">
