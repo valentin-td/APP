@@ -766,26 +766,44 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
-        // Verrou : deux Z ne peuvent pas être générés en même temps pour ce salon
-        // (évite une course sur le hash_precedent et sur le cumul perpétuel).
+        
+        // Verrou pour éviter les doubles exécutions simultanées
         await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
 
-        // La contrainte UNIQUE (id_salon, date_cloture) empêche un double Z pour
-        // le même jour civil : on vérifie d'abord explicitement pour renvoyer un
-        // message clair plutôt qu'une erreur SQL brute.
-        const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
-        if (dejaCloture.rowCount > 0) throw new Error("La caisse a déjà été clôturée aujourd'hui.");
+        // 1. Trouver le jour LE PLUS ANCIEN non clôturé
+        const jourRes = await clientDB.query(
+            `SELECT MIN(DATE(t.date_creation)) as jour_non_cloture
+             FROM tickets t
+             WHERE t.id_salon = $1
+               AND NOT EXISTS (
+                   SELECT 1 FROM clotures_caisse c
+                   WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
+               )`,
+            [id_salon]
+        );
 
-        const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = CURRENT_DATE AND statut != 'ANNULE'`, [id_salon]);
+        // Si on trouve un vieux jour avec des tickets, on le cible. Sinon, on cible aujourd'hui.
+        let dateACloturerStr;
+        if (jourRes.rowCount > 0 && jourRes.rows[0].jour_non_cloture) {
+             const d = new Date(jourRes.rows[0].jour_non_cloture);
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        } else {
+             const d = new Date();
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        // 2. Vérifier si ce jour précis est déjà clôturé (sécurité)
+        const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2', [id_salon, dateACloturerStr]);
+        if (dejaCloture.rowCount > 0) throw new Error(`La caisse pour la date du ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')} a déjà été clôturée.`);
+
+        // 3. Calculs financiers
+        const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
         const totalJour = caResult.rows[0].total;
 
-        // Grand Total : cumul global et perpétuel du chiffre d'affaires depuis
-        // l'ouverture du salon (ventes + écritures de compensation, qui se
-        // nettent naturellement puisqu'elles sont négatives).
         const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
         const grandTotalPerpetuel = grandTotalResult.rows[0].total;
 
-        // Chaînage des Z entre eux, comme pour les tickets et le JET.
+        // 4. Hachage et chaînage
         const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1', [id_salon]);
         const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
         const dateISO = new Date().toISOString();
@@ -793,15 +811,16 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             .update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO}`)
             .digest('hex');
 
+        // 5. Enregistrement en base de données
         await clientDB.query(
-            'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent) VALUES ($1, $2, $3, CURRENT_DATE, $4, $5)',
-            [id_salon, totalJour, signature, grandTotalPerpetuel, hashPrecedent]
+            'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent) VALUES ($1, $2, $3, $4, $5, $6)',
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent]
         );
 
-        await enregistrerJET(id_salon, 'CLOTURE_Z', { total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
+        await enregistrerJET(id_salon, 'CLOTURE_Z', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
 
         await clientDB.query('COMMIT');
-        res.json({ message: `Caisse clôturée avec succès. Total du jour : ${totalJour} € — Cumul perpétuel : ${grandTotalPerpetuel} €`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
+        res.json({ message: `Caisse clôturée avec succès pour le ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')}. Total : ${totalJour} €`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
     } catch (e) {
         await clientDB.query('ROLLBACK');
         res.status(500).json({ erreur: e.message || "Erreur lors de la clôture." });
