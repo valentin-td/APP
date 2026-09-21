@@ -139,7 +139,7 @@ function App() {
   };
   const resetToToday = () => setCurrentDate(new Date());
 
-  const [filtreAgenda, setFiltreAgenda] = useState('TOUS');
+  const [filtresEmployes, setFiltresEmployes] = useState([]); // [] = Affiche toute l'équipe
   const [rdvSelectionne, setRdvSelectionne] = useState(null); 
   const [isEditingRdv, setIsEditingRdv] = useState(false);
   const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '' });
@@ -870,6 +870,20 @@ function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       
+      {/* CSS INJECTÉ POUR L'EFFET ACCORDÉON DES RDV */}
+      <style>{`
+          .rdv-card-accordeon {
+              transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          }
+          .rdv-card-accordeon:hover {
+              z-index: 100 !important;
+              transform: scale(1.02);
+              box-shadow: 0 8px 16px rgba(0,0,0,0.25) !important;
+          }
+      `}</style>
+
+      
+      
       {/* BANDEAU HORS-LIGNE CRITIQUE */}
       {isOffline && (
         <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', zIndex: 10000, width: '100%', boxSizing: 'border-box' }}>
@@ -995,7 +1009,7 @@ function App() {
           <div className="main-content" style={{ overflowY: 'auto', flex: 1, ...(isMobile ? { paddingTop: '65px', paddingBottom: '110px' } : {}) }}>
             <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
               
-              {activeTab === 'agenda' && (
+             {activeTab === 'agenda' && (
                 <div className="admin-container">
                   <div className="agenda-header">
                       <div style={{display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap'}}>
@@ -1010,16 +1024,49 @@ function App() {
                       <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
                           <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
-                          {role === 'gerant' && (
-                              <select className="agenda-filtre" value={filtreAgenda} onChange={(e) => setFiltreAgenda(e.target.value)} style={{width: 'auto'}}>
-                                  <option value="TOUS">Tous les collaborateurs</option>
-                                  {employesListe.map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
-                              </select>
-                          )}
                       </div>
                   </div>
 
-                  {/* --- GRILLE AGENDA 100% DYNAMIQUE & CORRECTION BUG CSS --- */}
+                  {/* NOUVEAU SÉLECTEUR MULTI-COLLABORATEURS (PILULES) */}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
+                      <button 
+                          onClick={() => setFiltresEmployes([])} 
+                          style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
+                          Toute l'équipe
+                      </button>
+                      
+                      {decodeToken(token)?.id_employe && (
+                          <button 
+                              onClick={() => setFiltresEmployes([decodeToken(token)?.id_employe])} 
+                              style={{ background: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
+                              Ma Vue
+                          </button>
+                      )}
+
+                      <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>
+
+                      {employesListe.map((emp, index) => {
+                          const isActive = filtresEmployes.includes(emp.id_employe);
+                          const color = COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length];
+                          return (
+                              <button 
+                                  key={emp.id_employe}
+                                  onClick={() => {
+                                      if (isActive) {
+                                          setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe));
+                                      } else {
+                                          setFiltresEmployes([...filtresEmployes, emp.id_employe]);
+                                      }
+                                  }}
+                                  style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
+                                  {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
+                                  {emp.nom.split(' ')[0]}
+                              </button>
+                          );
+                      })}
+                  </div>
+
+                  {/* --- GRILLE AGENDA 100% DYNAMIQUE --- */}
                   <div className="week-calendar">
                       <div className="week-header-row">
                           <div className="time-spacer"></div>
@@ -1044,28 +1091,68 @@ function App() {
                               <div className="days-container" style={{ display: 'flex', flex: 1, position: 'relative' }}>
                                   {joursSemaine.map((jour, indexJour) => {
                                       const dateStringJour = formatDateInput(jour);
-                                      const rdvsDuJour = planningData.filter(rdv => {
+                                      const rdvsDuJourBruts = planningData.filter(rdv => {
                                           const rdvDateStr = rdv.date_heure_debut.replace('Z', '').split('T')[0];
-                                          return rdvDateStr === dateStringJour && (role === 'employe' || filtreAgenda === 'TOUS' || rdv.nom_employe === filtreAgenda);
+                                          return rdvDateStr === dateStringJour && (filtresEmployes.length === 0 || filtresEmployes.includes(rdv.id_employe));
                                       });
+
+                                      // ==========================================
+                                      // MOTEUR DE COLLISION & EFFET ACCORDÉON
+                                      // ==========================================
+                                      const sortedRdvs = rdvsDuJourBruts.map(rdv => {
+                                          const start = new Date(rdv.date_heure_debut.replace('Z', ''));
+                                          const end = new Date(start.getTime() + (rdv.duree_minutes || 30) * 60000);
+                                          return { ...rdv, start, end };
+                                      }).sort((a, b) => a.start - b.start);
+
+                                      const clusters = [];
+                                      let currentCluster = [];
+                                      let clusterEnd = null;
+
+                                      sortedRdvs.forEach(rdv => {
+                                          if (currentCluster.length === 0) {
+                                              currentCluster.push(rdv);
+                                              clusterEnd = rdv.end;
+                                          } else {
+                                              // Si le RDV coupe la fin du cluster actuel, c'est une collision
+                                              if (rdv.start < clusterEnd) {
+                                                  currentCluster.push(rdv);
+                                                  if (rdv.end > clusterEnd) clusterEnd = rdv.end;
+                                              } else {
+                                                  clusters.push([...currentCluster]);
+                                                  currentCluster = [rdv];
+                                                  clusterEnd = rdv.end;
+                                              }
+                                          }
+                                      });
+                                      if (currentCluster.length > 0) clusters.push(currentCluster);
 
                                       return (
                                           <div key={indexJour} className="day-column" style={{ flex: 1, borderRight: '1px solid var(--border-color)', position: 'relative', backgroundImage: 'linear-gradient(to bottom, var(--border-color) 1px, transparent 1px)', backgroundSize: '100% 80px' }}>
-                                              {rdvsDuJour.map((rdv) => {
-                                                  const dateDebut = new Date(rdv.date_heure_debut.replace('Z', ''));
-                                                  const ECHELLE_HEURE = 80;
-                                                  const dureeReelle = rdv.duree_minutes || 30;
-                                                  const topPosition = ((dateDebut.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (dateDebut.getMinutes() * (ECHELLE_HEURE / 60));
-                                                  const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
-                                                  const backgroundColor = COULEURS_EMPLOYES[(rdv.id_employe || 0) % COULEURS_EMPLOYES.length];
+                                              {clusters.flatMap((cluster) => {
+                                                  const clusterSize = cluster.length;
+                                                  return cluster.map((rdv, indexInCluster) => {
+                                                      const ECHELLE_HEURE = 80;
+                                                      const dureeReelle = rdv.duree_minutes || 30;
+                                                      const topPosition = ((rdv.start.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (rdv.start.getMinutes() * (ECHELLE_HEURE / 60));
+                                                      const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
+                                                      
+                                                      const empIndex = employesListe.findIndex(e => e.id_employe === rdv.id_employe);
+                                                      const backgroundColor = empIndex >= 0 ? COULEURS_EMPLOYES[empIndex % COULEURS_EMPLOYES.length] : '#ccc';
 
-                                                  return (
-                                                      <div key={rdv.id_rdv} onClick={() => ouvrirRdvSelectionne(rdv)}
-                                                           style={{ position: 'absolute', left: '2px', width: 'calc(100% - 4px)', boxSizing: 'border-box', top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827', borderRadius: '6px', padding: '4px 6px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', cursor: 'pointer', zIndex: 5 }}>
-                                                          <div style={{fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{dateDebut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</div>
-                                                          <div style={{fontSize: '10px', opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.prestation}</div>
-                                                      </div>
-                                                  );
+                                                      // Logique géométrique de l'accordéon
+                                                      const widthPercent = clusterSize === 1 ? 100 : (100 - (clusterSize - 1) * 10);
+                                                      const leftOffset = clusterSize === 1 ? 0 : (indexInCluster * 10);
+                                                      const zIndex = 5 + indexInCluster;
+
+                                                      return (
+                                                          <div key={rdv.id_rdv} onClick={() => ouvrirRdvSelectionne(rdv)} className="rdv-card-accordeon"
+                                                               style={{ position: 'absolute', left: `calc(2px + ${leftOffset}%)`, width: `calc(${widthPercent}% - 4px)`, boxSizing: 'border-box', top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827', borderRadius: '6px', padding: '4px 6px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.15)', cursor: 'pointer', zIndex: zIndex }}>
+                                                              <div style={{fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</div>
+                                                              <div style={{fontSize: '10px', opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.prestation}</div>
+                                                          </div>
+                                                      );
+                                                  });
                                               })}
                                           </div>
                                       );
@@ -1075,6 +1162,7 @@ function App() {
                       </div>
                   </div>
 
+                  {/* MODALES DE GESTION RDV RESTENT INCHANGÉES... */}
                   {showModalRdv && (
                       <div className="modal-overlay">
                           <div className="modal-content">
