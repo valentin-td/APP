@@ -62,6 +62,14 @@ function App() {
   const [tachesListe, setTachesListe] = useState([]);
   const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
   
+  // ==========================================
+  // --- PROTOCOLES & RECETTES (NOUVEAU) ---
+  // ==========================================
+  const [protocolesListe, setProtocolesListe] = useState([]);
+  const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', description: '', photo_url: null, delai_livraison_jours: 3, ingredients: [] });
+  const [ingredientTemp, setIngredientTemp] = useState({ id_article: '', quantite_necessaire: '' });
+  const [protocoleVisible, setProtocoleVisible] = useState(null); // Modale d'affichage
+
   // ÉTATS DE L'IA AUTOMATIQUE EN ARRIÈRE-PLAN
   const [tachesIA, setTachesIA] = useState([]);
   const [modalIA, setModalIA] = useState(null);
@@ -102,7 +110,7 @@ function App() {
   // === NOUVEAU : RECHERCHE CAISSE ===
   const [rechercheCaisse, setRechercheCaisse] = useState('');
 
-  // Algorithme Fuzzy Search : Enlève les accents, les espaces et les caractères spéciaux (ex: "L'Oréal" devient "loreal")
+  // Algorithme Fuzzy Search : Enlève les accents, les espaces et les caractères spéciaux
   const nettoyerTexteRecherche = (texte) => {
       if (!texte) return '';
       return texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
@@ -160,7 +168,7 @@ function App() {
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
-    telephone_gerant: '', alertes_sms_actives: false // <-- NOUVEAUX CHAMPS
+    telephone_gerant: '', alertes_sms_actives: false 
   });
 
   const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
@@ -188,6 +196,16 @@ function App() {
       if (file) {
           const reader = new FileReader();
           reader.onloadend = () => { setNewEmploye({ ...newEmploye, photo_url: reader.result }); };
+          reader.readAsDataURL(file);
+      }
+  };
+
+  // --- NOUVEAU : GESTION DES PHOTOS POUR LES PROTOCOLES ---
+  const handleImageUploadProtocole = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => { setNouveauProtocole({ ...nouveauProtocole, photo_url: reader.result }); };
           reader.readAsDataURL(file);
       }
   };
@@ -249,7 +267,6 @@ function App() {
 
   const fetchAndCache = async (url, setter, cacheKey) => {
       try {
-          // Anti-cache radical : On force le navigateur à toujours interroger le serveur
           const cacheBuster = url.includes('?') ? `&_=${Date.now()}` : `?_=${Date.now()}`;
           const res = await fetch(`https://api-salon-backend.onrender.com${url}${cacheBuster}`, { 
               headers: getAuthHeaders(),
@@ -276,7 +293,7 @@ function App() {
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
-    // CORRECTION : L'IA est retirée du cache ici, elle a son propre moteur asynchrone ci-dessous
+    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe'); // CHARGEMENT PROTOCOLES
 
     if (decodeToken(token)?.id_salon === 38) {
         fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
@@ -289,7 +306,7 @@ function App() {
             const config = { 
                 google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '', heure_ouverture: d.heure_ouverture || 8, heure_fermeture: d.heure_fermeture || 20,
                 fidelite_type: d.fidelite_type || 'NONE', fidelite_points_seuil: d.fidelite_points_seuil || 100, fidelite_points_valeur: d.fidelite_points_valeur || 10, fidelite_tampons_seuil: d.fidelite_tampons_seuil || 10, fidelite_recompense_type: d.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d.fidelite_recompense_valeur || '10', fidelite_delai_sms: d.fidelite_delai_sms || 60,
-                telephone_gerant: d.telephone_gerant || '', alertes_sms_actives: d.alertes_sms_actives || false // <-- NOUVEAUX CHAMPS
+                telephone_gerant: d.telephone_gerant || '', alertes_sms_actives: d.alertes_sms_actives || false 
             };
             setConfigSalon(config);
             await localforage.setItem('configSalon', config);
@@ -304,6 +321,11 @@ function App() {
           const startStr = formatDateInput(joursSemaine[0]); 
           const endStr = formatDateInput(joursSemaine[joursSemaine.length - 1]);
           fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData');
+          
+          // L'employé a besoin des protocoles pour les consulter dans son agenda
+          if (decodeToken(token)?.role === 'employe') {
+              fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
+          }
       }
   }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
@@ -356,7 +378,6 @@ function App() {
       let watchdogId = null;
       let dernierSignal = Date.now();
       
-      // 1. Ouvre le canal SSE pour être prévenu instantanément par le serveur
       const ouvrirConnexionSSE = () => {
           if (eventSource) eventSource.close();
           const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}?token=${encodeURIComponent(token)}`;
@@ -371,26 +392,23 @@ function App() {
               dernierSignal = Date.now();
           });
           
-          // LA LIGNE MAGIQUE : Le serveur dit qu'une tâche est prête, on lit la DB tout de suite !
           eventSource.addEventListener('nouvelleTacheIA', () => {
               console.log('%c🤖 Event nouvelleTacheIA REÇU côté client', 'color: #ff0000; font-weight: bold; font-size: 14px');
               dernierSignal = Date.now();
               showToast("🤖 L'IA a détecté une nouvelle action !", "success");
-              verifierTachesIAEnBase(); // <-- Ouvre le pop-up instantanément
+              verifierTachesIAEnBase(); 
               chargerTout();
           });
       };
       
       ouvrirConnexionSSE();
       
-      // Relance la connexion si le réseau coupe
       watchdogId = setInterval(() => {
           if (Date.now() - dernierSignal > 40000) {
               ouvrirConnexionSSE();
           }
       }, 10000);
 
-      // 2. Vérifications de base (Au démarrage et au Focus)
       verifierTachesIAEnBase();
       const onFocus = () => verifierTachesIAEnBase();
       window.addEventListener('focus', onFocus);
@@ -398,7 +416,6 @@ function App() {
           if (document.visibilityState === 'visible') verifierTachesIAEnBase();
       });
 
-      // 3. Filet de sécurité classique (Toutes les 15s)
       const intervalId = setInterval(verifierTachesIAEnBase, 15000);
 
       return () => {
@@ -410,13 +427,11 @@ function App() {
       };
   }, [token, isAbonnementInactif]);
 
-  // LOGIQUE DU POP-UP INTELLIGENT GLOBAL (S'ouvre instantanément sans condition)
   useEffect(() => {
       if (!modalIA && tachesIA && tachesIA.length > 0) {
           setModalIA(tachesIA[0]);
       }
   }, [tachesIA, modalIA]);
-  // =========================================================================
 
   const validerTacheIA = async (tache) => {
       try {
@@ -435,7 +450,7 @@ function App() {
           
           setModalIA(null);
           setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
-          setRefreshTrigger(prev => prev + 1); // Recharge l'Agenda discrètement
+          setRefreshTrigger(prev => prev + 1); 
       } catch (e) { 
           showToast(`Erreur : ${e.message}`, "error"); 
       }
@@ -451,7 +466,6 @@ function App() {
           showToast("Tâche ignorée", "info");
           setModalIA(null);
           setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
-          // On évite d'appeler chargerTout() ici pour ne pas provoquer un double rendu
       } catch (e) { showToast("Erreur serveur.", "error"); }
   };
 
@@ -521,8 +535,6 @@ function App() {
 
   const annulerTicket = (id_ticket) => {
       if(isOffline) return showToast("Annulation impossible hors-ligne.", "error");
-      // NF525 : le motif d'annulation est obligatoire, on ouvre une modale
-      // dédiée au lieu d'un simple window.confirm.
       setAnnulationDialog({ id_ticket, motif: '' });
   };
 
@@ -558,6 +570,42 @@ function App() {
   const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
   const ajouterArticle = async () => { if(isOffline) return showToast("Désactivé", "error"); if (newArticle.type_article === 'PRODUIT_REVENTE') { if (!newArticle.reference || newArticle.reference.trim().length < 4) { showToast("Veuillez saisir une référence d'au moins 4 caractères.", "error"); return; } } try { const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); const data = await handleFetchError(res); if (data.message && data.message.includes("Stock mis à jour")) { showToast(data.message, "success"); } setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' }); chargerTout(); showToast("Catalogue mis à jour.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
+
+  // ==========================================
+  // --- PROTOCOLES & RECETTES (FONCTIONS) ---
+  // ==========================================
+  const ajouterIngredientRecette = () => {
+      if (!ingredientTemp.id_article || !ingredientTemp.quantite_necessaire) return showToast("Sélectionnez un article et une quantité.", "error");
+      const art = catalogueListe.find(a => a.id_article.toString() === ingredientTemp.id_article);
+      if (nouveauProtocole.ingredients.find(i => i.id_article === art.id_article)) return showToast("Ingrédient déjà dans la recette.", "error");
+      setNouveauProtocole({ ...nouveauProtocole, ingredients: [...nouveauProtocole.ingredients, { id_article: art.id_article, nom: art.nom, quantite_necessaire: parseFloat(ingredientTemp.quantite_necessaire) }] });
+      setIngredientTemp({ id_article: '', quantite_necessaire: '' });
+  };
+
+  const supprimerIngredientRecette = (id_article) => { 
+      setNouveauProtocole({ ...nouveauProtocole, ingredients: nouveauProtocole.ingredients.filter(i => i.id_article !== id_article) }); 
+  };
+
+  const creerProtocole = async () => {
+      if(isOffline) return showToast("Action impossible hors-ligne.", "error");
+      if(!nouveauProtocole.nom_prestation) return showToast("Le nom de la prestation est requis.", "error");
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/protocoles', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(nouveauProtocole) });
+          await handleFetchError(res);
+          setNouveauProtocole({ nom_prestation: '', description: '', photo_url: null, delai_livraison_jours: 3, ingredients: [] });
+          chargerTout(); 
+          showToast("Protocole enregistré !", "success");
+      } catch (e) { showToast("Erreur lors de la création.", "error"); }
+  };
+
+  const supprimerProtocole = async (id) => {
+      if(isOffline) return showToast("Désactivé", "error");
+      try { 
+          await fetch(`https://api-salon-backend.onrender.com/api/protocoles/${id}`, { method: 'DELETE', headers: getAuthHeaders() }); 
+          chargerTout(); 
+          showToast("Protocole supprimé.", "success"); 
+      } catch (e) { showToast("Erreur suppression.", "error"); }
+  };
 
   const getStockStatus = (q) => { const num = parseFloat(q); if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; };
   const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
@@ -773,11 +821,11 @@ function App() {
   );
 
   const getCouleurTache = (tache) => {
-      if (tache.statut === 'FAIT') return 'var(--color-success)'; // Vert
-      if (!tache.date_echeance) return '#f59e0b'; // Orange par défaut si pas de date
+      if (tache.statut === 'FAIT') return 'var(--color-success)'; 
+      if (!tache.date_echeance) return '#f59e0b'; 
       const joursRestants = (new Date(tache.date_echeance) - new Date()) / (1000 * 60 * 60 * 24);
-      if (joursRestants <= 2) return 'var(--color-danger)'; // Rouge vif si < 48h
-      return '#f59e0b'; // Orange
+      if (joursRestants <= 2) return 'var(--color-danger)'; 
+      return '#f59e0b'; 
   };
 
   const nbTachesUrgentes = tachesListe.filter(t => t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
@@ -905,8 +953,6 @@ function App() {
           }
       `}</style>
 
-      
-      
       {/* BANDEAU HORS-LIGNE CRITIQUE */}
       {isOffline && (
         <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', zIndex: 10000, width: '100%', boxSizing: 'border-box' }}>
@@ -1130,7 +1176,7 @@ function App() {
                       </div>
                   </div>
 
-                  {/* NOUVEAU SÉLECTEUR MULTI-COLLABORATEURS (PILULES) */}
+                  {/* NOUVEAU SÉLECTEUR MULTI-COLLABORATEURS */}
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
                       {role === 'gerant' && (
                           <button 
@@ -1139,7 +1185,6 @@ function App() {
                               Toute l'équipe
                           </button>
                       )}
-                      
                       {role === 'gerant' && decodeToken(token)?.id_employe && (
                           <button 
                               onClick={() => setFiltresEmployes([decodeToken(token)?.id_employe])} 
@@ -1147,27 +1192,20 @@ function App() {
                               Ma Vue
                           </button>
                       )}
-
                       {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>}
-
                       {employesListe
                           .filter(emp => role === 'gerant' || emp.id_employe === decodeToken(token)?.id_employe)
                           .map((emp) => {
-                              // On retrouve l'index d'origine pour que la couleur reste toujours la bonne
                               const originalIndex = employesListe.findIndex(e => e.id_employe === emp.id_employe);
                               const isActive = role === 'employe' ? true : filtresEmployes.includes(emp.id_employe);
                               const color = COULEURS_EMPLOYES[originalIndex % COULEURS_EMPLOYES.length];
-                              
                               return (
                                   <button 
                                       key={emp.id_employe}
                                       onClick={() => {
-                                          if (role === 'employe') return; // L'employé ne peut pas décocher sa pastille
-                                          if (isActive) {
-                                              setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe));
-                                          } else {
-                                              setFiltresEmployes([...filtresEmployes, emp.id_employe]);
-                                          }
+                                          if (role === 'employe') return; 
+                                          if (isActive) { setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe)); } 
+                                          else { setFiltresEmployes([...filtresEmployes, emp.id_employe]); }
                                       }}
                                       style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
                                       {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
@@ -1177,7 +1215,6 @@ function App() {
                           })}
                   </div>
 
-                  {/* --- GRILLE AGENDA 100% DYNAMIQUE --- */}
                   <div className="week-calendar">
                       <div className="week-header-row">
                           <div className="time-spacer"></div>
@@ -1188,17 +1225,13 @@ function App() {
                               </div>
                           ))}
                       </div>
-
                       <div className="week-body" style={{ overflowY: 'auto', background: 'var(--bg-card)' }}>
                           <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
                               <div className="time-column" style={{ width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
                                   {Array.from({ length: nbHeures }).map((_, i) => (
-                                      <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>
-                                          {heureDebutAgenda + i} h
-                                      </div>
+                                      <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>{heureDebutAgenda + i} h</div>
                                   ))}
                               </div>
-                              
                               <div className="days-container" style={{ display: 'flex', flex: 1, position: 'relative' }}>
                                   {joursSemaine.map((jour, indexJour) => {
                                       const dateStringJour = formatDateInput(jour);
@@ -1206,34 +1239,17 @@ function App() {
                                           const rdvDateStr = rdv.date_heure_debut.replace('Z', '').split('T')[0];
                                           return rdvDateStr === dateStringJour && (filtresEmployes.length === 0 || filtresEmployes.includes(rdv.id_employe));
                                       });
-
-                                      // ==========================================
-                                      // MOTEUR DE COLLISION & EFFET ACCORDÉON
-                                      // ==========================================
                                       const sortedRdvs = rdvsDuJourBruts.map(rdv => {
                                           const start = new Date(rdv.date_heure_debut.replace('Z', ''));
                                           const end = new Date(start.getTime() + (rdv.duree_minutes || 30) * 60000);
                                           return { ...rdv, start, end };
                                       }).sort((a, b) => a.start - b.start);
-
-                                      const clusters = [];
-                                      let currentCluster = [];
-                                      let clusterEnd = null;
-
+                                      const clusters = []; let currentCluster = []; let clusterEnd = null;
                                       sortedRdvs.forEach(rdv => {
-                                          if (currentCluster.length === 0) {
-                                              currentCluster.push(rdv);
-                                              clusterEnd = rdv.end;
-                                          } else {
-                                              // Si le RDV coupe la fin du cluster actuel, c'est une collision
-                                              if (rdv.start < clusterEnd) {
-                                                  currentCluster.push(rdv);
-                                                  if (rdv.end > clusterEnd) clusterEnd = rdv.end;
-                                              } else {
-                                                  clusters.push([...currentCluster]);
-                                                  currentCluster = [rdv];
-                                                  clusterEnd = rdv.end;
-                                              }
+                                          if (currentCluster.length === 0) { currentCluster.push(rdv); clusterEnd = rdv.end; } 
+                                          else {
+                                              if (rdv.start < clusterEnd) { currentCluster.push(rdv); if (rdv.end > clusterEnd) clusterEnd = rdv.end; } 
+                                              else { clusters.push([...currentCluster]); currentCluster = [rdv]; clusterEnd = rdv.end; }
                                           }
                                       });
                                       if (currentCluster.length > 0) clusters.push(currentCluster);
@@ -1243,19 +1259,14 @@ function App() {
                                               {clusters.flatMap((cluster) => {
                                                   const clusterSize = cluster.length;
                                                   return cluster.map((rdv, indexInCluster) => {
-                                                      const ECHELLE_HEURE = 80;
-                                                      const dureeReelle = rdv.duree_minutes || 30;
+                                                      const ECHELLE_HEURE = 80; const dureeReelle = rdv.duree_minutes || 30;
                                                       const topPosition = ((rdv.start.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (rdv.start.getMinutes() * (ECHELLE_HEURE / 60));
                                                       const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
-                                                      
                                                       const empIndex = employesListe.findIndex(e => e.id_employe === rdv.id_employe);
                                                       const backgroundColor = empIndex >= 0 ? COULEURS_EMPLOYES[empIndex % COULEURS_EMPLOYES.length] : '#ccc';
-
-                                                      // Logique géométrique de l'accordéon
                                                       const widthPercent = clusterSize === 1 ? 100 : (100 - (clusterSize - 1) * 10);
                                                       const leftOffset = clusterSize === 1 ? 0 : (indexInCluster * 10);
                                                       const zIndex = 5 + indexInCluster;
-
                                                       return (
                                                           <div key={rdv.id_rdv} onClick={() => ouvrirRdvSelectionne(rdv)} className="rdv-card-accordeon"
                                                                style={{ position: 'absolute', left: `calc(2px + ${leftOffset}%)`, width: `calc(${widthPercent}% - 4px)`, boxSizing: 'border-box', top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827', borderRadius: '6px', padding: '4px 6px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.15)', cursor: 'pointer', zIndex: zIndex }}>
@@ -1273,7 +1284,6 @@ function App() {
                       </div>
                   </div>
 
-                  {/* MODALES DE GESTION RDV RESTENT INCHANGÉES... */}
                   {showModalRdv && (
                       <div className="modal-overlay">
                           <div className="modal-content">
@@ -1314,8 +1324,22 @@ function App() {
                                           <div style={{display: 'flex', justifyContent: 'space-between'}}><span style={{color: 'var(--text-secondary)'}}>Collaborateur</span> <strong>{rdvSelectionne.nom_employe}</strong></div>
                                       </div>
                                       <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                          
+                                          {/* BOUTON VOIR LE PROTOCOLE */}
+                                          {(() => {
+                                              const protoAssocie = protocolesListe.find(p => p.nom_prestation.toLowerCase() === rdvSelectionne.prestation.toLowerCase());
+                                              if (protoAssocie) {
+                                                  return (
+                                                      <button onClick={() => { setRdvSelectionne(null); setProtocoleVisible(protoAssocie); }} style={{background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}}>
+                                                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                                                          Voir le Protocole (Recette)
+                                                      </button>
+                                                  );
+                                              }
+                                              return null;
+                                          })()}
+
                                           {role === 'gerant' && <button onClick={() => setIsEditingRdv(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer', transition: 'all 0.15s'}}>Modifier l'horaire</button>}
-                                          {rdvSelectionne.stripe_payment_id && role === 'gerant' && <button onClick={() => window.open(`https://dashboard.stripe.com/payments/${rdvSelectionne.stripe_payment_id}`, '_blank')} className="btn-action">Gérer l'acompte (Stripe)</button>}
                                           {role === 'gerant' && <button onClick={demanderSuppressionRdv} style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Supprimer le rendez-vous</button>}
                                       </div>
                                   </>
@@ -1339,6 +1363,42 @@ function App() {
                           </div>
                       </div>
                   )}
+
+                  {/* MODALE AFFICHAGE DU PROTOCOLE POUR L'EMPLOYÉ */}
+                  {protocoleVisible && (
+                      <div className="modal-overlay">
+                          <div className="modal-content" style={{maxWidth: '500px'}}>
+                              <div className="modal-header">
+                                  <h3 style={{margin: 0, fontSize: '20px', color: 'var(--text-main)'}}>{protocoleVisible.nom_prestation}</h3>
+                                  <button className="modal-close-btn" onClick={() => setProtocoleVisible(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                              </div>
+                              
+                              {protocoleVisible.photo_url && (
+                                  <div style={{width: '100%', height: '200px', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px', background: 'var(--bg-app)'}}>
+                                      <img src={protocoleVisible.photo_url} alt="Résultat" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                  </div>
+                              )}
+                              
+                              <div className="section-titre" style={{fontSize: '14px', marginTop: 0}}>Ingrédients (À préparer au labo)</div>
+                              <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '16px', border: '1px solid var(--border-color)'}}>
+                                  {protocoleVisible.ingredients && protocoleVisible.ingredients.length > 0 ? (
+                                      protocoleVisible.ingredients.map((ing, i) => (
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i !== protocoleVisible.ingredients.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px', color: 'var(--text-main)', fontWeight: '500'}}>
+                                              <span>{ing.nom}</span>
+                                              <span>{ing.quantite_necessaire} dose(s) / ml</span>
+                                          </div>
+                                      ))
+                                  ) : <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun ingrédient spécifique.</span>}
+                              </div>
+
+                              <div className="section-titre" style={{fontSize: '14px'}}>Déroulé (Pas-à-pas)</div>
+                              <div style={{fontSize: '14px', color: 'var(--text-secondary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                  {protocoleVisible.description || "Aucune instruction supplémentaire."}
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
                 </div>
               )}
 
@@ -1405,8 +1465,106 @@ function App() {
                       <ThemeToggle />
                   </div>
                   <span className="date-subtitle">Remplissez votre base de données</span>
+
+                  {/* ========================================================= */}
+                  {/* --- NOUVEAU MODULE : PROTOCOLES & RECETTES (BOM) --- */}
+                  {/* ========================================================= */}
+                  <div className="section-titre" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                      Fiches Techniques & Protocoles
+                  </div>
+                  <div className="carte scan-carte">
+                      <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px'}}>Associez des produits du stock à une prestation. L'IA déduira les stocks automatiquement à l'encaissement et prévoira les ruptures avec l'agenda.</p>
+                      
+                      {/* FORMULAIRE CRÉATION PROTOCOLE */}
+                      <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '24px'}}>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                              <div style={{flex: 2}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Nom de la Prestation (Exactement comme dans le catalogue)</label>
+                                  <input type="text" className="input-fournisseur" placeholder="Ex: Balayage Californien" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})} />
+                              </div>
+                              <div style={{flex: 1}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Délai livraison (Jours)</label>
+                                  <input type="number" className="input-fournisseur" value={nouveauProtocole.delai_livraison_jours} onChange={e => setNouveauProtocole({...nouveauProtocole, delai_livraison_jours: parseInt(e.target.value)})} title="L'IA vous alertera X jours avant si le stock manque pour un RDV" />
+                              </div>
+                          </div>
+
+                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Déroulé / Pas-à-pas pour l'employé</label>
+                          <textarea className="input-fournisseur" rows="3" placeholder="Étape 1: Appliquer la poudre..." value={nouveauProtocole.description} onChange={e => setNouveauProtocole({...nouveauProtocole, description: e.target.value})} style={{marginBottom: '12px', resize: 'vertical'}} />
+                          
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                              <div style={{flex: 1}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo du Résultat attendu</label>
+                                  <input type="file" accept="image/*" onChange={handleImageUploadProtocole} style={{fontSize: '12px', color: 'var(--text-main)'}} />
+                              </div>
+                              {nouveauProtocole.photo_url && (
+                                  <div style={{width: '50px', height: '50px', borderRadius: '4px', overflow: 'hidden', border: '1px solid var(--border-color)'}}>
+                                      <img src={nouveauProtocole.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                  </div>
+                              )}
+                          </div>
+
+                          <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '16px 0 8px 0'}}>Ingrédients (Produits à déstocker)</h4>
+                          <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
+                              <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
+                                  <option value="">-- Choisir un produit du stock --</option>
+                                  {catalogueListe.filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => (
+                                      <option key={a.id_article} value={a.id_article}>{a.nom} (En stock: {a.stock_actuel})</option>
+                                  ))}
+                              </select>
+                              <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
+                              <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
+                          </div>
+                          
+                          <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '16px'}}>
+                              {nouveauProtocole.ingredients.map(ing => (
+                                  <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
+                                      <span>{ing.quantite_necessaire}x {ing.nom}</span>
+                                      <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
+                                  </div>
+                              ))}
+                          </div>
+
+                          <button className="btn-action" style={{width: '100%'}} onClick={creerProtocole}>Enregistrer la fiche technique</button>
+                      </div>
+
+                      {/* LISTE DES PROTOCOLES EXISTANTS (VUE GRILLE) */}
+                      <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
+                          {protocolesListe.map(proto => {
+                              let stockSuffisant = true;
+                              proto.ingredients.forEach(ing => {
+                                  const articleDuStock = catalogueListe.find(a => a.id_article === ing.id_article);
+                                  if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) {
+                                      stockSuffisant = false;
+                                  }
+                              });
+
+                              return (
+                                  <div key={proto.id_protocole} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden', display: 'flex', flexDirection: 'column'}}>
+                                      {proto.photo_url ? (
+                                          <div style={{height: '100px', width: '100%', background: '#ccc'}}>
+                                              <img src={proto.photo_url} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                          </div>
+                                      ) : (
+                                          <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div>
+                                      )}
+                                      <div style={{padding: '16px', flex: 1}}>
+                                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                                              <h4 style={{margin: 0, fontSize: '15px', color: 'var(--text-main)', lineHeight: '1.2'}}>{proto.nom_prestation}</h4>
+                                              <span style={{display: 'flex', alignItems: 'center', justifyContent: 'center', width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock suffisant" : "Risque de rupture"}></span>
+                                          </div>
+                                          <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>{proto.ingredients.length} ingrédient(s) requis</span>
+                                          <p style={{fontSize: '13px', color: 'var(--text-muted)', marginTop: '8px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'}}>{proto.description}</p>
+                                      </div>
+                                      <div style={{borderTop: '1px solid var(--border-color)', display: 'flex'}}>
+                                          <button onClick={() => supprimerProtocole(proto.id_protocole)} style={{flex: 1, padding: '10px', background: 'none', border: 'none', color: 'var(--color-danger)', fontWeight: '600', cursor: 'pointer', fontSize: '13px', transition: 'background 0.2s'}} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'none'}>Supprimer</button>
+                                      </div>
+                                  </div>
+                              );
+                          })}
+                      </div>
+                  </div>
                   
-                  <div className="section-titre">Catalogue (Prestations & Produits)</div>
+                  <div className="section-titre" style={{marginTop: '32px'}}>Catalogue (Prestations & Produits)</div>
                   <div className="carte scan-carte">
                     <div style={{display: 'flex', gap: '12px'}}>
                       <input type="text" className="input-fournisseur" placeholder={newArticle.type_article === 'PRODUIT_REVENTE' ? "Nom (Laissez vide si réassort)" : "Nom (ex: Coupe Homme)"} value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value})} />
@@ -1689,7 +1847,6 @@ function App() {
                     <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
                   </div>
                   
-                  
                   <div className="carte scan-carte">
                     <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Fidélisation (SMS Auto)</h3>
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
@@ -1708,7 +1865,7 @@ function App() {
                     <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
                         <div style={{flex: 1}}>
                             <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Votre téléphone</label>
-                            <input type="tel" className="input-fournisseur" placeholder="Ex: +33612345678" value={configSalon.telephone_gerant} onChange={(e) => setConfigSalon({...configSalon, telephone_gerant: e.target.value})} />
+                            <input type="tel" className="input-fournisseur" placeholder="Ex: +33612345678" value={configSalon.telephone_gerant || ''} onChange={(e) => setConfigSalon({...configSalon, telephone_gerant: e.target.value})} />
                         </div>
                         <div style={{display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '16px'}}>
                             <input type="checkbox" id="alertes_sms" checked={configSalon.alertes_sms_actives} onChange={(e) => setConfigSalon({...configSalon, alertes_sms_actives: e.target.checked})} style={{width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--btn-primary)'}} />
@@ -1764,15 +1921,7 @@ function App() {
                                   <button onClick={() => { setPosType('PRODUIT_REVENTE'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
                               </div>
 
-                              {/* BARRE DE RECHERCHE FUZZY */}
-                              <input 
-                                  type="text" 
-                                  className="input-fournisseur" 
-                                  placeholder="🔍 Rechercher (ex: L'Oréal, Coupe)..." 
-                                  value={rechercheCaisse} 
-                                  onChange={(e) => setRechercheCaisse(e.target.value)} 
-                                  style={{marginBottom: '24px', fontSize: '15px'}}
-                              />
+                              <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: L'Oréal, Coupe)..." value={rechercheCaisse} onChange={(e) => setRechercheCaisse(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}}/>
 
                               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '16px'}}>
                                 {catalogueListe.filter(art => {
@@ -1789,10 +1938,7 @@ function App() {
                                 ))}
                               </div>
                               {catalogueListe.filter(art => art.type_article === posType).length === 0 && (
-                                  <div className="empty-state">
-                                      <SvgEmptyState />
-                                      <p>Aucun élément dans cette catégorie.</p>
-                                  </div>
+                                  <div className="empty-state"><SvgEmptyState /><p>Aucun élément dans cette catégorie.</p></div>
                               )}
                             </>
                           )}
@@ -1800,12 +1946,7 @@ function App() {
 
                       {/* PANNEAU DROITE */}
                       <div className="caisse-right-panel">
-                          {/* --- AFFICHAGE DES ERREURS DE PAIEMENT --- */}
-                          {notificationCaisse && (
-                              <div style={{padding: '12px', background: 'var(--bg-danger)', color: 'var(--color-danger)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', fontWeight: '600'}}>
-                                  {notificationCaisse}
-                              </div>
-                          )}
+                          {notificationCaisse && ( <div style={{padding: '12px', background: 'var(--bg-danger)', color: 'var(--color-danger)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', fontWeight: '600'}}> {notificationCaisse} </div> )}
 
                           <div className="ticket-header">
                               <h3 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
@@ -1818,20 +1959,15 @@ function App() {
                               </select>
                           </div>
 
-                          {/* --- ALERTE INTELLIGENTE FIDÉLITÉ --- */}
                           {isEligibleFidelite && (
                               <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
                                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                                       <div>
-                                          <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>
-                                              {configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}
-                                          </span>
+                                          <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}</span>
                                           <span style={{fontSize: '12px', color: 'var(--color-info)'}}>🎁 {texteRecompense}</span>
                                       </div>
                                       {!remiseAppliquee ? (
-                                          <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>
-                                              Appliquer
-                                          </button>
+                                          <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
                                       ) : (
                                           <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>✅ Appliquée</span>
                                       )}
@@ -1851,9 +1987,7 @@ function App() {
                                           </div>
                                           <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
                                               <span className="ticket-ligne-prix">{(item.quantite * item.prix_unitaire).toFixed(2)} €</span>
-                                              <button className="ticket-ligne-supprimer" onClick={() => retirerDuPanier(item.id_article)}>
-                                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                              </button>
+                                              <button className="ticket-ligne-supprimer" onClick={() => retirerDuPanier(item.id_article)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                                           </div>
                                       </div>
                                   ))
@@ -1872,7 +2006,6 @@ function App() {
                                   <span>{totalCaisse.toFixed(2)} €</span>
                               </div>
                               
-                              {/* CHOIX DU MOYEN DE PAIEMENT */}
                               <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
                                   <button onClick={() => setMethodePaiement('CARTE')} disabled={isOffline || !navigator.onLine} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: (isOffline || !navigator.onLine) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', opacity: (isOffline || !navigator.onLine) ? 0.5 : 1}}>💳 TPE</button>
                                   <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'ESPECES' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600'}}>💶 Espèces</button>
@@ -1886,58 +2019,37 @@ function App() {
                       </div>
                   </div>
                   
-                  {/* --- MODAL SUGGESTION DE CLIENT (SMART POS MULTIPLE) --- */}
                   {clientsSuggeres.length > 0 && (
                       <div className="modal-overlay">
                           <div className="modal-content" style={{textAlign: 'center'}}>
-                              <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                                  <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                              </div>
-                              <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>
-                                  {clientsSuggeres.length === 1 ? `Encaisser ${formatNomClient(clientsSuggeres[0])} ?` : "Quel client encaissez-vous ?"}
-                              </h2>
-                              <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
-                                  {clientsSuggeres.length === 1 ? "D'après l'agenda, c'est le client que vous venez de coiffer." : "Plusieurs rendez-vous ont eu lieu récemment avec vous."}
-                              </p>
+                              <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+                              <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>{clientsSuggeres.length === 1 ? `Encaisser ${formatNomClient(clientsSuggeres[0])} ?` : "Quel client encaissez-vous ?"}</h2>
+                              <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>{clientsSuggeres.length === 1 ? "D'après l'agenda, c'est le client que vous venez de coiffer." : "Plusieurs rendez-vous ont eu lieu récemment avec vous."}</p>
                               <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                                   {clientsSuggeres.map(client => (
                                       <button key={client.id_client} onClick={() => { setClientCaisse(client.id_client.toString()); setClientsSuggeres([]); setPosStep('type'); }} className="btn-action" style={{padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
-                                          <span style={{fontSize: '16px'}}>✅ {formatNomClient(client)}</span>
-                                          <span style={{fontSize: '12px', opacity: 0.8}}>{client.prestation_rdv}</span>
+                                          <span style={{fontSize: '16px'}}>✅ {formatNomClient(client)}</span><span style={{fontSize: '12px', opacity: 0.8}}>{client.prestation_rdv}</span>
                                       </button>
                                   ))}
-                                  <button onClick={() => { setClientCaisse(''); setClientsSuggeres([]); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', marginTop: '8px'}}>
-                                      ❌ Aucun / Client de passage
-                                  </button>
+                                  <button onClick={() => { setClientCaisse(''); setClientsSuggeres([]); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', marginTop: '8px'}}>❌ Aucun / Client de passage</button>
                               </div>
                           </div>
                       </div>
                   )}
 
-                  {/* --- MODAL TICKET ÉCOLOGIQUE (LOI ANTI-GASPI) --- */}
                   {ticketGenere && (
                       <div className="modal-overlay">
                           <div className="modal-content" style={{textAlign: 'center', padding: '40px 32px'}}>
-                              <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                                  <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                              </div>
+                              <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
                               <h2 style={{marginTop: 0, marginBottom: '8px', color: 'var(--text-main)', fontSize: '24px'}}>Paiement Validé</h2>
                               {ticketGenere.is_offline && <span style={{fontSize: '12px', color: 'var(--color-danger)', fontWeight: 'bold'}}>Ticket sauvegardé hors-ligne</span>}
                               <h1 style={{color: 'var(--text-main)', fontSize: '40px', margin: '0 0 24px 0', letterSpacing: '-0.02em'}}>{ticketGenere.montant.toFixed(2)} <span style={{fontSize: '24px', color: 'var(--text-secondary)'}}>€</span></h1>
                               
                               <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
                                   <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
-                                  
-                                  <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
-                                      <input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/>
-                                      <button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline || !navigator.onLine}>Envoyer</button>
-                                  </div>
-
-                                  <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>
-                                      Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}
-                                  </button>
+                                  <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline || !navigator.onLine}>Envoyer</button></div>
+                                  <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}</button>
                               </div>
-
                               <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>Fermer (Sans reçu)</button>
                           </div>
                       </div>
@@ -1948,31 +2060,18 @@ function App() {
               {role === 'gerant' && activeTab === 'produits' && (
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>Inventaire</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span>
-                      </div>
+                      <div><h1 style={{margin: 0}}>Inventaire</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
                       <ThemeToggle />
                   </div>
                   <div className="stock-container">
                     {stocksData.length === 0 ? (
-                        <div className="empty-state">
-                            <SvgEmptyState />
-                            <p>Aucun produit en stock.</p>
-                        </div>
+                        <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>
                     ) : stocksData.map((produit) => {
                         const status = getStockStatus(produit.stock_actuel);
                         return (
                           <div className="stock-item" key={produit.id_article}>
-                            <div className="stock-info">
-                              <div className="stock-details">
-                                <span className="stock-nom">{produit.nom}</span>
-                                <span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>
-                              </div>
-                            </div>
-                            <div className="stock-quantite-container">
-                              <span className="stock-quantite">{produit.stock_actuel}</span>
-                            </div>
+                            <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
+                            <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
                           </div>
                         );
                     })}
@@ -1980,66 +2079,35 @@ function App() {
                 </div>
               )}
 
-              {/* --- NOUVELLE PAGE RH (ÉQUIPE) --- */}
               {role === 'gerant' && activeTab === 'rh' && (
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>Ressources Humaines</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span>
-                      </div>
+                      <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
                       <ThemeToggle />
                   </div>
                   
                   {rhData.length === 0 ? (
-                      <div className="empty-state">
-                          <SvgEmptyState />
-                          <p>Aucun employé enregistré.</p>
-                      </div>
+                      <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
                   ) : (
                     <div className="rh-grid">
                       {rhData.map(employe => (
                         <div className="rh-carte" key={employe.id_employe}>
-                          
                           <div className="rh-header-profil">
                             <div className="rh-avatar">
-                              {employe.photo_url ? (
-                                <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-                              ) : (
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                              )}
+                              {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
                             </div>
-                            <div className="rh-identite">
-                              <h3>{employe.nom}</h3>
-                              <span className="rh-role-badge">{employe.role}</span>
-                            </div>
+                            <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
                           </div>
-
                           <div className="rh-stats-row">
-                            <div className="rh-stat-bloc">
-                              <span className="valeur">{employe.performances_actuelles.clients_coiffes}</span>
-                              <span className="label">Clients</span>
-                            </div>
-                            <div className="rh-stat-bloc">
-                              <span className="valeur">{employe.performances_actuelles.produits_vendus}</span>
-                              <span className="label">Produits</span>
-                            </div>
-                            <div className="rh-stat-bloc">
-                              <span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span>
-                              <span className="label">CA Généré</span>
-                            </div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.produits_vendus}</span><span className="label">Produits</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
                           </div>
-
-                          <div className="rh-prime-box">
-                            <span className="label">Prime estimée</span>
-                            <span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span>
-                          </div>
-
+                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
                           <div style={{marginTop: '8px'}}>
                             <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
                             {dessinerChronogramme(employe.historique_primes)}
                           </div>
-
                         </div>
                       ))}
                     </div>
@@ -2050,28 +2118,19 @@ function App() {
               {role === 'gerant' && activeTab === 'admin' && (
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>Comptabilité Légale</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span>
-                      </div>
+                      <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span></div>
                       <ThemeToggle />
                   </div>
                   
                   <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
-                     <div>
-                        <h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3>
-                        <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span>
-                     </div>
+                     <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
                      <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
                   </div>
               
                   <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
                   <div className="section-titre">Historique des factures</div>
                   {historiqueData.length === 0 ? (
-                      <div className="empty-state">
-                          <SvgEmptyState />
-                          <p>Aucune facture traitée.</p>
-                      </div>
+                      <div className="empty-state"><SvgEmptyState /><p>Aucune facture traitée.</p></div>
                   ) : historiqueData.map((dossier, index) => (
                     <div className="dossier-mois" key={index}><div className="dossier-header"><span className="dossier-titre">{dossier.mois}</span><span className="dossier-total" style={{color: 'var(--text-main)'}}>{dossier.total_ttc.toFixed(2)} €</span></div>
                       {dossier.factures.map(facture => (<div className="facture-mini" key={facture.id}><span>{facture.fournisseur} <span style={{color: 'var(--text-muted)'}}>({facture.date})</span></span><span style={{fontWeight: 600, color: 'var(--text-main)'}}>{facture.ttc.toFixed(2)} €</span></div>))}
@@ -2084,48 +2143,30 @@ function App() {
               {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.id_salon === 38 && (
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0, color: '#aa3bff'}}>God Mode</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Espace Fondateur STACK</span>
-                      </div>
+                      <div><h1 style={{margin: 0, color: '#aa3bff'}}>God Mode</h1><span className="date-subtitle" style={{margin: 0}}>Espace Fondateur STACK</span></div>
                       <ThemeToggle />
                   </div>
                   
                   {superAdminData ? (
                       <div className="cartes-financieres">
-                          <div className="carte" style={{border: '1px solid #aa3bff'}}>
-                              <div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div>
-                              <p className="montant" style={{color: '#aa3bff'}}>{superAdminData.mrr_estime} <span className="devise">€ / mois</span></p>
-                          </div>
-                          <div className="carte">
-                              <div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div>
-                              <p className="montant">{superAdminData.salons_actifs} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData.total_salons} au total</span></p>
-                          </div>
+                          <div className="carte" style={{border: '1px solid #aa3bff'}}><div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div><p className="montant" style={{color: '#aa3bff'}}>{superAdminData.mrr_estime} <span className="devise">€ / mois</span></p></div>
+                          <div className="carte"><div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div><p className="montant">{superAdminData.salons_actifs} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData.total_salons} au total</span></p></div>
                       </div>
                   ) : <div className="skeleton-loading" style={{height: '120px', marginBottom: '32px'}}></div>}
 
                   <div className="section-titre" style={{marginTop: '32px', color: '#aa3bff', borderColor: '#aa3bff'}}>Gestion des Salons (Clients)</div>
-                  
                   <div className="carte scan-carte">
                       {superAdminSalons.map(salon => (
                           <div key={salon.id_salon} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid var(--border-color)'}}>
                               <div>
                                   <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
-                                      <strong style={{color: 'var(--text-main)', fontSize: '15px'}}>{salon.nom_salon}</strong>
-                                      <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: 'var(--bg-app)', color: 'var(--text-secondary)'}}>ID: {salon.id_salon}</span>
-                                      {salon.id_salon === 38 && <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#aa3bff', color: 'white'}}>Fondateur</span>}
+                                      <strong style={{color: 'var(--text-main)', fontSize: '15px'}}>{salon.nom_salon}</strong><span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: 'var(--bg-app)', color: 'var(--text-secondary)'}}>ID: {salon.id_salon}</span>{salon.id_salon === 38 && <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#aa3bff', color: 'white'}}>Fondateur</span>}
                                   </div>
                                   <span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>{salon.email}</span>
                               </div>
                               <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
-                                  <span className="badge-discret" style={{ background: salon.statut_abonnement === 'actif' ? 'var(--bg-success)' : 'var(--bg-danger)', color: salon.statut_abonnement === 'actif' ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                      {salon.statut_abonnement === 'actif' ? 'Abonné (Actif)' : 'Inactif / Impayé'}
-                                  </span>
-                                  {salon.id_salon !== 38 && (
-                                      <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>
-                                          {salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}
-                                      </button>
-                                  )}
+                                  <span className="badge-discret" style={{ background: salon.statut_abonnement === 'actif' ? 'var(--bg-success)' : 'var(--bg-danger)', color: salon.statut_abonnement === 'actif' ? 'var(--color-success)' : 'var(--color-danger)' }}>{salon.statut_abonnement === 'actif' ? 'Abonné (Actif)' : 'Inactif / Impayé'}</span>
+                                  {salon.id_salon !== 38 && ( <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>{salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}</button> )}
                               </div>
                           </div>
                       ))}
@@ -2133,18 +2174,14 @@ function App() {
                   </div>
                 </div>
               )}
-
             </div>
           </div>
       </div>
       
-      {/* --- MODALE GLOBALE DE CONFIRMATION (DANGER) --- */}
       {confirmDialog && (
           <div className="modal-overlay">
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                  </div>
+                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
                   <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>{confirmDialog.titre}</h2>
                   <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>{confirmDialog.message}</p>
                   <div style={{display: 'flex', gap: '12px'}}>
@@ -2155,25 +2192,13 @@ function App() {
           </div>
       )}
 
-      {/* --- MODALE ANNULATION DE TICKET (motif obligatoire — NF525) --- */}
       {annulationDialog && (
           <div className="modal-overlay">
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                  </div>
+                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
                   <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Annuler ce paiement</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>
-                      Cette action génère un ticket d'écriture de compensation (montant négatif) lié au ticket d'origine, conformément à la réglementation NF525. Le motif est obligatoire.
-                  </p>
-                  <textarea
-                      value={annulationDialog.motif}
-                      onChange={(e) => setAnnulationDialog({ ...annulationDialog, motif: e.target.value })}
-                      placeholder="Motif de l'annulation (ex : erreur de saisie, geste commercial...)"
-                      rows={3}
-                      style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical'}}
-                      autoFocus
-                  />
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>Cette action génère un ticket d'écriture de compensation (montant négatif) lié au ticket d'origine, conformément à la réglementation NF525. Le motif est obligatoire.</p>
+                  <textarea value={annulationDialog.motif} onChange={(e) => setAnnulationDialog({ ...annulationDialog, motif: e.target.value })} placeholder="Motif de l'annulation (ex : erreur de saisie, geste commercial...)" rows={3} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical'}} autoFocus />
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => setAnnulationDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Retour</button>
                       <button onClick={confirmerAnnulationTicket} disabled={!annulationDialog.motif.trim()} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: annulationDialog.motif.trim() ? 'pointer' : 'not-allowed', opacity: annulationDialog.motif.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Confirmer l'annulation</button>
@@ -2182,15 +2207,10 @@ function App() {
           </div>
       )}
 
-      {/* --- TOAST NOTIFICATIONS JSX --- */}
       {toast && (
         <div className="toast-container">
           <div className={`toast ${toast.type}`}>
-            {toast.type === 'success' ? (
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            )}
+            {toast.type === 'success' ? ( <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> ) : ( <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> )}
             {toast.message}
           </div>
         </div>
