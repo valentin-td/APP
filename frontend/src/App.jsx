@@ -265,6 +265,11 @@ function App() {
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     // CORRECTION : L'IA est retirée du cache ici, elle a son propre moteur asynchrone ci-dessous
+
+    if (decodeToken(token)?.id_salon === 38) {
+        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
+        fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
+    }
     
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
@@ -520,6 +525,18 @@ function App() {
           ouvrirFicheClient(clientSelectionne);
           chargerTout();
       } catch (error) { showToast(error.message, "error"); }
+  };
+
+  const basculerStatutSalon = async (id_salon, statutActuel) => {
+      const nouveauStatut = statutActuel === 'actif' ? 'inactif' : 'actif';
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/superadmin/salons/${id_salon}/status`, {
+              method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: nouveauStatut })
+          });
+          const data = await handleFetchError(res);
+          showToast(data.message, "success");
+          chargerTout();
+      } catch (e) { showToast("Erreur lors de la modification", "error"); }
   };
 
   const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
@@ -961,6 +978,16 @@ function App() {
                     <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span></div>
                  </>
              )}
+             
+             {decodeToken(token)?.id_salon === 38 && (
+                 <div className={`nav-item ${activeTab === 'superadmin' ? 'active' : ''}`} onClick={() => setActiveTab('superadmin')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}>
+                     <span className="nav-icon">
+                         <svg viewBox="0 0 24 24" fill="none" stroke="#aa3bff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                     </span>
+                     <span style={{color: '#aa3bff', fontWeight: 'bold'}}>God Mode</span>
+                 </div>
+             )}
+
              <div className="navbar-spacer" style={isMobile ? { display: 'none' } : {}}></div>
              <div className="nav-item" onClick={seDeconnecter} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto', color: 'var(--color-danger)' } : { color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
           </div>
@@ -1814,6 +1841,61 @@ function App() {
                   ))}
                 </div>
               )}
+
+              {/* === GOD MODE (SUPER-ADMIN) === */}
+              {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.id_salon === 38 && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div>
+                          <h1 style={{margin: 0, color: '#aa3bff'}}>God Mode</h1>
+                          <span className="date-subtitle" style={{margin: 0}}>Espace Fondateur STACK</span>
+                      </div>
+                      <ThemeToggle />
+                  </div>
+                  
+                  {superAdminData ? (
+                      <div className="cartes-financieres">
+                          <div className="carte" style={{border: '1px solid #aa3bff'}}>
+                              <div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div>
+                              <p className="montant" style={{color: '#aa3bff'}}>{superAdminData.mrr_estime} <span className="devise">€ / mois</span></p>
+                          </div>
+                          <div className="carte">
+                              <div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div>
+                              <p className="montant">{superAdminData.salons_actifs} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData.total_salons} au total</span></p>
+                          </div>
+                      </div>
+                  ) : <div className="skeleton-loading" style={{height: '120px', marginBottom: '32px'}}></div>}
+
+                  <div className="section-titre" style={{marginTop: '32px', color: '#aa3bff', borderColor: '#aa3bff'}}>Gestion des Salons (Clients)</div>
+                  
+                  <div className="carte scan-carte">
+                      {superAdminSalons.map(salon => (
+                          <div key={salon.id_salon} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid var(--border-color)'}}>
+                              <div>
+                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
+                                      <strong style={{color: 'var(--text-main)', fontSize: '15px'}}>{salon.nom_salon}</strong>
+                                      <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: 'var(--bg-app)', color: 'var(--text-secondary)'}}>ID: {salon.id_salon}</span>
+                                      {salon.id_salon === 38 && <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#aa3bff', color: 'white'}}>Fondateur</span>}
+                                  </div>
+                                  <span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>{salon.email}</span>
+                              </div>
+                              <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+                                  <span className="badge-discret" style={{ background: salon.statut_abonnement === 'actif' ? 'var(--bg-success)' : 'var(--bg-danger)', color: salon.statut_abonnement === 'actif' ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                      {salon.statut_abonnement === 'actif' ? 'Abonné (Actif)' : 'Inactif / Impayé'}
+                                  </span>
+                                  {salon.id_salon !== 38 && (
+                                      <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>
+                                          {salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}
+                                      </button>
+                                  )}
+                              </div>
+                          </div>
+                      ))}
+                      {superAdminSalons.length === 0 && <div className="empty-state"><p>Aucun salon chargé.</p></div>}
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
       </div>
