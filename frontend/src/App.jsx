@@ -59,6 +59,8 @@ function App() {
   const [planningData, setPlanningData] = useState([]); 
   const [superAdminData, setSuperAdminData] = useState(null);
   const [superAdminSalons, setSuperAdminSalons] = useState([]);
+  const [tachesListe, setTachesListe] = useState([]);
+  const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
   
   // ÉTATS DE L'IA AUTOMATIQUE EN ARRIÈRE-PLAN
   const [tachesIA, setTachesIA] = useState([]);
@@ -272,6 +274,7 @@ function App() {
     fetchAndCache('/api/rh', setRhData, 'rhData');
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
+    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
     // CORRECTION : L'IA est retirée du cache ici, elle a son propre moteur asynchrone ci-dessous
 
     if (decodeToken(token)?.id_salon === 38) {
@@ -767,6 +770,16 @@ function App() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
   );
 
+  const getCouleurTache = (tache) => {
+      if (tache.statut === 'FAIT') return 'var(--color-success)'; // Vert
+      if (!tache.date_echeance) return '#f59e0b'; // Orange par défaut si pas de date
+      const joursRestants = (new Date(tache.date_echeance) - new Date()) / (1000 * 60 * 60 * 24);
+      if (joursRestants <= 2) return 'var(--color-danger)'; // Rouge vif si < 48h
+      return '#f59e0b'; // Orange
+  };
+
+  const nbTachesUrgentes = tachesListe.filter(t => t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
+
   let clientCaisseObj = null;
   let isEligibleFidelite = false;
   let texteRecompense = '';
@@ -963,12 +976,28 @@ function App() {
                               </div>
                           </>
                       )}
+
+                      {modalIA.type_tache === 'ACTION' && (
+                          <>
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Action requise détectée</label>
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.titre || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, titre: e.target.value}})} />
+                              
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Échéance</label>
+                                      <input type="date" className="input-fournisseur" value={modalIA.donnees.date_echeance || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_echeance: e.target.value}})} />
+                                  </div>
+                              </div>
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', marginTop: '12px', display: 'block'}}>Détails extraits</label>
+                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees.description || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, description: e.target.value}})} />
+                          </>
+                      )}
                   </div>
                   
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => ignorerTacheIA(modalIA)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Ignorer</button>
                       <button onClick={() => validerTacheIA(modalIA)} className="btn-action" style={{flex: 2}}>
-                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : "Ajouter à l'Agenda"}
+                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : modalIA.type_tache === 'RDV' ? "Ajouter à l'Agenda" : "Ajouter au Centre d'Action"}
                       </button>
                   </div>
               </div>
@@ -979,6 +1008,13 @@ function App() {
           <div className="navbar-sidebar" style={isMobile ? { flexDirection: 'row', top: 'auto', bottom: 0, width: '100%', height: '90px', padding: '10px 16px 20px 16px', boxSizing: 'border-box', borderRight: 'none', borderTop: '1px solid var(--border-color)', justifyContent: 'space-between', overflowX: 'auto', zIndex: 1000 } : {}}>
              {role === 'gerant' && (
                  <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>
+             )}
+
+             {role === 'gerant' && (
+                 <div className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => setActiveTab('actions')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
+                     {nbTachesUrgentes > 0 && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
+                     <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span>Actions</span>
+                 </div>
              )}
              
              <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
@@ -1017,6 +1053,63 @@ function App() {
           <div className="main-content" style={{ overflowY: 'auto', flex: 1, ...(isMobile ? { paddingTop: '65px', paddingBottom: '110px' } : {}) }}>
             <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
               
+              {/* --- CENTRE D'ACTION (TÂCHES) --- */}
+              {role === 'gerant' && activeTab === 'actions' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div>
+                          <h1 style={{margin: 0}}>Centre d'Action</h1>
+                          <span className="date-subtitle" style={{margin: 0}}>Pilotez vos urgences administratives</span>
+                      </div>
+                      <ThemeToggle />
+                  </div>
+
+                  <div className="carte scan-carte">
+                      <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                          <input type="text" className="input-fournisseur" placeholder="Titre (ex: Payer l'URSSAF)" style={{flex: 2}} value={nouvelleTache.titre} onChange={e => setNouvelleTache({...nouvelleTache, titre: e.target.value})} />
+                          <input type="date" className="input-fournisseur" style={{flex: 1}} value={nouvelleTache.date_echeance} onChange={e => setNouvelleTache({...nouvelleTache, date_echeance: e.target.value})} />
+                      </div>
+                      <input type="text" className="input-fournisseur" placeholder="Détails (Optionnel)" style={{marginBottom: '16px'}} value={nouvelleTache.description} onChange={e => setNouvelleTache({...nouvelleTache, description: e.target.value})} />
+                      <button className="btn-action" style={{width: '100%'}} disabled={!nouvelleTache.titre} onClick={async () => {
+                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(nouvelleTache) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:''}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
+                      }}>Ajouter une tâche</button>
+                  </div>
+
+                  <div className="section-titre" style={{marginTop: '32px'}}>À traiter ({tachesListe.filter(t => t.statut === 'A_FAIRE').length})</div>
+                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                      {tachesListe.filter(t => t.statut === 'A_FAIRE').map(tache => (
+                          <div key={tache.id_tache} style={{background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-card)', border: '1px solid var(--border-color)', borderLeft: `4px solid ${getCouleurTache(tache)}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'var(--shadow-sm)', transition: 'all 0.2s ease'}}>
+                              <div style={{display: 'flex', alignItems: 'flex-start', gap: '16px'}}>
+                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: '2px solid var(--text-muted)', width: '24px', height: '24px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px'}}></button>
+                                  <div>
+                                      <h3 style={{margin: '0 0 4px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                          {tache.titre}
+                                          {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>DÉTECTÉ PAR IA</span>}
+                                      </h3>
+                                      {tache.description && <p style={{margin: '0 0 8px 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
+                                      {tache.date_echeance && <span style={{fontSize: '11px', fontWeight: 'bold', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
+                                  </div>
+                              </div>
+                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer'}}>
+                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                              </button>
+                          </div>
+                      ))}
+                      {tachesListe.filter(t => t.statut === 'A_FAIRE').length === 0 && <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>}
+                  </div>
+
+                  <div className="section-titre" style={{marginTop: '32px'}}>Terminées</div>
+                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', opacity: 0.7}}>
+                      {tachesListe.filter(t => t.statut === 'FAIT').map(tache => (
+                          <div key={tache.id_tache} style={{display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)'}}>
+                              <span style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontSize: '13px'}}>{tache.titre}</span>
+                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Annuler</button>
+                          </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
              {activeTab === 'agenda' && (
                 <div className="admin-container">
                   <div className="agenda-header">
