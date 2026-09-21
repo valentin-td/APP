@@ -157,6 +157,18 @@ pool.query(`
         statut VARCHAR(20) DEFAULT 'ATTENTE',
         date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS taches_actions (
+        id_tache SERIAL PRIMARY KEY,
+        id_salon INT,
+        titre VARCHAR(255),
+        description TEXT,
+        date_echeance DATE,
+        statut VARCHAR(20) DEFAULT 'A_FAIRE',
+        source VARCHAR(20) DEFAULT 'MANUEL',
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
