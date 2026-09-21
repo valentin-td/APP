@@ -1029,13 +1029,15 @@ function App() {
 
                   {/* NOUVEAU SÉLECTEUR MULTI-COLLABORATEURS (PILULES) */}
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
-                      <button 
-                          onClick={() => setFiltresEmployes([])} 
-                          style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
-                          Toute l'équipe
-                      </button>
+                      {role === 'gerant' && (
+                          <button 
+                              onClick={() => setFiltresEmployes([])} 
+                              style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
+                              Toute l'équipe
+                          </button>
+                      )}
                       
-                      {decodeToken(token)?.id_employe && (
+                      {role === 'gerant' && decodeToken(token)?.id_employe && (
                           <button 
                               onClick={() => setFiltresEmployes([decodeToken(token)?.id_employe])} 
                               style={{ background: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
@@ -1043,27 +1045,33 @@ function App() {
                           </button>
                       )}
 
-                      <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>
+                      {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>}
 
-                      {employesListe.map((emp, index) => {
-                          const isActive = filtresEmployes.includes(emp.id_employe);
-                          const color = COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length];
-                          return (
-                              <button 
-                                  key={emp.id_employe}
-                                  onClick={() => {
-                                      if (isActive) {
-                                          setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe));
-                                      } else {
-                                          setFiltresEmployes([...filtresEmployes, emp.id_employe]);
-                                      }
-                                  }}
-                                  style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
-                                  {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
-                                  {emp.nom.split(' ')[0]}
-                              </button>
-                          );
-                      })}
+                      {employesListe
+                          .filter(emp => role === 'gerant' || emp.id_employe === decodeToken(token)?.id_employe)
+                          .map((emp) => {
+                              // On retrouve l'index d'origine pour que la couleur reste toujours la bonne
+                              const originalIndex = employesListe.findIndex(e => e.id_employe === emp.id_employe);
+                              const isActive = role === 'employe' ? true : filtresEmployes.includes(emp.id_employe);
+                              const color = COULEURS_EMPLOYES[originalIndex % COULEURS_EMPLOYES.length];
+                              
+                              return (
+                                  <button 
+                                      key={emp.id_employe}
+                                      onClick={() => {
+                                          if (role === 'employe') return; // L'employé ne peut pas décocher sa pastille
+                                          if (isActive) {
+                                              setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe));
+                                          } else {
+                                              setFiltresEmployes([...filtresEmployes, emp.id_employe]);
+                                          }
+                                      }}
+                                      style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
+                                      {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
+                                      {role === 'employe' ? `Mon Planning (${emp.nom.split(' ')[0]})` : emp.nom.split(' ')[0]}
+                                  </button>
+                              );
+                          })}
                   </div>
 
                   {/* --- GRILLE AGENDA 100% DYNAMIQUE --- */}
