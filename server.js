@@ -189,6 +189,8 @@ pool.query(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
     ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS telephone_gerant VARCHAR(20);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS alertes_sms_actives BOOLEAN DEFAULT FALSE;
 
     -- =====================================================================
     -- --- NF525 / ISCA : Inaltérabilité, Journal des Événements Techniques,
@@ -476,13 +478,13 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture } = req.body; 
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives } = req.body; 
     try { 
         // CRYPTAGE DU MOT DE PASSE AVANT SAUVEGARDE
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
         
-        const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11 WHERE id_salon = $12`; 
-        await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, req.user.id_salon]); 
+        const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13 WHERE id_salon = $14`; 
+        await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, req.user.id_salon]); 
         
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
@@ -1076,7 +1078,6 @@ async function analyserEmailAvecIA(sujet, texte) {
             }];
         }
 
-        // ---> COLLE LE NOUVEAU BLOC ICI <---
         if (analyse.type === 'ACTION' && analyse.donnees && analyse.donnees.titre) {
             return [{
                 type_tache: 'ACTION',
@@ -1145,7 +1146,6 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
 
             io.to(id_salon.toString()).emit('nouveauRDV');
         } 
-        // ---> COLLE LE NOUVEAU BLOC ICI <---
         else if (type_tache === 'ACTION') {
             let echeance = donnees.date_echeance && donnees.date_echeance !== '' ? donnees.date_echeance : null;
             await clientDB.query(
@@ -1436,7 +1436,6 @@ cron.schedule('0 9 * * *', async () => {
             }
 
             // 2. Anniversaires (avec nouvel incitatif croisé)
-            // 2. Anniversaires (avec nouvel incitatif croisé)
             const anniversaires = await pool.query(`
                 SELECT * FROM clients 
                 WHERE id_salon = $1 
@@ -1455,19 +1454,27 @@ cron.schedule('0 9 * * *', async () => {
                 }
             }
 
-            // ---> COLLE LE NOUVEAU BLOC ICI <---
             // 3. Alertes Tâches Urgentes (Centre d'Action)
             const tachesUrgentes = await pool.query(`SELECT titre, date_echeance FROM taches_actions WHERE id_salon = $1 AND statut = 'A_FAIRE' AND date_echeance <= NOW() + INTERVAL '2 days'`, [salon.id_salon]);
-            if (tachesUrgentes.rowCount > 0 && process.env.SMTP_USER && process.env.SMTP_PASS) {
-                const gerant = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [salon.id_salon]);
-                if (gerant.rowCount > 0) {
-                    let texteEmail = `Bonjour,\n\nVous avez ${tachesUrgentes.rowCount} tâche(s) urgente(s) nécessitant votre attention :\n\n`;
-                    tachesUrgentes.rows.forEach(t => texteEmail += `🔴 ${t.titre} (Échéance: ${new Date(t.date_echeance).toLocaleDateString()})\n`);
-                    texteEmail += `\nConnectez-vous à STACK pour les traiter.`;
-                    try {
-                        let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
-                        await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures...)`, text: texteEmail });
-                    } catch(e) {}
+            if (tachesUrgentes.rowCount > 0) {
+                // -> Envoi de l'Email (si configuré)
+                if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+                    const gerant = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [salon.id_salon]);
+                    if (gerant.rowCount > 0) {
+                        let texteEmail = `Bonjour,\n\nVous avez ${tachesUrgentes.rowCount} tâche(s) urgente(s) nécessitant votre attention :\n\n`;
+                        tachesUrgentes.rows.forEach(t => texteEmail += `🔴 ${t.titre} (Échéance: ${new Date(t.date_echeance).toLocaleDateString()})\n`);
+                        texteEmail += `\nConnectez-vous à STACK pour les traiter.`;
+                        try {
+                            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+                            await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures...)`, text: texteEmail });
+                        } catch(e) {}
+                    }
+                }
+
+                // -> Envoi du SMS au Gérant (Si activé + Numéro renseigné + Clé Brevo valide)
+                if (salon.alertes_sms_actives && salon.telephone_gerant && salon.telephone_gerant.trim() !== '' && salon.brevo_api_key) {
+                    const smsTexte = `⚠️ STACK : Vous avez ${tachesUrgentes.rowCount} action(s) urgente(s) en attente (ex: ${tachesUrgentes.rows[0].titre}). Connectez-vous pour les traiter !`;
+                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name || 'STACK', salon.telephone_gerant, smsTexte);
                 }
             }
             
