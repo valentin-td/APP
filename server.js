@@ -1016,6 +1016,7 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 const PROMPT_SYSTEME_IA = `Tu es un assistant IA pour un salon de coiffure. Analyse cet email et extrais les donnees en JSON strict.
 CAS 1 - STOCK : Si le texte parle de livraison, commande, achat, facture ou réassort de produits. -> Renvoie {"type": "STOCK", "donnees": {"nom_produit": "nom du produit", "quantite": entier, "reference": ""}}
 CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe, couleur...", "date_heure": "YYYY-MM-DDTHH:MM"}}
+CAS 4 - URGENCES / FACTURES : Si le texte est une facture à payer, une relance, ou une action requise (impôts, URSSAF, EDF...). -> Renvoie {"type": "ACTION", "donnees": {"titre": "Payer EDF", "description": "Facture numéro XYZ...", "date_echeance": "YYYY-MM-DD"}}
 CAS 3 - AUTRE : Pour tout le reste (pubs, spam, etc.) -> Renvoie {"type": "NONE"}`;
 
 async function analyserEmailAvecIA(sujet, texte) {
@@ -1075,6 +1076,18 @@ async function analyserEmailAvecIA(sujet, texte) {
             }];
         }
 
+        // ---> COLLE LE NOUVEAU BLOC ICI <---
+        if (analyse.type === 'ACTION' && analyse.donnees && analyse.donnees.titre) {
+            return [{
+                type_tache: 'ACTION',
+                donnees: {
+                    titre: String(analyse.donnees.titre).trim().substring(0, 200),
+                    description: analyse.donnees.description ? String(analyse.donnees.description).trim() : '',
+                    date_echeance: analyse.donnees.date_echeance || ''
+                }
+            }];
+        }
+
         return [];
     } catch (erreurIA) { return []; }
 }
@@ -1122,6 +1135,7 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             );
             
             // 2. Crée le profil client dans le CRM (seulement si le numéro existe) 
+            // ... (fin de la logique de création du RDV et du Client)
             if (donnees.telephone && donnees.telephone.trim() !== '') {
                 await clientDB.query(
                     "INSERT INTO clients (nom, telephone, id_salon) SELECT $1::varchar, $2::varchar, $3::int WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
@@ -1130,6 +1144,14 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             }
 
             io.to(id_salon.toString()).emit('nouveauRDV');
+        } 
+        // ---> COLLE LE NOUVEAU BLOC ICI <---
+        else if (type_tache === 'ACTION') {
+            let echeance = donnees.date_echeance && donnees.date_echeance !== '' ? donnees.date_echeance : null;
+            await clientDB.query(
+                "INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')",
+                [id_salon, donnees.titre, donnees.description, echeance]
+            );
         }
 
         await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
@@ -1304,6 +1326,41 @@ cron.schedule('*/10 8-19 * * *', () => { executerRobotComptable(); });
 cron.schedule('0 2 * * *', () => { executerRobotComptable(); });
 app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot IA & Comptable lancé." }); });
 
+// =========================================================================
+// --- CENTRE D'ACTION (TÂCHES & URGENCES) ---
+// =========================================================================
+app.get('/api/taches', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT * FROM taches_actions WHERE id_salon = $1 ORDER BY statut ASC, date_echeance ASC NULLS LAST`, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture tâches." }); }
+});
+
+app.post('/api/taches', verifierToken, async (req, res) => {
+    const { titre, description, date_echeance } = req.body;
+    try {
+        await pool.query(
+            "INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'MANUEL')", 
+            [req.user.id_salon, titre, description, date_echeance || null]
+        );
+        res.status(201).json({ message: "Action ajoutée !" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur ajout tâche." }); }
+});
+
+app.put('/api/taches/:id/statut', verifierToken, async (req, res) => {
+    try {
+        await pool.query("UPDATE taches_actions SET statut = CASE WHEN statut = 'A_FAIRE' THEN 'FAIT' ELSE 'A_FAIRE' END WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Statut mis à jour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur modification." }); }
+});
+
+app.delete('/api/taches/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query("DELETE FROM taches_actions WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Tâche supprimée." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression." }); }
+});
+
 
 // =========================================================================
 // --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES ---
@@ -1379,6 +1436,7 @@ cron.schedule('0 9 * * *', async () => {
             }
 
             // 2. Anniversaires (avec nouvel incitatif croisé)
+            // 2. Anniversaires (avec nouvel incitatif croisé)
             const anniversaires = await pool.query(`
                 SELECT * FROM clients 
                 WHERE id_salon = $1 
@@ -1396,7 +1454,24 @@ cron.schedule('0 9 * * *', async () => {
                     );
                 }
             }
-        }
+
+            // ---> COLLE LE NOUVEAU BLOC ICI <---
+            // 3. Alertes Tâches Urgentes (Centre d'Action)
+            const tachesUrgentes = await pool.query(`SELECT titre, date_echeance FROM taches_actions WHERE id_salon = $1 AND statut = 'A_FAIRE' AND date_echeance <= NOW() + INTERVAL '2 days'`, [salon.id_salon]);
+            if (tachesUrgentes.rowCount > 0 && process.env.SMTP_USER && process.env.SMTP_PASS) {
+                const gerant = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [salon.id_salon]);
+                if (gerant.rowCount > 0) {
+                    let texteEmail = `Bonjour,\n\nVous avez ${tachesUrgentes.rowCount} tâche(s) urgente(s) nécessitant votre attention :\n\n`;
+                    tachesUrgentes.rows.forEach(t => texteEmail += `🔴 ${t.titre} (Échéance: ${new Date(t.date_echeance).toLocaleDateString()})\n`);
+                    texteEmail += `\nConnectez-vous à STACK pour les traiter.`;
+                    try {
+                        let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+                        await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures...)`, text: texteEmail });
+                    } catch(e) {}
+                }
+            }
+            
+        } // <-- Ceci est l'accolade fermante de "for (let salon of salons.rows)"
     } catch (err) {
         console.error("Erreur Cron SMS:", err);
     }
