@@ -166,6 +166,7 @@ pool.query(`
         source VARCHAR(20) DEFAULT 'MANUEL',
         date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+    
 
     CREATE TABLE IF NOT EXISTS protocoles (
         id_protocole SERIAL PRIMARY KEY,
@@ -180,6 +181,7 @@ pool.query(`
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS etapes JSONB DEFAULT '[]';
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS delai_livraison_jours INT DEFAULT 3;
 
     CREATE TABLE IF NOT EXISTS recettes_articles (
         id_recette SERIAL PRIMARY KEY,
