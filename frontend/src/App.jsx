@@ -97,6 +97,14 @@ function App() {
   const [posStep, setPosStep] = useState('employee'); 
   const [posEmploye, setPosEmploye] = useState(null);
   const [posType, setPosType] = useState('PRESTATION'); 
+  // === NOUVEAU : RECHERCHE CAISSE ===
+  const [rechercheCaisse, setRechercheCaisse] = useState('');
+
+  // Algorithme Fuzzy Search : Enlève les accents, les espaces et les caractères spéciaux (ex: "L'Oréal" devient "loreal")
+  const nettoyerTexteRecherche = (texte) => {
+      if (!texte) return '';
+      return texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  };
   const [clientCaisse, setClientCaisse] = useState('');
   const [panierCaisse, setPanierCaisse] = useState([]); 
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
@@ -640,7 +648,7 @@ function App() {
             is_offline: true
         });
         
-        setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES');
+        setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES'); setRechercheCaisse('');
         showToast("Ticket sauvegardé localement (Mode Hors-Ligne)", "success");
     };
 
@@ -1633,13 +1641,29 @@ function App() {
                             </div>
                           ) : (
                             <>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
-                                  <button onClick={() => setPosType('PRESTATION')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
-                                  <button onClick={() => setPosType('PRODUIT_REVENTE')} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                  <button onClick={() => { setPosType('PRESTATION'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
+                                  <button onClick={() => { setPosType('PRODUIT_REVENTE'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
                               </div>
 
+                              {/* BARRE DE RECHERCHE FUZZY */}
+                              <input 
+                                  type="text" 
+                                  className="input-fournisseur" 
+                                  placeholder="🔍 Rechercher (ex: L'Oréal, Coupe)..." 
+                                  value={rechercheCaisse} 
+                                  onChange={(e) => setRechercheCaisse(e.target.value)} 
+                                  style={{marginBottom: '24px', fontSize: '15px'}}
+                              />
+
                               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '16px'}}>
-                                {catalogueListe.filter(art => art.type_article === posType).map(art => (
+                                {catalogueListe.filter(art => {
+                                    if (art.type_article !== posType) return false;
+                                    if (!rechercheCaisse) return true;
+                                    const searchClean = nettoyerTexteRecherche(rechercheCaisse);
+                                    const nomClean = nettoyerTexteRecherche(art.nom);
+                                    return nomClean.includes(searchClean);
+                                }).map(art => (
                                     <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '24px 16px', borderRadius: 'var(--radius-card)', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '8px', textAlign: 'center', transition: 'border-color 0.2s ease', boxShadow: 'var(--shadow-sm)' }}>
                                       <span style={{fontSize: '14px', fontWeight: '500', color: 'var(--text-main)'}}>{art.nom}</span>
                                       <span style={{fontSize: '18px', fontWeight: '700', color: 'var(--text-main)'}}>{parseFloat(art.prix).toFixed(2)} €</span>
