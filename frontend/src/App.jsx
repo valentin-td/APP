@@ -57,6 +57,8 @@ function App() {
   const [rhData, setRhData] = useState([]);
   const [historiqueData, setHistoriqueData] = useState([]);
   const [planningData, setPlanningData] = useState([]); 
+  const [superAdminData, setSuperAdminData] = useState(null);
+  const [superAdminSalons, setSuperAdminSalons] = useState([]);
   
   // ÉTATS DE L'IA AUTOMATIQUE EN ARRIÈRE-PLAN
   const [tachesIA, setTachesIA] = useState([]);
