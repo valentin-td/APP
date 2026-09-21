@@ -66,7 +66,7 @@ function App() {
   // --- PROTOCOLES & RECETTES (NOUVEAU) ---
   // ==========================================
   const [protocolesListe, setProtocolesListe] = useState([]);
-  const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], delai_livraison_jours: 3, ingredients: [] });
+  const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
   const [ingredientTemp, setIngredientTemp] = useState({ id_article: '', quantite_necessaire: '' });
   const [etapeTemp, setEtapeTemp] = useState({ texte: '', timer_min: '' });
   const [protocoleVisible, setProtocoleVisible] = useState(null); 
@@ -107,7 +107,7 @@ function App() {
 
   const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null });
-  const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' });
+  const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3 });
 
   const [posStep, setPosStep] = useState('employee'); 
   const [posEmploye, setPosEmploye] = useState(null);
@@ -562,7 +562,28 @@ function App() {
   const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
   const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
-  const ajouterArticle = async () => { if(isOffline) return showToast("Désactivé", "error"); if (newArticle.type_article === 'PRODUIT_REVENTE') { if (!newArticle.reference || newArticle.reference.trim().length < 4) { showToast("Veuillez saisir une référence d'au moins 4 caractères.", "error"); return; } } try { const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); const data = await handleFetchError(res); if (data.message && data.message.includes("Stock mis à jour")) { showToast(data.message, "success"); } setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '' }); chargerTout(); showToast("Catalogue mis à jour.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  
+  const ajouterArticle = async () => { 
+      if(isOffline) return showToast("Désactivé hors-ligne", "error"); 
+      if (newArticle.type_article === 'PRODUIT_REVENTE') { 
+          if (!newArticle.reference || newArticle.reference.trim().length < 4) { 
+              showToast("Veuillez saisir une référence d'au moins 4 caractères.", "error"); 
+              return; 
+          } 
+      } 
+      try { 
+          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); 
+          const data = await handleFetchError(res); 
+          if (data.message && data.message.includes("Stock mis à jour")) { 
+              showToast(data.message, "success"); 
+          } 
+          setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3 }); 
+          chargerTout(); 
+          showToast("Catalogue mis à jour.", "success"); 
+      } catch(e) { 
+          if(e.message !== "Abonnement inactif") showToast(e.message, "error"); 
+      }
+  };
   const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
 
   // ==========================================
@@ -604,7 +625,7 @@ function App() {
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/protocoles', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(nouveauProtocole) });
           await handleFetchError(res);
-          setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], delai_livraison_jours: 3, ingredients: [] });
+          setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
           setModeEditionProtocole(null);
           chargerTout(); 
           showToast("Protocole enregistré !", "success");
@@ -1507,7 +1528,7 @@ function App() {
               )}
              
               {/* ========================================================= */}
-              {/* --- NOUVEL ONGLET DÉDIÉ : L'ACADÉMIE (SPLIT SCREEN) --- */}
+              {/* --- NOUVEL ONGLET DÉDIÉ : L'ACADÉMIE (FULL SCREEN) --- */}
               {/* ========================================================= */}
               {role === 'gerant' && activeTab === 'protocoles' && (
                 <div className="admin-container">
@@ -1518,205 +1539,211 @@ function App() {
                       </div>
                       <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
-                          <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], delai_livraison_jours: 3, ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">+ Créer une Fiche</button>
+                          {!modeEditionProtocole && (
+                              <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">+ Créer une Fiche</button>
+                          )}
                       </div>
                   </div>
 
-                  <div className="caisse-split-container">
-                      {/* PANNEAU GAUCHE : BIBLIOTHÈQUE */}
-                      <div className="caisse-left-panel">
-                          <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px'}}/>
-                          
-                          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px'}}>
-                              {protocolesListe.filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
-                                  let stockSuffisant = true;
-                                  proto.ingredients?.forEach(ing => {
-                                      const articleDuStock = catalogueListe.find(a => a.id_article === ing.id_article);
-                                      if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
-                                  });
+                  <div className="caisse-split-container" style={{ display: 'block' }}>
+                      {/* VUE 1 : BIBLIOTHÈQUE (Masquée si création ou consultation) */}
+                      {!modeEditionProtocole && (
+                          <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
+                              <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', maxWidth: '400px'}}/>
+                              
+                              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
+                                  {protocolesListe.filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
+                                      let stockSuffisant = true;
+                                      proto.ingredients?.forEach(ing => {
+                                          const articleDuStock = catalogueListe.find(a => a.id_article === ing.id_article);
+                                          if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
+                                      });
 
-                                  const isSelected = modeEditionProtocole && modeEditionProtocole.id_protocole === proto.id_protocole;
-
-                                  return (
-                                      <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} style={{background: isSelected ? 'var(--text-main)' : 'var(--bg-card)', color: isSelected ? 'var(--bg-app)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '8px', transition: 'all 0.2s ease'}}>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
-                                              <span style={{fontSize: '14px', fontWeight: 'bold'}}>{proto.nom_prestation}</span>
-                                              <span style={{width: '10px', height: '10px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
+                                      return (
+                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                                              {proto.medias && proto.medias.apres ? (
+                                                  <div style={{height: '140px', width: '100%', background: '#ccc'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
+                                              ) : ( <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div> )}
+                                              
+                                              <div style={{padding: '16px'}}>
+                                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                                                      <span style={{fontSize: '15px', fontWeight: 'bold'}}>{proto.nom_prestation}</span>
+                                                      <span style={{width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
+                                                  </div>
+                                                  <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '12px'}}>
+                                                      {proto.tags?.map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
+                                                  </div>
+                                              </div>
                                           </div>
-                                          <div style={{display: 'flex', gap: '4px', flexWrap: 'wrap'}}>
-                                              {proto.tags?.map(t => <span key={t} style={{fontSize: '10px', background: isSelected ? 'rgba(255,255,255,0.2)' : 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px'}}>{t}</span>)}
-                                          </div>
-                                      </div>
-                                  );
-                              })}
-                              {protocolesListe.length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
+                                      );
+                                  })}
+                                  {protocolesListe.length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
+                              </div>
                           </div>
-                      </div>
+                      )}
 
-                      {/* PANNEAU DROITE : ÉDITION OU LECTURE */}
-                      <div className="caisse-right-panel" style={{overflowY: 'auto'}}>
-                          {!modeEditionProtocole ? (
-                              <div className="empty-state" style={{marginTop: '40px'}}><p>Sélectionnez une fiche technique à gauche ou créez-en une nouvelle.</p></div>
-                          ) : modeEditionProtocole === 'NEW' ? (
-                              <>
-                                  <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
-                                  
-                                  <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                                      <div style={{flex: 2}}>
-                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible</label>
-                                          <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
-                                              <option value="">-- Choisir une prestation --</option>
-                                              {catalogueListe.filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
-                                          </select>
-                                      </div>
-                                      <div style={{flex: 1}}>
-                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Délai (Jours)</label>
-                                          <input type="number" className="input-fournisseur" value={nouveauProtocole.delai_livraison_jours} onChange={e => setNouveauProtocole({...nouveauProtocole, delai_livraison_jours: parseInt(e.target.value)})} />
-                                      </div>
-                                  </div>
+                      {/* VUE 2 : ÉDITEUR (Plein Écran) */}
+                      {modeEditionProtocole === 'NEW' && (
+                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible' }}>
+                              <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
+                              
+                              <div style={{marginBottom: '16px'}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
+                                  <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
+                                      <option value="">-- Choisir une prestation --</option>
+                                      {catalogueListe.filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
+                                  </select>
+                              </div>
 
-                                  <div style={{marginBottom: '24px'}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
-                                      <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
-                                          {TAGS_DISPONIBLES.map(tag => (
-                                              <button key={tag} onClick={() => toggleTag(tag)} style={{background: nouveauProtocole.tags.includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: nouveauProtocole.tags.includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
-                                          ))}
-                                      </div>
-                                  </div>
-
-                                  <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                      <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
-                                      <div style={{display: 'flex', gap: '12px'}}>
-                                          {['avant', 'pendant', 'apres'].map(type => (
-                                              <div key={type} style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
-                                                  <label style={{fontSize: '11px', textTransform: 'capitalize', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
-                                                  <div style={{height: '80px', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
-                                                      {nouveauProtocole.medias[type] ? <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <span style={{fontSize: '20px', color: 'var(--text-muted)'}}>+</span>}
-                                                      <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer'}} />
-                                                  </div>
-                                              </div>
-                                          ))}
-                                      </div>
-                                  </div>
-
-                                  <div style={{marginBottom: '24px'}}>
-                                      <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
-                                      <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
-                                          {nouveauProtocole.etapes.map((etape, index) => (
-                                              <div key={etape.id_etape} style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center'}}>
-                                                  <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
-                                                  <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
-                                                  {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ {etape.timer_min} min</div>}
-                                                  <button onClick={() => supprimerEtapeRecette(etape.id_etape)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer'}}>✕</button>
-                                              </div>
-                                          ))}
-                                      </div>
-                                      <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
-                                          <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
-                                          <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
-                                          <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
-                                      </div>
-                                  </div>
-
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
-                                  <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
-                                      <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
-                                          <option value="">-- Ajouter un produit --</option>
-                                          {catalogueListe.filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
-                                      </select>
-                                      <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
-                                      <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
-                                  </div>
-                                  
-                                  <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
-                                      {nouveauProtocole.ingredients.map(ing => (
-                                          <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
-                                              <span>{ing.quantite_necessaire}x {ing.nom}</span>
-                                              <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
-                                          </div>
+                              <div style={{marginBottom: '24px'}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
+                                  <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                                      {TAGS_DISPONIBLES.map(tag => (
+                                          <button key={tag} onClick={() => toggleTag(tag)} style={{background: nouveauProtocole.tags.includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: nouveauProtocole.tags.includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
                                       ))}
-                                  </div>
-
-                                  {(() => {
-                                      const prestaChoisie = catalogueListe.find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
-                                      const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
-                                      const coutProduits = nouveauProtocole.ingredients.reduce((acc, ing) => {
-                                          const art = catalogueListe.find(a => a.id_article === ing.id_article);
-                                          return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0);
-                                      }, 0);
-                                      const margeValeur = prixVente - coutProduits;
-                                      const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
-                                      const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
-
-                                      return (nouveauProtocole.nom_prestation && (
-                                          <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                              <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
-                                                  <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité de la prestation</span>
-                                                  <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
-                                                  <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
-                                              </div>
-                                              <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
-                                                  <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
-                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                      <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
-                                                      <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
-                                                  </div>
-                                              </div>
-                                          </div>
-                                      ));
-                                  })()}
-
-                                  <button className="btn-action" style={{width: '100%', padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
-                              </>
-                          ) : (
-                              <div>
-                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
-                                      <div>
-                                          <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
-                                          <div style={{display: 'flex', gap: '8px'}}>
-                                              {modeEditionProtocole.tags?.map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
-                                          </div>
-                                      </div>
-                                      <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>Supprimer la fiche</button>
-                                  </div>
-
-                                  <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
-                                      {['avant', 'pendant', 'apres'].map(type => (
-                                          modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
-                                              <div key={type} style={{flex: 1}}>
-                                                  <div style={{height: '100px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                                  <span style={{fontSize: '10px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
-                                              </div>
-                                          )
-                                      ))}
-                                  </div>
-
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
-                                  <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
-                                      {modeEditionProtocole.ingredients?.map((ing, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== modeEditionProtocole.ingredients.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
-                                              <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
-                                          </div>
-                                      ))}
-                                      {(!modeEditionProtocole.ingredients || modeEditionProtocole.ingredients.length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
-                                  </div>
-
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
-                                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                      {modeEditionProtocole.etapes?.map((etape, index) => (
-                                          <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
-                                              <div style={{flex: 1}}>
-                                                  <p style={{margin: '0 0 8px 0', fontSize: '14px', lineHeight: '1.5'}}>{etape.texte}</p>
-                                                  {etape.timer_min && <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ Minuteur : {etape.timer_min} min</span>}
-                                              </div>
-                                          </div>
-                                      ))}
-                                      {(!modeEditionProtocole.etapes || modeEditionProtocole.etapes.length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
                                   </div>
                               </div>
-                          )}
-                      </div>
+
+                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
+                                  <div style={{display: 'flex', gap: '12px'}}>
+                                      {['avant', 'pendant', 'apres'].map(type => (
+                                          <div key={type} style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                                              <label style={{fontSize: '11px', textTransform: 'capitalize', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
+                                              <div style={{height: '100px', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
+                                                  {nouveauProtocole.medias[type] ? <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <span style={{fontSize: '20px', color: 'var(--text-muted)'}}>+</span>}
+                                                  <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer'}} />
+                                              </div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+
+                              <div style={{marginBottom: '24px'}}>
+                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
+                                      {nouveauProtocole.etapes.map((etape, index) => (
+                                          <div key={etape.id_etape} style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center'}}>
+                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
+                                              <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
+                                              {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ {etape.timer_min} min</div>}
+                                              <button onClick={() => supprimerEtapeRecette(etape.id_etape)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer'}}>✕</button>
+                                          </div>
+                                      ))}
+                                  </div>
+                                  <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
+                                      <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
+                                      <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
+                                      <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
+                                  </div>
+                              </div>
+
+                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
+                              <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
+                                  <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
+                                      <option value="">-- Ajouter un produit --</option>
+                                      {catalogueListe.filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
+                                  </select>
+                                  <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
+                                  <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
+                              </div>
+                              
+                              <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
+                                  {nouveauProtocole.ingredients.map(ing => (
+                                      <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
+                                          <span>{ing.quantite_necessaire}x {ing.nom}</span>
+                                          <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
+                                      </div>
+                                  ))}
+                              </div>
+
+                              {(() => {
+                                  const prestaChoisie = catalogueListe.find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
+                                  const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
+                                  const coutProduits = nouveauProtocole.ingredients.reduce((acc, ing) => {
+                                      const art = catalogueListe.find(a => a.id_article === ing.id_article);
+                                      return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0);
+                                  }, 0);
+                                  const margeValeur = prixVente - coutProduits;
+                                  const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
+                                  const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
+
+                                  return (nouveauProtocole.nom_prestation && (
+                                      <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité</span>
+                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
+                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
+                                          </div>
+                                          <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
+                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                  <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
+                                                  <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ));
+                              })()}
+
+                              {/* BOUTONS ANNULER ET SAUVEGARDER */}
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                  <button onClick={() => setModeEditionProtocole(null)} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-input)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer'}}>Annuler</button>
+                                  <button className="btn-action" style={{flex: 2, padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
+                              </div>
+                          </div>
+                      )}
+                      
+                      {/* VUE 3 : LECTURE D'UNE FICHE EXISTANTE (Plein Écran) */}
+                      {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
+                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible' }}>
+                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
+                                  <div>
+                                      <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
+                                      <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
+                                      <div style={{display: 'flex', gap: '8px'}}>
+                                          {modeEditionProtocole.tags?.map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
+                                      </div>
+                                  </div>
+                                  <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>Supprimer la fiche</button>
+                              </div>
+
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
+                                  {['avant', 'pendant', 'apres'].map(type => (
+                                      modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
+                                          <div key={type} style={{flex: 1}}>
+                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
+                                              <span style={{fontSize: '10px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
+                                          </div>
+                                      )
+                                  ))}
+                              </div>
+
+                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
+                              <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
+                                  {modeEditionProtocole.ingredients?.map((ing, i) => (
+                                      <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== modeEditionProtocole.ingredients.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                          <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
+                                      </div>
+                                  ))}
+                                  {(!modeEditionProtocole.ingredients || modeEditionProtocole.ingredients.length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
+                              </div>
+
+                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
+                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                  {modeEditionProtocole.etapes?.map((etape, index) => (
+                                      <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                          <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
+                                          <div style={{flex: 1}}>
+                                              <p style={{margin: '0 0 8px 0', fontSize: '14px', lineHeight: '1.5'}}>{etape.texte}</p>
+                                              {etape.timer_min && <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ Minuteur : {etape.timer_min} min</span>}
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {(!modeEditionProtocole.etapes || modeEditionProtocole.etapes.length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
+                              </div>
+                          </div>
+                      )}
                   </div>
                 </div>
               )}
@@ -1742,8 +1769,9 @@ function App() {
                       </select>
                       {newArticle.type_article === 'PRODUIT_REVENTE' && (
                         <>
-                          <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '150px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value})} />
-                          <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '90px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value})} />
+                          <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '120px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value})} />
+                          <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '70px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value})} />
+                          <input type="number" className="input-fournisseur" placeholder="Délai (j)" title="Délai moyen de livraison du fournisseur en jours" style={{width: '90px'}} value={newArticle.delai_livraison_jours} onChange={(e) => setNewArticle({...newArticle, delai_livraison_jours: e.target.value})} />
                         </>
                       )}
                     </div>
@@ -1753,7 +1781,11 @@ function App() {
                           <div className="empty-state" style={{padding: '20px'}}><p>Catalogue vide.</p></div>
                       ) : catalogueListe.map(art => (
                         <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
-                          <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € {art.reference && <span style={{color: 'var(--text-muted)', marginLeft: '8px'}}>(Réf: {art.reference})</span>}</span>
+                          <span>
+                            <strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € 
+                            {art.reference && <span style={{color: 'var(--text-muted)', marginLeft: '8px'}}>(Réf: {art.reference})</span>}
+                            {art.type_article === 'PRODUIT_REVENTE' && <span style={{color: 'var(--text-secondary)', marginLeft: '8px', fontSize: '11px'}}>[Délai: {art.delai_livraison_jours || 3}j]</span>}
+                          </span>
                           <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
                         </div>
                       ))}
