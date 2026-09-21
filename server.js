@@ -506,6 +506,68 @@ app.get('/api/settings', verifierToken, async (req, res) => {
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }
 });
 
+app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
+    const id_client = req.params.id; const id_salon = req.user.id_salon;
+    try {
+        const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
+        if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
+        
+        const achatsRes = await pool.query(`SELECT t.id_ticket, (CASE WHEN t.est_compense THEN 'ANNULE' ELSE 'VALIDE' END) as statut, t.date_creation, COALESCE(lt.nom_article_snapshot, c.nom) as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 AND t.type_ticket != 'ANNULATION' ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
+        const rdvRes = await pool.query(`SELECT date_heure_debut, prestation, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.telephone_client = $1 AND r.id_salon = $2 ORDER BY r.date_heure_debut DESC LIMIT 20`, [clientRes.rows[0].telephone, id_salon]);
+        const gainsRes = await pool.query(`SELECT date_creation, total_ttc FROM tickets WHERE id_client = $1 AND id_salon = $2 AND recompense_utilisee = TRUE AND statut != 'ANNULE' AND est_compense = FALSE ORDER BY date_creation DESC LIMIT 20`, [id_client, id_salon]);
+
+        res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows, gains: gainsRes.rows });
+    } catch (e) { res.status(500).json({ erreur: "Erreur historique." }); }
+});
+
+app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
+    try {
+        await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', [req.body.notes, req.params.id, req.user.id_salon]);
+        res.json({ message: "Notes sauvegardées" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur sauvegarde." }); }
+});
+
+app.post('/api/rdv', verifierToken, async (req, res) => {
+    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes } = req.body;
+    try {
+        await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.status(201).json({ message: "RDV ajouté." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur création RDV." }); }
+});
+
+app.put('/api/rdv/:id', verifierToken, async (req, res) => {
+    const { id_employe, prestation, date_heure_debut } = req.body;
+    try {
+        await pool.query(
+            `UPDATE rendez_vous SET id_employe = $1, prestation = $2, date_heure_debut = $3 WHERE id_rdv = $4 AND id_salon = $5`, 
+            [id_employe, prestation, date_heure_debut, req.params.id, req.user.id_salon]
+        );
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous modifié." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur modification RDV." }); }
+});
+
+app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous supprimé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
+});
+
+app.get('/api/planning', verifierToken, async (req, res) => {
+    const startDate = req.query.startDate; const endDate = req.query.endDate;
+    try {
+        let query = `SELECT r.*, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.id_salon = $1 AND DATE(r.date_heure_debut) >= $2 AND DATE(r.date_heure_debut) <= $3`;
+        const params = [req.user.id_salon, startDate, endDate];
+        if (req.user.role === 'employe') { query += ` AND r.id_employe = $4`; params.push(req.user.id_employe); }
+        query += ` ORDER BY r.date_heure_debut ASC`;
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture agenda." }); }
+});
+
 // =========================================================================
 // --- L'ENCAISSEMENT & MÉTHODES DE PAIEMENT (SMART POS) ---
 // =========================================================================
