@@ -1313,5 +1313,52 @@ app.get('/api/admin/nettoyer-fantomes', async (req, res) => {
     }
 });
 
+// =========================================================================
+// --- GOD MODE (SUPER-ADMIN) ---
+// =========================================================================
+const verifierSuperAdmin = (req, res, next) => {
+    // Seul le salon 38 (le tien) a le droit d'accéder à ces routes
+    if (req.user.id_salon !== 38) {
+        return res.status(403).json({ erreur: "Accès refusé. God mode uniquement." });
+    }
+    next();
+};
+
+app.get('/api/superadmin/stats', verifierToken, verifierSuperAdmin, async (req, res) => {
+    try {
+        const totalSalons = await pool.query("SELECT COUNT(*) as count FROM configuration_salon");
+        const activeSalons = await pool.query("SELECT COUNT(*) as count FROM utilisateurs WHERE statut_abonnement = 'actif' AND role = 'gerant'");
+        const mrr = parseInt(activeSalons.rows[0].count) * 49; // 49€ par abonnement actif
+        
+        res.json({ 
+            total_salons: totalSalons.rows[0].count, 
+            salons_actifs: activeSalons.rows[0].count, 
+            mrr_estime: mrr 
+        });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture stats admin." }); }
+});
+
+app.get('/api/superadmin/salons', verifierToken, verifierSuperAdmin, async (req, res) => {
+    try {
+        const query = `
+            SELECT c.id_salon, c.nom_salon, u.email, u.statut_abonnement 
+            FROM configuration_salon c
+            JOIN utilisateurs u ON c.id_salon = u.id_salon
+            WHERE u.role = 'gerant'
+            ORDER BY c.id_salon DESC
+        `;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture liste salons." }); }
+});
+
+app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, async (req, res) => {
+    try {
+        const { statut } = req.body;
+        await pool.query("UPDATE utilisateurs SET statut_abonnement = $1 WHERE id_salon = $2 AND role = 'gerant'", [statut, req.params.id]);
+        res.json({ message: `Le salon #${req.params.id} est maintenant ${statut}.` });
+    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
+});
+
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
