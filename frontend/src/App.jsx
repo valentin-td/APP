@@ -1534,7 +1534,7 @@ function App() {
                   <div className="caisse-split-container">
                       {/* PANNEAU GAUCHE : BIBLIOTHÈQUE */}
                       <div className="caisse-left-panel">
-                          <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage, Cuivré)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px'}}/>
+                          <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px'}}/>
                           
                           <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px'}}>
                               {protocolesListe.filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
@@ -1572,14 +1572,14 @@ function App() {
                                   
                                   <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
                                       <div style={{flex: 2}}>
-                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible</label>
                                           <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
                                               <option value="">-- Choisir une prestation --</option>
                                               {catalogueListe.filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
                                           </select>
                                       </div>
                                       <div style={{flex: 1}}>
-                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Délai réassort (Jours)</label>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Délai (Jours)</label>
                                           <input type="number" className="input-fournisseur" value={nouveauProtocole.delai_livraison_jours} onChange={e => setNouveauProtocole({...nouveauProtocole, delai_livraison_jours: parseInt(e.target.value)})} />
                                       </div>
                                   </div>
@@ -1593,7 +1593,6 @@ function App() {
                                       </div>
                                   </div>
 
-                                  {/* GALERIE MÉDIAS */}
                                   <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
                                       <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
                                       <div style={{display: 'flex', gap: '12px'}}>
@@ -1609,7 +1608,6 @@ function App() {
                                       </div>
                                   </div>
 
-                                  {/* ÉDITEUR D'ÉTAPES DYNAMIQUES */}
                                   <div style={{marginBottom: '24px'}}>
                                       <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
                                       <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
@@ -1624,17 +1622,16 @@ function App() {
                                       </div>
                                       <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
                                           <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
-                                          <input type="number" className="input-fournisseur" placeholder="Minuteur (Min)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
+                                          <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
                                           <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
                                       </div>
                                   </div>
 
-                                  {/* INGRÉDIENTS & CALCULATEUR */}
                                   <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
                                   <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
                                       <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
-                                          <option value="">-- Ajouter un produit du stock --</option>
-                                          {catalogueListe.filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€/u)</option>)}
+                                          <option value="">-- Ajouter un produit --</option>
+                                          {catalogueListe.filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
                                       </select>
                                       <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
                                       <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
@@ -1649,7 +1646,6 @@ function App() {
                                       ))}
                                   </div>
 
-                                  {/* CALCULATEUR ERP */}
                                   {(() => {
                                       const prestaChoisie = catalogueListe.find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
                                       const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
@@ -1679,10 +1675,9 @@ function App() {
                                       ));
                                   })()}
 
-                                  <button className="btn-action" style={{width: '100%', padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder et Activer l'IA</button>
+                                  <button className="btn-action" style={{width: '100%', padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
                               </>
                           ) : (
-                              /* LECTURE D'UNE FICHE EXISTANTE */
                               <div>
                                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
                                       <div>
@@ -1694,7 +1689,6 @@ function App() {
                                       <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>Supprimer la fiche</button>
                                   </div>
 
-                                  {/* GALERIE AFFICHAGE */}
                                   <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
                                       {['avant', 'pendant', 'apres'].map(type => (
                                           modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
@@ -1713,6 +1707,7 @@ function App() {
                                               <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
                                           </div>
                                       ))}
+                                      {(!modeEditionProtocole.ingredients || modeEditionProtocole.ingredients.length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
                                   </div>
 
                                   <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
@@ -1726,13 +1721,14 @@ function App() {
                                               </div>
                                           </div>
                                       ))}
+                                      {(!modeEditionProtocole.etapes || modeEditionProtocole.etapes.length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
                                   </div>
                               </div>
                           )}
                       </div>
                   </div>
                 </div>
-              )} 
+              )}
 
               {role === 'gerant' && activeTab === 'gestion' && (
                 <div className="admin-container">
