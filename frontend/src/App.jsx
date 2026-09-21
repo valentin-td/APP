@@ -1732,7 +1732,7 @@ function App() {
                       </div>
                   </div>
                 </div>
-              )}
+              )} 
 
               {role === 'gerant' && activeTab === 'gestion' && (
                 <div className="admin-container">
