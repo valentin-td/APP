@@ -177,6 +177,10 @@ pool.query(`
         date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS etapes JSONB DEFAULT '[]';
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';
+
     CREATE TABLE IF NOT EXISTS recettes_articles (
         id_recette SERIAL PRIMARY KEY,
         id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE,
@@ -1358,13 +1362,13 @@ app.get('/api/protocoles', verifierToken, async (req, res) => {
 });
 
 app.post('/api/protocoles', verifierToken, async (req, res) => {
-    const { nom_prestation, description, photo_url, delai_livraison_jours, ingredients } = req.body;
+    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
         const protoRes = await clientDB.query(
-            `INSERT INTO protocoles (id_salon, nom_prestation, description, photo_url, delai_livraison_jours) VALUES ($1, $2, $3, $4, $5) RETURNING id_protocole`,
-            [req.user.id_salon, nom_prestation, description, photo_url, delai_livraison_jours || 3]
+            `INSERT INTO protocoles (id_salon, nom_prestation, etapes, medias, tags, delai_livraison_jours) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_protocole`,
+            [req.user.id_salon, nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3]
         );
         const idProto = protoRes.rows[0].id_protocole;
 
