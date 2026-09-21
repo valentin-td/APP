@@ -69,8 +69,8 @@ function App() {
   const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], delai_livraison_jours: 3, ingredients: [] });
   const [ingredientTemp, setIngredientTemp] = useState({ id_article: '', quantite_necessaire: '' });
   const [etapeTemp, setEtapeTemp] = useState({ texte: '', timer_min: '' });
-  const [protocoleVisible, setProtocoleVisible] = useState(null); // Modale Agenda (Employé)
-  const [modeEditionProtocole, setModeEditionProtocole] = useState(null); // Gère le panneau droit ('NEW' ou un objet)
+  const [protocoleVisible, setProtocoleVisible] = useState(null); 
+  const [modeEditionProtocole, setModeEditionProtocole] = useState(null); 
   const [rechercheProtocole, setRechercheProtocole] = useState('');
   
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
@@ -87,7 +87,7 @@ function App() {
 
   const [toast, setToast] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
-  const [annulationDialog, setAnnulationDialog] = useState(null); // { id_ticket, motif }
+  const [annulationDialog, setAnnulationDialog] = useState(null);
 
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
@@ -112,10 +112,8 @@ function App() {
   const [posStep, setPosStep] = useState('employee'); 
   const [posEmploye, setPosEmploye] = useState(null);
   const [posType, setPosType] = useState('PRESTATION'); 
-  // === NOUVEAU : RECHERCHE CAISSE ===
   const [rechercheCaisse, setRechercheCaisse] = useState('');
 
-  // Algorithme Fuzzy Search : Enlève les accents, les espaces et les caractères spéciaux
   const nettoyerTexteRecherche = (texte) => {
       if (!texte) return '';
       return texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
@@ -162,7 +160,7 @@ function App() {
   };
   const resetToToday = () => setCurrentDate(new Date());
 
-  const [filtresEmployes, setFiltresEmployes] = useState([]); // [] = Affiche toute l'équipe
+  const [filtresEmployes, setFiltresEmployes] = useState([]); 
   const [rdvSelectionne, setRdvSelectionne] = useState(null); 
   const [isEditingRdv, setIsEditingRdv] = useState(false);
   const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '' });
@@ -205,7 +203,6 @@ function App() {
       }
   };
 
-  // --- NOUVEAU : GESTION DES PHOTOS POUR LES PROTOCOLES ---
   const handleImageUploadProtocole = (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -215,7 +212,6 @@ function App() {
       }
   };
 
-  // --- MÉCANIQUE OFFLINE ANTI-BUG iOS ---
   useEffect(() => {
       const handleOnline = () => { setIsOffline(false); syncOfflineTickets(); };
       const handleOffline = () => { setIsOffline(true); setMethodePaiement('ESPECES'); }; 
@@ -298,7 +294,7 @@ function App() {
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
-    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe'); // CHARGEMENT PROTOCOLES
+    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
 
     if (decodeToken(token)?.id_salon === 38) {
         fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
@@ -327,14 +323,12 @@ function App() {
           const endStr = formatDateInput(joursSemaine[joursSemaine.length - 1]);
           fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData');
           
-          // L'employé a besoin des protocoles pour les consulter dans son agenda
           if (decodeToken(token)?.role === 'employe') {
               fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
           }
       }
   }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
-  // CORRECTION : SOCKET.IO SEULEMENT POUR RDV & PAIEMENT
   useEffect(() => { 
       if (token && !isAbonnementInactif) { 
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
@@ -357,9 +351,6 @@ function App() {
       } 
   }, [token, isAbonnementInactif, isOffline]);
 
-  // =========================================================================
-  // NOUVEAU MOTEUR IA : 100% INFAILLIBLE, 0% CACHE + SSE INSTANTANÉ
-  // =========================================================================
   const verifierTachesIAEnBase = async () => {
       if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
       try {
@@ -452,7 +443,6 @@ function App() {
           }
           
           showToast("Action de l'IA confirmée !", "success");
-          
           setModalIA(null);
           setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
           setRefreshTrigger(prev => prev + 1); 
@@ -467,7 +457,6 @@ function App() {
               method: 'POST',
               headers: getAuthHeaders()
           });
-          
           showToast("Tâche ignorée", "info");
           setModalIA(null);
           setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
@@ -1458,6 +1447,8 @@ function App() {
                           </div>
                       </div>
                   )}
+                </div>
+              )}
 
               {role === 'gerant' && activeTab === 'accueil' && (
                 <>
@@ -1737,11 +1728,6 @@ function App() {
                       <ThemeToggle />
                   </div>
                   <span className="date-subtitle">Remplissez votre base de données</span>
-
-                  {/* ========================================================= */}
-                  {/* --- NOUVEAU MODULE : PROTOCOLES & RECETTES (BOM) --- */}
-                  {/* ========================================================= */}
-                  
                   
                   <div className="section-titre" style={{marginTop: '32px'}}>Catalogue (Prestations & Produits)</div>
                   <div className="carte scan-carte">
