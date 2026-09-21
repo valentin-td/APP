@@ -26,6 +26,38 @@ const groq = new OpenAI({
 const http = require('http');
 const { Server } = require('socket.io');
 
+// =========================================================================
+// --- MOTEUR DE CRYPTAGE RGPD (AES-256-CBC) ---
+// =========================================================================
+const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET || 'stack_secret_de_secours_absolu', 'salt', 32);
+const ALGORITHM = 'aes-256-cbc';
+
+function chiffrer(text) {
+    if (!text) return text;
+    try {
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return iv.toString('hex') + ':' + encrypted;
+    } catch (e) { return text; }
+}
+
+function dechiffrer(text) {
+    // Rétrocompatibilité : si le texte ne contient pas de ":" (le séparateur de notre IV), 
+    // c'est qu'il est encore en clair dans l'ancienne version de la DB.
+    if (!text || !text.includes(':')) return text; 
+    try {
+        const textParts = text.split(':');
+        const iv = Buffer.from(textParts.shift(), 'hex');
+        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+        const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) { return text; }
+}
+
 console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
 app.use(cors());
@@ -434,10 +466,12 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 app.post('/api/settings', verifierToken, async (req, res) => { 
     const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture } = req.body; 
     try { 
+        // CRYPTAGE DU MOT DE PASSE AVANT SAUVEGARDE
+        const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
+        
         const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11 WHERE id_salon = $12`; 
-        await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, req.user.id_salon]); 
-        // On journalise uniquement la LISTE des champs modifiés, jamais leur valeur
-        // (certains, comme mot_de_passe_email, sont des secrets).
+        await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, req.user.id_salon]); 
+        
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
@@ -446,7 +480,14 @@ app.post('/api/settings', verifierToken, async (req, res) => {
 app.get('/api/settings', verifierToken, async (req, res) => { 
     try { 
         const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); 
-        res.json(result.rowCount > 0 ? result.rows[0] : {}); 
+        if (result.rowCount > 0) {
+            let config = result.rows[0];
+            // DÉCRYPTAGE À LA VOLÉE POUR L'AFFICHAGE FRONTEND
+            config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email); 
+            res.json(config);
+        } else {
+            res.json({});
+        }
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }
 });
 
@@ -752,7 +793,8 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
 
         if (methode === 'email') {
             if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
-            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: config.mot_de_passe_app_email } });
+            // DÉCRYPTAGE À LA VOLÉE POUR NODEMAILER
+            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: dechiffrer(config.mot_de_passe_app_email) } });
             await transporter.sendMail({ from: `"${config.nom_salon}" <${config.email_reception_factures}>`, to: email, subject: `Votre reçu - ${config.nom_salon}`, text: textRecap });
             if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
         } else if (methode === 'sms') {
@@ -1129,7 +1171,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             const pdfData = Buffer.concat(buffers); 
             if (salonConfig && salonConfig.email_reception_factures && salonConfig.mot_de_passe_app_email) {
                 try {
-                    let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: salonConfig.mot_de_passe_app_email } });
+                    // DÉCRYPTAGE À LA VOLÉE POUR NODEMAILER
+                    let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: dechiffrer(salonConfig.mot_de_passe_app_email) } });
                     await transporter.sendMail({
                         from: `"SaaS Caisse" <${salonConfig.email_reception_factures}>`, to: salonConfig.email_reception_factures, 
                         subject: '📊 Liasse Comptable Mensuelle', text: 'Bonjour, \nVeuillez trouver en pièce jointe la liasse comptable du mois avec le détail des encaissements.',
@@ -1187,7 +1230,8 @@ async function executerRobotComptable() {
 
         const salonsResult = await clientDB.query('SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL');
         for (let salon of salonsResult.rows) {
-            const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: salon.email_reception_factures, pass: salon.mot_de_passe_app_email }, logger: false });
+            // DÉCRYPTAGE À LA VOLÉE POUR IMAPFLOW
+            const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) }, logger: false });
             try {
                 await imapClient.connect();
                 let lock = await imapClient.getMailboxLock('INBOX');
