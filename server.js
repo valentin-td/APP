@@ -1300,28 +1300,73 @@ cron.schedule('0 9 * * *', async () => {
     try {
         const salons = await pool.query("SELECT * FROM configuration_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''");
         for (let salon of salons.rows) {
-            if (salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0) {
-                const clientsInactifs = await pool.query(`
-                    SELECT c.* FROM clients c
-                    LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
-                    WHERE c.id_salon = $1 
-                    AND c.derniere_visite <= NOW() - INTERVAL '${salon.fidelite_delai_sms} days'
-                    AND r.id_rdv IS NULL
-                `, [salon.id_salon]);
+            const delaiFixe = salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0 ? salon.fidelite_delai_sms : 60;
 
-                for (let client of clientsInactifs.rows) {
-                    if (!client.telephone) continue;
+            // 1. Relance SMS Intelligente (Algorithme de Fréquence)
+            // On calcule dynamiquement la moyenne de jours entre chaque visite via SQL (LAG).
+            // Le LEFT JOIN sur rendez_vous vérifie s'il y a un RDV futur (Filtre Anti-Spam).
+            const queryClients = `
+                WITH Visites AS (
+                    SELECT id_client, DATE(date_creation) as date_visite
+                    FROM tickets
+                    WHERE id_salon = $1 AND statut != 'ANNULE' AND est_compense = FALSE
+                    GROUP BY id_client, DATE(date_creation)
+                ),
+                Ecarts AS (
+                    SELECT id_client,
+                           date_visite - LAG(date_visite) OVER (PARTITION BY id_client ORDER BY date_visite) as jours_ecart
+                    FROM Visites
+                ),
+                Moyennes AS (
+                    SELECT id_client, AVG(jours_ecart) as moyenne_jours, COUNT(jours_ecart) as nb_ecarts
+                    FROM Ecarts
+                    WHERE jours_ecart IS NOT NULL
+                    GROUP BY id_client
+                )
+                SELECT c.*,
+                       COALESCE(m.moyenne_jours, 0) as moyenne_jours,
+                       COALESCE(m.nb_ecarts, 0) as nb_ecarts
+                FROM clients c
+                LEFT JOIN Moyennes m ON c.id_client = m.id_client
+                LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
+                WHERE c.id_salon = $1
+                  AND r.id_rdv IS NULL
+                  AND c.telephone IS NOT NULL
+                  AND c.derniere_visite IS NOT NULL
+            `;
+            const clientsResult = await pool.query(queryClients, [salon.id_salon]);
+            const now = new Date();
+
+            for (let client of clientsResult.rows) {
+                const derniereVisite = new Date(client.derniere_visite);
+                const joursDepuisVisite = (now - derniereVisite) / (1000 * 60 * 60 * 24);
+
+                let seuilRelance;
+                if (client.nb_ecarts > 0 && client.moyenne_jours > 0) {
+                    // Analyse dynamique : Moyenne des visites + 20% de marge de grâce
+                    seuilRelance = parseFloat(client.moyenne_jours) * 1.2;
+                } else {
+                    // Protection : Si une seule visite, on utilise le délai fixe du salon
+                    seuilRelance = delaiFixe;
+                }
+
+                // On déclenche le SMS uniquement le jour exact où le seuil est franchi
+                // (Fenêtre stricte de 1 jour pour éviter d'envoyer le même SMS tous les matins)
+                if (joursDepuisVisite >= seuilRelance && joursDepuisVisite < (seuilRelance + 1)) {
                     let message = "";
                     if (salon.fidelite_type === 'TAMPONS') {
                         const restants = salon.fidelite_tampons_seuil - (client.tampons_fidelite || 0);
                         message = `Hey ${client.prenom || client.nom} ! Cela fait un moment qu'on ne t'a pas vu chez ${salon.sms_sender_name}. Plus que ${restants} passage(s) avant ta récompense ! Prends vite rendez-vous : ${salon.lien_google_maps}`;
                     } else if (salon.fidelite_type === 'POINTS') {
                         message = `Bonjour ${client.prenom || client.nom}, votre fidélité paie ! Vous avez ${client.points_fidelite || 0} points. Venez en profiter chez ${salon.sms_sender_name}. RDV: ${salon.lien_google_maps}`;
+                    } else {
+                        message = `Bonjour ${client.prenom || client.nom}, ça fait longtemps ! Pensez à prendre soin de vous chez ${salon.sms_sender_name}. Prenez rendez-vous ici : ${salon.lien_google_maps}`;
                     }
                     if (message !== "") await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, message);
                 }
             }
 
+            // 2. Anniversaires (avec nouvel incitatif croisé)
             const anniversaires = await pool.query(`
                 SELECT * FROM clients 
                 WHERE id_salon = $1 
@@ -1331,11 +1376,18 @@ cron.schedule('0 9 * * *', async () => {
 
             for (let client of anniversaires.rows) {
                 if (client.telephone) {
-                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 ${salon.sms_sender_name} a une surprise pour vous aujourd'hui. Prenez RDV : ${salon.lien_google_maps}`);
+                    await envoyerSMS(
+                        salon.brevo_api_key, 
+                        salon.sms_sender_name, 
+                        client.telephone, 
+                        `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`
+                    );
                 }
             }
         }
-    } catch (err) {}
+    } catch (err) {
+        console.error("Erreur Cron SMS:", err);
+    }
 });
 
 async function envoyerSMS(apiKey, sender, phone, text) {
@@ -1346,16 +1398,6 @@ async function envoyerSMS(apiKey, sender, phone, text) {
         });
     } catch(e) {}
 }
-
-app.get('/api/admin/nettoyer-fantomes', async (req, res) => {
-    try {
-        // On efface les identifiants e-mail de TOUS les salons, SAUF le tien (le 38)
-        await pool.query('UPDATE configuration_salon SET email_reception_factures = NULL, mot_de_passe_app_email = NULL WHERE id_salon != 38');
-        res.json({ message: "🧹 Fantômes nettoyés ! Seul le salon 38 a désormais accès au robot." });
-    } catch (e) {
-        res.status(500).json({ erreur: e.message });
-    }
-});
 
 // =========================================================================
 // --- GOD MODE (SUPER-ADMIN) ---
