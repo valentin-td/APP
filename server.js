@@ -44,8 +44,6 @@ function chiffrer(text) {
 }
 
 function dechiffrer(text) {
-    // Rétrocompatibilité : si le texte ne contient pas de ":" (le séparateur de notre IV), 
-    // c'est qu'il est encore en clair dans l'ancienne version de la DB.
     if (!text || !text.includes(':')) return text; 
     try {
         const textParts = text.split(':');
@@ -169,6 +167,23 @@ pool.query(`
         date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS protocoles (
+        id_protocole SERIAL PRIMARY KEY,
+        id_salon INT,
+        nom_prestation VARCHAR(255),
+        description TEXT,
+        photo_url TEXT,
+        delai_livraison_jours INT DEFAULT 3,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS recettes_articles (
+        id_recette SERIAL PRIMARY KEY,
+        id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE,
+        id_article INT,
+        quantite_necessaire NUMERIC(10,2) DEFAULT 1
+    );
+
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
@@ -245,7 +260,7 @@ pool.query(`
                 END IF;
             END $$;
         `);
-        console.log("✅ Base de données prête (Paiement, IA, CRM, NF525/ISCA)");
+        console.log("✅ Base de données prête (Paiement, IA, CRM, NF525/ISCA, Protocoles)");
     } catch (e) {
         // Si votre table clotures_caisse ne possède pas de colonne "date_creation",
         // adaptez cette étape de backfill au nom réel de votre colonne de date.
@@ -276,11 +291,6 @@ const verifierToken = (req, res, next) => {
 // =========================================================================
 // --- NF525 / ISCA : JOURNAL DES ÉVÉNEMENTS TECHNIQUES (JET) ---
 // =========================================================================
-// Chaque événement est haché avec le hash de l'événement précédent du même
-// salon (chaînage), à la manière du hash_ticket déjà utilisé sur les tickets.
-// Un verrou consultatif Postgres (pg_advisory_xact_lock) évite qu'une écriture
-// concurrente sur le même salon ne casse la chaîne (deux requêtes lisant le
-// même "hash précédent" en même temps).
 async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
     try {
         await dbClient.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
@@ -300,17 +310,10 @@ async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
         );
         return hashJet;
     } catch (e) {
-        // Le JET ne doit jamais faire planter une action métier : on logue et on continue.
         console.error(`❌ Erreur JET (${action}):`, e.message);
         return null;
     }
 }
-// NOTE IMPORTANTE : pg_advisory_xact_lock ne se libère qu'à la fin de la
-// transaction en cours. Quand enregistrerJET est appelé avec un client déjà
-// "BEGIN" (clientDB), le verrou tient jusqu'au COMMIT/ROLLBACK de cette
-// transaction : c'est voulu, cela protège aussi les JET liés à un ticket.
-// Quand il est appelé avec le pool nu (hors transaction), le verrou est libéré
-// dès la fin de cette requête unique.
 
 // =========================================================================
 // --- NF525 : BLOCAGE Z — interdit l'encaissement si un jour antérieur
@@ -480,7 +483,6 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 app.post('/api/settings', verifierToken, async (req, res) => { 
     const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives } = req.body; 
     try { 
-        // CRYPTAGE DU MOT DE PASSE AVANT SAUVEGARDE
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
         
         const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13 WHERE id_salon = $14`; 
@@ -496,79 +498,12 @@ app.get('/api/settings', verifierToken, async (req, res) => {
         const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); 
         if (result.rowCount > 0) {
             let config = result.rows[0];
-            // DÉCRYPTAGE À LA VOLÉE POUR L'AFFICHAGE FRONTEND
             config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email); 
             res.json(config);
         } else {
             res.json({});
         }
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }
-});
-
-app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
-    const id_client = req.params.id; const id_salon = req.user.id_salon;
-    try {
-        const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
-        if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
-        
-        // On lit désormais le nom "figé" au moment de la vente (nom_article_snapshot)
-        // plutôt que le nom actuel du catalogue, et on dérive l'affichage "ANNULE"
-        // du flag non-fiscal est_compense (le ticket d'origine n'est jamais modifié
-        // dans ses montants : voir écritures de compensation).
-        const achatsRes = await pool.query(`SELECT t.id_ticket, (CASE WHEN t.est_compense THEN 'ANNULE' ELSE 'VALIDE' END) as statut, t.date_creation, COALESCE(lt.nom_article_snapshot, c.nom) as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 AND t.type_ticket != 'ANNULATION' ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
-        const rdvRes = await pool.query(`SELECT date_heure_debut, prestation, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.telephone_client = $1 AND r.id_salon = $2 ORDER BY r.date_heure_debut DESC LIMIT 20`, [clientRes.rows[0].telephone, id_salon]);
-        const gainsRes = await pool.query(`SELECT date_creation, total_ttc FROM tickets WHERE id_client = $1 AND id_salon = $2 AND recompense_utilisee = TRUE AND statut != 'ANNULE' AND est_compense = FALSE ORDER BY date_creation DESC LIMIT 20`, [id_client, id_salon]);
-
-        res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows, gains: gainsRes.rows });
-    } catch (e) { res.status(500).json({ erreur: "Erreur historique." }); }
-});
-
-app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
-    try {
-        await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', [req.body.notes, req.params.id, req.user.id_salon]);
-        res.json({ message: "Notes sauvegardées" });
-    } catch (e) { res.status(500).json({ erreur: "Erreur sauvegarde." }); }
-});
-
-app.post('/api/rdv', verifierToken, async (req, res) => {
-    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes } = req.body;
-    try {
-        await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30]);
-        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
-        res.status(201).json({ message: "RDV ajouté." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur création RDV." }); }
-});
-
-app.put('/api/rdv/:id', verifierToken, async (req, res) => {
-    const { id_employe, prestation, date_heure_debut } = req.body;
-    try {
-        await pool.query(
-            `UPDATE rendez_vous SET id_employe = $1, prestation = $2, date_heure_debut = $3 WHERE id_rdv = $4 AND id_salon = $5`, 
-            [id_employe, prestation, date_heure_debut, req.params.id, req.user.id_salon]
-        );
-        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
-        res.json({ message: "Rendez-vous modifié." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur modification RDV." }); }
-});
-
-app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
-        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
-        res.json({ message: "Rendez-vous supprimé." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
-});
-
-app.get('/api/planning', verifierToken, async (req, res) => {
-    const startDate = req.query.startDate; const endDate = req.query.endDate;
-    try {
-        let query = `SELECT r.*, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.id_salon = $1 AND DATE(r.date_heure_debut) >= $2 AND DATE(r.date_heure_debut) <= $3`;
-        const params = [req.user.id_salon, startDate, endDate];
-        if (req.user.role === 'employe') { query += ` AND r.id_employe = $4`; params.push(req.user.id_employe); }
-        query += ` ORDER BY r.date_heure_debut ASC`;
-        const result = await pool.query(query, params);
-        res.json(result.rows);
-    } catch (e) { res.status(500).json({ erreur: "Erreur lecture agenda." }); }
 });
 
 // =========================================================================
@@ -596,16 +531,13 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             paymentIntentId = paymentIntent.id;
             reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
 
-            // --- AUTO-SIMULATION : Bip la carte virtuellement (Uniquement en mode test) ---
             if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
                 try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
             }
 
-            // --- NOUVELLE LOGIQUE : ATTENTE DE LA CARTE DU CLIENT ---
             let intentStatus = paymentIntent.status;
             let attempts = 0;
             
-            // Le serveur vérifie Stripe toutes les 2 secondes (pendant 1 minute max)
             while (intentStatus === 'requires_payment_method' && attempts < 30) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
@@ -614,14 +546,11 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             }
 
             if (intentStatus === 'requires_capture') {
-                // Le TPE a validé la carte, on capture l'argent définitivement !
                 await stripe.paymentIntents.capture(paymentIntentId);
             } else {
-                // Timeout ou abandon du client -> on annule l'ordre sur le TPE physique
                 try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
                 throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
             }
-            // --------------------------------------------------------
         }
 
         await clientDB.query('BEGIN'); 
@@ -635,9 +564,6 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
 
-        const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montant}-${previousHash}`).digest('hex');
-        await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
-
         const employeResult = await clientDB.query('SELECT * FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
         const employe = employeResult.rowCount > 0 ? employeResult.rows[0] : null;
 
@@ -645,10 +571,6 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             for (let ligne of lignes) {
                 const total_ligne = ligne.quantite * ligne.prix_unitaire;
 
-                // --- Snapshot NF525 : on fige le nom et le taux de TVA de l'article
-                // tels qu'ils sont AU MOMENT DE LA VENTE. Une modification ou une
-                // suppression ultérieure du catalogue ne doit jamais réécrire
-                // l'historique des tickets déjà émis.
                 const articleSnapshot = await clientDB.query('SELECT nom, taux_tva FROM catalogue WHERE id_article = $1 AND id_salon = $2', [ligne.id_article, id_salon]);
                 const nomSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].nom : (ligne.nom || 'Article supprimé');
                 const tvaSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].taux_tva : 20.00;
@@ -661,6 +583,19 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
                 let type_article = 'PRESTATION'; 
                 if (stockResult.rowCount > 0) type_article = stockResult.rows[0].type_article;
                 
+                // === DÉSTOCKAGE AUTOMATIQUE DES INGRÉDIENTS (RECETTES) ===
+                if (type_article === 'PRESTATION') {
+                    const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [nomSnapshot, id_salon]);
+                    if (protocoleRes.rowCount > 0) {
+                        const idProto = protocoleRes.rows[0].id_protocole;
+                        const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
+                        for (let ing of ingredients.rows) {
+                            const quantite_a_deduire = ing.quantite_necessaire * ligne.quantite;
+                            await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_deduire, ing.id_article, id_salon]);
+                        }
+                    }
+                }
+
                 if (employe) {
                     const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
                     const montant_commission = (total_ligne * (taux / 100)).toFixed(2);
@@ -669,6 +604,9 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
                 }
             }
         }
+
+        const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montant}-${previousHash}`).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
 
         if (id_client) {
             await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1`, [id_client]);
@@ -715,9 +653,6 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
     try {
         await clientDB.query('BEGIN');
 
-        // Le ticket d'origine ne doit JAMAIS être modifié dans ses montants
-        // (inaltérabilité NF525). On vérifie seulement qu'il existe, qu'il
-        // s'agit bien d'une vente, et qu'il n'a pas déjà été compensé.
         const ticketRes = await clientDB.query(
             "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION' AND est_compense = FALSE",
             [id_ticket, id_salon]
@@ -730,7 +665,6 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
             [id_ticket]
         );
 
-        // --- Génération du ticket de compensation (montant et quantités inversés) ---
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
         const numeroCompensation = `TKT-AN-` + Date.now();
@@ -746,12 +680,8 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
         const newHash = crypto.createHash('sha256').update(`${idTicketCompensation}-${numeroCompensation}-${montantCompensation}-${previousHash}`).digest('hex');
         await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idTicketCompensation]);
 
-        // On marque l'origine comme "compensée" : un flag de suivi non-fiscal,
-        // qui ne touche ni au montant, ni aux dates, ni aux lignes du ticket.
         await clientDB.query("UPDATE tickets SET est_compense = TRUE WHERE id_ticket = $1", [id_ticket]);
 
-        // Lignes de compensation : mêmes snapshots (nom, prix TTC, taux de TVA),
-        // quantités et montants inversés.
         for (const ligne of lignesOrigine.rows) {
             await clientDB.query(
                 `INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot)
@@ -759,10 +689,19 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
                 [idTicketCompensation, ligne.id_article, -ligne.quantite, ligne.prix_unitaire_ttc, -ligne.total_ligne_ttc, id_salon, ligne.nom_article_snapshot, ligne.taux_tva_snapshot]
             );
             await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [ligne.quantite, ligne.id_article]);
+            
+            // REMISE EN STOCK DES RECETTES SI PRÉSENTES
+            const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [ligne.nom_article_snapshot, id_salon]);
+            if (protocoleRes.rowCount > 0) {
+                const idProto = protocoleRes.rows[0].id_protocole;
+                const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
+                for (let ing of ingredients.rows) {
+                    const quantite_a_restaurer = ing.quantite_necessaire * ligne.quantite;
+                    await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_restaurer, ing.id_article, id_salon]);
+                }
+            }
         }
 
-        // Commissions : écriture de compensation négative plutôt qu'une
-        // réécriture de la commission d'origine.
         const commissionsOrigine = await clientDB.query("SELECT * FROM commissions WHERE id_ticket = $1", [id_ticket]);
         for (const c of commissionsOrigine.rows) {
             await clientDB.query(
@@ -807,7 +746,6 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
 
         if (methode === 'email') {
             if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
-            // DÉCRYPTAGE À LA VOLÉE POUR NODEMAILER
             let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: dechiffrer(config.mot_de_passe_app_email) } });
             await transporter.sendMail({ from: `"${config.nom_salon}" <${config.email_reception_factures}>`, to: email, subject: `Votre reçu - ${config.nom_salon}`, text: textRecap });
             if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
@@ -830,10 +768,8 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     try {
         await clientDB.query('BEGIN');
         
-        // Verrou pour éviter les doubles exécutions simultanées
         await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
 
-        // 1. Trouver le jour LE PLUS ANCIEN non clôturé
         const jourRes = await clientDB.query(
             `SELECT MIN(DATE(t.date_creation)) as jour_non_cloture
              FROM tickets t
@@ -845,7 +781,6 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             [id_salon]
         );
 
-        // Si on trouve un vieux jour avec des tickets, on le cible. Sinon, on cible aujourd'hui.
         let dateACloturerStr;
         if (jourRes.rowCount > 0 && jourRes.rows[0].jour_non_cloture) {
              const d = new Date(jourRes.rows[0].jour_non_cloture);
@@ -855,18 +790,15 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
              dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         }
 
-        // 2. Vérifier si ce jour précis est déjà clôturé (sécurité)
         const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2', [id_salon, dateACloturerStr]);
         if (dejaCloture.rowCount > 0) throw new Error(`La caisse pour la date du ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')} a déjà été clôturée.`);
 
-        // 3. Calculs financiers
         const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
         const totalJour = caResult.rows[0].total;
 
         const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
         const grandTotalPerpetuel = grandTotalResult.rows[0].total;
 
-        // 4. Hachage et chaînage
         const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1', [id_salon]);
         const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
         const dateISO = new Date().toISOString();
@@ -874,7 +806,6 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             .update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO}`)
             .digest('hex');
 
-        // 5. Enregistrement en base de données
         await clientDB.query(
             'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent) VALUES ($1, $2, $3, $4, $5, $6)',
             [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent]
@@ -890,9 +821,6 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     } finally { clientDB.release(); }
 });
 
-// =========================================================================
-// --- NF525 : ARCHIVE FISCALE (export CSV signé) ---
-// =========================================================================
 app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     const { date_debut, date_fin } = req.query;
@@ -936,10 +864,6 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
                 .map(echapper).join(';') + '\r\n';
         }
 
-        // Signature cryptographique globale de l'archive (HMAC-SHA256), pour
-        // prouver a posteriori que le fichier exporté n'a pas été altéré.
-        // ⚠️ Nécessite une variable d'environnement dédiée ARCHIVE_SIGNING_SECRET
-        // (ne réutilisez pas JWT_SECRET pour ne pas mélanger les usages).
         const secret = process.env.ARCHIVE_SIGNING_SECRET || process.env.JWT_SECRET;
         const signatureArchive = crypto.createHmac('sha256', secret).update(csv).digest('hex');
         csv += `\r\nSIGNATURE_ARCHIVE;${signatureArchive}\r\n`;
@@ -948,7 +872,7 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
 
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="archive-fiscale-${id_salon}-${date_debut}_${date_fin}.csv"`);
-        res.send('\uFEFF' + csv); // BOM pour un bon rendu des accents dans Excel
+        res.send('\uFEFF' + csv);
     } catch (e) {
         console.error("❌ Erreur export archive fiscale:", e);
         res.status(500).json({ erreur: "Erreur lors de la génération de l'archive fiscale." });
@@ -1122,21 +1046,17 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             let datetime = new Date().toISOString();
             if (donnees.date_heure_debut) {
                 datetime = donnees.date_heure_debut;
-                // Si l'input n'a pas mis les secondes, on les rajoute pour PostgreSQL
                 if (datetime.length === 16) datetime += ':00'; 
             }
             
             const rawEmployeId = parseInt(donnees.id_employe);
             const idEmploye = isNaN(rawEmployeId) ? null : rawEmployeId;
             
-            // 1. Ajoute le RDV
             await clientDB.query(
                 `INSERT INTO rendez_vous (id_salon, nom_client, telephone_client, prestation, date_heure_debut, id_employe, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, 30)`, 
                 [id_salon, donnees.nom_client, donnees.telephone, donnees.prestation, datetime, idEmploye]
             );
             
-            // 2. Crée le profil client dans le CRM (seulement si le numéro existe) 
-            // ... (fin de la logique de création du RDV et du Client)
             if (donnees.telephone && donnees.telephone.trim() !== '') {
                 await clientDB.query(
                     "INSERT INTO clients (nom, telephone, id_salon) SELECT $1::varchar, $2::varchar, $3::int WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
@@ -1205,7 +1125,6 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             const pdfData = Buffer.concat(buffers); 
             if (salonConfig && salonConfig.email_reception_factures && salonConfig.mot_de_passe_app_email) {
                 try {
-                    // DÉCRYPTAGE À LA VOLÉE POUR NODEMAILER
                     let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: dechiffrer(salonConfig.mot_de_passe_app_email) } });
                     await transporter.sendMail({
                         from: `"SaaS Caisse" <${salonConfig.email_reception_factures}>`, to: salonConfig.email_reception_factures, 
@@ -1243,7 +1162,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
     } catch (erreur) { res.status(500).send("Erreur lors de la génération du PDF."); }
 });
 
-let isRobotRunning = false; // VERROU ANTI-CLONES
+let isRobotRunning = false;
 
 async function executerRobotComptable() {
     if (isRobotRunning) return;
@@ -1264,7 +1183,6 @@ async function executerRobotComptable() {
 
         const salonsResult = await clientDB.query('SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL');
         for (let salon of salonsResult.rows) {
-            // DÉCRYPTAGE À LA VOLÉE POUR IMAPFLOW
             const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) }, logger: false });
             try {
                 await imapClient.connect();
@@ -1279,7 +1197,6 @@ async function executerRobotComptable() {
                         const dejaTraite = await clientDB.query('SELECT message_id FROM robot_memoire_emails WHERE message_id = $1 AND id_salon = $2', [idUnique, salon.id_salon]);
                         if (dejaTraite.rows.length > 0) continue;
 
-                        // SÉCURITÉ ABSOLUE : On grave dans la mémoire AVANT d'appeler l'IA pour bloquer les clones
                         await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
 
                         const texteEmail = mailParsi.text || mailParsi.html || ""; 
@@ -1316,13 +1233,10 @@ async function executerRobotComptable() {
         console.log("Erreur globale robot :", erreur.message);
     } finally { 
         clientDB.release(); 
-        isRobotRunning = false; // On retire le verrou
+        isRobotRunning = false; 
     }
 }
-// Le robot passe toutes les 10 minutes de 08h00 à 19h50
 cron.schedule('*/10 8-19 * * *', () => { executerRobotComptable(); });
-
-// Le robot passe une seule fois la nuit (à 02h00 du matin)
 cron.schedule('0 2 * * *', () => { executerRobotComptable(); });
 app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot IA & Comptable lancé." }); });
 
@@ -1363,7 +1277,61 @@ app.delete('/api/taches/:id', verifierToken, async (req, res) => {
 
 
 // =========================================================================
-// --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES ---
+// --- PROTOCOLES & RECETTES ---
+// =========================================================================
+app.get('/api/protocoles', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT p.*, 
+                   COALESCE(json_agg(json_build_object('id_article', r.id_article, 'quantite_necessaire', r.quantite_necessaire, 'nom', c.nom)) FILTER (WHERE r.id_article IS NOT NULL), '[]') as ingredients
+            FROM protocoles p
+            LEFT JOIN recettes_articles r ON p.id_protocole = r.id_protocole
+            LEFT JOIN catalogue c ON r.id_article = c.id_article
+            WHERE p.id_salon = $1
+            GROUP BY p.id_protocole
+            ORDER BY p.nom_prestation ASC
+        `, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture protocoles." }); }
+});
+
+app.post('/api/protocoles', verifierToken, async (req, res) => {
+    const { nom_prestation, description, photo_url, delai_livraison_jours, ingredients } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const protoRes = await clientDB.query(
+            `INSERT INTO protocoles (id_salon, nom_prestation, description, photo_url, delai_livraison_jours) VALUES ($1, $2, $3, $4, $5) RETURNING id_protocole`,
+            [req.user.id_salon, nom_prestation, description, photo_url, delai_livraison_jours || 3]
+        );
+        const idProto = protoRes.rows[0].id_protocole;
+
+        if (ingredients && ingredients.length > 0) {
+            for (let ing of ingredients) {
+                await clientDB.query(
+                    `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire) VALUES ($1, $2, $3)`,
+                    [idProto, ing.id_article, ing.quantite_necessaire]
+                );
+            }
+        }
+        await clientDB.query('COMMIT');
+        res.status(201).json({ message: "Protocole ajouté avec succès !" });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: "Erreur création protocole." });
+    } finally { clientDB.release(); }
+});
+
+app.delete('/api/protocoles/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query("DELETE FROM protocoles WHERE id_protocole = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Protocole supprimé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression protocole." }); }
+});
+
+
+// =========================================================================
+// --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES & PRÉDICTIONS ---
 // =========================================================================
 cron.schedule('0 9 * * *', async () => {
     try {
@@ -1371,9 +1339,6 @@ cron.schedule('0 9 * * *', async () => {
         for (let salon of salons.rows) {
             const delaiFixe = salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0 ? salon.fidelite_delai_sms : 60;
 
-            // 1. Relance SMS Intelligente (Algorithme de Fréquence)
-            // On calcule dynamiquement la moyenne de jours entre chaque visite via SQL (LAG).
-            // Le LEFT JOIN sur rendez_vous vérifie s'il y a un RDV futur (Filtre Anti-Spam).
             const queryClients = `
                 WITH Visites AS (
                     SELECT id_client, DATE(date_creation) as date_visite
@@ -1412,15 +1377,11 @@ cron.schedule('0 9 * * *', async () => {
 
                 let seuilRelance;
                 if (client.nb_ecarts > 0 && client.moyenne_jours > 0) {
-                    // Analyse dynamique : Moyenne des visites + 20% de marge de grâce
                     seuilRelance = parseFloat(client.moyenne_jours) * 1.2;
                 } else {
-                    // Protection : Si une seule visite, on utilise le délai fixe du salon
                     seuilRelance = delaiFixe;
                 }
 
-                // On déclenche le SMS uniquement le jour exact où le seuil est franchi
-                // (Fenêtre stricte de 1 jour pour éviter d'envoyer le même SMS tous les matins)
                 if (joursDepuisVisite >= seuilRelance && joursDepuisVisite < (seuilRelance + 1)) {
                     let message = "";
                     if (salon.fidelite_type === 'TAMPONS') {
@@ -1435,7 +1396,6 @@ cron.schedule('0 9 * * *', async () => {
                 }
             }
 
-            // 2. Anniversaires (avec nouvel incitatif croisé)
             const anniversaires = await pool.query(`
                 SELECT * FROM clients 
                 WHERE id_salon = $1 
@@ -1454,10 +1414,52 @@ cron.schedule('0 9 * * *', async () => {
                 }
             }
 
+            // =================================================================
+            // 4. MOTEUR PRÉDICTIF D'INVENTAIRE (Protocoles -> Centre d'Action)
+            // =================================================================
+            const rdvsFuturs = await pool.query(`
+                SELECT r.prestation, MIN(r.date_heure_debut) as premier_rdv, COUNT(*) as nb_rdv
+                FROM rendez_vous r
+                WHERE r.id_salon = $1 AND r.date_heure_debut BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+                GROUP BY r.prestation
+            `, [salon.id_salon]);
+
+            for (let rdv of rdvsFuturs.rows) {
+                const protocole = await pool.query(`
+                    SELECT p.id_protocole, p.delai_livraison_jours 
+                    FROM protocoles p 
+                    WHERE p.id_salon = $1 AND p.nom_prestation ILIKE $2 LIMIT 1
+                `, [salon.id_salon, rdv.prestation]);
+
+                if (protocole.rowCount > 0) {
+                    const ingredients = await pool.query(`
+                        SELECT r.id_article, r.quantite_necessaire, c.nom, c.stock_actuel
+                        FROM recettes_articles r
+                        JOIN catalogue c ON r.id_article = c.id_article
+                        WHERE r.id_protocole = $1
+                    `, [protocole.rows[0].id_protocole]);
+
+                    for (let ing of ingredients.rows) {
+                        const besoinTotal = ing.quantite_necessaire * rdv.nb_rdv;
+                        if (ing.stock_actuel < besoinTotal) {
+                            const dateAlerte = new Date(rdv.premier_rdv);
+                            dateAlerte.setDate(dateAlerte.getDate() - (protocole.rows[0].delai_livraison_jours || 3));
+                            
+                            const titreAlerte = `⚠️ Rupture prédictive : ${ing.nom}`;
+                            const descAlerte = `Il vous manque ${besoinTotal - ing.stock_actuel} unité(s) de "${ing.nom}" pour assurer vos ${rdv.nb_rdv} rdv "${rdv.prestation}" prévus d'ici 14j. Commandez aujourd'hui !`;
+                            
+                            const exist = await pool.query(`SELECT 1 FROM taches_actions WHERE id_salon = $1 AND titre = $2 AND statut = 'A_FAIRE'`, [salon.id_salon, titreAlerte]);
+                            if (exist.rowCount === 0) {
+                                await pool.query(`INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')`, [salon.id_salon, titreAlerte, descAlerte, dateAlerte]);
+                            }
+                        }
+                    }
+                }
+            }
+
             // 3. Alertes Tâches Urgentes (Centre d'Action)
             const tachesUrgentes = await pool.query(`SELECT titre, date_echeance FROM taches_actions WHERE id_salon = $1 AND statut = 'A_FAIRE' AND date_echeance <= NOW() + INTERVAL '2 days'`, [salon.id_salon]);
             if (tachesUrgentes.rowCount > 0) {
-                // -> Envoi de l'Email (si configuré)
                 if (process.env.SMTP_USER && process.env.SMTP_PASS) {
                     const gerant = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [salon.id_salon]);
                     if (gerant.rowCount > 0) {
@@ -1466,19 +1468,18 @@ cron.schedule('0 9 * * *', async () => {
                         texteEmail += `\nConnectez-vous à STACK pour les traiter.`;
                         try {
                             let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
-                            await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures...)`, text: texteEmail });
+                            await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures, Stocks...)`, text: texteEmail });
                         } catch(e) {}
                     }
                 }
 
-                // -> Envoi du SMS au Gérant (Si activé + Numéro renseigné + Clé Brevo valide)
                 if (salon.alertes_sms_actives && salon.telephone_gerant && salon.telephone_gerant.trim() !== '' && salon.brevo_api_key) {
                     const smsTexte = `⚠️ STACK : Vous avez ${tachesUrgentes.rowCount} action(s) urgente(s) en attente (ex: ${tachesUrgentes.rows[0].titre}). Connectez-vous pour les traiter !`;
                     await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name || 'STACK', salon.telephone_gerant, smsTexte);
                 }
             }
             
-        } // <-- Ceci est l'accolade fermante de "for (let salon of salons.rows)"
+        } 
     } catch (err) {
         console.error("Erreur Cron SMS:", err);
     }
@@ -1497,7 +1498,6 @@ async function envoyerSMS(apiKey, sender, phone, text) {
 // --- GOD MODE (SUPER-ADMIN) ---
 // =========================================================================
 const verifierSuperAdmin = (req, res, next) => {
-    // Seul le salon 38 (le tien) a le droit d'accéder à ces routes
     if (req.user.id_salon !== 38) {
         return res.status(403).json({ erreur: "Accès refusé. God mode uniquement." });
     }
@@ -1508,7 +1508,7 @@ app.get('/api/superadmin/stats', verifierToken, verifierSuperAdmin, async (req, 
     try {
         const totalSalons = await pool.query("SELECT COUNT(*) as count FROM configuration_salon");
         const activeSalons = await pool.query("SELECT COUNT(*) as count FROM utilisateurs WHERE statut_abonnement = 'actif' AND role = 'gerant'");
-        const mrr = parseInt(activeSalons.rows[0].count) * 49; // 49€ par abonnement actif
+        const mrr = parseInt(activeSalons.rows[0].count) * 49;
         
         res.json({ 
             total_salons: totalSalons.rows[0].count, 
