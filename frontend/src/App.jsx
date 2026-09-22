@@ -572,7 +572,14 @@ function App() {
           } 
       } 
       try { 
-          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newArticle) }); 
+          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { 
+              method: 'POST', 
+              headers: getAuthHeaders(true), 
+              body: JSON.stringify({
+                  ...newArticle,
+                  delai_livraison_jours: parseInt(newArticle.delai_livraison_jours) || 3
+              }) 
+          }); 
           const data = await handleFetchError(res); 
           if (data.message && data.message.includes("Stock mis à jour")) { 
               showToast(data.message, "success"); 
