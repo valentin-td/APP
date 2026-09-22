@@ -632,13 +632,18 @@ function App() {
       if(isOffline) return showToast("Action impossible hors-ligne.", "error");
       if(!nouveauProtocole.nom_prestation) return showToast("Le nom de la prestation est requis.", "error");
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/protocoles', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(nouveauProtocole) });
+          const method = nouveauProtocole.id_protocole ? 'PUT' : 'POST';
+          const url = nouveauProtocole.id_protocole 
+              ? `https://api-salon-backend.onrender.com/api/protocoles/${nouveauProtocole.id_protocole}` 
+              : 'https://api-salon-backend.onrender.com/api/protocoles';
+
+          const res = await fetch(url, { method: method, headers: getAuthHeaders(true), body: JSON.stringify(nouveauProtocole) });
           await handleFetchError(res);
           setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
           setModeEditionProtocole(null);
           chargerTout(); 
-          showToast("Protocole enregistré !", "success");
-      } catch (e) { showToast("Erreur lors de la création.", "error"); }
+          showToast(nouveauProtocole.id_protocole ? "Fiche modifiée !" : "Fiche créée !", "success");
+      } catch (e) { showToast("Erreur lors de la sauvegarde.", "error"); }
   };
 
   const supprimerProtocole = async (id) => {
@@ -1786,7 +1791,25 @@ function App() {
                                   <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
                                   <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
                                       {nouveauProtocole.etapes.map((etape, index) => (
-                                          <div key={etape.id_etape} style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center'}}>
+                                          <div 
+                                              key={etape.id_etape} 
+                                              draggable
+                                              onDragStart={(e) => e.dataTransfer.setData("dragIndex", index)}
+                                              onDragOver={(e) => e.preventDefault()}
+                                              onDrop={(e) => {
+                                                  const dragIndex = Number(e.dataTransfer.getData("dragIndex"));
+                                                  const dropIndex = index;
+                                                  const nouvellesEtapes = [...nouveauProtocole.etapes];
+                                                  const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1);
+                                                  nouvellesEtapes.splice(dropIndex, 0, draggedEtape);
+                                                  setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes });
+                                              }}
+                                              style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center', cursor: 'grab'}}
+                                              title="Maintenez cliqué pour déplacer"
+                                          >
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5}}>
+                                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                              </div>
                                               <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
                                               <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
                                               {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ {etape.timer_min} min</div>}
@@ -1859,7 +1882,7 @@ function App() {
                       
                       {/* VUE 3 : LECTURE D'UNE FICHE EXISTANTE (Plein Écran) */}
                       {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
-                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible' }}>
+                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
                               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
                                   <div>
                                       <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
@@ -1868,7 +1891,17 @@ function App() {
                                           {modeEditionProtocole.tags?.map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
                                       </div>
                                   </div>
-                                  <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>Supprimer la fiche</button>
+                                  <div style={{display: 'flex', gap: '8px'}}>
+                                      <button onClick={() => {
+                                          setNouveauProtocole(modeEditionProtocole); // Charge les données dans le formulaire
+                                          setModeEditionProtocole('NEW'); // Bascule sur la vue éditeur
+                                      }} style={{background: 'var(--btn-primary)', border: 'none', color: 'white', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                          Modifier la fiche
+                                      </button>
+                                      <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                          Supprimer la fiche
+                                      </button>
+                                  </div>
                               </div>
 
                               <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
