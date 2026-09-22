@@ -1750,9 +1750,9 @@ function App() {
                           </div>
                       )}
 
-                      {/* VUE 2 : ÉDITEUR (Plein Écran) */}
+                     {/* VUE 2 : ÉDITEUR (Plein Écran) */}
                       {modeEditionProtocole === 'NEW' && (
-                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible' }}>
+                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
                               <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
                               
                               <div style={{marginBottom: '16px'}}>
