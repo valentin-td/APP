@@ -965,7 +965,46 @@ app.post('/api/employes', verifierToken, async (req, res) => {
 app.delete('/api/employes/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }});
 
 app.get('/api/catalogue', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur catalogue."}); }});
-app.post('/api/catalogue', verifierToken, async (req, res) => { const { nom, type_article, prix, stock_actuel, reference, taux_tva } = req.body; try { const typeArticleFormatte = type_article || 'PRESTATION'; const prixFormatte = parseFloat((prix || "0").toString().replace(',', '.')) || 0; const stockFormatte = parseInt(stock_actuel) || 0; const refFormattee = reference ? reference.trim() : null; const tvaFormattee = (taux_tva !== undefined && taux_tva !== null && taux_tva !== '') ? parseFloat(taux_tva.toString().replace(',', '.')) : 20.00; if (typeArticleFormatte === 'PRODUIT_REVENTE') { if (!refFormattee || refFormattee.length < 4) { return res.status(400).json({ erreur: "Réf valide requise." }); } } const checkQuery = `SELECT * FROM catalogue WHERE (nom ILIKE $1 OR (reference = $2 AND reference IS NOT NULL)) AND id_salon = $3`; const checkResult = await pool.query(checkQuery, [nom, refFormattee, req.user.id_salon]); if (checkResult.rowCount > 0) { const art = checkResult.rows[0]; if (refFormattee && art.reference === refFormattee && typeArticleFormatte === 'PRODUIT_REVENTE') { if (!nom || nom.trim() === '') { await pool.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2', [stockFormatte, art.id_article]); await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: art.id_article, action: 'REAPPRO_STOCK', ajout: stockFormatte }); return res.status(200).json({ message: `Stock mis à jour (+${stockFormatte})` }); } else if (nom.trim().toLowerCase() !== art.nom.toLowerCase()) { return res.status(400).json({ erreur: `Référence déjà utilisée.` }); } } if (art.nom.toLowerCase() === nom.trim().toLowerCase()) { return res.status(400).json({ erreur: `L'article existe déjà.` }); } } const inserted = await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, taux_tva, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_article', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, tvaFormattee, req.user.id_salon]); await enregistrerJET(req.user.id_salon, 'CREATION_ARTICLE', { id_article: inserted.rows[0].id_article, nom, type_article: typeArticleFormatte, prix: prixFormatte, taux_tva: tvaFormattee }); res.status(201).json({ message: "Article ajouté avec succès !" }); } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }});
+
+app.post('/api/catalogue', verifierToken, async (req, res) => { 
+    const { nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours } = req.body; 
+    try { 
+        const typeArticleFormatte = type_article || 'PRESTATION'; 
+        const prixFormatte = parseFloat((prix || "0").toString().replace(',', '.')) || 0; 
+        const stockFormatte = parseInt(stock_actuel) || 0; 
+        const refFormattee = reference ? reference.trim() : null; 
+        const tvaFormattee = (taux_tva !== undefined && taux_tva !== null && taux_tva !== '') ? parseFloat(taux_tva.toString().replace(',', '.')) : 20.00; 
+        const delaiFormatte = parseInt(delai_livraison_jours) || 3;
+
+        if (typeArticleFormatte === 'PRODUIT_REVENTE') { 
+            if (!refFormattee || refFormattee.length < 4) { return res.status(400).json({ erreur: "Réf valide requise." }); } 
+        } 
+        
+        const checkQuery = `SELECT * FROM catalogue WHERE (nom ILIKE $1 OR (reference = $2 AND reference IS NOT NULL)) AND id_salon = $3`; 
+        const checkResult = await pool.query(checkQuery, [nom, refFormattee, req.user.id_salon]); 
+        
+        if (checkResult.rowCount > 0) { 
+            const art = checkResult.rows[0]; 
+            if (refFormattee && art.reference === refFormattee && typeArticleFormatte === 'PRODUIT_REVENTE') { 
+                if (!nom || nom.trim() === '') { 
+                    await pool.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2', [stockFormatte, art.id_article]); 
+                    await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: art.id_article, action: 'REAPPRO_STOCK', ajout: stockFormatte }); 
+                    return res.status(200).json({ message: `Stock mis à jour (+${stockFormatte})` }); 
+                } else if (nom.trim().toLowerCase() !== art.nom.toLowerCase()) { 
+                    return res.status(400).json({ erreur: `Référence déjà utilisée.` }); 
+                } 
+            } 
+            if (art.nom.toLowerCase() === nom.trim().toLowerCase()) { 
+                return res.status(400).json({ erreur: `L'article existe déjà.` }); 
+            } 
+        } 
+        
+        const inserted = await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_article', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, tvaFormattee, delaiFormatte, req.user.id_salon]); 
+        await enregistrerJET(req.user.id_salon, 'CREATION_ARTICLE', { id_article: inserted.rows[0].id_article, nom, type_article: typeArticleFormatte, prix: prixFormatte, taux_tva: tvaFormattee }); 
+        res.status(201).json({ message: "Article ajouté avec succès !" }); 
+    } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }
+});
+
 app.delete('/api/catalogue/:id', verifierToken, async (req, res) => { try { const articleRes = await pool.query('SELECT nom, type_article, prix FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); if (articleRes.rowCount > 0) { await enregistrerJET(req.user.id_salon, 'SUPPRESSION_ARTICLE', { id_article: req.params.id, ...articleRes.rows[0] }); } res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }});
 
 app.get('/api/stocks', verifierToken, async (req, res) => { try { const stockResult = await pool.query(`SELECT id_article, nom, stock_actuel, seuil_alerte, type_article FROM catalogue WHERE id_salon = $1 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') ORDER BY nom ASC`, [req.user.id_salon]); res.json(stockResult.rows); } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }});
@@ -1494,14 +1533,14 @@ cron.schedule('0 9 * * *', async () => {
 
             for (let rdv of rdvsFuturs.rows) {
                 const protocole = await pool.query(`
-                    SELECT p.id_protocole, p.delai_livraison_jours 
+                    SELECT p.id_protocole 
                     FROM protocoles p 
                     WHERE p.id_salon = $1 AND p.nom_prestation ILIKE $2 LIMIT 1
                 `, [salon.id_salon, rdv.prestation]);
 
                 if (protocole.rowCount > 0) {
                     const ingredients = await pool.query(`
-                        SELECT r.id_article, r.quantite_necessaire, c.nom, c.stock_actuel
+                        SELECT r.id_article, r.quantite_necessaire, c.nom, c.stock_actuel, c.delai_livraison_jours
                         FROM recettes_articles r
                         JOIN catalogue c ON r.id_article = c.id_article
                         WHERE r.id_protocole = $1
@@ -1511,10 +1550,10 @@ cron.schedule('0 9 * * *', async () => {
                         const besoinTotal = ing.quantite_necessaire * rdv.nb_rdv;
                         if (ing.stock_actuel < besoinTotal) {
                             const dateAlerte = new Date(rdv.premier_rdv);
-                            dateAlerte.setDate(dateAlerte.getDate() - (protocole.rows[0].delai_livraison_jours || 3));
+                            dateAlerte.setDate(dateAlerte.getDate() - (ing.delai_livraison_jours || 3));
                             
                             const titreAlerte = `⚠️ Rupture prédictive : ${ing.nom}`;
-                            const descAlerte = `Il vous manque ${besoinTotal - ing.stock_actuel} unité(s) de "${ing.nom}" pour assurer vos ${rdv.nb_rdv} rdv "${rdv.prestation}" prévus d'ici 14j. Commandez aujourd'hui !`;
+                            const descAlerte = `Il vous manque ${besoinTotal - ing.stock_actuel} unité(s) de "${ing.nom}" pour assurer vos ${rdv.nb_rdv} rdv "${rdv.prestation}" prévus d'ici 14j. Commandez aujourd'hui ! (Délai : ${ing.delai_livraison_jours || 3}j)`;
                             
                             const exist = await pool.query(`SELECT 1 FROM taches_actions WHERE id_salon = $1 AND titre = $2 AND statut = 'A_FAIRE'`, [salon.id_salon, titreAlerte]);
                             if (exist.rowCount === 0) {
