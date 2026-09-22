@@ -167,6 +167,7 @@ function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [showDropdownPresta, setShowDropdownPresta] = useState(false);
+  const [showDropdownClient, setShowDropdownClient] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
 
   const [configSalon, setConfigSalon] = useState({
@@ -983,31 +984,32 @@ function App() {
 
   // --- MOTEUR DE RECHERCHE PRESTATIONS (MAX 5 RESULTATS) ---
   const getPrestationsSuggerees = (texteSaisi) => {
-      // On ne garde que les prestations du catalogue
       const prestationsDb = catalogueListe.filter(a => a.type_article === 'PRESTATION');
       const searchClean = nettoyerTexteRecherche(texteSaisi);
-
-      let resultats = [];
-      
-      if (!searchClean) {
-          // Si le champ est vide : On priorise le Top 3 du Dashboard, puis on complète avec le catalogue
-          const topNoms = dashboardData?.top_3_prestations?.map(p => p.nom.toLowerCase()) || [];
-          const topPrestas = prestationsDb.filter(p => topNoms.includes(p.nom.toLowerCase()));
-          const autresPrestas = prestationsDb.filter(p => !topNoms.includes(p.nom.toLowerCase()));
-          resultats = [...topPrestas, ...autresPrestas];
-      } else {
-          // Si l'utilisateur tape quelque chose : on filtre par nom
-          resultats = prestationsDb.filter(p => nettoyerTexteRecherche(p.nom).includes(searchClean));
-      }
-      
-      // On retourne un maximum de 5 résultats pour que ça reste très compact sans scroll
+      // ... le reste de la fonction prestations ...
       return resultats.slice(0, 5); 
+  };
+
+  // --- MOTEUR DE RECHERCHE CLIENTS CRM (MAX 5 RESULTATS) ---
+  const getClientsSuggeresPourRdv = (texteSaisi) => {
+      if (!texteSaisi) return clientsListe.slice(0, 5); // Si vide, on montre 5 clients récents/au hasard
+
+      const searchClean = nettoyerTexteRecherche(texteSaisi);
+      
+      return clientsListe.filter(cli => {
+          const nomComplet = nettoyerTexteRecherche(formatNomClient(cli));
+          const tel = nettoyerTexteRecherche(cli.telephone || '');
+          // On cherche si ce qu'on tape correspond au nom OU au téléphone
+          return nomComplet.includes(searchClean) || tel.includes(searchClean);
+      }).slice(0, 5); // On limite à 5 résultats maximum
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       
       {/* CSS INJECTÉ POUR L'EFFET ACCORDÉON DES RDV */}
+      
+     
       <style>{`
           .rdv-card-accordeon {
               transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1361,7 +1363,70 @@ function App() {
                                   <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Nouveau Rendez-vous</h3>
                                   <button className="modal-close-btn" onClick={() => setShowModalRdv(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                               </div>
-                              <input type="text" className="input-fournisseur" placeholder="Nom du Client" value={formRdv.nom_client} onChange={e => setFormRdv({...formRdv, nom_client: e.target.value})} style={{marginBottom:'12px'}}/>
+                              <div style={{ position: 'relative', marginBottom: '12px' }}>
+                                  <input 
+                                      type="text" 
+                                      className="input-fournisseur" 
+                                      placeholder="Nom du Client ou N° de Téléphone" 
+                                      value={formRdv.nom_client} 
+                                      onChange={e => {
+                                          setFormRdv({...formRdv, nom_client: e.target.value});
+                                          setShowDropdownClient(true);
+                                      }} 
+                                      onFocus={() => setShowDropdownClient(true)}
+                                      onBlur={() => setTimeout(() => setShowDropdownClient(false), 200)} 
+                                      style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }}
+                                  />
+                                  
+                                  {/* MENU DÉROULANT CLIENTS CRM */}
+                                  {showDropdownClient && (
+                                      <div style={{
+                                          position: 'absolute', top: '100%', left: 0, right: 0, 
+                                          background: 'var(--bg-card)', border: '1px solid var(--border-color)', 
+                                          borderRadius: '6px', marginTop: '4px', zIndex: 1000, 
+                                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden'
+                                      }}>
+                                          {getClientsSuggeresPourRdv(formRdv.nom_client).map((cli, idx) => (
+                                              <div 
+                                                  key={cli.id_client}
+                                                  onClick={() => {
+                                                      // LA MAGIE : On remplit le nom ET le téléphone en un clic !
+                                                      setFormRdv({
+                                                          ...formRdv, 
+                                                          nom_client: formatNomClient(cli),
+                                                          telephone_client: cli.telephone || formRdv.telephone_client
+                                                      });
+                                                      setShowDropdownClient(false);
+                                                  }}
+                                                  style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}
+                                                  onMouseOver={e => e.currentTarget.style.background = 'var(--bg-app)'}
+                                                  onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                                              >
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                      <span style={{fontSize: '14px'}}>👤</span>
+                                                      <span style={{color: 'var(--text-main)', fontSize: '13px', fontWeight: '600'}}>{formatNomClient(cli)}</span>
+                                                  </div>
+                                                  {cli.telephone && (
+                                                      <span style={{color: 'var(--text-secondary)', fontSize: '11px', background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px'}}>
+                                                          {cli.telephone}
+                                                      </span>
+                                                  )}
+                                              </div>
+                                          ))}
+                                          
+                                          {/* MODE TEXTE LIBRE POUR LES NOUVEAUX CLIENTS */}
+                                          {formRdv.nom_client && !getClientsSuggeresPourRdv(formRdv.nom_client).find(c => formatNomClient(c).toLowerCase() === formRdv.nom_client.toLowerCase()) && (
+                                              <div 
+                                                  onClick={() => setShowDropdownClient(false)}
+                                                  style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}
+                                              >
+                                                  <span style={{fontSize: '14px'}}>➕</span>
+                                                  Nouveau client : "{formRdv.nom_client}"
+                                              </div>
+                                          )}
+                                      </div>
+                                  )}
+                              </div>
                               <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
                               <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
                                   <option value="">-- Choisir un collaborateur --</option>
