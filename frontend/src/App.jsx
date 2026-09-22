@@ -1390,7 +1390,6 @@ function App() {
                                               <div 
                                                   key={cli.id_client}
                                                   onClick={() => {
-                                                      // LA MAGIE : On remplit le nom ET le téléphone en un clic !
                                                       setFormRdv({
                                                           ...formRdv, 
                                                           nom_client: formatNomClient(cli),
@@ -1443,7 +1442,6 @@ function App() {
                                           setShowDropdownPresta(true);
                                       }} 
                                       onFocus={() => setShowDropdownPresta(true)}
-                                      // Le setTimeout permet au clic sur la liste de s'exécuter avant que le menu ne disparaisse
                                       onBlur={() => setTimeout(() => setShowDropdownPresta(false), 200)} 
                                       style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }}
                                   />
@@ -1457,7 +1455,6 @@ function App() {
                                           boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden'
                                       }}>
                                           {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
-                                              // Si la prestation fait partie du top 3 du tableau de bord, on la met en avant
                                               const isTop = dashboardData?.top_3_prestations?.find(p => p.nom.toLowerCase() === presta.nom.toLowerCase());
                                               
                                               return (
