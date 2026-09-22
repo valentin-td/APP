@@ -166,6 +166,7 @@ function App() {
   const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '' });
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showModalRdv, setShowModalRdv] = useState(false);
+  const [showDropdownPresta, setShowDropdownPresta] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
 
   const [configSalon, setConfigSalon] = useState({
@@ -980,6 +981,29 @@ function App() {
   const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
   const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
 
+  // --- MOTEUR DE RECHERCHE PRESTATIONS (MAX 5 RESULTATS) ---
+  const getPrestationsSuggerees = (texteSaisi) => {
+      // On ne garde que les prestations du catalogue
+      const prestationsDb = catalogueListe.filter(a => a.type_article === 'PRESTATION');
+      const searchClean = nettoyerTexteRecherche(texteSaisi);
+
+      let resultats = [];
+      
+      if (!searchClean) {
+          // Si le champ est vide : On priorise le Top 3 du Dashboard, puis on complète avec le catalogue
+          const topNoms = dashboardData?.top_3_prestations?.map(p => p.nom.toLowerCase()) || [];
+          const topPrestas = prestationsDb.filter(p => topNoms.includes(p.nom.toLowerCase()));
+          const autresPrestas = prestationsDb.filter(p => !topNoms.includes(p.nom.toLowerCase()));
+          resultats = [...topPrestas, ...autresPrestas];
+      } else {
+          // Si l'utilisateur tape quelque chose : on filtre par nom
+          resultats = prestationsDb.filter(p => nettoyerTexteRecherche(p.nom).includes(searchClean));
+      }
+      
+      // On retourne un maximum de 5 résultats pour que ça reste très compact sans scroll
+      return resultats.slice(0, 5); 
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       
@@ -1343,7 +1367,67 @@ function App() {
                                   <option value="">-- Choisir un collaborateur --</option>
                                   {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                               </select>
-                              <input type="text" className="input-fournisseur" placeholder="Prestation" value={formRdv.prestation} onChange={e => setFormRdv({...formRdv, prestation: e.target.value})} style={{marginBottom:'12px'}}/>
+                              <div style={{ position: 'relative', marginBottom: '12px' }}>
+                                  <input 
+                                      type="text" 
+                                      className="input-fournisseur" 
+                                      placeholder="Prestation (ex: Coupe Homme)" 
+                                      value={formRdv.prestation} 
+                                      onChange={e => {
+                                          setFormRdv({...formRdv, prestation: e.target.value});
+                                          setShowDropdownPresta(true);
+                                      }} 
+                                      onFocus={() => setShowDropdownPresta(true)}
+                                      // Le setTimeout permet au clic sur la liste de s'exécuter avant que le menu ne disparaisse
+                                      onBlur={() => setTimeout(() => setShowDropdownPresta(false), 200)} 
+                                      style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }}
+                                  />
+                                  
+                                  {/* MENU DÉROULANT INTELLIGENT */}
+                                  {showDropdownPresta && (
+                                      <div style={{
+                                          position: 'absolute', top: '100%', left: 0, right: 0, 
+                                          background: 'var(--bg-card)', border: '1px solid var(--border-color)', 
+                                          borderRadius: '6px', marginTop: '4px', zIndex: 1000, 
+                                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden'
+                                      }}>
+                                          {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
+                                              // Si la prestation fait partie du top 3 du tableau de bord, on la met en avant
+                                              const isTop = dashboardData?.top_3_prestations?.find(p => p.nom.toLowerCase() === presta.nom.toLowerCase());
+                                              
+                                              return (
+                                                  <div 
+                                                      key={presta.id_article}
+                                                      onClick={() => {
+                                                          setFormRdv({...formRdv, prestation: presta.nom});
+                                                          setShowDropdownPresta(false);
+                                                      }}
+                                                      style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}
+                                                      onMouseOver={e => e.currentTarget.style.background = 'var(--bg-app)'}
+                                                      onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                                                  >
+                                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                          {isTop && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Top</span>}
+                                                          <span style={{color: 'var(--text-main)', fontWeight: '500'}}>{presta.nom}</span>
+                                                      </div>
+                                                      <span style={{color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600'}}>{presta.prix} €</span>
+                                                  </div>
+                                              )
+                                          })}
+                                          
+                                          {/* MODE TEXTE LIBRE : S'affiche uniquement si ce qu'on a tapé ne correspond à rien d'exact dans la liste */}
+                                          {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => p.nom.toLowerCase() === formRdv.prestation.toLowerCase()) && (
+                                              <div 
+                                                  onClick={() => setShowDropdownPresta(false)}
+                                                  style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}
+                                              >
+                                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                                  Utiliser "{formRdv.prestation}" (Texte libre)
+                                              </div>
+                                          )}
+                                      </div>
+                                  )}
+                              </div>
                               <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
                                   <input type="date" className="input-fournisseur" value={formRdv.date} onChange={e => setFormRdv({...formRdv, date: e.target.value})} />
                                   <input type="time" className="input-fournisseur" value={formRdv.heure} onChange={e => setFormRdv({...formRdv, heure: e.target.value})} />
