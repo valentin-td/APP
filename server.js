@@ -1429,6 +1429,37 @@ app.post('/api/protocoles', verifierToken, async (req, res) => {
     } finally { clientDB.release(); }
 });
 
+app.put('/api/protocoles/:id', verifierToken, async (req, res) => {
+    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        
+        // 1. Mise à jour de la fiche
+        await clientDB.query(
+            `UPDATE protocoles SET nom_prestation = $1, etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5 WHERE id_protocole = $6 AND id_salon = $7`,
+            [nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, req.params.id, req.user.id_salon]
+        );
+
+        // 2. Remplacement des ingrédients de la recette
+        await clientDB.query(`DELETE FROM recettes_articles WHERE id_protocole = $1`, [req.params.id]);
+        if (ingredients && ingredients.length > 0) {
+            for (let ing of ingredients) {
+                await clientDB.query(
+                    `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire) VALUES ($1, $2, $3)`,
+                    [req.params.id, ing.id_article, ing.quantite_necessaire]
+                );
+            }
+        }
+        
+        await clientDB.query('COMMIT');
+        res.json({ message: "Protocole modifié avec succès !" });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: "Erreur modification protocole." });
+    } finally { clientDB.release(); }
+});
+
 app.delete('/api/protocoles/:id', verifierToken, async (req, res) => {
     try {
         await pool.query("DELETE FROM protocoles WHERE id_protocole = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
