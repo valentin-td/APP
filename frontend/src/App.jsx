@@ -986,10 +986,20 @@ function App() {
   const getPrestationsSuggerees = (texteSaisi) => {
       const prestationsDb = catalogueListe.filter(a => a.type_article === 'PRESTATION');
       const searchClean = nettoyerTexteRecherche(texteSaisi);
-      // ... le reste de la fonction prestations ...
+
+      let resultats = [];
+      
+      if (!searchClean) {
+          const topNoms = dashboardData?.top_3_prestations?.map(p => p.nom?.toLowerCase() || '') || [];
+          const topPrestas = prestationsDb.filter(p => p.nom && topNoms.includes(p.nom.toLowerCase()));
+          const autresPrestas = prestationsDb.filter(p => !p.nom || !topNoms.includes(p.nom.toLowerCase()));
+          resultats = [...topPrestas, ...autresPrestas];
+      } else {
+          resultats = prestationsDb.filter(p => nettoyerTexteRecherche(p.nom).includes(searchClean));
+      }
+      
       return resultats.slice(0, 5); 
   };
-
   // --- MOTEUR DE RECHERCHE CLIENTS CRM (MAX 5 RESULTATS) ---
   const getClientsSuggeresPourRdv = (texteSaisi) => {
       if (!texteSaisi) return clientsListe.slice(0, 5); // Si vide, on montre 5 clients récents/au hasard
@@ -1455,7 +1465,7 @@ function App() {
                                           boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden'
                                       }}>
                                           {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
-                                              const isTop = dashboardData?.top_3_prestations?.find(p => p.nom.toLowerCase() === presta.nom.toLowerCase());
+                                              const isTop = dashboardData?.top_3_prestations?.find(p => p.nom?.toLowerCase() === presta.nom?.toLowerCase());
                                               
                                               return (
                                                   <div 
@@ -1478,7 +1488,7 @@ function App() {
                                           })}
                                           
                                           {/* MODE TEXTE LIBRE : S'affiche uniquement si ce qu'on a tapé ne correspond à rien d'exact dans la liste */}
-                                          {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => p.nom.toLowerCase() === formRdv.prestation.toLowerCase()) && (
+                                          {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => p.nom?.toLowerCase() === formRdv.prestation.toLowerCase()) && (
                                               <div 
                                                   onClick={() => setShowDropdownPresta(false)}
                                                   style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}
