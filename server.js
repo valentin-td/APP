@@ -1471,89 +1471,85 @@ app.delete('/api/protocoles/:id', verifierToken, async (req, res) => {
 // =========================================================================
 // --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES & PRÉDICTIONS ---
 // =========================================================================
-cron.schedule('0 9 * * *', async () => {
+async function executerRobotMarketingEtPredictif() {
     try {
-        const salons = await pool.query("SELECT * FROM configuration_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''");
+        // CORRECTION 1 : On récupère TOUS les salons (même ceux qui n'ont pas configuré les SMS)
+        const salons = await pool.query("SELECT * FROM configuration_salon");
+        
         for (let salon of salons.rows) {
+            const hasBrevo = salon.brevo_api_key && salon.brevo_api_key.trim() !== '';
             const delaiFixe = salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0 ? salon.fidelite_delai_sms : 60;
 
-            const queryClients = `
-                WITH Visites AS (
-                    SELECT id_client, DATE(date_creation) as date_visite
-                    FROM tickets
-                    WHERE id_salon = $1 AND statut != 'ANNULE' AND est_compense = FALSE
-                    GROUP BY id_client, DATE(date_creation)
-                ),
-                Ecarts AS (
-                    SELECT id_client,
-                           date_visite - LAG(date_visite) OVER (PARTITION BY id_client ORDER BY date_visite) as jours_ecart
-                    FROM Visites
-                ),
-                Moyennes AS (
-                    SELECT id_client, AVG(jours_ecart) as moyenne_jours, COUNT(jours_ecart) as nb_ecarts
-                    FROM Ecarts
-                    WHERE jours_ecart IS NOT NULL
-                    GROUP BY id_client
-                )
-                SELECT c.*,
-                       COALESCE(m.moyenne_jours, 0) as moyenne_jours,
-                       COALESCE(m.nb_ecarts, 0) as nb_ecarts
-                FROM clients c
-                LEFT JOIN Moyennes m ON c.id_client = m.id_client
-                LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
-                WHERE c.id_salon = $1
-                  AND r.id_rdv IS NULL
-                  AND c.telephone IS NOT NULL
-                  AND c.derniere_visite IS NOT NULL
-            `;
-            const clientsResult = await pool.query(queryClients, [salon.id_salon]);
-            const now = new Date();
+            // --- 1. GESTION DES SMS (S'exécute uniquement si Brevo est configuré) ---
+            if (hasBrevo) {
+                const queryClients = `
+                    WITH Visites AS (
+                        SELECT id_client, DATE(date_creation) as date_visite
+                        FROM tickets
+                        WHERE id_salon = $1 AND statut != 'ANNULE' AND est_compense = FALSE
+                        GROUP BY id_client, DATE(date_creation)
+                    ),
+                    Ecarts AS (
+                        SELECT id_client,
+                               date_visite - LAG(date_visite) OVER (PARTITION BY id_client ORDER BY date_visite) as jours_ecart
+                        FROM Visites
+                    ),
+                    Moyennes AS (
+                        SELECT id_client, AVG(jours_ecart) as moyenne_jours, COUNT(jours_ecart) as nb_ecarts
+                        FROM Ecarts
+                        WHERE jours_ecart IS NOT NULL
+                        GROUP BY id_client
+                    )
+                    SELECT c.*,
+                           COALESCE(m.moyenne_jours, 0) as moyenne_jours,
+                           COALESCE(m.nb_ecarts, 0) as nb_ecarts
+                    FROM clients c
+                    LEFT JOIN Moyennes m ON c.id_client = m.id_client
+                    LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
+                    WHERE c.id_salon = $1
+                      AND r.id_rdv IS NULL
+                      AND c.telephone IS NOT NULL
+                      AND c.derniere_visite IS NOT NULL
+                `;
+                const clientsResult = await pool.query(queryClients, [salon.id_salon]);
+                const now = new Date();
 
-            for (let client of clientsResult.rows) {
-                const derniereVisite = new Date(client.derniere_visite);
-                const joursDepuisVisite = (now - derniereVisite) / (1000 * 60 * 60 * 24);
+                for (let client of clientsResult.rows) {
+                    const derniereVisite = new Date(client.derniere_visite);
+                    const joursDepuisVisite = (now - derniereVisite) / (1000 * 60 * 60 * 24);
 
-                let seuilRelance;
-                if (client.nb_ecarts > 0 && client.moyenne_jours > 0) {
-                    seuilRelance = parseFloat(client.moyenne_jours) * 1.2;
-                } else {
-                    seuilRelance = delaiFixe;
-                }
+                    let seuilRelance = (client.nb_ecarts > 0 && client.moyenne_jours > 0) ? parseFloat(client.moyenne_jours) * 1.2 : delaiFixe;
 
-                if (joursDepuisVisite >= seuilRelance && joursDepuisVisite < (seuilRelance + 1)) {
-                    let message = "";
-                    if (salon.fidelite_type === 'TAMPONS') {
-                        const restants = salon.fidelite_tampons_seuil - (client.tampons_fidelite || 0);
-                        message = `Hey ${client.prenom || client.nom} ! Cela fait un moment qu'on ne t'a pas vu chez ${salon.sms_sender_name}. Plus que ${restants} passage(s) avant ta récompense ! Prends vite rendez-vous : ${salon.lien_google_maps}`;
-                    } else if (salon.fidelite_type === 'POINTS') {
-                        message = `Bonjour ${client.prenom || client.nom}, votre fidélité paie ! Vous avez ${client.points_fidelite || 0} points. Venez en profiter chez ${salon.sms_sender_name}. RDV: ${salon.lien_google_maps}`;
-                    } else {
-                        message = `Bonjour ${client.prenom || client.nom}, ça fait longtemps ! Pensez à prendre soin de vous chez ${salon.sms_sender_name}. Prenez rendez-vous ici : ${salon.lien_google_maps}`;
+                    if (joursDepuisVisite >= seuilRelance && joursDepuisVisite < (seuilRelance + 1)) {
+                        let message = "";
+                        if (salon.fidelite_type === 'TAMPONS') {
+                            const restants = salon.fidelite_tampons_seuil - (client.tampons_fidelite || 0);
+                            message = `Hey ${client.prenom || client.nom} ! Cela fait un moment qu'on ne t'a pas vu chez ${salon.sms_sender_name}. Plus que ${restants} passage(s) avant ta récompense ! Prends vite rendez-vous : ${salon.lien_google_maps}`;
+                        } else if (salon.fidelite_type === 'POINTS') {
+                            message = `Bonjour ${client.prenom || client.nom}, votre fidélité paie ! Vous avez ${client.points_fidelite || 0} points. Venez en profiter chez ${salon.sms_sender_name}. RDV: ${salon.lien_google_maps}`;
+                        } else {
+                            message = `Bonjour ${client.prenom || client.nom}, ça fait longtemps ! Pensez à prendre soin de vous chez ${salon.sms_sender_name}. Prenez rendez-vous ici : ${salon.lien_google_maps}`;
+                        }
+                        if (message !== "") await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, message);
                     }
-                    if (message !== "") await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, message);
                 }
-            }
 
-            const anniversaires = await pool.query(`
-                SELECT * FROM clients 
-                WHERE id_salon = $1 
-                AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
-                AND EXTRACT(DAY FROM date_naissance) = EXTRACT(DAY FROM NOW())
-            `, [salon.id_salon]);
+                const anniversaires = await pool.query(`
+                    SELECT * FROM clients 
+                    WHERE id_salon = $1 
+                    AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
+                    AND EXTRACT(DAY FROM date_naissance) = EXTRACT(DAY FROM NOW())
+                `, [salon.id_salon]);
 
-            for (let client of anniversaires.rows) {
-                if (client.telephone) {
-                    await envoyerSMS(
-                        salon.brevo_api_key, 
-                        salon.sms_sender_name, 
-                        client.telephone, 
-                        `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`
-                    );
+                for (let client of anniversaires.rows) {
+                    if (client.telephone) {
+                        await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`);
+                    }
                 }
             }
 
             // =================================================================
-            // 4. MOTEUR PRÉDICTIF D'INVENTAIRE (Protocoles -> Centre d'Action)
+            // --- 2. MOTEUR PRÉDICTIF D'INVENTAIRE (S'exécute toujours !) ---
             // =================================================================
             const rdvsFuturs = await pool.query(`
                 SELECT r.prestation, MIN(r.date_heure_debut) as premier_rdv, COUNT(*) as nb_rdv
@@ -1595,7 +1591,7 @@ cron.schedule('0 9 * * *', async () => {
                 }
             }
 
-            // 3. Alertes Tâches Urgentes (Centre d'Action)
+            // --- 3. Alertes Tâches Urgentes (Centre d'Action) ---
             const tachesUrgentes = await pool.query(`SELECT titre, date_echeance FROM taches_actions WHERE id_salon = $1 AND statut = 'A_FAIRE' AND date_echeance <= NOW() + INTERVAL '2 days'`, [salon.id_salon]);
             if (tachesUrgentes.rowCount > 0) {
                 if (process.env.SMTP_USER && process.env.SMTP_PASS) {
@@ -1611,7 +1607,7 @@ cron.schedule('0 9 * * *', async () => {
                     }
                 }
 
-                if (salon.alertes_sms_actives && salon.telephone_gerant && salon.telephone_gerant.trim() !== '' && salon.brevo_api_key) {
+                if (salon.alertes_sms_actives && salon.telephone_gerant && salon.telephone_gerant.trim() !== '' && hasBrevo) {
                     const smsTexte = `⚠️ STACK : Vous avez ${tachesUrgentes.rowCount} action(s) urgente(s) en attente (ex: ${tachesUrgentes.rows[0].titre}). Connectez-vous pour les traiter !`;
                     await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name || 'STACK', salon.telephone_gerant, smsTexte);
                 }
@@ -1619,18 +1615,19 @@ cron.schedule('0 9 * * *', async () => {
             
         } 
     } catch (err) {
-        console.error("Erreur Cron SMS:", err);
+        console.error("Erreur Robot Marketing/Prédictif:", err);
     }
-});
-
-async function envoyerSMS(apiKey, sender, phone, text) {
-    try {
-        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
-            method: 'POST', headers: { 'accept': 'application/json', 'content-type': 'application/json', 'api-key': apiKey },
-            body: JSON.stringify({ type: 'transactional', unicodeEnabled: true, sender: sender.substring(0, 11), recipient: phone, content: text })
-        });
-    } catch(e) {}
 }
+
+// Planification automatique à 9h00 du matin
+cron.schedule('0 9 * * *', () => { executerRobotMarketingEtPredictif(); });
+
+// CORRECTION 2 : La route lance maintenant LES DEUX robots
+app.get('/api/admin/forcer-robot', async (req, res) => { 
+    executerRobotComptable(); 
+    executerRobotMarketingEtPredictif();
+    res.json({ message: "Robots IA (Comptable & Prédictif d'Inventaire) lancés avec succès." }); 
+});
 
 // =========================================================================
 // --- GOD MODE (SUPER-ADMIN) ---
