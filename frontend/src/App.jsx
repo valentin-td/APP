@@ -66,18 +66,14 @@ function App() {
   const [tachesListe, setTachesListe] = useState([]);
   const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
   
-  // --- NOUVEAUX ÉTATS POUR L'UI OPTIMISÉE ---
   const [showAddClient, setShowAddClient] = useState(false);
   const [showAddEmploye, setShowAddEmploye] = useState(false);
   const [showAddProduit, setShowAddProduit] = useState(false);
   const [showAddPrestation, setShowAddPrestation] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
-  const [stockSortBy, setStockSortBy] = useState('nom'); // 'nom', 'stock', 'prix'
+  const [stockSortBy, setStockSortBy] = useState('nom');
   const [isStockExpanded, setIsStockExpanded] = useState(true);
   
-  // ==========================================
-  // --- PROTOCOLES & RECETTES ---
-  // ==========================================
   const [protocolesListe, setProtocolesListe] = useState([]);
   const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
   const [ingredientTemp, setIngredientTemp] = useState({ id_article: '', quantite_necessaire: '' });
@@ -88,7 +84,6 @@ function App() {
   
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
 
-  // ÉTATS DE L'IA AUTOMATIQUE EN ARRIÈRE-PLAN
   const [tachesIA, setTachesIA] = useState([]);
   const [modalIA, setModalIA] = useState(null);
   
@@ -290,11 +285,11 @@ function App() {
               cache: 'no-store'
           });
           const data = await handleFetchError(res);
-          setter(data);
-          await localforage.setItem(cacheKey, data);
+          setter(data || []);
+          await localforage.setItem(cacheKey, data || []);
       } catch (e) {
           const cachedData = await localforage.getItem(cacheKey);
-          if (cachedData) setter(cachedData);
+          if (cachedData) setter(cachedData || []);
       }
   };
 
@@ -688,12 +683,17 @@ function App() {
       const now = new Date();
       let matches = [];
 
+      // On récupère les RDV d'aujourd'hui pour cet employé
       const rdvsToday = (planningData || []).filter(r => r.id_employe === id_employe && r.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', ''))));
-      rdvsToday.sort((a, b) => new Date(b.date_heure_debut.replace('Z', '')) - new Date(a.date_heure_debut.replace('Z', '')));
+      
+      // On les trie du plus ancien au plus récent de la journée (ex: 10:00 avant 11:00)
+      rdvsToday.sort((a, b) => new Date(a.date_heure_debut.replace('Z', '')).getTime() - new Date(b.date_heure_debut.replace('Z', '')).getTime());
 
       for (let rdv of rdvsToday) {
           const rdvStart = new Date(rdv.date_heure_debut.replace('Z', ''));
-          const diffMinutes = (now - rdvStart) / 60000; 
+          const diffMinutes = (now.getTime() - rdvStart.getTime()) / 60000; 
+          
+          // Fenêtre de tir : le RDV a commencé il y a maximum 150 minutes, ou commence dans max 30 minutes
           if (diffMinutes > -30 && diffMinutes < 150) { 
               let clientInCRM = null;
               if (rdv.telephone_client) {
@@ -703,17 +703,23 @@ function App() {
                   clientInCRM = (clientsListe || []).find(c => (c.nom || '').toLowerCase() === (rdv.nom_client || '').toLowerCase());
               }
               if (clientInCRM && !matches.find(m => m.id_client === clientInCRM.id_client)) {
-                  matches.push({ ...clientInCRM, prestation_rdv: rdv.prestation });
+                  matches.push({ ...clientInCRM, prestation_rdv: rdv.prestation, diffMinutes });
               }
           }
       }
 
+      // On trie les matchs : la plus grande différence (le RDV commencé il y a le plus longtemps) passe en premier
+      matches.sort((a, b) => b.diffMinutes - a.diffMinutes);
+
       if (matches.length > 0) {
           setClientsSuggeres(matches);
+          // On auto-sélectionne le premier (le plus probable)
+          setClientCaisse(matches[0].id_client.toString());
       } else {
           setClientCaisse('');
-          setPosStep('type');
+          setClientsSuggeres([]);
       }
+      setPosStep('type');
   };
 
   const ajouterAuPanier = (article) => {
@@ -1226,10 +1232,15 @@ function App() {
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                       <div>
-                          <h1 style={{margin: 0}}>Tableau de Bord</h1>
+                          <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
                           <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
                       </div>
-                      <ThemeToggle />
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                          </button>
+                      </div>
                   </div>
                   {!dashboardData ? (
                       <div className="skeleton-loading" style={{height: '200px', borderRadius: '12px'}}></div>
@@ -1307,54 +1318,104 @@ function App() {
                     <div style={{flex: 2, display: 'flex', flexDirection: 'column'}}>
                         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                             <div><h1 style={{margin: 0}}>Caisse</h1></div>
-                            <ThemeToggle />
+                            <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                                <ThemeToggle />
+                                <button onClick={() => setShowAddClient(!showAddClient)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Client">+</button>
+                            </div>
                         </div>
-                        <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                            <button onClick={() => setPosType('PRESTATION')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: posType === 'PRESTATION' ? 'var(--btn-primary)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'white' : 'var(--text-main)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Prestations</button>
-                            <button onClick={() => setPosType('PRODUIT_REVENTE')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: posType === 'PRODUIT_REVENTE' ? 'var(--btn-primary)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'white' : 'var(--text-main)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Produits</button>
-                        </div>
-                        <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '16px'}} />
-                        
-                        <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px'}}>
-                            {(catalogueListe || [])
-                                .filter(a => a.type_article === posType && ((a.nom || '').toLowerCase().includes((rechercheCaisse || '').toLowerCase()) || (a.reference && a.reference.toLowerCase().includes((rechercheCaisse || '').toLowerCase()))))
-                                .map(art => (
-                                <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', transition: 'transform 0.1s'}} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
-                                    <span style={{fontWeight: '600', fontSize: '13px', color: 'var(--text-main)'}}>{art.nom}</span>
-                                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                        <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(art.prix || 0).toFixed(2)}€</span>
-                                        {posType === 'PRODUIT_REVENTE' && <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Stock: {art.stock_actuel}</span>}
-                                    </div>
+
+                        {showAddClient && (
+                            <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                                <h3 style={{marginTop: 0}}>Nouveau Client</h3>
+                                <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                  <input type="text" className="input-fournisseur" placeholder="Prénom" value={newClient.prenom} onChange={(e) => setNewClient({...newClient, prenom: e.target.value})} />
+                                  <input type="text" className="input-fournisseur" placeholder="Nom" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
                                 </div>
-                            ))}
-                        </div>
+                                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                  <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
+                                  <input type="date" className="input-fournisseur" placeholder="Date de naissance" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} />
+                                </div>
+                                <button className="btn-action" onClick={() => {ajouterClient(); setShowAddClient(false);}} disabled={!newClient.nom} style={{width: '100%'}}>Enregistrer le client</button>
+                            </div>
+                        )}
+
+                        {!posEmploye ? (
+                            <div className="carte">
+                                <h3 style={{color: 'var(--text-main)', marginBottom: '16px', fontWeight: '600', fontSize: '16px'}}>1. Qui réalise la vente ?</h3>
+                                {(employesListe || []).length === 0 ? (
+                                    <div className="empty-state"><p>Aucun collaborateur enregistré.</p></div>
+                                ) : (
+                                    <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '16px'}}>
+                                        {(employesListe || []).map((emp, index) => (
+                                            <div key={emp.id_employe} onClick={() => handleSelectEmployeCaisse(emp.id_employe)}
+                                                style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '24px 12px', borderRadius: 'var(--radius-card)', fontSize: '16px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', transition: 'transform 0.15s ease' }}>
+                                                {(emp.nom || 'Inconnu').split(' ')[0]}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <>
+                                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                    <button onClick={() => { setPosType('PRESTATION'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
+                                    <button onClick={() => { setPosType('PRODUIT_REVENTE'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
+                                </div>
+                                <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}} />
+                                
+                                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px'}}>
+                                    {(catalogueListe || [])
+                                        .filter(art => {
+                                            if (art.type_article !== posType) return false;
+                                            if (!rechercheCaisse) return true;
+                                            const searchClean = nettoyerTexteRecherche(rechercheCaisse);
+                                            const nomClean = nettoyerTexteRecherche(art.nom);
+                                            return nomClean.includes(searchClean);
+                                        })
+                                        .map(art => (
+                                        <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', transition: 'transform 0.1s'}} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
+                                            <span style={{fontWeight: '600', fontSize: '13px', color: 'var(--text-main)'}}>{art.nom}</span>
+                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                                <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(art.prix || 0).toFixed(2)}€</span>
+                                                {posType === 'PRODUIT_REVENTE' && <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Stock: {art.stock_actuel}</span>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                {(catalogueListe || []).filter(art => art.type_article === posType).length === 0 && (
+                                    <div className="empty-state"><SvgEmptyState /><p>Aucun élément dans cette catégorie.</p></div>
+                                )}
+                            </>
+                        )}
                     </div>
 
                     {/* RIGHT PANEL - PANIER & ENCAISSEMENT */}
                     <div style={{flex: 1, minWidth: '320px', background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
                         {ticketGenere ? (
                             <div style={{padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center'}}>
-                                <div style={{color: 'var(--color-success)', marginBottom: '16px', display: 'flex', justifyContent: 'center'}}><svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-                                <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Paiement Validé</h2>
-                                <p style={{color: 'var(--text-secondary)', marginBottom: '24px'}}>{ticketGenere.montant.toFixed(2)} € encaissé par {methodePaiement}</p>
+                                <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                                <h2 style={{marginTop: 0, marginBottom: '8px', color: 'var(--text-main)', fontSize: '24px'}}>Paiement Validé</h2>
+                                {ticketGenere.is_offline && <span style={{fontSize: '12px', color: 'var(--color-danger)', fontWeight: 'bold'}}>Ticket sauvegardé hors-ligne</span>}
+                                <h1 style={{color: 'var(--text-main)', fontSize: '40px', margin: '0 0 24px 0', letterSpacing: '-0.02em'}}>{ticketGenere.montant.toFixed(2)} <span style={{fontSize: '24px', color: 'var(--text-secondary)'}}>€</span></h1>
                                 
-                                <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px'}}>
-                                    <button onClick={() => envoyerTicketEco('email')} className="btn-action" style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>📧 Envoyer le ticket (E-mail)</button>
-                                    {configSalon.brevo_api_key && <button onClick={() => envoyerTicketEco('sms')} className="btn-action" style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>📱 Envoyer le ticket (SMS)</button>}
+                                <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
+                                    <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
+                                    <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline || !navigator.onLine}>Envoyer</button></div>
+                                    <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}</button>
                                 </div>
-                                <button onClick={() => setTicketGenere(null)} className="btn-action">Nouveau Ticket</button>
+                                <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>Fermer (Sans reçu)</button>
                             </div>
                         ) : (
                             <>
                                 <div style={{padding: '16px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
-                                    <select className="input-fournisseur" value={posEmploye || ''} onChange={e => handleSelectEmployeCaisse(e.target.value)} style={{marginBottom: '12px', background: 'var(--bg-card)'}}>
-                                        <option value="">👤 Sélectionner un collaborateur...</option>
-                                        {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                    </select>
-                                    <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => setClientCaisse(e.target.value)} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
+                                    <div className="ticket-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                                        <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '16px'}}>Ticket en cours</h3>
+                                        {posEmploye && <button onClick={() => { setPosEmploye(null); setClientsSuggeres([]); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
+                                    </div>
+                                    <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
                                         <option value="">🤝 Client de passage...</option>
-                                        {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
-                                        {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client}>{c.nom} {c.prenom}</option>)}
+                                        {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
+                                        {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>{c.nom} {c.prenom}</option>)}
                                     </select>
                                 </div>
 
@@ -1379,32 +1440,72 @@ function App() {
 
                                 <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
                                     {isEligibleFidelite && (
-                                        <div style={{background: 'var(--bg-success)', color: 'var(--color-success)', padding: '12px', borderRadius: '8px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                            <span style={{fontSize: '13px', fontWeight: 'bold'}}>🎁 Fidélité : {texteRecompense}</span>
-                                            <input type="checkbox" checked={remiseAppliquee} onChange={e => setRemiseAppliquee(e.target.checked)} style={{width: '18px', height: '18px', cursor: 'pointer'}} />
+                                        <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
+                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                                <div>
+                                                    <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}</span>
+                                                    <span style={{fontSize: '12px', color: 'var(--color-info)'}}>🎁 {texteRecompense}</span>
+                                                </div>
+                                                {!remiseAppliquee ? (
+                                                    <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
+                                                ) : (
+                                                    <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>✅ Appliquée</span>
+                                                )}
+                                            </div>
                                         </div>
                                     )}
                                     
+                                    {remiseAppliquee && configSalon.fidelite_type !== 'NONE' && (
+                                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px', color: 'var(--color-success)'}}>
+                                            <span style={{fontWeight: 'bold'}}>🎁 Remise Fidélité</span>
+                                            <span style={{fontWeight: 'bold'}}>-{Math.max(0, sousTotalCaisse - totalCaisse).toFixed(2)} €</span>
+                                        </div>
+                                    )}
+
                                     <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
                                         <span>Total TTC</span>
                                         <span>{totalCaisse.toFixed(2)} €</span>
                                     </div>
 
                                     <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
-                                        <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: methodePaiement === 'ESPECES' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--bg-info)' : 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>Espèces</button>
-                                        <button onClick={() => setMethodePaiement('CARTE')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: methodePaiement === 'CARTE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--bg-info)' : 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>Carte TPE</button>
+                                        <button onClick={() => setMethodePaiement('CARTE')} disabled={isOffline || !navigator.onLine} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CARTE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: (isOffline || !navigator.onLine) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', opacity: (isOffline || !navigator.onLine) ? 0.5 : 1, transition: 'all 0.15s'}}>💳 TPE</button>
+                                        <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'ESPECES' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'ESPECES' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>💶 Espèces</button>
+                                        <button onClick={() => setMethodePaiement('CHEQUE')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CHEQUE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CHEQUE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CHEQUE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>📝 Chèque</button>
                                     </div>
 
                                     {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
                                     
                                     <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye}>
-                                        Encaisser {totalCaisse.toFixed(2)} €
+                                        {notificationCaisse && notificationCaisse.includes('⏳') ? "En attente du TPE..." : `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`}
                                     </button>
                                 </div>
                             </>
                         )}
                     </div>
                 </div>
+              )}
+
+              {/* === MODAL SUGGESTION DE CLIENTS INTELLIGENTE === */}
+              {clientsSuggeres.length > 0 && (
+                  <div className="modal-overlay">
+                      <div className="modal-content" style={{textAlign: 'center'}}>
+                          <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+                          <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>{clientsSuggeres.length === 1 ? `Encaisser ${formatNomClient(clientsSuggeres[0])} ?` : "Quel client encaissez-vous ?"}</h2>
+                          <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
+                              {clientsSuggeres.length === 1 
+                                  ? "D'après l'agenda, c'est le client le plus probable à encaisser pour vous en ce moment." 
+                                  : "D'après l'agenda, voici les clients que vous venez de coiffer, du plus ancien au plus récent."}
+                          </p>
+                          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                              {(clientsSuggeres || []).map((client, i) => (
+                                  <button key={client.id_client} onClick={() => { setClientCaisse(client.id_client.toString()); setClientsSuggeres([]); setPosStep('type'); }} className="btn-action" style={{padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: i === 0 ? 'var(--btn-primary)' : 'var(--bg-app)', color: i === 0 ? 'white' : 'var(--text-main)', border: i === 0 ? 'none' : '1px solid var(--border-color)'}}>
+                                      <span style={{fontSize: '16px'}}>✅ {formatNomClient(client)}</span><span style={{fontSize: '12px', opacity: 0.8}}>{client.prestation_rdv}</span>
+                                  </button>
+                              ))}
+                              <button onClick={() => { setClientCaisse(''); setClientsSuggeres([]); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', marginTop: '8px'}}>❌ Aucun / Client de passage</button>
+                          </div>
+                      </div>
+                  </div>
               )}
 
               {/* --- CENTRE D'ACTION (TÂCHES) --- */}
@@ -2167,7 +2268,7 @@ function App() {
 
                   <div className="carte scan-carte">
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isStockExpanded ? '16px' : '0'}} onClick={() => setIsStockExpanded(!isStockExpanded)}>
-                          <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks & Catalogue Revente</h3>
+                          <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks</h3>
                           <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isStockExpanded ? '▲' : '▼'}</span>
                       </div>
                       
@@ -2177,40 +2278,27 @@ function App() {
                                   <input type="text" className="input-fournisseur" placeholder="🔍 Chercher un produit..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} style={{flex: 1, minWidth: '200px'}} />
                                   <select className="input-fournisseur" value={stockSortBy} onChange={e => setStockSortBy(e.target.value)} style={{width: 'auto', minWidth: '150px'}}>
                                       <option value="nom">Trier par: Nom (A-Z)</option>
-                                      <option value="stock">Trier par: Quantité (Croissant)</option>
-                                      <option value="stock_desc">Trier par: Quantité (Décroissant)</option>
-                                      <option value="prix">Trier par: Prix</option>
+                                      <option value="stock">Trier par: Quantité</option>
                                   </select>
                               </div>
                               <div className="stock-container">
-                                {(catalogueListe || [])
-                                    .filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE')
+                                {stocksData
                                     .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
                                     .sort((a, b) => {
                                         if (stockSortBy === 'nom') return a.nom.localeCompare(b.nom);
                                         if (stockSortBy === 'stock') return a.stock_actuel - b.stock_actuel;
-                                        if (stockSortBy === 'stock_desc') return b.stock_actuel - a.stock_actuel;
-                                        if (stockSortBy === 'prix') return parseFloat(a.prix) - parseFloat(b.prix);
                                         return 0;
                                     })
                                     .map((produit) => {
                                     const status = getStockStatus(produit.stock_actuel);
                                     return (
-                                      <div className="stock-item" key={produit.id_article} style={{position: 'relative'}}>
-                                        <div className="stock-info">
-                                            <div className="stock-details">
-                                                <span className="stock-nom">{produit.nom} <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>{parseFloat(produit.prix).toFixed(2)}€</span></span>
-                                                <span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>
-                                            </div>
-                                        </div>
-                                        <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                                            <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
-                                            <button onClick={() => supprimerArticle(produit.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '4px'}}>🗑️</button>
-                                        </div>
+                                      <div className="stock-item" key={produit.id_article}>
+                                        <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
+                                        <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
                                       </div>
                                     );
                                 })}
-                                {(catalogueListe || []).filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE').length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
+                                {stocksData.length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
                               </div>
                           </>
                       )}
@@ -2260,9 +2348,8 @@ function App() {
                       <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
                   ) : (
                     <div className="rh-grid">
-                      {(rhData || []).map(employe => (
-                        <div className="rh-carte" key={employe.id_employe} style={{position: 'relative'}}>
-                          <button onClick={() => supprimerEmploye(employe.id_employe)} style={{position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '14px'}} title="Supprimer l'employé">🗑️</button>
+                      {rhData.map(employe => (
+                        <div className="rh-carte" key={employe.id_employe}>
                           <div className="rh-header-profil">
                             <div className="rh-avatar">
                               {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
@@ -2270,11 +2357,11 @@ function App() {
                             <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
                           </div>
                           <div className="rh-stats-row">
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles?.clients_coiffes || 0}</span><span className="label">Clients</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles?.produits_vendus || 0}</span><span className="label">Produits</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{(((employe.performances_actuelles?.ca_genere || 0) / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.produits_vendus}</span><span className="label">Produits</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
                           </div>
-                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{(employe.performances_actuelles?.prime_estimee || 0).toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
+                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
                           <div style={{marginTop: '8px'}}>
                             <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
                             {dessinerChronogramme(employe.historique_primes)}
