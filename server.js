@@ -1236,6 +1236,7 @@ app.get('/api/factures/historique', verifierToken, async (req, res) => {
             });
         });
 
+        // Conversion de l'objet historique en tableau pour React
         const formattedData = Object.keys(historique).sort((a, b) => b - a).map(annee => ({
             annee: annee,
             mois: Object.keys(historique[annee]).map(mois => ({
