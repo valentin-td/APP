@@ -2131,11 +2131,15 @@ function App() {
                                                               <span>{moisData.total_mensuel.toFixed(2)} €</span>
                                                           </div>
 
-                                                          {/* Historique des Z quotidiens */}
-                                                          {moisData.jours.map(jour => (
-                                                              <div key={jour.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                                                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📄 Clôture (Z) du {jour.date}</span>
-                                                                  <span style={{ fontWeight: '600', color: 'var(--text-main)' }}>{jour.total.toFixed(2)} €</span>
+                                                          {/* Historique des Ventes détaillées */}
+                                                          {moisData.ventes.map(vente => (
+                                                              <div key={vente.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                                      <span style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>📅 {vente.date} à {vente.heure}</span>
+                                                                      <span style={{ color: 'var(--text-main)' }}>✂️ {vente.prestations}</span>
+                                                                      <span style={{ fontSize: '11px', opacity: 0.8 }}>👤 Réalisé par : {vente.employe}</span>
+                                                                  </div>
+                                                                  <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{vente.total.toFixed(2)} €</span>
                                                               </div>
                                                           ))}
                                                       </div>
