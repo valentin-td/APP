@@ -1204,11 +1204,53 @@ app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/factures/historique', verifierToken, async (req, res) => { 
     try { 
-        const histoQuery = `SELECT TO_CHAR(DATE_TRUNC('month', date_traitement), 'MM/YYYY') as mois_annee, SUM(montant_ttc) as total_ttc, json_agg(json_build_object('id', id_facture, 'fournisseur', nom_fournisseur, 'date', TO_CHAR(date_traitement, 'DD/MM/YYYY'), 'ttc', montant_ttc)) as factures FROM factures_fournisseurs WHERE id_salon = $1 GROUP BY DATE_TRUNC('month', date_traitement), mois_annee ORDER BY DATE_TRUNC('month', date_traitement) DESC;`; 
-        const result = await pool.query(histoQuery, [req.user.id_salon]); 
-        let historique = result.rows.map(row => ({ mois: "Mois " + row.mois_annee, total_ttc: parseFloat(row.total_ttc), factures: row.factures })); 
-        res.json(historique); 
-    } catch (erreur) { res.status(500).json({ erreur: "Erreur Historique" }); }
+        const query = `
+            SELECT 
+                id_cloture, 
+                date_cloture, 
+                total_encaisse, 
+                EXTRACT(YEAR FROM date_cloture) as annee, 
+                EXTRACT(MONTH FROM date_cloture) as mois, 
+                TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_formattee 
+            FROM clotures_caisse 
+            WHERE id_salon = $1 
+            ORDER BY date_cloture DESC
+        `;
+        const result = await pool.query(query, [req.user.id_salon]); 
+
+        const historique = {};
+        const moisNoms = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+
+        // Rangement automatique dans les dossiers
+        result.rows.forEach(row => {
+            const annee = row.annee.toString();
+            const moisNom = moisNoms[parseInt(row.mois) - 1];
+
+            if (!historique[annee]) historique[annee] = {};
+            if (!historique[annee][moisNom]) historique[annee][moisNom] = { total_mensuel: 0, jours: [] };
+
+            historique[annee][moisNom].total_mensuel += parseFloat(row.total_encaisse);
+            historique[annee][moisNom].jours.push({
+                id: row.id_cloture,
+                date: row.date_formattee,
+                total: parseFloat(row.total_encaisse)
+            });
+        });
+
+        // Formatage pour React
+        const formattedData = Object.keys(historique).sort((a, b) => b - a).map(annee => ({
+            annee: annee,
+            mois: Object.keys(historique[annee]).map(mois => ({
+                nom: mois,
+                total_mensuel: historique[annee][mois].total_mensuel,
+                jours: historique[annee][mois].jours
+            }))
+        }));
+
+        res.json(formattedData); 
+    } catch (erreur) { 
+        res.status(500).json({ erreur: "Erreur Historique Compta" }); 
+    }
 });
 
 app.get('/api/export-pdf', verifierToken, async (req, res) => {
