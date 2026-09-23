@@ -290,11 +290,11 @@ function App() {
               cache: 'no-store'
           });
           const data = await handleFetchError(res);
-          setter(data || []);
+          setter(data);
           await localforage.setItem(cacheKey, data);
       } catch (e) {
           const cachedData = await localforage.getItem(cacheKey);
-          if (cachedData) setter(cachedData || []);
+          if (cachedData) setter(cachedData);
       }
   };
 
@@ -441,7 +441,7 @@ function App() {
 
   useEffect(() => {
       if (!modalIA && tachesIA && (tachesIA || []).length > 0) {
-          setModalIA(tachesIA[0]);
+          setModalIA((tachesIA || [])[0]);
       }
   }, [tachesIA, modalIA]);
 
