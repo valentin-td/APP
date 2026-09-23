@@ -1221,7 +1221,6 @@ app.get('/api/factures/historique', verifierToken, async (req, res) => {
         const historique = {};
         const moisNoms = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 
-        // Rangement automatique dans les dossiers
         result.rows.forEach(row => {
             const annee = row.annee.toString();
             const moisNom = moisNoms[parseInt(row.mois) - 1];
@@ -1237,7 +1236,6 @@ app.get('/api/factures/historique', verifierToken, async (req, res) => {
             });
         });
 
-        // Formatage pour React
         const formattedData = Object.keys(historique).sort((a, b) => b - a).map(annee => ({
             annee: annee,
             mois: Object.keys(historique[annee]).map(mois => ({
