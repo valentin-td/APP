@@ -1312,6 +1312,139 @@ function App() {
               {/* ========================================================= */}
               {/* --- VUE : CAISSE & ENCAISSEMENT --- */}
               {/* ========================================================= */}
+              {/* ========================================================= */}
+              {/* --- VUE : PARAMÈTRES DU SALON --- */}
+              {/* ========================================================= */}
+              {role === 'gerant' && activeTab === 'parametres' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                    <div>
+                        <h1 style={{margin: 0}}>Paramètres</h1>
+                        <span className="date-subtitle" style={{margin: 0}}>Configuration de votre salon</span>
+                    </div>
+                    <button onClick={() => setActiveTab('accueil')} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', fontSize: '14px', cursor: 'pointer', color: 'var(--text-main)', padding: '8px 16px', borderRadius: '16px', fontWeight: 'bold'}}>← Retour</button>
+                  </div>
+                  
+                  <div className="carte scan-carte">
+                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
+                    
+                    <select className="input-fournisseur" value={configSalon.fidelite_type || 'NONE'} onChange={e => setConfigSalon({...configSalon, fidelite_type: e.target.value})} style={{marginBottom: '16px'}}>
+                        <option value="NONE">Désactivé</option>
+                        <option value="POINTS">Par Points (1€ = 1 point)</option>
+                        <option value="TAMPONS">Carte à Tampons (1 visite = 1 tampon)</option>
+                    </select>
+
+                    {configSalon.fidelite_type === 'POINTS' && (
+                        <div style={{display: 'flex', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                            <div style={{flex: 1}}>
+                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Points à atteindre</label>
+                                <input type="number" className="input-fournisseur" placeholder="Ex: 100" value={configSalon.fidelite_points_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_seuil: e.target.value})} />
+                            </div>
+                            <div style={{flex: 1}}>
+                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Réduction offerte (€)</label>
+                                <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_points_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_valeur: e.target.value})} />
+                            </div>
+                        </div>
+                    )}
+
+                    {configSalon.fidelite_type === 'TAMPONS' && (
+                        <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                            <div>
+                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Nombre de passages requis</label>
+                                <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_tampons_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_tampons_seuil: e.target.value})} />
+                            </div>
+                            <div style={{display: 'flex', gap: '12px'}}>
+                                <div style={{flex: 1}}>
+                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Type de récompense</label>
+                                    <select className="input-fournisseur" value={configSalon.fidelite_recompense_type || 'MONTANT'} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_type: e.target.value})}>
+                                        <option value="MONTANT">Remise fixe (€)</option>
+                                        <option value="POURCENTAGE">Pourcentage (%)</option>
+                                        <option value="PRODUIT">Produit / Service offert</option>
+                                    </select>
+                                </div>
+                                <div style={{flex: 1}}>
+                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Valeur (Ex: 20, 10, Shampoing)</label>
+                                    <input type="text" className="input-fournisseur" value={configSalon.fidelite_recompense_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_valeur: e.target.value})} />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '24px 0 8px 0'}}>📱 Relance SMS Auto</h4>
+                    <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                        <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Délai d'inactivité avant relance (Jours)</label>
+                        <input type="number" className="input-fournisseur" placeholder="Ex: 60" value={configSalon.fidelite_delai_sms || ''} onChange={e => setConfigSalon({...configSalon, fidelite_delai_sms: e.target.value})} />
+                        <p style={{fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Un SMS incitatif sera envoyé si le client ne vient pas pendant cette durée.</p>
+                    </div>
+                  </div>
+
+                  <div className="carte scan-carte">
+                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Google My Business</h3>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
+                    <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
+                    <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} style={{marginBottom: '12px'}}/>
+                    <input type="text" className="input-fournisseur" placeholder="Google Location ID" value={configSalon.google_location_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_location_id: e.target.value})} />
+                  </div>
+
+                  <div className="carte scan-carte">
+                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Horaires de l'Agenda</h3>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
+                    <div style={{display: 'flex', gap: '15px'}}>
+                      <div style={{flex: 1}}>
+                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Ouverture (0-23)</label>
+                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_ouverture || 8} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
+                      </div>
+                      <div style={{flex: 1}}>
+                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Fermeture (0-23)</label>
+                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_fermeture || 20} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="carte scan-carte">
+                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Boîte Mail (Robot Comptable)</h3>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
+                    <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures || ''} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
+                    <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email || ''} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
+                  </div>
+                  
+                  <div className="carte scan-carte">
+                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Fidélisation (SMS Auto)</h3>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
+                    <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
+                    <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name || ''} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} style={{marginBottom: '12px'}}/>
+                    <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps" value={configSalon.lien_google_maps || ''} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
+                  </div>
+
+                  <div className="carte scan-carte">
+                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        Alertes Urgences (Gérant)
+                    </h3>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Recevez un SMS si une tâche de votre Centre d'Action arrive à expiration (ex: URSSAF, Factures EDF...).</span>
+                    
+                    <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                        <div style={{flex: 1}}>
+                            <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Votre téléphone</label>
+                            <input type="tel" className="input-fournisseur" placeholder="Ex: +33612345678" value={configSalon.telephone_gerant || ''} onChange={(e) => setConfigSalon({...configSalon, telephone_gerant: e.target.value})} />
+                        </div>
+                        <div style={{display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '16px'}}>
+                            <input type="checkbox" id="alertes_sms" checked={configSalon.alertes_sms_actives || false} onChange={(e) => setConfigSalon({...configSalon, alertes_sms_actives: e.target.checked})} style={{width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--btn-primary)'}} />
+                            <label htmlFor="alertes_sms" style={{fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer', fontWeight: '600'}}>Activer les SMS</label>
+                        </div>
+                    </div>
+                  </div>
+
+                  <div className="carte scan-carte">
+                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>TPE Physique (Stripe Terminal)</h3>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
+                    <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
+                  </div>
+
+                  <button className="btn-action" style={{marginTop: '8px', width: '100%'}} onClick={sauvegarderParametres}>Enregistrer la configuration</button>
+                </div>
+              )}
               {role === 'gerant' && activeTab === 'caisse' && (
                 <div className="admin-container" style={{display: 'flex', gap: '24px', height: '100%', flexDirection: isMobile ? 'column' : 'row'}}>
                     {/* LEFT PANEL - CATALOGUE */}
