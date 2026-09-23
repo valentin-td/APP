@@ -61,6 +61,14 @@ function App() {
   const [superAdminSalons, setSuperAdminSalons] = useState([]);
   const [tachesListe, setTachesListe] = useState([]);
   const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
+  // --- NOUVEAUX ÉTATS POUR L'UI OPTIMISÉE ---
+  const [showAddClient, setShowAddClient] = useState(false);
+  const [showAddEmploye, setShowAddEmploye] = useState(false);
+  const [showAddProduit, setShowAddProduit] = useState(false);
+  const [showAddPrestation, setShowAddPrestation] = useState(false);
+  const [stockSearch, setStockSearch] = useState('');
+  const [stockSortBy, setStockSortBy] = useState('nom'); // 'nom', 'stock', 'prix'
+  const [isStockExpanded, setIsStockExpanded] = useState(true);
   
   // ==========================================
   // --- PROTOCOLES & RECETTES (NOUVEAU) ---
@@ -1156,7 +1164,6 @@ function App() {
              {role === 'gerant' && (
                  <>
                     <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
-                    <div className={`nav-item ${activeTab === 'gestion' ? 'active' : ''}`} onClick={() => setActiveTab('gestion')} style={isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span>Gestion</span></div>
                     <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => setActiveTab('protocoles')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span>
                     </div>
@@ -1707,11 +1714,23 @@ function App() {
                       </div>
                       <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
+                          <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
                           {!modeEditionProtocole && (
-                              <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">+ Créer une Fiche</button>
+                              <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">Créer une Fiche Technique</button>
                           )}
                       </div>
                   </div>
+
+                  {showAddPrestation && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouvelle Prestation (Catalogue)</h3>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                              <input type="text" className="input-fournisseur" placeholder="Nom de la prestation (ex: Coupe Homme)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
+                              <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
+                          </div>
+                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation</button>
+                      </div>
+                  )}
 
                   <div className="caisse-split-container" style={{ display: 'block' }}>
                       {/* VUE 1 : BIBLIOTHÈQUE (Masquée si création ou consultation) */}
@@ -2285,8 +2304,26 @@ function App() {
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                     <h1 style={{margin: 0}}>Caisse</h1>
-                    <ThemeToggle />
+                    <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                        <ThemeToggle />
+                        <button onClick={() => setShowAddClient(!showAddClient)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Client">+</button>
+                    </div>
                   </div>
+
+                  {showAddClient && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouveau Client</h3>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Prénom" value={newClient.prenom} onChange={(e) => setNewClient({...newClient, prenom: e.target.value})} />
+                            <input type="text" className="input-fournisseur" placeholder="Nom" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
+                          </div>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                            <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
+                            <input type="date" className="input-fournisseur" placeholder="Date de naissance" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} />
+                          </div>
+                          <button className="btn-action" onClick={() => {ajouterClient(); setShowAddClient(false);}} disabled={!newClient.nom} style={{width: '100%'}}>Enregistrer le client</button>
+                      </div>
+                  )}
 
                   <div className="caisse-split-container">
                       {/* PANNEAU GAUCHE */}
@@ -2454,20 +2491,64 @@ function App() {
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                       <div><h1 style={{margin: 0}}>Inventaire</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
-                      <ThemeToggle />
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
+                      </div>
                   </div>
-                  <div className="stock-container">
-                    {stocksData.length === 0 ? (
-                        <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>
-                    ) : stocksData.map((produit) => {
-                        const status = getStockStatus(produit.stock_actuel);
-                        return (
-                          <div className="stock-item" key={produit.id_article}>
-                            <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
-                            <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+
+                  {showAddProduit && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouveau Produit (Revente/Labo)</h3>
+                          <div style={{display: 'flex', gap: '12px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Nom du produit (Laissez vide si réassort)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
                           </div>
-                        );
-                    })}
+                          <div style={{display: 'flex', gap: '12px', marginTop: '12px', marginBottom: '16px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '120px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '70px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Délai (j)" title="Délai moyen de livraison (jours)" style={{width: '90px'}} value={newArticle.delai_livraison_jours} onChange={(e) => setNewArticle({...newArticle, delai_livraison_jours: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                          </div>
+                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRODUIT_REVENTE'}); ajouterArticle(); setShowAddProduit(false); }} disabled={!newArticle.reference} style={{width: '100%'}}>{!newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
+                      </div>
+                  )}
+
+                  <div className="carte scan-carte">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isStockExpanded ? '16px' : '0'}} onClick={() => setIsStockExpanded(!isStockExpanded)}>
+                          <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks</h3>
+                          <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isStockExpanded ? '▲' : '▼'}</span>
+                      </div>
+                      
+                      {isStockExpanded && (
+                          <>
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
+                                  <input type="text" className="input-fournisseur" placeholder="🔍 Chercher un produit..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} style={{flex: 1, minWidth: '200px'}} />
+                                  <select className="input-fournisseur" value={stockSortBy} onChange={e => setStockSortBy(e.target.value)} style={{width: 'auto', minWidth: '150px'}}>
+                                      <option value="nom">Trier par: Nom (A-Z)</option>
+                                      <option value="stock">Trier par: Quantité</option>
+                                  </select>
+                              </div>
+                              <div className="stock-container">
+                                {stocksData
+                                    .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
+                                    .sort((a, b) => {
+                                        if (stockSortBy === 'nom') return a.nom.localeCompare(b.nom);
+                                        if (stockSortBy === 'stock') return a.stock_actuel - b.stock_actuel;
+                                        return 0;
+                                    })
+                                    .map((produit) => {
+                                    const status = getStockStatus(produit.stock_actuel);
+                                    return (
+                                      <div className="stock-item" key={produit.id_article}>
+                                        <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
+                                        <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+                                      </div>
+                                    );
+                                })}
+                                {stocksData.length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
+                              </div>
+                          </>
+                      )}
                   </div>
                 </div>
               )}
@@ -2476,8 +2557,39 @@ function App() {
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                       <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
-                      <ThemeToggle />
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
+                      </div>
                   </div>
+
+                  {showAddEmploye && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                            <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
+                          </div>
+
+                          <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo de profil (Optionnel)</label>
+                          <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                              <div className="rh-avatar" style={{width: '40px', height: '40px', flexShrink: 0, border: 'none', background: 'transparent'}}>
+                                  {newEmploye.photo_url ? (
+                                      <img src={newEmploye.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
+                                  ) : (
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--text-muted)', width: '24px', height: '24px'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                  )}
+                              </div>
+                              <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleImageUpload} style={{fontSize: '12px', color: 'var(--text-main)'}} />
+                          </div>
+
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                            <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
+                            <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
+                          </div>
+                          <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.nom || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
+                      </div>
+                  )}
                   
                   {rhData.length === 0 ? (
                       <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
@@ -2521,7 +2633,7 @@ function App() {
                   </div>
               
                   <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
-                  <div className="section-titre">Historique des factures</div>
+                  <div className="section-titre">Historique des bilans comptables</div>
                   {historiqueData.length === 0 ? (
                       <div className="empty-state"><SvgEmptyState /><p>Aucune facture traitée.</p></div>
                   ) : historiqueData.map((dossier, index) => (
