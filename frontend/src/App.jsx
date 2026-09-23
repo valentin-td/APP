@@ -71,7 +71,7 @@ function App() {
   const [showAddProduit, setShowAddProduit] = useState(false);
   const [showAddPrestation, setShowAddPrestation] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
-  const [stockSortBy, setStockSortBy] = useState('nom');
+  const [stockSortBy, setStockSortBy] = useState('nom'); 
   const [isStockExpanded, setIsStockExpanded] = useState(true);
   
   const [protocolesListe, setProtocolesListe] = useState([]);
@@ -606,9 +606,6 @@ function App() {
   };
   const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
 
-  // ==========================================
-  // --- PROTOCOLES & RECETTES (FONCTIONS) ---
-  // ==========================================
   const ajouterIngredientRecette = () => {
       if (!ingredientTemp.id_article || !ingredientTemp.quantite_necessaire) return showToast("Sélectionnez un article et une quantité.", "error");
       const art = (catalogueListe || []).find(a => a.id_article?.toString() === ingredientTemp.id_article);
@@ -1024,7 +1021,6 @@ function App() {
   const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
   const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
 
-  // --- MOTEUR DE RECHERCHE PRESTATIONS (MAX 5 RESULTATS) ---
   const getPrestationsSuggerees = (texteSaisi) => {
       const prestationsDb = (catalogueListe || []).filter(a => a.type_article === 'PRESTATION');
       const searchClean = nettoyerTexteRecherche(texteSaisi);
@@ -1042,7 +1038,7 @@ function App() {
       
       return resultats.slice(0, 5); 
   };
-  // --- MOTEUR DE RECHERCHE CLIENTS CRM (MAX 5 RESULTATS) ---
+
   const getClientsSuggeresPourRdv = (texteSaisi) => {
       if (!texteSaisi) return (clientsListe || []).slice(0, 5);
 
@@ -1058,7 +1054,6 @@ function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       
-      {/* CSS INJECTÉ POUR L'EFFET ACCORDÉON DES RDV */}
       <style>{`
           .rdv-card-accordeon {
               transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1070,14 +1065,12 @@ function App() {
           }
       `}</style>
 
-      {/* BANDEAU HORS-LIGNE CRITIQUE */}
       {isOffline && (
         <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', zIndex: 10000, width: '100%', boxSizing: 'border-box' }}>
             ⚠️ Connexion perdue. Mode hors-ligne activé. Les encaissements sont sauvegardés localement.
         </div>
       )}
 
-      {/* POP-UP INTELLIGENT DE L'IA (STOCK & RDV) */}
       {modalIA && (
           <div className="modal-overlay">
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
@@ -1220,7 +1213,195 @@ function App() {
 
           <div className="main-content" style={{ overflowY: 'auto', flex: 1, ...(isMobile ? { paddingTop: '65px', paddingBottom: '140px' } : { paddingBottom: '40px' }) }}>
             <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
-              
+
+              {/* ========================================================= */}
+              {/* --- VUE : TABLEAU DE BORD (ACCUEIL) --- */}
+              {/* ========================================================= */}
+              {role === 'gerant' && activeTab === 'accueil' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div>
+                          <h1 style={{margin: 0}}>Tableau de Bord</h1>
+                          <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                      </div>
+                      <ThemeToggle />
+                  </div>
+                  {!dashboardData ? (
+                      <div className="skeleton-loading" style={{height: '200px', borderRadius: '12px'}}></div>
+                  ) : (
+                      <>
+                          <div className="cartes-financieres">
+                              <div className="carte">
+                                  <div className="carte-titre-container">
+                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+                                      <h3>Chiffre d'Affaires</h3>
+                                  </div>
+                                  <p className="montant">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                              </div>
+                              <div className="carte">
+                                  <div className="carte-titre-container">
+                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
+                                      <h3>Panier Moyen</h3>
+                                  </div>
+                                  <p className="montant">{dashboardData.finances?.panier_moyen || '0.00'} <span className="devise">€</span></p>
+                              </div>
+                              <div className="carte">
+                                  <div className="carte-titre-container">
+                                      <div className="icon" style={{color: 'var(--color-info)'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+                                      <h3>Commissions Dues</h3>
+                                  </div>
+                                  <p className="montant" style={{color: 'var(--color-info)'}}>{dashboardData.finances?.commissions_a_payer?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                              </div>
+                          </div>
+                          
+                          <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '24px'}}>
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
+                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
+                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                          {(dashboardData.top_3_prestations || []).map((p, i) => (
+                                              <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px'}}>
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                      <span style={{fontWeight: 'bold', color: 'var(--text-secondary)'}}>#{i+1}</span>
+                                                      <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{p.nom}</span>
+                                                  </div>
+                                                  <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(p.total_genere || 0).toFixed(2)} €</span>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
+                              </div>
+
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
+                                  {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
+                                          <div style={{textAlign: 'center'}}>
+                                              <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
+                                              <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
+                                          </div>
+                                          <div style={{flex: 1}}>
+                                              <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
+                                              {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
+                                          </div>
+                                      </div>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres (Compta) pour afficher les avis.</p>}
+                              </div>
+                          </div>
+                      </>
+                  )}
+                </div>
+              )}
+
+              {/* ========================================================= */}
+              {/* --- VUE : CAISSE & ENCAISSEMENT --- */}
+              {/* ========================================================= */}
+              {role === 'gerant' && activeTab === 'caisse' && (
+                <div className="admin-container" style={{display: 'flex', gap: '24px', height: '100%', flexDirection: isMobile ? 'column' : 'row'}}>
+                    {/* LEFT PANEL - CATALOGUE */}
+                    <div style={{flex: 2, display: 'flex', flexDirection: 'column'}}>
+                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                            <div><h1 style={{margin: 0}}>Caisse</h1></div>
+                            <ThemeToggle />
+                        </div>
+                        <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                            <button onClick={() => setPosType('PRESTATION')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: posType === 'PRESTATION' ? 'var(--btn-primary)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'white' : 'var(--text-main)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Prestations</button>
+                            <button onClick={() => setPosType('PRODUIT_REVENTE')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: posType === 'PRODUIT_REVENTE' ? 'var(--btn-primary)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'white' : 'var(--text-main)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Produits</button>
+                        </div>
+                        <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '16px'}} />
+                        
+                        <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px'}}>
+                            {(catalogueListe || [])
+                                .filter(a => a.type_article === posType && (a.nom.toLowerCase().includes(rechercheCaisse.toLowerCase()) || (a.reference && a.reference.toLowerCase().includes(rechercheCaisse.toLowerCase()))))
+                                .map(art => (
+                                <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', transition: 'transform 0.1s'}} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
+                                    <span style={{fontWeight: '600', fontSize: '13px', color: 'var(--text-main)'}}>{art.nom}</span>
+                                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                        <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(art.prix || 0).toFixed(2)}€</span>
+                                        {posType === 'PRODUIT_REVENTE' && <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Stock: {art.stock_actuel}</span>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* RIGHT PANEL - PANIER & ENCAISSEMENT */}
+                    <div style={{flex: 1, minWidth: '320px', background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
+                        {ticketGenere ? (
+                            <div style={{padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center'}}>
+                                <div style={{color: 'var(--color-success)', marginBottom: '16px', display: 'flex', justifyContent: 'center'}}><svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                                <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Paiement Validé</h2>
+                                <p style={{color: 'var(--text-secondary)', marginBottom: '24px'}}>{ticketGenere.montant.toFixed(2)} € encaissé par {methodePaiement}</p>
+                                
+                                <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px'}}>
+                                    <button onClick={() => envoyerTicketEco('email')} className="btn-action" style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>📧 Envoyer le ticket (E-mail)</button>
+                                    {configSalon.brevo_api_key && <button onClick={() => envoyerTicketEco('sms')} className="btn-action" style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>📱 Envoyer le ticket (SMS)</button>}
+                                </div>
+                                <button onClick={() => setTicketGenere(null)} className="btn-action">Nouveau Ticket</button>
+                            </div>
+                        ) : (
+                            <>
+                                <div style={{padding: '16px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
+                                    <select className="input-fournisseur" value={posEmploye || ''} onChange={e => handleSelectEmployeCaisse(e.target.value)} style={{marginBottom: '12px', background: 'var(--bg-card)'}}>
+                                        <option value="">👤 Sélectionner un collaborateur...</option>
+                                        {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                    </select>
+                                    <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => setClientCaisse(e.target.value)} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
+                                        <option value="">🤝 Client de passage...</option>
+                                        {clientsSuggeres.map(c => <option key={c.id_client} value={c.id_client}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
+                                        {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client}>{c.nom} {c.prenom}</option>)}
+                                    </select>
+                                </div>
+
+                                <div style={{flex: 1, overflowY: 'auto', padding: '16px'}}>
+                                    {(panierCaisse || []).length === 0 ? (
+                                        <div className="empty-state" style={{marginTop: '40px'}}><p>Le ticket est vide.</p></div>
+                                    ) : (
+                                        (panierCaisse || []).map(item => (
+                                            <div key={item.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px'}}>
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                    <span style={{background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: 'var(--text-main)'}}>{item.quantite}x</span>
+                                                    <span style={{color: 'var(--text-main)'}}>{item.nom}</span>
+                                                </div>
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                    <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{(item.prix_unitaire * item.quantite).toFixed(2)}€</span>
+                                                    <button onClick={() => retirerDuPanier(item.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+
+                                <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
+                                    {isEligibleFidelite && (
+                                        <div style={{background: 'var(--bg-success)', color: 'var(--color-success)', padding: '12px', borderRadius: '8px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                            <span style={{fontSize: '13px', fontWeight: 'bold'}}>🎁 Fidélité : {texteRecompense}</span>
+                                            <input type="checkbox" checked={remiseAppliquee} onChange={e => setRemiseAppliquee(e.target.checked)} style={{width: '18px', height: '18px', cursor: 'pointer'}} />
+                                        </div>
+                                    )}
+                                    
+                                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
+                                        <span>Total TTC</span>
+                                        <span>{totalCaisse.toFixed(2)} €</span>
+                                    </div>
+
+                                    <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
+                                        <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: methodePaiement === 'ESPECES' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--bg-info)' : 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>Espèces</button>
+                                        <button onClick={() => setMethodePaiement('CARTE')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: methodePaiement === 'CARTE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--bg-info)' : 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>Carte TPE</button>
+                                    </div>
+
+                                    {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
+                                    
+                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || panierCaisse.length === 0 || !posEmploye}>
+                                        Encaisser {totalCaisse.toFixed(2)} €
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+              )}
+
               {/* --- CENTRE D'ACTION (TÂCHES) --- */}
               {role === 'gerant' && activeTab === 'actions' && (
                 <div className="admin-container">
@@ -1668,6 +1849,516 @@ function App() {
                                   )}
                               </div>
                           </div>
+                      </div>
+                  )}
+                </div>
+              )}
+
+              {/* ========================================================= */}
+              {/* --- NOUVEL ONGLET DÉDIÉ : L'ACADÉMIE (FULL SCREEN) --- */}
+              {/* ========================================================= */}
+              {role === 'gerant' && activeTab === 'protocoles' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div>
+                          <h1 style={{margin: 0}}>L'Académie</h1>
+                          <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
+                      </div>
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
+                          {!modeEditionProtocole && (
+                              <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">Créer une Fiche Technique</button>
+                          )}
+                      </div>
+                  </div>
+
+                  {showAddPrestation && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouvelle Prestation (Catalogue)</h3>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                              <input type="text" className="input-fournisseur" placeholder="Nom de la prestation (ex: Coupe Homme)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
+                              <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
+                          </div>
+                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation</button>
+                      </div>
+                  )}
+
+                  <div className="caisse-split-container" style={{ display: 'block' }}>
+                      {/* VUE 1 : BIBLIOTHÈQUE (Masquée si création ou consultation) */}
+                      {!modeEditionProtocole && (
+                          <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
+                              <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', maxWidth: '400px'}}/>
+                              
+                              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
+                                  {(protocolesListe || []).filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
+                                      let stockSuffisant = true;
+                                      (proto.ingredients || []).forEach(ing => {
+                                          const articleDuStock = (catalogueListe || []).find(a => a.id_article === ing.id_article);
+                                          if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
+                                      });
+
+                                      return (
+                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                                              {proto.medias && proto.medias.apres ? (
+                                                  <div style={{height: '140px', width: '100%', background: '#ccc'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
+                                              ) : ( <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div> )}
+                                              
+                                              <div style={{padding: '16px'}}>
+                                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                                                      <span style={{fontSize: '15px', fontWeight: 'bold'}}>{proto.nom_prestation}</span>
+                                                      <span style={{width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
+                                                  </div>
+                                                  <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '12px'}}>
+                                                      {(proto.tags || []).map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
+                                                  </div>
+                                              </div>
+                                          </div>
+                                      );
+                                  })}
+                                  {(protocolesListe || []).length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
+                              </div>
+                          </div>
+                      )}
+
+                     {/* VUE 2 : ÉDITEUR (Plein Écran) */}
+                      {modeEditionProtocole === 'NEW' && (
+                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
+                              <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
+                              
+                              <div style={{marginBottom: '16px'}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
+                                  <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
+                                      <option value="">-- Choisir une prestation --</option>
+                                      {(catalogueListe || []).filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
+                                  </select>
+                              </div>
+
+                              <div style={{marginBottom: '24px'}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
+                                  <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                                      {TAGS_DISPONIBLES.map(tag => (
+                                          <button key={tag} onClick={() => toggleTag(tag)} style={{background: (nouveauProtocole.tags || []).includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: (nouveauProtocole.tags || []).includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
+                                      ))}
+                                  </div>
+                              </div>
+
+                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
+                                  <div style={{display: 'flex', gap: '12px'}}>
+                                      {['avant', 'pendant', 'apres'].map(type => (
+                                          <div key={type} style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                                              <label style={{fontSize: '11px', textTransform: 'capitalize', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
+                                              <div style={{height: '100px', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
+                                                  {nouveauProtocole.medias[type] ? <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <span style={{fontSize: '20px', color: 'var(--text-muted)'}}>+</span>}
+                                                  <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer'}} />
+                                              </div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+
+                              <div style={{marginBottom: '24px'}}>
+                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
+                                      {(nouveauProtocole.etapes || []).map((etape, index) => (
+                                          <div 
+                                              key={etape.id_etape} 
+                                              draggable
+                                              onDragStart={(e) => e.dataTransfer.setData("dragIndex", index)}
+                                              onDragOver={(e) => e.preventDefault()}
+                                              onDrop={(e) => {
+                                                  const dragIndex = Number(e.dataTransfer.getData("dragIndex"));
+                                                  const dropIndex = index;
+                                                  const nouvellesEtapes = [...(nouveauProtocole.etapes || [])];
+                                                  const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1);
+                                                  nouvellesEtapes.splice(dropIndex, 0, draggedEtape);
+                                                  setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes });
+                                              }}
+                                              style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center', cursor: 'grab'}}
+                                              title="Maintenez cliqué pour déplacer"
+                                          >
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5}}>
+                                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                              </div>
+                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
+                                              <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
+                                              {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ {etape.timer_min} min</div>}
+                                              <button onClick={() => supprimerEtapeRecette(etape.id_etape)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer'}}>✕</button>
+                                          </div>
+                                      ))}
+                                  </div>
+                                  <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
+                                      <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
+                                      <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
+                                      <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
+                                  </div>
+                              </div>
+
+                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
+                              <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
+                                  <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
+                                      <option value="">-- Ajouter un produit --</option>
+                                      {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
+                                  </select>
+                                  <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
+                                  <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
+                              </div>
+                              
+                              <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
+                                  {(nouveauProtocole.ingredients || []).map(ing => (
+                                      <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
+                                          <span>{ing.quantite_necessaire}x {ing.nom}</span>
+                                          <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
+                                      </div>
+                                  ))}
+                              </div>
+
+                              {(() => {
+                                  const prestaChoisie = (catalogueListe || []).find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
+                                  const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
+                                  const coutProduits = (nouveauProtocole.ingredients || []).reduce((acc, ing) => {
+                                      const art = (catalogueListe || []).find(a => a.id_article === ing.id_article);
+                                      return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0);
+                                  }, 0);
+                                  const margeValeur = prixVente - coutProduits;
+                                  const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
+                                  const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
+
+                                  return (nouveauProtocole.nom_prestation && (
+                                      <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité</span>
+                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
+                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
+                                          </div>
+                                          <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
+                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                  <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
+                                                  <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ));
+                              })()}
+
+                              {/* BOUTONS ANNULER ET SAUVEGARDER */}
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                  <button onClick={() => setModeEditionProtocole(null)} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-input)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer'}}>Annuler</button>
+                                  <button className="btn-action" style={{flex: 2, padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
+                              </div>
+                          </div>
+                      )}
+                      
+                      {/* VUE 3 : LECTURE D'UNE FICHE EXISTANTE (Plein Écran) */}
+                      {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
+                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
+                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
+                                  <div>
+                                      <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
+                                      <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
+                                      <div style={{display: 'flex', gap: '8px'}}>
+                                          {(modeEditionProtocole.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
+                                      </div>
+                                  </div>
+                                  <div style={{display: 'flex', gap: '8px'}}>
+                                      <button onClick={() => {
+                                          setNouveauProtocole(modeEditionProtocole); // Charge les données dans le formulaire
+                                          setModeEditionProtocole('NEW'); // Bascule sur la vue éditeur
+                                      }} style={{background: 'var(--btn-primary)', border: 'none', color: 'white', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                          Modifier la fiche
+                                      </button>
+                                      <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                          Supprimer la fiche
+                                      </button>
+                                  </div>
+                              </div>
+
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
+                                  {['avant', 'pendant', 'apres'].map(type => (
+                                      modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
+                                          <div key={type} style={{flex: 1}}>
+                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
+                                              <span style={{fontSize: '10px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
+                                          </div>
+                                      )
+                                  ))}
+                              </div>
+
+                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
+                              <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
+                                  {(modeEditionProtocole.ingredients || []).map((ing, i) => (
+                                      <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== (modeEditionProtocole.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                          <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
+                                      </div>
+                                  ))}
+                                  {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
+                              </div>
+
+                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
+                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                  {(modeEditionProtocole.etapes || []).map((etape, index) => (
+                                      <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                          <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
+                                          <div style={{flex: 1}}>
+                                              <p style={{margin: '0 0 8px 0', fontSize: '14px', lineHeight: '1.5'}}>{etape.texte}</p>
+                                              {etape.timer_min && <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ Minuteur : {etape.timer_min} min</span>}
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {(!modeEditionProtocole.etapes || (modeEditionProtocole.etapes || []).length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
+                              </div>
+                          </div>
+                      )}
+                  </div>
+                  
+                  {/* CATALOGUE DES PRESTATIONS INTÉGRÉ DANS L'ACADÉMIE */}
+                  {!modeEditionProtocole && (
+                      <>
+                          <div className="section-titre" style={{marginTop: '32px'}}>Catalogue des Prestations</div>
+                          <div className="carte scan-carte">
+                              {(catalogueListe || []).filter(art => art.type_article === 'PRESTATION').length === 0 ? (
+                                  <div className="empty-state"><p>Aucune prestation au catalogue.</p></div>
+                              ) : (catalogueListe || []).filter(art => art.type_article === 'PRESTATION').map(art => (
+                                  <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
+                                      <span>
+                                          <strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € 
+                                      </span>
+                                      <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
+                                  </div>
+                              ))}
+                          </div>
+                      </>
+                  )}
+                </div>
+              )}
+
+              {role === 'gerant' && activeTab === 'produits' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
+                      </div>
+                  </div>
+
+                  {showAddProduit && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouveau Produit (Revente/Labo)</h3>
+                          <div style={{display: 'flex', gap: '12px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Nom du produit (Laissez vide si réassort)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                          </div>
+                          <div style={{display: 'flex', gap: '12px', marginTop: '12px', marginBottom: '16px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '120px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '70px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Délai (j)" title="Délai moyen de livraison (jours)" style={{width: '90px'}} value={newArticle.delai_livraison_jours} onChange={(e) => setNewArticle({...newArticle, delai_livraison_jours: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                          </div>
+                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRODUIT_REVENTE'}); ajouterArticle(); setShowAddProduit(false); }} disabled={!newArticle.reference} style={{width: '100%'}}>{!newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
+                      </div>
+                  )}
+
+                  <div className="carte scan-carte">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isStockExpanded ? '16px' : '0'}} onClick={() => setIsStockExpanded(!isStockExpanded)}>
+                          <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks & Catalogue Revente</h3>
+                          <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isStockExpanded ? '▲' : '▼'}</span>
+                      </div>
+                      
+                      {isStockExpanded && (
+                          <>
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
+                                  <input type="text" className="input-fournisseur" placeholder="🔍 Chercher un produit..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} style={{flex: 1, minWidth: '200px'}} />
+                                  <select className="input-fournisseur" value={stockSortBy} onChange={e => setStockSortBy(e.target.value)} style={{width: 'auto', minWidth: '150px'}}>
+                                      <option value="nom">Trier par: Nom (A-Z)</option>
+                                      <option value="stock">Trier par: Quantité (Croissant)</option>
+                                      <option value="stock_desc">Trier par: Quantité (Décroissant)</option>
+                                      <option value="prix">Trier par: Prix</option>
+                                  </select>
+                              </div>
+                              <div className="stock-container">
+                                {(catalogueListe || [])
+                                    .filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE')
+                                    .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
+                                    .sort((a, b) => {
+                                        if (stockSortBy === 'nom') return a.nom.localeCompare(b.nom);
+                                        if (stockSortBy === 'stock') return a.stock_actuel - b.stock_actuel;
+                                        if (stockSortBy === 'stock_desc') return b.stock_actuel - a.stock_actuel;
+                                        if (stockSortBy === 'prix') return parseFloat(a.prix) - parseFloat(b.prix);
+                                        return 0;
+                                    })
+                                    .map((produit) => {
+                                    const status = getStockStatus(produit.stock_actuel);
+                                    return (
+                                      <div className="stock-item" key={produit.id_article} style={{position: 'relative'}}>
+                                        <div className="stock-info">
+                                            <div className="stock-details">
+                                                <span className="stock-nom">{produit.nom} <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>{parseFloat(produit.prix).toFixed(2)}€</span></span>
+                                                <span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>
+                                            </div>
+                                        </div>
+                                        <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                            <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+                                            <button onClick={() => supprimerArticle(produit.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '4px'}}>🗑️</button>
+                                        </div>
+                                      </div>
+                                    );
+                                })}
+                                {(catalogueListe || []).filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE').length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
+                              </div>
+                          </>
+                      )}
+                  </div>
+                </div>
+              )}
+
+              {role === 'gerant' && activeTab === 'rh' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
+                      </div>
+                  </div>
+
+                  {showAddEmploye && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                            <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
+                          </div>
+
+                          <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo de profil (Optionnel)</label>
+                          <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                              <div className="rh-avatar" style={{width: '40px', height: '40px', flexShrink: 0, border: 'none', background: 'transparent'}}>
+                                  {newEmploye.photo_url ? (
+                                      <img src={newEmploye.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
+                                  ) : (
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--text-muted)', width: '24px', height: '24px'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                  )}
+                              </div>
+                              <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleImageUpload} style={{fontSize: '12px', color: 'var(--text-main)'}} />
+                          </div>
+
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                            <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
+                            <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
+                          </div>
+                          <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.nom || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
+                      </div>
+                  )}
+                  
+                  {(rhData || []).length === 0 ? (
+                      <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
+                  ) : (
+                    <div className="rh-grid">
+                      {(rhData || []).map(employe => (
+                        <div className="rh-carte" key={employe.id_employe} style={{position: 'relative'}}>
+                          <button onClick={() => supprimerEmploye(employe.id_employe)} style={{position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '14px'}} title="Supprimer l'employé">🗑️</button>
+                          <div className="rh-header-profil">
+                            <div className="rh-avatar">
+                              {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
+                            </div>
+                            <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
+                          </div>
+                          <div className="rh-stats-row">
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles?.clients_coiffes || 0}</span><span className="label">Clients</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles?.produits_vendus || 0}</span><span className="label">Produits</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{(((employe.performances_actuelles?.ca_genere || 0) / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
+                          </div>
+                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{(employe.performances_actuelles?.prime_estimee || 0).toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
+                          <div style={{marginTop: '8px'}}>
+                            <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
+                            {dessinerChronogramme(employe.historique_primes)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {role === 'gerant' && activeTab === 'admin' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span></div>
+                      <ThemeToggle />
+                  </div>
+                  
+                  <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
+                     <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
+                     <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
+                  </div>
+              
+                  <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
+                  <div className="section-titre">Historique des bilans comptables</div>
+                  
+                  {(historiqueData || []).length === 0 ? (
+                      <div className="empty-state">
+                          <SvgEmptyState />
+                          <p>Aucune clôture de caisse (Z) effectuée pour le moment.</p>
+                      </div>
+                  ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {(historiqueData || []).map((anneeData) => (
+                              <div key={anneeData.annee} style={{ background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                                  
+                                  {/* DOSSIER ANNÉE */}
+                                  <div onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', background: 'var(--bg-card)', padding: '16px', fontWeight: 'bold', fontSize: '16px', color: 'var(--text-main)' }}>
+                                      <span style={{ fontSize: '20px' }}>{expandedYear === anneeData.annee ? '📂' : '📁'}</span> 
+                                      Année {anneeData.annee}
+                                  </div>
+
+                                  {/* SOUS-DOSSIERS MOIS */}
+                                  {expandedYear === anneeData.annee && (
+                                      <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
+                                          {(anneeData.mois || []).map((moisData) => (
+                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                                                  
+                                                  <div onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px' }}>
+                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', color: 'var(--text-main)' }}>
+                                                          <span style={{ fontSize: '18px' }}>{expandedMonth === moisData.nom ? '📂' : '📁'}</span> 
+                                                          {moisData.nom}
+                                                      </div>
+                                                      <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)' }}>
+                                                          {moisData.total_mensuel?.toFixed(2) || '0.00'} €
+                                                      </span>
+                                                  </div>
+
+                                                  {/* FICHIERS DU MOIS */}
+                                                  {expandedMonth === moisData.nom && (
+                                                      <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                          
+                                                          {/* Récapitulatif Mensuel (Fichier maitre) */}
+                                                          <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', border: '1px solid #bfdbfe', marginBottom: '8px' }}>
+                                                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📊 Bilan consolidé ({moisData.nom})</span>
+                                                              <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
+                                                          </div>
+
+                                                          {/* Liste des jours du mois (Un fichier cliquable par jour) */}
+                                                          {(moisData.jours || []).map(jour => (
+                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'} title="Cliquez pour télécharger le PDF détaillé">
+                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                                      <span style={{ fontSize: '20px' }}>📄</span>
+                                                                      <span style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
+                                                                  </div>
+                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
+                                                                      <span style={{ fontSize: '16px' }}>⬇️</span>
+                                                                  </div>
+                                                              </div>
+                                                          ))}
+                                                      </div>
+                                                  )}
+                                              </div>
+                                          ))}
+                                      </div>
+                                  )}
+                              </div>
+                          ))}
                       </div>
                   )}
                 </div>
