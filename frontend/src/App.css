@@ -346,8 +346,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 /* ==========================================================================
    14. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
-@media (max-width: 768px) {
-  /* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
+/* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
   .navbar-sidebar { 
       position: fixed !important;
       flex-direction: row !important; 
@@ -358,39 +357,47 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       right: 0 !important;
       width: 100% !important; 
       height: auto !important; 
-      padding: 8px 0 !important; /* Espacement ajusté */
+      padding: 8px 12px !important; 
       padding-bottom: calc(8px + env(safe-area-inset-bottom)) !important;
       box-sizing: border-box !important; 
-      border-right: none !important; 
-      border-top: 0.5px solid rgba(0, 0, 0, 0.1) !important; /* Bordure iOS ultra fine */
-      justify-content: space-around !important; 
-      /* Effet Liquid Glass Apple */
-      background: rgba(255, 255, 255, 0.65) !important; /* Très transparent */
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      justify-content: space-between !important; 
+      /* Effet Liquid Glass Apple pur (Aucune bordure dure) */
+      background: rgba(255, 255, 255, 0.75) !important;
+      backdrop-filter: blur(30px) saturate(200%);
+      -webkit-backdrop-filter: blur(30px) saturate(200%);
+      border-top: none !important; 
+      border-right: none !important;
+      box-shadow: 0 -0.5px 0 rgba(0,0,0,0.08) !important; /* Ligne de séparation ultra fine iOS */
       z-index: 1000 !important;
   }
   body.dark-mode .navbar-sidebar {
-      background: rgba(24, 24, 27, 0.65) !important;
-      border-top: 0.5px solid rgba(255, 255, 255, 0.1) !important;
+      background: rgba(24, 24, 27, 0.75) !important;
+      box-shadow: 0 -0.5px 0 rgba(255,255,255,0.1) !important;
   }
   .navbar-spacer { display: none !important; }
+  
+  /* L'effet "Pilule" (Pill) de l'image 2 */
   .nav-item { 
       min-width: 0 !important; 
       flex: 1 !important;
-      padding: 4px 0 !important; 
-      margin-bottom: 0 !important; 
-      font-size: 10px !important; /* Typographie miniature iOS */
+      padding: 8px 0 !important; 
+      margin: 0 4px !important;
+      border-radius: 16px !important; /* Forme de la pilule */
+      font-size: 10px !important; /* Micro typo iOS */
       font-weight: 500 !important;
-      color: #8e8e93 !important; /* Gris inactif iOS */
-      gap: 2px !important; /* Espace réduit entre icône et texte */
+      color: var(--text-main) !important;
+      gap: 2px !important; 
+      transition: background 0.2s ease !important;
   }
   .nav-item.active {
-      color: var(--text-main) !important; /* Noir/Blanc franc quand actif */
+      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair de votre photo 2 */
+  }
+  body.dark-mode .nav-item.active {
+      background: rgba(255, 255, 255, 0.12) !important;
   }
   .nav-icon { 
-      width: 26px !important; 
-      height: 26px !important; 
+      width: 24px !important; 
+      height: 24px !important; 
       opacity: 1 !important;
   }
 
