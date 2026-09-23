@@ -813,7 +813,26 @@ function App() {
   }
 
   const declencherExport = async () => { if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
-  
+
+  const telechargerBilanJour = async (date_brute) => {
+      if(isOffline || !navigator.onLine) return showToast("Téléchargement impossible hors-ligne.", "error");
+      showToast("Génération du PDF en cours...");
+      try {
+          const response = await fetch(`https://api-salon-backend.onrender.com/api/export-pdf/${date_brute}`, { headers: getAuthHeaders() });
+          if (response.status === 402) { setIsAbonnementInactif(true); return; }
+          if (!response.ok) throw new Error("Erreur Serveur");
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Bilan_${date_brute}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+          showToast("PDF téléchargé !", "success");
+      } catch (error) { showToast("Erreur lors du téléchargement.", "error"); }
+  };
   const sauvegarderParametres = async () => { 
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       showToast("Sauvegarde en cours..."); 
@@ -2121,7 +2140,7 @@ function App() {
                                                       </span>
                                                   </div>
 
-                                                  {/* FICHIERS DU MOIS (Bilan Mensuel + Z Journaliers) */}
+                                                  {/* FICHIERS DU MOIS */}
                                                   {expandedMonth === moisData.nom && (
                                                       <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                                           
@@ -2131,15 +2150,17 @@ function App() {
                                                               <span>{moisData.total_mensuel.toFixed(2)} €</span>
                                                           </div>
 
-                                                          {/* Historique des Ventes détaillées */}
-                                                          {moisData.ventes.map(vente => (
-                                                              <div key={vente.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                                                      <span style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>📅 {vente.date} à {vente.heure}</span>
-                                                                      <span style={{ color: 'var(--text-main)' }}>✂️ {vente.prestations}</span>
-                                                                      <span style={{ fontSize: '11px', opacity: 0.8 }}>👤 Réalisé par : {vente.employe}</span>
+                                                          {/* Liste des jours du mois (Un fichier cliquable par jour) */}
+                                                          {(moisData.jours || []).map(jour => (
+                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'} title="Cliquez pour télécharger le PDF détaillé">
+                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                                      <span style={{ fontSize: '20px' }}>📄</span>
+                                                                      <span style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
                                                                   </div>
-                                                                  <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{vente.total.toFixed(2)} €</span>
+                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total.toFixed(2)} €</span>
+                                                                      <span style={{ fontSize: '16px' }}>⬇️</span>
+                                                                  </div>
                                                               </div>
                                                           ))}
                                                       </div>
