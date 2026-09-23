@@ -1204,50 +1204,65 @@ app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/factures/historique', verifierToken, async (req, res) => { 
     try { 
+        // Nouvelle requête SQL pour récupérer le détail de chaque vente avec l'employé et les prestations
         const query = `
             SELECT 
-                id_cloture, 
-                date_cloture, 
-                total_encaisse, 
-                EXTRACT(YEAR FROM date_cloture) as annee, 
-                EXTRACT(MONTH FROM date_cloture) as mois, 
-                TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_formattee 
-            FROM clotures_caisse 
-            WHERE id_salon = $1 
-            ORDER BY date_cloture DESC
+                t.id_ticket, 
+                t.date_creation, 
+                t.total_ttc, 
+                EXTRACT(YEAR FROM t.date_creation) as annee, 
+                EXTRACT(MONTH FROM t.date_creation) as mois, 
+                TO_CHAR(t.date_creation, 'DD/MM/YYYY') as date_formattee,
+                TO_CHAR(t.date_creation, 'HH24:MI') as heure_formattee,
+                COALESCE(e.nom, 'Employé inconnu') as nom_employe,
+                (
+                    SELECT string_agg(COALESCE(lt.nom_article_snapshot, c.nom), ', ')
+                    FROM lignes_ticket lt
+                    LEFT JOIN catalogue c ON lt.id_article = c.id_article
+                    WHERE lt.id_ticket = t.id_ticket
+                ) as prestations
+            FROM tickets t 
+            LEFT JOIN employes e ON t.id_employe = e.id_employe
+            WHERE t.id_salon = $1 AND t.statut != 'ANNULE'
+            ORDER BY t.date_creation DESC
         `;
         const result = await pool.query(query, [req.user.id_salon]); 
 
         const historique = {};
         const moisNoms = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 
+        // Rangement automatique dans les dossiers
         result.rows.forEach(row => {
             const annee = row.annee.toString();
             const moisNom = moisNoms[parseInt(row.mois) - 1];
 
             if (!historique[annee]) historique[annee] = {};
-            if (!historique[annee][moisNom]) historique[annee][moisNom] = { total_mensuel: 0, jours: [] };
+            if (!historique[annee][moisNom]) historique[annee][moisNom] = { total_mensuel: 0, ventes: [] };
 
-            historique[annee][moisNom].total_mensuel += parseFloat(row.total_encaisse);
-            historique[annee][moisNom].jours.push({
-                id: row.id_cloture,
+            historique[annee][moisNom].total_mensuel += parseFloat(row.total_ttc);
+            historique[annee][moisNom].ventes.push({
+                id: row.id_ticket,
                 date: row.date_formattee,
-                total: parseFloat(row.total_encaisse)
+                heure: row.heure_formattee,
+                prestations: row.prestations || 'Prestation personnalisée',
+                employe: row.nom_employe,
+                total: parseFloat(row.total_ttc)
             });
         });
 
-        // Conversion de l'objet historique en tableau pour React
+        // Formatage pour React
         const formattedData = Object.keys(historique).sort((a, b) => b - a).map(annee => ({
             annee: annee,
             mois: Object.keys(historique[annee]).map(mois => ({
                 nom: mois,
                 total_mensuel: historique[annee][mois].total_mensuel,
-                jours: historique[annee][mois].jours
+                ventes: historique[annee][mois].ventes
             }))
         }));
 
         res.json(formattedData); 
     } catch (erreur) { 
+        console.error("Erreur historique ventes:", erreur);
         res.status(500).json({ erreur: "Erreur Historique Compta" }); 
     }
 });
