@@ -65,6 +65,7 @@ function App() {
   const [superAdminSalons, setSuperAdminSalons] = useState([]);
   const [tachesListe, setTachesListe] = useState([]);
   const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
+  
   // --- NOUVEAUX ÉTATS POUR L'UI OPTIMISÉE ---
   const [showAddClient, setShowAddClient] = useState(false);
   const [showAddEmploye, setShowAddEmploye] = useState(false);
@@ -75,7 +76,7 @@ function App() {
   const [isStockExpanded, setIsStockExpanded] = useState(true);
   
   // ==========================================
-  // --- PROTOCOLES & RECETTES (NOUVEAU) ---
+  // --- PROTOCOLES & RECETTES ---
   // ==========================================
   const [protocolesListe, setProtocolesListe] = useState([]);
   const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
@@ -130,6 +131,7 @@ function App() {
       if (!texte) return '';
       return texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
   };
+  
   const [clientCaisse, setClientCaisse] = useState('');
   const [panierCaisse, setPanierCaisse] = useState([]); 
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
@@ -572,9 +574,9 @@ function App() {
       } catch (e) { showToast("Erreur lors de la modification", "error"); }
   };
 
-  const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); setShowAddClient(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
-  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
   
   const ajouterArticle = async () => { 
@@ -601,6 +603,8 @@ function App() {
           setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3 }); 
           chargerTout(); 
           showToast("Catalogue mis à jour.", "success"); 
+          setShowAddPrestation(false);
+          setShowAddProduit(false);
       } catch(e) { 
           if(e.message !== "Abonnement inactif") showToast(e.message, "error"); 
       }
@@ -877,7 +881,6 @@ function App() {
       } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
   };
 
-  
   const getCouleurTache = (tache) => {
       if (tache.statut === 'FAIT') return 'var(--color-success)'; 
       if (!tache.date_echeance) return '#f59e0b'; 
@@ -1016,24 +1019,21 @@ function App() {
   };
   // --- MOTEUR DE RECHERCHE CLIENTS CRM (MAX 5 RESULTATS) ---
   const getClientsSuggeresPourRdv = (texteSaisi) => {
-      if (!texteSaisi) return clientsListe.slice(0, 5); // Si vide, on montre 5 clients récents/au hasard
+      if (!texteSaisi) return clientsListe.slice(0, 5);
 
       const searchClean = nettoyerTexteRecherche(texteSaisi);
       
       return clientsListe.filter(cli => {
           const nomComplet = nettoyerTexteRecherche(formatNomClient(cli));
           const tel = nettoyerTexteRecherche(cli.telephone || '');
-          // On cherche si ce qu'on tape correspond au nom OU au téléphone
           return nomComplet.includes(searchClean) || tel.includes(searchClean);
-      }).slice(0, 5); // On limite à 5 résultats maximum
+      }).slice(0, 5); 
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       
       {/* CSS INJECTÉ POUR L'EFFET ACCORDÉON DES RDV */}
-      
-     
       <style>{`
           .rdv-card-accordeon {
               transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1193,7 +1193,7 @@ function App() {
           </div>
           
 
-          <div className="main-content" style={{ overflowY: 'auto', flex: 1, ...(isMobile ? { paddingTop: '65px', paddingBottom: '110px' } : {}) }}>
+          <div className="main-content" style={{ overflowY: 'auto', flex: 1, ...(isMobile ? { paddingTop: '65px', paddingBottom: '140px' } : { paddingBottom: '40px' }) }}>
             <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
               
               {/* --- CENTRE D'ACTION (TÂCHES) --- */}
@@ -1647,62 +1647,6 @@ function App() {
                 </div>
               )}
 
-              {role === 'gerant' && activeTab === 'accueil' && (
-                <>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                    <h1 style={{margin: 0}}>Tableau de bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID de votre salon : {decodeToken(token)?.id_salon})</span></h1>
-                    <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                      <ThemeToggle />
-                      <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                      </button>
-                    </div>
-                  </div>
-                  <span className="date-subtitle">{formatDateComplete(new Date())}</span>
-                  {erreur && <p style={{color: 'var(--color-danger)'}}>❌ {erreur}</p>}
-                  
-                  {!dashboardData && !erreur ? (
-                    <div>
-                      <div className="carte skeleton-loading" style={{height: '100px', marginBottom: '24px'}}></div>
-                      <div className="cartes-financieres"><div className="carte skeleton-loading" style={{height: '120px'}}></div><div className="carte skeleton-loading" style={{height: '120px'}}></div></div>
-                      <div className="carte skeleton-loading" style={{height: '200px'}}></div>
-                    </div>
-                  ) : dashboardData && (
-                    <>
-                      {dashboardData.marketing && (
-                        <div className="carte reputation-carte">
-                          <div className="reputation-gauche">
-                            <h3 style={{color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px'}}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> Google Maps</h3>
-                            <div className="reputation-note">{dashboardData.marketing.note_actuelle} <span className="reputation-etoile" style={{color: '#fbbf24'}}>★</span></div>
-                            <span className="reputation-avis">Sur {dashboardData.marketing.total_avis} avis</span>
-                          </div>
-                          <div className="reputation-droite"><span className="tendance-label">En hausse ↗</span>{dessinerCourbe(dashboardData.marketing.tendance_6_mois)}</div>
-                        </div>
-                      )}
-                      
-                      <div className="cartes-financieres">
-                        <div className="carte">
-                          <div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><h3>Chiffre d'Affaires</h3></div>
-                          <p className="montant">{dashboardData.finances.chiffre_affaires_total} <span className="devise">€</span></p>
-                        </div>
-                        <div className="carte">
-                          <div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div><h3>Panier Moyen</h3></div>
-                          <p className="montant">{dashboardData.finances.panier_moyen} <span className="devise">€</span></p>
-                        </div>
-                      </div>
-                      <div className="section-titre">Top 3 Prestations</div>
-                      <div className="top-prestations">
-                        {dashboardData.top_3_prestations.length === 0 ? (
-                            <div className="empty-state"><SvgEmptyState /><p>Aucune prestation enregistrée.</p></div>
-                        ) : dashboardData.top_3_prestations.map((presta, i) => (
-                          <div className="presta-item" key={i}><div className="presta-header"><span className="presta-nom"> {presta.nom}</span>{i === 0 && <span className="badge-succes">N°1</span>}</div><div className="presta-details"><span>Total généré</span><span className="montant-presta">{presta.total_genere} <span className="devise" style={{fontSize:'12px'}}>€</span></span></div></div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-             
               {/* ========================================================= */}
               {/* --- NOUVEL ONGLET DÉDIÉ : L'ACADÉMIE (FULL SCREEN) --- */}
               {/* ========================================================= */}
@@ -1961,10 +1905,175 @@ function App() {
                           </div>
                       )}
                   </div>
+                  
+                  {/* CATALOGUE DES PRESTATIONS INTÉGRÉ DANS L'ACADÉMIE */}
+                  {!modeEditionProtocole && (
+                      <>
+                          <div className="section-titre" style={{marginTop: '32px'}}>Catalogue des Prestations</div>
+                          <div className="carte scan-carte">
+                              {catalogueListe.filter(art => art.type_article === 'PRESTATION').length === 0 ? (
+                                  <div className="empty-state"><p>Aucune prestation au catalogue.</p></div>
+                              ) : catalogueListe.filter(art => art.type_article === 'PRESTATION').map(art => (
+                                  <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
+                                      <span>
+                                          <strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € 
+                                      </span>
+                                      <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
+                                  </div>
+                              ))}
+                          </div>
+                      </>
+                  )}
                 </div>
               )}
 
-              
+              {role === 'gerant' && activeTab === 'produits' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
+                      </div>
+                  </div>
+
+                  {showAddProduit && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouveau Produit (Revente/Labo)</h3>
+                          <div style={{display: 'flex', gap: '12px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Nom du produit (Laissez vide si réassort)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                          </div>
+                          <div style={{display: 'flex', gap: '12px', marginTop: '12px', marginBottom: '16px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '120px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '70px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                            <input type="number" className="input-fournisseur" placeholder="Délai (j)" title="Délai moyen de livraison (jours)" style={{width: '90px'}} value={newArticle.delai_livraison_jours} onChange={(e) => setNewArticle({...newArticle, delai_livraison_jours: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                          </div>
+                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRODUIT_REVENTE'}); ajouterArticle(); setShowAddProduit(false); }} disabled={!newArticle.reference} style={{width: '100%'}}>{!newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
+                      </div>
+                  )}
+
+                  <div className="carte scan-carte">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isStockExpanded ? '16px' : '0'}} onClick={() => setIsStockExpanded(!isStockExpanded)}>
+                          <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks & Catalogue Revente</h3>
+                          <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isStockExpanded ? '▲' : '▼'}</span>
+                      </div>
+                      
+                      {isStockExpanded && (
+                          <>
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
+                                  <input type="text" className="input-fournisseur" placeholder="🔍 Chercher un produit..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} style={{flex: 1, minWidth: '200px'}} />
+                                  <select className="input-fournisseur" value={stockSortBy} onChange={e => setStockSortBy(e.target.value)} style={{width: 'auto', minWidth: '150px'}}>
+                                      <option value="nom">Trier par: Nom (A-Z)</option>
+                                      <option value="stock">Trier par: Quantité (Croissant)</option>
+                                      <option value="stock_desc">Trier par: Quantité (Décroissant)</option>
+                                      <option value="prix">Trier par: Prix</option>
+                                  </select>
+                              </div>
+                              <div className="stock-container">
+                                {catalogueListe
+                                    .filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE')
+                                    .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
+                                    .sort((a, b) => {
+                                        if (stockSortBy === 'nom') return a.nom.localeCompare(b.nom);
+                                        if (stockSortBy === 'stock') return a.stock_actuel - b.stock_actuel;
+                                        if (stockSortBy === 'stock_desc') return b.stock_actuel - a.stock_actuel;
+                                        if (stockSortBy === 'prix') return parseFloat(a.prix) - parseFloat(b.prix);
+                                        return 0;
+                                    })
+                                    .map((produit) => {
+                                    const status = getStockStatus(produit.stock_actuel);
+                                    return (
+                                      <div className="stock-item" key={produit.id_article} style={{position: 'relative'}}>
+                                        <div className="stock-info">
+                                            <div className="stock-details">
+                                                <span className="stock-nom">{produit.nom} <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>{parseFloat(produit.prix).toFixed(2)}€</span></span>
+                                                <span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>
+                                            </div>
+                                        </div>
+                                        <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                            <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+                                            <button onClick={() => supprimerArticle(produit.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '4px'}}>🗑️</button>
+                                        </div>
+                                      </div>
+                                    );
+                                })}
+                                {catalogueListe.filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE').length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
+                              </div>
+                          </>
+                      )}
+                  </div>
+                </div>
+              )}
+
+              {role === 'gerant' && activeTab === 'rh' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
+                      </div>
+                  </div>
+
+                  {showAddEmploye && (
+                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                          <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                            <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                            <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
+                          </div>
+
+                          <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo de profil (Optionnel)</label>
+                          <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                              <div className="rh-avatar" style={{width: '40px', height: '40px', flexShrink: 0, border: 'none', background: 'transparent'}}>
+                                  {newEmploye.photo_url ? (
+                                      <img src={newEmploye.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
+                                  ) : (
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--text-muted)', width: '24px', height: '24px'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                  )}
+                              </div>
+                              <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleImageUpload} style={{fontSize: '12px', color: 'var(--text-main)'}} />
+                          </div>
+
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                            <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
+                            <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
+                          </div>
+                          <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.nom || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
+                      </div>
+                  )}
+                  
+                  {rhData.length === 0 ? (
+                      <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
+                  ) : (
+                    <div className="rh-grid">
+                      {rhData.map(employe => (
+                        <div className="rh-carte" key={employe.id_employe} style={{position: 'relative'}}>
+                          <button onClick={() => supprimerEmploye(employe.id_employe)} style={{position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '14px'}} title="Supprimer l'employé">🗑️</button>
+                          <div className="rh-header-profil">
+                            <div className="rh-avatar">
+                              {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
+                            </div>
+                            <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
+                          </div>
+                          <div className="rh-stats-row">
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.produits_vendus}</span><span className="label">Produits</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
+                          </div>
+                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
+                          <div style={{marginTop: '8px'}}>
+                            <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
+                            {dessinerChronogramme(employe.historique_primes)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {role === 'gerant' && activeTab === 'admin' && (
                 <div className="admin-container">
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
@@ -2039,6 +2148,8 @@ function App() {
                           ))}
                       </div>
                   )}
+                </div>
+              )}
 
               {/* === GOD MODE (SUPER-ADMIN) === */}
               {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.id_salon === 38 && (
