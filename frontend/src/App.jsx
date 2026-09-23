@@ -56,6 +56,8 @@ function App() {
   const [stocksData, setStocksData] = useState([]);
   const [rhData, setRhData] = useState([]);
   const [historiqueData, setHistoriqueData] = useState([]);
+  const [expandedYear, setExpandedYear] = useState(new Date().getFullYear().toString());
+  const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
   const [planningData, setPlanningData] = useState([]); 
   const [superAdminData, setSuperAdminData] = useState(null);
   const [superAdminSalons, setSuperAdminSalons] = useState([]);
@@ -2634,15 +2636,66 @@ function App() {
               
                   <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
                   <div className="section-titre">Historique des bilans comptables</div>
+                  
                   {historiqueData.length === 0 ? (
-                      <div className="empty-state"><SvgEmptyState /><p>Aucune facture traitée.</p></div>
-                  ) : historiqueData.map((dossier, index) => (
-                    <div className="dossier-mois" key={index}><div className="dossier-header"><span className="dossier-titre">{dossier.mois}</span><span className="dossier-total" style={{color: 'var(--text-main)'}}>{dossier.total_ttc.toFixed(2)} €</span></div>
-                      {dossier.factures.map(facture => (<div className="facture-mini" key={facture.id}><span>{facture.fournisseur} <span style={{color: 'var(--text-muted)'}}>({facture.date})</span></span><span style={{fontWeight: 600, color: 'var(--text-main)'}}>{facture.ttc.toFixed(2)} €</span></div>))}
-                    </div>
-                  ))}
-                </div>
-              )}
+                      <div className="empty-state">
+                          <SvgEmptyState />
+                          <p>Aucune clôture de caisse (Z) effectuée pour le moment.</p>
+                      </div>
+                  ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {historiqueData.map((anneeData) => (
+                              <div key={anneeData.annee} style={{ background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                                  
+                                  {/* DOSSIER ANNÉE */}
+                                  <div onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', background: 'var(--bg-card)', padding: '16px', fontWeight: 'bold', fontSize: '16px', color: 'var(--text-main)' }}>
+                                      <span style={{ fontSize: '20px' }}>{expandedYear === anneeData.annee ? '📂' : '📁'}</span> 
+                                      Année {anneeData.annee}
+                                  </div>
+
+                                  {/* SOUS-DOSSIERS MOIS */}
+                                  {expandedYear === anneeData.annee && (
+                                      <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
+                                          {anneeData.mois.map((moisData) => (
+                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                                                  
+                                                  <div onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px' }}>
+                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', color: 'var(--text-main)' }}>
+                                                          <span style={{ fontSize: '18px' }}>{expandedMonth === moisData.nom ? '📂' : '📁'}</span> 
+                                                          {moisData.nom}
+                                                      </div>
+                                                      <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)' }}>
+                                                          {moisData.total_mensuel.toFixed(2)} €
+                                                      </span>
+                                                  </div>
+
+                                                  {/* FICHIERS DU MOIS (Bilan Mensuel + Z Journaliers) */}
+                                                  {expandedMonth === moisData.nom && (
+                                                      <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                          
+                                                          {/* Récapitulatif Mensuel (Fichier maitre) */}
+                                                          <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', border: '1px solid #bfdbfe', marginBottom: '8px' }}>
+                                                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📊 Bilan consolidé ({moisData.nom})</span>
+                                                              <span>{moisData.total_mensuel.toFixed(2)} €</span>
+                                                          </div>
+
+                                                          {/* Historique des Z quotidiens */}
+                                                          {moisData.jours.map(jour => (
+                                                              <div key={jour.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                                                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📄 Clôture (Z) du {jour.date}</span>
+                                                                  <span style={{ fontWeight: '600', color: 'var(--text-main)' }}>{jour.total.toFixed(2)} €</span>
+                                                              </div>
+                                                          ))}
+                                                      </div>
+                                                  )}
+                                              </div>
+                                          ))}
+                                      </div>
+                                  )}
+                              </div>
+                          ))}
+                      </div>
+                  )}
 
               {/* === GOD MODE (SUPER-ADMIN) === */}
               {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.id_salon === 38 && (
