@@ -346,7 +346,8 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 /* ==========================================================================
    14. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
-/* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
+@media (max-width: 768px) {
+  /* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
   .navbar-sidebar { 
       position: fixed !important;
       flex-direction: row !important; 
@@ -385,12 +386,13 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       border-radius: 16px !important; /* Forme de la pilule */
       font-size: 10px !important; /* Micro typo iOS */
       font-weight: 500 !important;
-      color: var(--text-main) !important;
+      color: var(--text-secondary) !important;
       gap: 2px !important; 
       transition: background 0.2s ease !important;
   }
   .nav-item.active {
-      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair de votre photo 2 */
+      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair */
+      color: var(--text-main) !important;
   }
   body.dark-mode .nav-item.active {
       background: rgba(255, 255, 255, 0.12) !important;
@@ -436,7 +438,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       padding: 16px;
   }
   .ticket-lignes { max-height: 20vh; overflow-y: auto; }
-  .caisse-left-panel { padding-bottom: calc(45vh + 80px); } /* Protège le catalogue sous la carte */
+  .caisse-left-panel { padding-bottom: calc(45vh + 80px); }
 
   /* 5. LISTES ET POLICES RÉDUITES */
   .presta-item, .stock-item { flex-direction: column; align-items: flex-start; gap: 6px; }
@@ -455,23 +457,16 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 }
 
 /* ==========================================================================
-   PASTILLES DE NOTIFICATION IA
+   PASTILLES DE NOTIFICATION IA (Style iOS)
    ========================================================================== */
 .badge-ia-rouge {
   position: absolute;
-  top: 6px;
-  right: 12px;
-  width: 10px;
-  height: 10px;
-  background-color: var(--color-danger);
+  top: 0px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background-color: #ff3b30; /* Rouge exact d'Apple */
   border-radius: 50%;
-  border: 2px solid var(--bg-card);
+  border: 1.5px solid var(--bg-app); /* Contour pour détacher du logo */
   z-index: 10;
-  animation: pulse-red 2s infinite;
-}
-
-@keyframes pulse-red {
-  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
-  70% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
 }
