@@ -16,8 +16,6 @@ const crypto = require('crypto');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 
-// Le SDK "openai" est utilisé comme simple client HTTP compatible : on le
-// pointe vers l'API de Groq (gratuite, très rapide) plutôt que vers OpenAI.
 const groq = new OpenAI({
     apiKey: process.env.GROQ_API_KEY,
     baseURL: 'https://api.groq.com/openai/v1',
@@ -26,9 +24,6 @@ const groq = new OpenAI({
 const http = require('http');
 const { Server } = require('socket.io');
 
-// =========================================================================
-// --- MOTEUR DE CRYPTAGE RGPD (AES-256-CBC) ---
-// =========================================================================
 const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET || 'stack_secret_de_secours_absolu', 'salt', 32);
 const ALGORITHM = 'aes-256-cbc';
 
@@ -69,70 +64,42 @@ io.on('connection', (socket) => {
     });
 });
 
-// =========================================================================
-// --- CANAL SSE POUR LES ÉVÉNEMENTS IA (remplace Socket.io pour ce flux) ---
-// =========================================================================
-const abonnesSSE = new Map(); // id_salon (string) -> Set<res>
+const abonnesSSE = new Map();
 
 function envoyerEvenementSSE(id_salon, nomEvenement, data = {}) {
     const room = id_salon.toString();
     const clients = abonnesSSE.get(room);
-    if (!clients || clients.size === 0) {
-        console.log(`📡 [SSE] Aucun client abonné pour le salon ${room}, événement '${nomEvenement}' perdu.`);
-        return;
-    }
+    if (!clients || clients.size === 0) return;
     const payload = `event: ${nomEvenement}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of clients) res.write(payload);
-    console.log(`📡 [SSE] '${nomEvenement}' envoyé -> salon ${room} (${clients.size} client(s))`);
 }
 
-// Route d'abonnement au flux
 app.get('/api/events/:id_salon', (req, res) => {
     const { token } = req.query;
     let user;
-    try {
-        user = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (e) {
-        return res.status(401).end();
-    }
+    try { user = jwt.verify(token, process.env.JWT_SECRET); } catch (e) { return res.status(401).end(); }
     if (String(user.id_salon) !== req.params.id_salon) return res.status(403).end();
+    
     const room = req.params.id_salon;
-
-    req.setTimeout(0);
-    res.socket.setTimeout(0);
-    res.socket.setNoDelay(true);
-    res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-    });
+    req.setTimeout(0); res.socket.setTimeout(0); res.socket.setNoDelay(true);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
 
     if (!abonnesSSE.has(room)) abonnesSSE.set(room, new Set());
     abonnesSSE.get(room).add(res);
-    console.log(`📡 [SSE] Connexion ouverte pour salon ${room} (${abonnesSSE.get(room).size} client(s))`);
-
     res.write(`event: connected\ndata: {}\n\n`);
 
-    const heartbeat = setInterval(() => {
-        res.write(`event: heartbeat\ndata: {}\n\n`);
-    }, 15000);
+    const heartbeat = setInterval(() => { res.write(`event: heartbeat\ndata: {}\n\n`); }, 15000);
 
     req.on('close', () => {
         clearInterval(heartbeat);
         abonnesSSE.get(room)?.delete(res);
-        console.log(`📡 [SSE] Connexion fermée pour salon ${room}`);
     });
 });
-// =========================================================================
 
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { 
-      next(); 
-  } else { 
-      express.json({ limit: '10mb' })(req, res, next); 
-  }
+  if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { next(); } 
+  else { express.json({ limit: '10mb' })(req, res, next); }
 });
 
 const pool = new Pool({
@@ -143,53 +110,15 @@ const pool = new Pool({
   port: process.env.DB_PORT
 });
 
-// =========================================================================
-// --- CRM : AUTO-HEALING & CONFIGURATION FIDÉLITÉ & IA ---
-// =========================================================================
 pool.query(`
-    CREATE TABLE IF NOT EXISTS ia_taches_attente (
-        id_tache SERIAL PRIMARY KEY,
-        id_salon INT,
-        type_tache VARCHAR(50),
-        donnees JSONB,
-        statut VARCHAR(20) DEFAULT 'ATTENTE',
-        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS taches_actions (
-        id_tache SERIAL PRIMARY KEY,
-        id_salon INT,
-        titre VARCHAR(255),
-        description TEXT,
-        date_echeance DATE,
-        statut VARCHAR(20) DEFAULT 'A_FAIRE',
-        source VARCHAR(20) DEFAULT 'MANUEL',
-        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    
-
-    CREATE TABLE IF NOT EXISTS protocoles (
-        id_protocole SERIAL PRIMARY KEY,
-        id_salon INT,
-        nom_prestation VARCHAR(255),
-        description TEXT,
-        photo_url TEXT,
-        delai_livraison_jours INT DEFAULT 3,
-        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
+    CREATE TABLE IF NOT EXISTS ia_taches_attente (id_tache SERIAL PRIMARY KEY, id_salon INT, type_tache VARCHAR(50), donnees JSONB, statut VARCHAR(20) DEFAULT 'ATTENTE', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS taches_actions (id_tache SERIAL PRIMARY KEY, id_salon INT, titre VARCHAR(255), description TEXT, date_echeance DATE, statut VARCHAR(20) DEFAULT 'A_FAIRE', source VARCHAR(20) DEFAULT 'MANUEL', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS protocoles (id_protocole SERIAL PRIMARY KEY, id_salon INT, nom_prestation VARCHAR(255), description TEXT, photo_url TEXT, delai_livraison_jours INT DEFAULT 3, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS etapes JSONB DEFAULT '[]';
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';
     ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS delai_livraison_jours INT DEFAULT 3;
-
-    CREATE TABLE IF NOT EXISTS recettes_articles (
-        id_recette SERIAL PRIMARY KEY,
-        id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE,
-        id_article INT,
-        quantite_necessaire NUMERIC(10,2) DEFAULT 1
-    );
-
+    CREATE TABLE IF NOT EXISTS recettes_articles (id_recette SERIAL PRIMARY KEY, id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE, id_article INT, quantite_necessaire NUMERIC(10,2) DEFAULT 1);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
@@ -213,66 +142,29 @@ pool.query(`
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS telephone_gerant VARCHAR(20);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS alertes_sms_actives BOOLEAN DEFAULT FALSE;
 
-    -- =====================================================================
-    -- --- NF525 / ISCA : Inaltérabilité, Journal des Événements Techniques,
-    -- --- Clôtures scellées et Grand Total perpétuel.
-    -- =====================================================================
-
-    -- 1. Écritures de compensation (le ticket d'origine n'est JAMAIS modifié
-    --    dans ses montants ; on lui ajoute seulement un marqueur non-fiscal
-    --    et on crée un ticket négatif lié).
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type_ticket VARCHAR(20) DEFAULT 'VENTE';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_ticket_origine INT REFERENCES tickets(id_ticket);
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS motif_annulation TEXT;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS est_compense BOOLEAN DEFAULT FALSE;
 
-    -- 2. Snapshot des lignes (nom, prix TTC, taux de TVA figés au moment de
-    --    la vente : une modification ultérieure du catalogue ne doit jamais
-    --    réécrire l'historique).
     ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS nom_article_snapshot VARCHAR(255);
     ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS taux_tva_snapshot NUMERIC(5,2) DEFAULT 20.00;
     ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS taux_tva NUMERIC(5,2) DEFAULT 20.00;
 
-    -- 3. Journal des Événements Techniques (JET), chaîné par hash comme les
-    --    tickets (chaque ligne référence le hash de la précédente).
-    CREATE TABLE IF NOT EXISTS jet_logs (
-        id_jet SERIAL PRIMARY KEY,
-        id_salon INT NOT NULL,
-        action VARCHAR(50) NOT NULL,
-        details JSONB,
-        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        hash_precedent VARCHAR(64),
-        hash_jet VARCHAR(64)
-    );
+    CREATE TABLE IF NOT EXISTS jet_logs (id_jet SERIAL PRIMARY KEY, id_salon INT NOT NULL, action VARCHAR(50) NOT NULL, details JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP, hash_precedent VARCHAR(64), hash_jet VARCHAR(64));
     CREATE INDEX IF NOT EXISTS idx_jet_logs_salon_date ON jet_logs (id_salon, date_creation);
 
-    -- 4. Clôtures : on fige un jour civil par salon (blocage Z), on scelle
-    --    le cumul perpétuel, et on chaîne les Z entre eux.
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS id_cloture SERIAL;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS date_cloture DATE;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
 `).then(async () => {
-    // Backfill de date_cloture à partir de date_creation pour les Z déjà existants,
-    // AVANT de poser la contrainte d'unicité (sinon un DEFAULT CURRENT_DATE
-    // matérialisé sur d'anciennes lignes provoquerait de faux doublons).
     try {
         await pool.query(`UPDATE clotures_caisse SET date_cloture = DATE(date_creation) WHERE date_cloture IS NULL;`);
         await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_DATE;`);
-        await pool.query(`
-            DO $$ BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN
-                    ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture);
-                END IF;
-            END $$;
-        `);
-        console.log("✅ Base de données prête (Paiement, IA, CRM, NF525/ISCA, Protocoles)");
-    } catch (e) {
-        // Si votre table clotures_caisse ne possède pas de colonne "date_creation",
-        // adaptez cette étape de backfill au nom réel de votre colonne de date.
-        console.error("❌ Erreur backfill date_cloture (NF525):", e);
-    }
-}).catch((e) => console.error("❌ Erreur Auto-healing:", e));
+        await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture); END IF; END $$;`);
+    } catch (e) { }
+}).catch((e) => console.error("Erreur Init DB:", e));
 
 const verifierToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -294,67 +186,32 @@ const verifierToken = (req, res, next) => {
     });
 };
 
-// =========================================================================
-// --- NF525 / ISCA : JOURNAL DES ÉVÉNEMENTS TECHNIQUES (JET) ---
-// =========================================================================
 async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
     try {
         await dbClient.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
-        const dernier = await dbClient.query(
-            'SELECT hash_jet FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet DESC LIMIT 1',
-            [id_salon]
-        );
+        const dernier = await dbClient.query('SELECT hash_jet FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet DESC LIMIT 1', [id_salon]);
         const hashPrecedent = dernier.rowCount > 0 ? dernier.rows[0].hash_jet : 'GENESIS_JET';
         const dateISO = new Date().toISOString();
         const detailsJSON = JSON.stringify(details || {});
-        const hashJet = crypto.createHash('sha256')
-            .update(`${id_salon}-${action}-${detailsJSON}-${dateISO}-${hashPrecedent}`)
-            .digest('hex');
-        await dbClient.query(
-            'INSERT INTO jet_logs (id_salon, action, details, date_creation, hash_precedent, hash_jet) VALUES ($1, $2, $3, $4, $5, $6)',
-            [id_salon, action, detailsJSON, dateISO, hashPrecedent, hashJet]
-        );
+        const hashJet = crypto.createHash('sha256').update(`${id_salon}-${action}-${detailsJSON}-${dateISO}-${hashPrecedent}`).digest('hex');
+        await dbClient.query('INSERT INTO jet_logs (id_salon, action, details, date_creation, hash_precedent, hash_jet) VALUES ($1, $2, $3, $4, $5, $6)', [id_salon, action, detailsJSON, dateISO, hashPrecedent, hashJet]);
         return hashJet;
-    } catch (e) {
-        console.error(`❌ Erreur JET (${action}):`, e.message);
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
-// =========================================================================
-// --- NF525 : BLOCAGE Z — interdit l'encaissement si un jour antérieur
-// --- n'a pas fait l'objet d'une clôture (Z). ---
-// =========================================================================
 const verifierClotureZ = async (req, res, next) => {
     const id_salon = req.user.id_salon;
     try {
         const jourBloquant = await pool.query(
-            `SELECT MIN(DATE(t.date_creation)) as jour
-             FROM tickets t
-             WHERE t.id_salon = $1
-               AND DATE(t.date_creation) < CURRENT_DATE
-               AND NOT EXISTS (
-                   SELECT 1 FROM clotures_caisse c
-                   WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
-               )`,
-            [id_salon]
+            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < CURRENT_DATE AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`, [id_salon]
         );
         if (jourBloquant.rowCount > 0 && jourBloquant.rows[0].jour) {
-            return res.status(423).json({
-                erreur: `Clôture (Z) manquante pour le ${new Date(jourBloquant.rows[0].jour).toLocaleDateString()}. Effectuez la clôture journalière avant de continuer à encaisser.`,
-                z_manquant: jourBloquant.rows[0].jour
-            });
+            return res.status(423).json({ erreur: `Clôture (Z) manquante pour le ${new Date(jourBloquant.rows[0].jour).toLocaleDateString()}. Effectuez la clôture avant d'encaisser.`, z_manquant: jourBloquant.rows[0].jour });
         }
         next();
-    } catch (e) {
-        console.error("❌ Erreur vérification blocage Z:", e);
-        res.status(500).json({ erreur: "Erreur vérification clôture." });
-    }
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification clôture." }); }
 };
 
-// =========================================================================
-// --- AUTHENTIFICATION & BILLING ---
-// =========================================================================
 app.post('/api/register', async (req, res) => {
     const { email, mot_de_passe, nom_salon } = req.body;
     const clientDB = await pool.connect();
@@ -362,28 +219,16 @@ app.post('/api/register', async (req, res) => {
         await clientDB.query('BEGIN');
         const checkEmail = await clientDB.query('SELECT email FROM utilisateurs WHERE email = $1', [email]);
         if (checkEmail.rowCount > 0) throw new Error('Cet e-mail est déjà utilisé.');
-        
         const hash = await bcrypt.hash(mot_de_passe, 10);
         const salonResult = await clientDB.query('INSERT INTO configuration_salon (nom_salon) VALUES ($1) RETURNING id_salon', [nom_salon || 'Nouveau Salon']);
         const idNouveauSalon = salonResult.rows[0].id_salon;
-        
         let customerId = null;
-        try { 
-            const customer = await stripe.customers.create({ email: email, name: nom_salon });
-            customerId = customer.id; 
-        } catch(e) {}
-        
-        await clientDB.query(
-            'INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', 
-            [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']
-        ); 
+        try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
+        await clientDB.query('INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']); 
         await clientDB.query('COMMIT');
         const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: "Inscription réussie", token });
-    } catch (erreur) { 
-        await clientDB.query('ROLLBACK'); 
-        res.status(400).json({ erreur: erreur.message }); 
-    } finally { clientDB.release(); }
+    } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -490,10 +335,8 @@ app.post('/api/settings', verifierToken, async (req, res) => {
     const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives } = req.body; 
     try { 
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
-        
         const updateQuery = `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13 WHERE id_salon = $14`; 
         await pool.query(updateQuery, [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, req.user.id_salon]); 
-        
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
     } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
@@ -1016,7 +859,19 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
         const statsResult = await pool.query(`SELECT COUNT(id_ticket) as nb_ventes, COALESCE(SUM(total_ttc), 0) as chiffre_affaires FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]); 
         const nbVentes = parseInt(statsResult.rows[0].nb_ventes); 
         const caTotal = parseFloat(statsResult.rows[0].chiffre_affaires); 
-        const topPrestationsResult = await pool.query(`SELECT c.nom, SUM(lt.total_ligne_ttc) as total_genere FROM lignes_ticket lt JOIN tickets t ON lt.id_ticket = t.id_ticket JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_salon = $1 AND c.type_article = 'PRESTATION' AND t.statut != 'ANNULE' GROUP BY c.nom ORDER BY total_genere DESC LIMIT 3`, [id_salon]); 
+        
+        // LA CORRECTION EST ICI : on s'assure que c.nom est présent dans le GROUP BY si on l'utilise.
+        const topPrestationsResult = await pool.query(`
+            SELECT c.nom, SUM(lt.total_ligne_ttc) as total_genere 
+            FROM lignes_ticket lt 
+            JOIN tickets t ON lt.id_ticket = t.id_ticket 
+            JOIN catalogue c ON lt.id_article = c.id_article 
+            WHERE t.id_salon = $1 AND c.type_article = 'PRESTATION' AND t.statut != 'ANNULE' 
+            GROUP BY c.nom 
+            ORDER BY total_genere DESC 
+            LIMIT 3
+        `, [id_salon]); 
+        
         const commissionsResult = await pool.query(`SELECT COALESCE(SUM(montant_commission), 0) as total_commissions FROM commissions WHERE id_salon = $1`, [id_salon]); 
         let googleMarketing = { note_actuelle: 0, total_avis: 0, tendance_6_mois: [0, 0, 0, 0, 0, 0] }; 
         try { 
@@ -1039,8 +894,21 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
                 } 
             } 
         } catch (e) { console.error("Avertissement Google API :", e); } 
-        res.json({ statut: "Succès", finances: { chiffre_affaires_total: caTotal, panier_moyen: nbVentes > 0 ? (caTotal / nbVentes).toFixed(2) : 0, commissions_a_payer: parseFloat(commissionsResult.rows[0].total_commissions) }, top_3_prestations: topPrestationsResult.rows, marketing: googleMarketing }); 
-    } catch (erreur) { res.status(500).json({ erreur: "Erreur calcul dashboard." }); }
+        
+        res.json({ 
+            statut: "Succès", 
+            finances: { 
+                chiffre_affaires_total: caTotal, 
+                panier_moyen: nbVentes > 0 ? (caTotal / nbVentes).toFixed(2) : 0, 
+                commissions_a_payer: parseFloat(commissionsResult.rows[0].total_commissions) 
+            }, 
+            top_3_prestations: topPrestationsResult.rows || [], 
+            marketing: googleMarketing 
+        }); 
+    } catch (erreur) { 
+        console.error("Erreur Dashboard:", erreur);
+        res.status(500).json({ erreur: "Erreur calcul dashboard." }); 
+    }
 });
 
 // =========================================================================
@@ -1254,7 +1122,7 @@ app.get('/api/factures/historique', verifierToken, async (req, res) => {
 
 app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
-    const dateCible = req.params.date; // format YYYY-MM-DD
+    const dateCible = req.params.date;
     try {
         const ventesResult = await pool.query(`
             SELECT 
