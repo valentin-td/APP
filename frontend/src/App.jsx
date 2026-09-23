@@ -1269,1413 +1269,1256 @@ function App() {
           </>
       )}
 
-      <div className="main-content">
-        <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          {/* --- BARRE DE NAVIGATION (DESKTOP & MOBILE) --- */}
+          <div className="navbar-sidebar">
+              {/* VUE DESKTOP */}
+              {!isMobile && (
+                  <>
+                     {role === 'gerant' && <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>}
+                     {role === 'gerant' && (
+                         <div className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => setActiveTab('actions')} style={{ position: 'relative' }}>
+                             {nbTachesUrgentes > 0 && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
+                             <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span>Actions</span>
+                         </div>
+                     )}
+                     <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative' }}>
+                         {(tachesIA || []).some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
+                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
+                     </div>
+                     {role === 'gerant' && (
+                         <>
+                            <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
+                            <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => setActiveTab('protocoles')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span></div>
+                            <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative' }}>
+                                {(tachesIA || []).some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
+                                <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
+                            </div>
+                            <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => setActiveTab('rh')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span></div>
+                            <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span></div>
+                         </>
+                     )}
+                     {decodeToken(token)?.id_salon === 38 && (
+                         <div className={`nav-item ${activeTab === 'superadmin' ? 'active' : ''}`} onClick={() => setActiveTab('superadmin')}>
+                             <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#aa3bff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span style={{color: '#aa3bff', fontWeight: 'bold'}}>God Mode</span>
+                         </div>
+                     )}
+                     <div className="navbar-spacer"></div>
+                     <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
+                  </>
+              )}
 
-              {/* ========================================================= */}
-              {/* --- VUE : TABLEAU DE BORD (ACCUEIL) --- */}
-              {/* ========================================================= */}
-              {role === 'gerant' && activeTab === 'accueil' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
-                          <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+              {/* VUE MOBILE (BOTTOM TAB BAR STRICTE À 5 ONGLETS) */}
+              {isMobile && (
+                  <>
+                      <div className={`nav-item ${activeTab === 'accueil' || activeTab === 'parametres' ? 'active' : ''}`} onClick={() => {setActiveTab('accueil'); setIsOutilsMenuOpen(false);}}>
+                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+                          <span>Bord</span>
                       </div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                      <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => {setActiveTab('caisse'); setIsOutilsMenuOpen(false);}}>
+                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></span>
+                          <span>Caisse</span>
+                      </div>
+                      <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => {setActiveTab('agenda'); setIsOutilsMenuOpen(false);}} style={{position: 'relative'}}>
+                          {(tachesIA || []).some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
+                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+                          <span>Agenda</span>
+                      </div>
+                      <div className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => {setActiveTab('actions'); setIsOutilsMenuOpen(false);}} style={{position: 'relative'}}>
+                          {nbTachesUrgentes > 0 && <span className="badge-ia-rouge" style={{top: 0, right: '20px'}}></span>}
+                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
+                          <span>Actions</span>
+                      </div>
+                      <div className={`nav-item ${isOutilsMenuOpen ? 'active' : ''}`} onClick={() => setIsOutilsMenuOpen(true)}>
+                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></span>
+                          <span>Outils</span>
+                      </div>
+                  </>
+              )}
+          </div>
+
+          {/* --- MENU OUTILS (BOTTOM SHEET MOBILE) --- */}
+          {isMobile && (
+              <>
+                  <div className={`outils-bottom-sheet-overlay ${isOutilsMenuOpen ? 'open' : ''}`} onClick={() => setIsOutilsMenuOpen(false)}></div>
+                  <div className={`outils-bottom-sheet ${isOutilsMenuOpen ? 'open' : ''}`}>
+                      <h3 style={{margin: '0 0 16px 0', fontSize: '18px', textAlign: 'center'}}>Outils & Gestion</h3>
+                      <div className="outils-grid">
+                          <button className="outil-btn" onClick={() => {setActiveTab('protocoles'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">🎓</div><span className="outil-btn-label">Académie</span>
+                          </button>
+                          <button className="outil-btn" onClick={() => {setActiveTab('produits'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">📦</div><span className="outil-btn-label">Stocks</span>
+                          </button>
+                          <button className="outil-btn" onClick={() => {setActiveTab('rh'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">👥</div><span className="outil-btn-label">Équipe</span>
+                          </button>
+                          <button className="outil-btn" onClick={() => {setActiveTab('admin'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">📁</div><span className="outil-btn-label">Compta</span>
+                          </button>
+                          {decodeToken(token)?.id_salon === 38 && (
+                              <button className="outil-btn" onClick={() => {setActiveTab('superadmin'); setIsOutilsMenuOpen(false);}}>
+                                  <div className="outil-btn-icon">⚡️</div><span className="outil-btn-label">God Mode</span>
+                              </button>
+                          )}
+                          <button className="outil-btn" onClick={() => {seDeconnecter(); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon" style={{color:'var(--color-danger)'}}>🚪</div><span className="outil-btn-label" style={{color:'var(--color-danger)'}}>Quitter</span>
                           </button>
                       </div>
                   </div>
-                  {!dashboardData ? (
-                      <div className="skeleton-loading" style={{height: '200px', borderRadius: '12px'}}></div>
-                  ) : (
-                      <>
-                          <div className="cartes-financieres">
-                              <div className="carte">
-                                  <div className="carte-titre-container">
-                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
-                                      <h3>Chiffre d'Affaires</h3>
-                                  </div>
-                                  <p className="montant">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
-                              </div>
-                              <div className="carte">
-                                  <div className="carte-titre-container">
-                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
-                                      <h3>Panier Moyen</h3>
-                                  </div>
-                                  <p className="montant">{dashboardData.finances?.panier_moyen || '0.00'} <span className="devise">€</span></p>
-                              </div>
-                              <div className="carte">
-                                  <div className="carte-titre-container">
-                                      <div className="icon" style={{color: 'var(--color-info)'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
-                                      <h3>Commissions Dues</h3>
-                                  </div>
-                                  <p className="montant" style={{color: 'var(--color-info)'}}>{dashboardData.finances?.commissions_a_payer?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
-                              </div>
+              </>
+          )}
+
+          <div className="main-content">
+            <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
+
+                  {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
+                  {role === 'gerant' && activeTab === 'accueil' && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                          <div>
+                              <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
+                              <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
                           </div>
-                          
-                          <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '24px'}}>
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
-                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
-                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                          {(dashboardData.top_3_prestations || []).map((p, i) => (
-                                              <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px'}}>
-                                                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                                                      <span style={{fontWeight: 'bold', color: 'var(--text-secondary)'}}>#{i+1}</span>
-                                                      <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{p.nom}</span>
-                                                  </div>
-                                                  <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(p.total_genere || 0).toFixed(2)} €</span>
-                                              </div>
-                                          ))}
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
-                              </div>
-
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
-                                  {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
-                                          <div style={{textAlign: 'center'}}>
-                                              <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
-                                              <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
-                                          </div>
-                                          <div style={{flex: 1}}>
-                                              <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
-                                              {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
-                                          </div>
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres (Compta) pour afficher les avis.</p>}
-                              </div>
-                          </div>
-                      </>
-                  )}
-                </div>
-              )}
-
-              {/* ========================================================= */}
-              {/* --- VUE : PARAMÈTRES DU SALON --- */}
-              {/* ========================================================= */}
-              {role === 'gerant' && activeTab === 'parametres' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                    <div>
-                        <h1 style={{margin: 0}}>Paramètres</h1>
-                        <span className="date-subtitle" style={{margin: 0}}>Configuration de votre salon</span>
-                    </div>
-                    <button onClick={() => setActiveTab('accueil')} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', fontSize: '14px', cursor: 'pointer', color: 'var(--text-main)', padding: '8px 16px', borderRadius: '16px', fontWeight: 'bold'}}>← Retour</button>
-                  </div>
-                  
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
-                    
-                    <select className="input-fournisseur" value={configSalon.fidelite_type || 'NONE'} onChange={e => setConfigSalon({...configSalon, fidelite_type: e.target.value})} style={{marginBottom: '16px'}}>
-                        <option value="NONE">Désactivé</option>
-                        <option value="POINTS">Par Points (1€ = 1 point)</option>
-                        <option value="TAMPONS">Carte à Tampons (1 visite = 1 tampon)</option>
-                    </select>
-
-                    {configSalon.fidelite_type === 'POINTS' && (
-                        <div style={{display: 'flex', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                            <div style={{flex: 1}}>
-                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Points à atteindre</label>
-                                <input type="number" className="input-fournisseur" placeholder="Ex: 100" value={configSalon.fidelite_points_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_seuil: e.target.value})} />
-                            </div>
-                            <div style={{flex: 1}}>
-                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Réduction offerte (€)</label>
-                                <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_points_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_valeur: e.target.value})} />
-                            </div>
-                        </div>
-                    )}
-
-                    {configSalon.fidelite_type === 'TAMPONS' && (
-                        <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                            <div>
-                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Nombre de passages requis</label>
-                                <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_tampons_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_tampons_seuil: e.target.value})} />
-                            </div>
-                            <div style={{display: 'flex', gap: '12px'}}>
-                                <div style={{flex: 1}}>
-                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Type de récompense</label>
-                                    <select className="input-fournisseur" value={configSalon.fidelite_recompense_type || 'MONTANT'} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_type: e.target.value})}>
-                                        <option value="MONTANT">Remise fixe (€)</option>
-                                        <option value="POURCENTAGE">Pourcentage (%)</option>
-                                        <option value="PRODUIT">Produit / Service offert</option>
-                                    </select>
-                                </div>
-                                <div style={{flex: 1}}>
-                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Valeur (Ex: 20, 10, Shampoing)</label>
-                                    <input type="text" className="input-fournisseur" value={configSalon.fidelite_recompense_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_valeur: e.target.value})} />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '24px 0 8px 0'}}>📱 Relance SMS Auto</h4>
-                    <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                        <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Délai d'inactivité avant relance (Jours)</label>
-                        <input type="number" className="input-fournisseur" placeholder="Ex: 60" value={configSalon.fidelite_delai_sms || ''} onChange={e => setConfigSalon({...configSalon, fidelite_delai_sms: e.target.value})} />
-                        <p style={{fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Un SMS incitatif sera envoyé si le client ne vient pas pendant cette durée.</p>
-                    </div>
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Google My Business</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
-                    <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Google Location ID" value={configSalon.google_location_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_location_id: e.target.value})} />
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Horaires de l'Agenda</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
-                    <div style={{display: 'flex', gap: '15px'}}>
-                      <div style={{flex: 1}}>
-                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Ouverture (0-23)</label>
-                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_ouverture || 8} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
-                      </div>
-                      <div style={{flex: 1}}>
-                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Fermeture (0-23)</label>
-                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_fermeture || 20} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Boîte Mail (Robot Comptable)</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
-                    <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures || ''} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email || ''} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
-                  </div>
-                  
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Fidélisation (SMS Auto)</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
-                    <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name || ''} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps" value={configSalon.lien_google_maps || ''} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                        Alertes Urgences (Gérant)
-                    </h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Recevez un SMS si une tâche de votre Centre d'Action arrive à expiration (ex: URSSAF, Factures EDF...).</span>
-                    
-                    <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                        <div style={{flex: 1}}>
-                            <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Votre téléphone</label>
-                            <input type="tel" className="input-fournisseur" placeholder="Ex: +33612345678" value={configSalon.telephone_gerant || ''} onChange={(e) => setConfigSalon({...configSalon, telephone_gerant: e.target.value})} />
-                        </div>
-                        <div style={{display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '16px'}}>
-                            <input type="checkbox" id="alertes_sms" checked={configSalon.alertes_sms_actives || false} onChange={(e) => setConfigSalon({...configSalon, alertes_sms_actives: e.target.checked})} style={{width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--btn-primary)'}} />
-                            <label htmlFor="alertes_sms" style={{fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer', fontWeight: '600'}}>Activer les SMS</label>
-                        </div>
-                    </div>
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>TPE Physique (Stripe Terminal)</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
-                    <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
-                  </div>
-
-                  <button className="btn-action" style={{marginTop: '8px', width: '100%'}} onClick={sauvegarderParametres}>Enregistrer la configuration</button>
-                </div>
-              )}
-              
-              {/* ========================================================= */}
-              {/* --- VUE : CAISSE & ENCAISSEMENT --- */}
-              {/* ========================================================= */}
-              {role === 'gerant' && activeTab === 'caisse' && (
-                <div className="admin-container caisse-split-container">
-                    {/* LEFT PANEL - CATALOGUE */}
-                    <div className="caisse-left-panel">
-                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                            <div><h1 style={{margin: 0}}>Caisse</h1></div>
-                            <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                                <ThemeToggle />
-                                <button onClick={() => setShowAddClient(!showAddClient)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Client">+</button>
-                            </div>
-                        </div>
-
-                        {showAddClient && (
-                            <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                                <h3 style={{marginTop: 0}}>Nouveau Client</h3>
-                                <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <input type="text" className="input-fournisseur" placeholder="Prénom" value={newClient.prenom} onChange={(e) => setNewClient({...newClient, prenom: e.target.value})} />
-                                  <input type="text" className="input-fournisseur" placeholder="Nom" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
-                                </div>
-                                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                                  <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
-                                  <input type="date" className="input-fournisseur" placeholder="Date de naissance" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} />
-                                </div>
-                                <button className="btn-action" onClick={() => {ajouterClient(); setShowAddClient(false);}} disabled={!newClient.nom} style={{width: '100%'}}>Enregistrer le client</button>
-                            </div>
-                        )}
-
-                        {!posEmploye ? (
-                            <div className="carte">
-                                <h3 style={{color: 'var(--text-main)', marginBottom: '16px', fontWeight: '600', fontSize: '16px'}}>1. Qui réalise la vente ?</h3>
-                                {(employesListe || []).length === 0 ? (
-                                    <div className="empty-state"><p>Aucun collaborateur enregistré.</p></div>
-                                ) : (
-                                    <div className="grid-collaborateurs">
-                                        {(employesListe || []).map((emp, index) => (
-                                            <div key={emp.id_employe} onClick={() => handleSelectEmployeCaisse(emp.id_employe)}
-                                                style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '24px 12px', borderRadius: 'var(--radius-card)', fontSize: '16px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', transition: 'transform 0.15s ease' }}>
-                                                {(emp.nom || 'Inconnu').split(' ')[0]}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ) : (
-                            <>
-                                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                                    <button onClick={() => { setPosType('PRESTATION'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
-                                    <button onClick={() => { setPosType('PRODUIT_REVENTE'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
-                                </div>
-                                <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}} />
-                                
-                                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px'}}>
-                                    {(catalogueListe || [])
-                                        .filter(art => {
-                                            if (art.type_article !== posType) return false;
-                                            if (!rechercheCaisse) return true;
-                                            const searchClean = nettoyerTexteRecherche(rechercheCaisse);
-                                            const nomClean = nettoyerTexteRecherche(art.nom);
-                                            return nomClean.includes(searchClean);
-                                        })
-                                        .map(art => (
-                                        <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', transition: 'transform 0.1s'}} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
-                                            <span style={{fontWeight: '600', fontSize: '13px', color: 'var(--text-main)'}}>{art.nom}</span>
-                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                                <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(art.prix || 0).toFixed(2)}€</span>
-                                                {posType === 'PRODUIT_REVENTE' && <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Stock: {art.stock_actuel}</span>}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                                {(catalogueListe || []).filter(art => art.type_article === posType).length === 0 && (
-                                    <div className="empty-state"><SvgEmptyState /><p>Aucun élément dans cette catégorie.</p></div>
-                                )}
-                            </>
-                        )}
-                    </div>
-
-                    {/* RIGHT PANEL - PANIER & ENCAISSEMENT (FLOATING ACTION BAR SUR MOBILE) */}
-                    <div className="caisse-right-panel">
-                        {ticketGenere ? (
-                            <div style={{padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center'}}>
-                                <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-                                <h2 style={{marginTop: 0, marginBottom: '8px', color: 'var(--text-main)', fontSize: '24px'}}>Paiement Validé</h2>
-                                {ticketGenere.is_offline && <span style={{fontSize: '12px', color: 'var(--color-danger)', fontWeight: 'bold'}}>Ticket sauvegardé hors-ligne</span>}
-                                <h1 style={{color: 'var(--text-main)', fontSize: '40px', margin: '0 0 24px 0', letterSpacing: '-0.02em'}}>{ticketGenere.montant.toFixed(2)} <span style={{fontSize: '24px', color: 'var(--text-secondary)'}}>€</span></h1>
-                                
-                                <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
-                                    <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
-                                    <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline || !navigator.onLine}>Envoyer</button></div>
-                                    <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}</button>
-                                </div>
-                                <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>Fermer (Sans reçu)</button>
-                            </div>
-                        ) : (
-                            <>
-                                <div style={{padding: '16px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
-                                    <div className="ticket-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
-                                        <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '16px'}}>Ticket en cours</h3>
-                                        {posEmploye && <button onClick={() => { setPosEmploye(null); setClientsSuggeres([]); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
-                                    </div>
-                                    <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
-                                        <option value="">🤝 Client de passage...</option>
-                                        {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
-                                        {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>{c.nom} {c.prenom}</option>)}
-                                    </select>
-                                </div>
-
-                                <div className="ticket-lignes" style={{padding: '16px'}}>
-                                    {(panierCaisse || []).length === 0 ? (
-                                        <div className="empty-state" style={{marginTop: '10px'}}><p>Le ticket est vide.</p></div>
-                                    ) : (
-                                        (panierCaisse || []).map(item => (
-                                            <div key={item.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px'}}>
-                                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                    <span style={{background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: 'var(--text-main)'}}>{item.quantite}x</span>
-                                                    <span style={{color: 'var(--text-main)'}}>{item.nom}</span>
-                                                </div>
-                                                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                                                    <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{((item.prix_unitaire || 0) * (item.quantite || 1)).toFixed(2)}€</span>
-                                                    <button onClick={() => retirerDuPanier(item.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-
-                                <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
-                                    {isEligibleFidelite && (
-                                        <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
-                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                                <div>
-                                                    <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}</span>
-                                                    <span style={{fontSize: '12px', color: 'var(--color-info)'}}>🎁 {texteRecompense}</span>
-                                                </div>
-                                                {!remiseAppliquee ? (
-                                                    <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
-                                                ) : (
-                                                    <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>✅ Appliquée</span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-                                    
-                                    {remiseAppliquee && configSalon.fidelite_type !== 'NONE' && (
-                                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px', color: 'var(--color-success)'}}>
-                                            <span style={{fontWeight: 'bold'}}>🎁 Remise Fidélité</span>
-                                            <span style={{fontWeight: 'bold'}}>-{Math.max(0, sousTotalCaisse - totalCaisse).toFixed(2)} €</span>
-                                        </div>
-                                    )}
-
-                                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
-                                        <span>Total TTC</span>
-                                        <span>{totalCaisse.toFixed(2)} €</span>
-                                    </div>
-
-                                    <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
-                                        <button onClick={() => setMethodePaiement('CARTE')} disabled={isOffline || !navigator.onLine} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CARTE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: (isOffline || !navigator.onLine) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', opacity: (isOffline || !navigator.onLine) ? 0.5 : 1, transition: 'all 0.15s'}}>💳 TPE</button>
-                                        <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'ESPECES' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'ESPECES' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>💶 Espèces</button>
-                                        <button onClick={() => setMethodePaiement('CHEQUE')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CHEQUE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CHEQUE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CHEQUE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>📝 Chèque</button>
-                                    </div>
-
-                                    {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
-                                    
-                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye}>
-                                        {notificationCaisse && notificationCaisse.includes('⏳') ? "En attente du TPE..." : `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`}
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-              )}
-
-              {/* === MODAL SUGGESTION DE CLIENTS INTELLIGENTE === */}
-              {clientsSuggeres.length > 0 && (
-                  <div className="modal-overlay">
-                      <div className="modal-content" style={{textAlign: 'center'}}>
-                          <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-                          <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>{clientsSuggeres.length === 1 ? `Encaisser ${formatNomClient(clientsSuggeres[0])} ?` : "Quel client encaissez-vous ?"}</h2>
-                          <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
-                              {clientsSuggeres.length === 1 
-                                  ? "D'après l'agenda, c'est le client le plus probable à encaisser pour vous en ce moment." 
-                                  : "D'après l'agenda, voici les clients que vous venez de coiffer, du plus ancien au plus récent."}
-                          </p>
-                          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                              {(clientsSuggeres || []).map((client, i) => (
-                                  <button key={client.id_client} onClick={() => { setClientCaisse(client.id_client.toString()); setClientsSuggeres([]); setPosStep('type'); }} className="btn-action" style={{padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: i === 0 ? 'var(--btn-primary)' : 'var(--bg-app)', color: i === 0 ? 'white' : 'var(--text-main)', border: i === 0 ? 'none' : '1px solid var(--border-color)'}}>
-                                      <span style={{fontSize: '16px'}}>✅ {formatNomClient(client)}</span><span style={{fontSize: '12px', opacity: 0.8}}>{client.prestation_rdv}</span>
-                                  </button>
-                              ))}
-                              <button onClick={() => { setClientCaisse(''); setClientsSuggeres([]); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', marginTop: '8px'}}>❌ Aucun / Client de passage</button>
-                          </div>
-                      </div>
-                  </div>
-              )}
-
-              {/* --- CENTRE D'ACTION (TÂCHES) --- */}
-              {role === 'gerant' && activeTab === 'actions' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>Centre d'Action</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Pilotez vos urgences administratives</span>
-                      </div>
-                      <ThemeToggle />
-                  </div>
-
-                  <div className="carte scan-carte">
-                      <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                          <input type="text" className="input-fournisseur" placeholder="Titre (ex: Payer l'URSSAF)" style={{flex: 2}} value={nouvelleTache.titre} onChange={e => setNouvelleTache({...nouvelleTache, titre: e.target.value})} />
-                          <input type="date" className="input-fournisseur" style={{flex: 1}} value={nouvelleTache.date_echeance} onChange={e => setNouvelleTache({...nouvelleTache, date_echeance: e.target.value})} />
-                      </div>
-                      <input type="text" className="input-fournisseur" placeholder="Détails (Optionnel)" style={{marginBottom: '16px'}} value={nouvelleTache.description} onChange={e => setNouvelleTache({...nouvelleTache, description: e.target.value})} />
-                      <button className="btn-action" style={{width: '100%'}} disabled={!nouvelleTache.titre} onClick={async () => {
-                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(nouvelleTache) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:''}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
-                      }}>Ajouter une tâche</button>
-                  </div>
-
-                  <div className="section-titre" style={{marginTop: '32px'}}>À traiter ({(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length})</div>
-                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                      {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').map(tache => (
-                          <div key={tache.id_tache} style={{background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-card)', border: '1px solid var(--border-color)', borderLeft: `4px solid ${getCouleurTache(tache)}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'var(--shadow-sm)', transition: 'all 0.2s ease'}}>
-                              <div style={{display: 'flex', alignItems: 'flex-start', gap: '16px'}}>
-                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: '2px solid var(--text-muted)', width: '24px', height: '24px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px'}}></button>
-                                  <div>
-                                      <h3 style={{margin: '0 0 4px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                          {tache.titre}
-                                          {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>DÉTECTÉ PAR IA</span>}
-                                      </h3>
-                                      {tache.description && <p style={{margin: '0 0 8px 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
-                                      {tache.date_echeance && <span style={{fontSize: '11px', fontWeight: 'bold', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
-                                  </div>
-                              </div>
-                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer'}}>
-                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                               </button>
                           </div>
-                      ))}
-                      {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length === 0 && <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>}
-                  </div>
-
-                  <div className="section-titre" style={{marginTop: '32px'}}>Terminées</div>
-                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', opacity: 0.7}}>
-                      {(tachesListe || []).filter(t => t.statut === 'FAIT').map(tache => (
-                          <div key={tache.id_tache} style={{display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)'}}>
-                              <span style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontSize: '13px'}}>{tache.titre}</span>
-                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Annuler</button>
-                          </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-             {activeTab === 'agenda' && (
-                <div className="admin-container">
-                  <div className="agenda-header">
-                      <div style={{display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap'}}>
-                          <h1 style={{margin: 0}}>Agenda</h1>
-                          <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-                              <button onClick={() => changerPeriode(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>◀</button>
-                              <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', padding: '0 10px'}}>{joursSemaine[0].toLocaleDateString('fr-FR', {month: 'short'})} {joursSemaine[0].getFullYear()}</span>
-                              <button onClick={() => changerPeriode(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>▶</button>
-                              <button onClick={resetToToday} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
-                          </div>
                       </div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
-                      </div>
-                  </div>
-
-                  {/* NOUVEAU SÉLECTEUR MULTI-COLLABORATEURS */}
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
-                      {role === 'gerant' && (
-                          <button 
-                              onClick={() => setFiltresEmployes([])} 
-                              style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
-                              Toute l'équipe
-                          </button>
-                      )}
-                      {role === 'gerant' && decodeToken(token)?.id_employe && (
-                          <button 
-                              onClick={() => setFiltresEmployes([decodeToken(token)?.id_employe])} 
-                              style={{ background: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
-                              Ma Vue
-                          </button>
-                      )}
-                      {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>}
-                      {(employesListe || [])
-                          .filter(emp => role === 'gerant' || emp.id_employe === decodeToken(token)?.id_employe)
-                          .map((emp) => {
-                              const originalIndex = (employesListe || []).findIndex(e => e.id_employe === emp.id_employe);
-                              const isActive = role === 'employe' ? true : filtresEmployes.includes(emp.id_employe);
-                              const color = COULEURS_EMPLOYES[originalIndex % COULEURS_EMPLOYES.length];
-                              return (
-                                  <button 
-                                      key={emp.id_employe}
-                                      onClick={() => {
-                                          if (role === 'employe') return; 
-                                          if (isActive) { setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe)); } 
-                                          else { setFiltresEmployes([...filtresEmployes, emp.id_employe]); }
-                                      }}
-                                      style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
-                                      {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
-                                      {role === 'employe' ? `Mon Planning (${(emp.nom || '').split(' ')[0]})` : (emp.nom || '').split(' ')[0]}
-                                  </button>
-                              );
-                          })}
-                  </div>
-
-                  <div className="week-calendar">
-                      <div className="week-header-row">
-                          <div className="time-spacer"></div>
-                          {joursSemaine.map((jour, index) => (
-                              <div key={index} className={`day-header ${isToday(jour) ? 'today' : ''}`}>
-                                  <span className="day-name">{jour.toLocaleDateString('fr-FR', {weekday: 'short'})}</span>
-                                  <span className="day-number">{jour.getDate()}</span>
-                              </div>
-                          ))}
-                      </div>
-                      <div className="week-body" style={{ overflowY: 'auto', background: 'var(--bg-card)' }}>
-                          <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
-                              <div className="time-column" style={{ width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
-                                  {Array.from({ length: nbHeures }).map((_, i) => (
-                                      <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>{heureDebutAgenda + i} h</div>
-                                  ))}
-                              </div>
-                              <div className="days-container">
-                                  {joursSemaine.map((jour, indexJour) => {
-                                      const dateStringJour = formatDateInput(jour);
-                                      const rdvsDuJourBruts = (planningData || []).filter(rdv => {
-                                          if(!rdv || !rdv.date_heure_debut) return false;
-                                          const rdvDateStr = (rdv.date_heure_debut || '').replace('Z', '').split('T')[0];
-                                          return rdvDateStr === dateStringJour && (filtresEmployes.length === 0 || filtresEmployes.includes(rdv.id_employe));
-                                      });
-                                      const sortedRdvs = rdvsDuJourBruts.map(rdv => {
-                                          const start = new Date((rdv.date_heure_debut || '').replace('Z', ''));
-                                          const end = new Date(start.getTime() + ((rdv.duree_minutes || 30) * 60000));
-                                          return { ...rdv, start, end };
-                                      }).sort((a, b) => a.start - b.start);
-                                      const clusters = []; let currentCluster = []; let clusterEnd = null;
-                                      sortedRdvs.forEach(rdv => {
-                                          if (currentCluster.length === 0) { currentCluster.push(rdv); clusterEnd = rdv.end; } 
-                                          else {
-                                              if (rdv.start < clusterEnd) { currentCluster.push(rdv); if (rdv.end > clusterEnd) clusterEnd = rdv.end; } 
-                                              else { clusters.push([...currentCluster]); currentCluster = [rdv]; clusterEnd = rdv.end; }
-                                          }
-                                      });
-                                      if (currentCluster.length > 0) clusters.push(currentCluster);
-
-                                      return (
-                                          <div key={indexJour} className="day-column">
-                                              {clusters.flatMap((cluster) => {
-                                                  const clusterSize = cluster.length;
-                                                  return cluster.map((rdv, indexInCluster) => {
-                                                      const ECHELLE_HEURE = 80; const dureeReelle = rdv.duree_minutes || 30;
-                                                      const topPosition = ((rdv.start.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (rdv.start.getMinutes() * (ECHELLE_HEURE / 60));
-                                                      const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
-                                                      const empIndex = (employesListe || []).findIndex(e => e.id_employe === rdv.id_employe);
-                                                      const backgroundColor = empIndex >= 0 ? COULEURS_EMPLOYES[empIndex % COULEURS_EMPLOYES.length] : '#ccc';
-                                                      const widthPercent = clusterSize === 1 ? 100 : (100 - (clusterSize - 1) * 10);
-                                                      const leftOffset = clusterSize === 1 ? 0 : (indexInCluster * 10);
-                                                      const zIndex = 5 + indexInCluster;
-                                                      return (
-                                                          <div key={rdv.id_rdv} onClick={() => ouvrirRdvSelectionne(rdv)} className="rdv-card-accordeon"
-                                                               style={{ position: 'absolute', left: `calc(2px + ${leftOffset}%)`, width: `calc(${widthPercent}% - 4px)`, boxSizing: 'border-box', top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827', borderRadius: '6px', padding: '4px 6px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.15)', cursor: 'pointer', zIndex: zIndex }}>
-                                                              <div style={{fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</div>
-                                                              <div style={{fontSize: '10px', opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.prestation}</div>
-                                                          </div>
-                                                      );
-                                                  });
-                                              })}
-                                          </div>
-                                      );
-                                  })}
-                              </div>
-                          </div>
-                      </div>
-                  </div>
-
-                  {showModalRdv && (
-                      <div className="modal-overlay">
-                          <div className="modal-content">
-                              <div className="modal-header">
-                                  <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Nouveau Rendez-vous</h3>
-                                  <button className="modal-close-btn" onClick={() => setShowModalRdv(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-                              <div style={{ position: 'relative', marginBottom: '12px' }}>
-                                  <input 
-                                      type="text" 
-                                      className="input-fournisseur" 
-                                      placeholder="Nom du Client ou N° de Téléphone" 
-                                      value={formRdv.nom_client} 
-                                      onChange={e => {
-                                          setFormRdv({...formRdv, nom_client: e.target.value});
-                                          setShowDropdownClient(true);
-                                      }} 
-                                      onFocus={() => setShowDropdownClient(true)}
-                                      onBlur={() => setTimeout(() => setShowDropdownClient(false), 200)} 
-                                      style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }}
-                                  />
-                                  
-                                  {/* MENU DÉROULANT CLIENTS CRM */}
-                                  {showDropdownClient && (
-                                      <div style={{
-                                          position: 'absolute', top: '100%', left: 0, right: 0, 
-                                          background: 'var(--bg-card)', border: '1px solid var(--border-color)', 
-                                          borderRadius: '6px', marginTop: '4px', zIndex: 1000, 
-                                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden'
-                                      }}>
-                                          {getClientsSuggeresPourRdv(formRdv.nom_client).map((cli, idx) => (
-                                              <div 
-                                                  key={cli.id_client}
-                                                  onClick={() => {
-                                                      setFormRdv({
-                                                          ...formRdv, 
-                                                          nom_client: formatNomClient(cli),
-                                                          telephone_client: cli.telephone || formRdv.telephone_client
-                                                      });
-                                                      setShowDropdownClient(false);
-                                                  }}
-                                                  style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}
-                                                  onMouseOver={e => e.currentTarget.style.background = 'var(--bg-app)'}
-                                                  onMouseOut={e => e.currentTarget.style.background = 'transparent'}
-                                              >
-                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                      <span style={{fontSize: '14px'}}>👤</span>
-                                                      <span style={{color: 'var(--text-main)', fontSize: '13px', fontWeight: '600'}}>{formatNomClient(cli)}</span>
-                                                  </div>
-                                                  {cli.telephone && (
-                                                      <span style={{color: 'var(--text-secondary)', fontSize: '11px', background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px'}}>
-                                                          {cli.telephone}
-                                                      </span>
-                                                  )}
-                                              </div>
-                                          ))}
-                                          
-                                          {/* MODE TEXTE LIBRE POUR LES NOUVEAUX CLIENTS */}
-                                          {formRdv.nom_client && !getClientsSuggeresPourRdv(formRdv.nom_client).find(c => formatNomClient(c).toLowerCase() === formRdv.nom_client.toLowerCase()) && (
-                                              <div 
-                                                  onClick={() => setShowDropdownClient(false)}
-                                                  style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}
-                                              >
-                                                  <span style={{fontSize: '14px'}}>➕</span>
-                                                  Nouveau client : "{formRdv.nom_client}"
-                                              </div>
-                                          )}
-                                      </div>
-                                  )}
-                              </div>
-                              <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
-                              <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
-                                  <option value="">-- Choisir un collaborateur --</option>
-                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                              </select>
-                              <div style={{ position: 'relative', marginBottom: '12px' }}>
-                                  <input 
-                                      type="text" 
-                                      className="input-fournisseur" 
-                                      placeholder="Prestation (ex: Coupe Homme)" 
-                                      value={formRdv.prestation} 
-                                      onChange={e => {
-                                          setFormRdv({...formRdv, prestation: e.target.value});
-                                          setShowDropdownPresta(true);
-                                      }} 
-                                      onFocus={() => setShowDropdownPresta(true)}
-                                      onBlur={() => setTimeout(() => setShowDropdownPresta(false), 200)} 
-                                      style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }}
-                                  />
-                                  
-                                  {/* MENU DÉROULANT INTELLIGENT */}
-                                  {showDropdownPresta && (
-                                      <div style={{
-                                          position: 'absolute', top: '100%', left: 0, right: 0, 
-                                          background: 'var(--bg-card)', border: '1px solid var(--border-color)', 
-                                          borderRadius: '6px', marginTop: '4px', zIndex: 1000, 
-                                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden'
-                                      }}>
-                                          {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
-                                              const isTop = dashboardData?.top_3_prestations?.find(p => (p.nom || '').toLowerCase() === (presta.nom || '').toLowerCase());
-                                              
-                                              return (
-                                                  <div 
-                                                      key={presta.id_article}
-                                                      onClick={() => {
-                                                          setFormRdv({...formRdv, prestation: presta.nom});
-                                                          setShowDropdownPresta(false);
-                                                      }}
-                                                      style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}
-                                                      onMouseOver={e => e.currentTarget.style.background = 'var(--bg-app)'}
-                                                      onMouseOut={e => e.currentTarget.style.background = 'transparent'}
-                                                  >
-                                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                          {isTop && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Top</span>}
-                                                          <span style={{color: 'var(--text-main)', fontWeight: '500'}}>{presta.nom}</span>
-                                                      </div>
-                                                      <span style={{color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600'}}>{presta.prix} €</span>
-                                                  </div>
-                                              )
-                                          })}
-                                          
-                                          {/* MODE TEXTE LIBRE : S'affiche uniquement si ce qu'on a tapé ne correspond à rien d'exact dans la liste */}
-                                          {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => (p.nom || '').toLowerCase() === (formRdv.prestation || '').toLowerCase()) && (
-                                              <div 
-                                                  onClick={() => setShowDropdownPresta(false)}
-                                                  style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}
-                                              >
-                                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                                  Utiliser "{formRdv.prestation}" (Texte libre)
-                                              </div>
-                                          )}
-                                      </div>
-                                  )}
-                              </div>
-                              <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
-                                  <input type="date" className="input-fournisseur" value={formRdv.date} onChange={e => setFormRdv({...formRdv, date: e.target.value})} />
-                                  <input type="time" className="input-fournisseur" value={formRdv.heure} onChange={e => setFormRdv({...formRdv, heure: e.target.value})} />
-                              </div>
-                              <button onClick={creerRdvManuel} className="btn-action" style={{width:'100%'}}>Créer le rendez-vous</button>
-                          </div>
-                      </div>
-                  )}
-
-                  {rdvSelectionne && (
-                      <div className="modal-overlay">
-                          <div className="modal-content">
-                              <div className="modal-header">
-                                  <h3 style={{margin: 0, fontSize: '18px'}}>{!isEditingRdv ? "Détails du Rendez-vous" : "Modifier le Rendez-vous"}</h3>
-                                  <button className="modal-close-btn" onClick={() => setRdvSelectionne(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-                              
-                              {!isEditingRdv ? (
-                                  <>
-                                      <div style={{marginBottom: '24px', padding: '16px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)'}}>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Client</span> <strong style={{color: 'var(--text-main)'}}>{rdvSelectionne.nom_client}</strong></div>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Téléphone</span> <strong>{rdvSelectionne.telephone_client}</strong></div>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Service</span> <strong>{rdvSelectionne.prestation}</strong></div>
-                                          <div style={{display: 'flex', justifyContent: 'space-between'}}><span style={{color: 'var(--text-secondary)'}}>Collaborateur</span> <strong>{rdvSelectionne.nom_employe}</strong></div>
-                                      </div>
-                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                          
-                                          {/* BOUTON VOIR LE PROTOCOLE */}
-                                          {(() => {
-                                              const protoAssocie = (protocolesListe || []).find(p => (p.nom_prestation || '').toLowerCase() === (rdvSelectionne.prestation || '').toLowerCase());
-                                              if (protoAssocie) {
-                                                  return (
-                                                      <button onClick={() => { setRdvSelectionne(null); setProtocoleVisible(protoAssocie); }} style={{background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}}>
-                                                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                                                          Voir le Protocole (Recette)
-                                                      </button>
-                                                  );
-                                              }
-                                              return null;
-                                          })()}
-
-                                          {role === 'gerant' && <button onClick={() => setIsEditingRdv(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer', transition: 'all 0.15s'}}>Modifier l'horaire</button>}
-                                          {role === 'gerant' && <button onClick={demanderSuppressionRdv} style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Supprimer le rendez-vous</button>}
-                                      </div>
-                                  </>
-                              ) : (
-                                  <>
-                                      <select className="input-fournisseur" value={editRdvForm.id_employe} onChange={e => setEditRdvForm({...editRdvForm, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
-                                          <option value="">-- Choisir un collaborateur --</option>
-                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                      </select>
-                                      <input type="text" className="input-fournisseur" placeholder="Prestation" value={editRdvForm.prestation} onChange={e => setEditRdvForm({...editRdvForm, prestation: e.target.value})} style={{marginBottom:'12px'}}/>
-                                      <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
-                                          <input type="date" className="input-fournisseur" value={editRdvForm.date} onChange={e => setEditRdvForm({...editRdvForm, date: e.target.value})} />
-                                          <input type="time" className="input-fournisseur" value={editRdvForm.heure} onChange={e => setEditRdvForm({...editRdvForm, heure: e.target.value})} />
-                                      </div>
-                                      <div style={{display: 'flex', gap: '12px'}}>
-                                        <button onClick={() => setIsEditingRdv(false)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer'}}>Annuler</button>
-                                        <button onClick={sauvegarderModifRdv} className="btn-action" style={{flex: 2}}>Enregistrer</button>
-                                      </div>
-                                  </>
-                              )}
-                          </div>
-                      </div>
-                  )}
-
-                  {/* MODALE AFFICHAGE DU PROTOCOLE POUR L'EMPLOYÉ (AGENDA) */}
-                  {protocoleVisible && (
-                      <div className="modal-overlay">
-                          <div className="modal-content" style={{maxWidth: '600px', height: '80vh', overflowY: 'auto', padding: '24px'}}>
-                              <div className="modal-header" style={{borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '16px'}}>
-                                  <div>
-                                      <h3 style={{margin: '0 0 8px 0', fontSize: '22px', color: 'var(--text-main)'}}>{protocoleVisible.nom_prestation}</h3>
-                                      <div style={{display: 'flex', gap: '8px'}}>
-                                          {(protocoleVisible.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '2px 8px', borderRadius: '12px', border: '1px solid var(--border-color)'}}>{t}</span>)}
-                                      </div>
-                                  </div>
-                                  <button className="modal-close-btn" onClick={() => setProtocoleVisible(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-                              
-                              {/* GALERIE EMPLOYÉ */}
-                              <div style={{display: 'flex', gap: '8px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '8px'}}>
-                                  {['avant', 'pendant', 'apres'].map(type => (
-                                      protocoleVisible.medias && protocoleVisible.medias[type] && (
-                                          <div key={type} style={{flexShrink: 0, width: '140px'}}>
-                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={protocoleVisible.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              <span style={{fontSize: '11px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
-                                          </div>
-                                      )
-                                  ))}
-                              </div>
-                              
-                              <div className="section-titre" style={{fontSize: '14px', marginTop: 0}}>Ingrédients (Préparation Labo)</div>
-                              <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px', border: '1px dashed var(--border-color)'}}>
-                                  {protocoleVisible.ingredients && (protocoleVisible.ingredients || []).length > 0 ? (
-                                      (protocoleVisible.ingredients || []).map((ing, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i !== (protocoleVisible.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '14px', color: 'var(--text-main)', fontWeight: '600'}}>
-                                              <span><span style={{color: 'var(--text-secondary)', marginRight: '8px'}}>🧪</span>{ing.nom}</span>
-                                              <span>{ing.quantite_necessaire} doses / ml</span>
-                                          </div>
-                                      ))
-                                  ) : <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit à préparer.</span>}
-                              </div>
-
-                              <div className="section-titre" style={{fontSize: '14px'}}>Déroulé de la prestation (To-Do List)</div>
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {protocoleVisible.etapes && (protocoleVisible.etapes || []).length > 0 ? (
-                                      (protocoleVisible.etapes || []).map((etape, index) => (
-                                          <label key={index} style={{display: 'flex', gap: '16px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', cursor: 'pointer', alignItems: 'flex-start'}}>
-                                              <input type="checkbox" style={{width: '20px', height: '20px', marginTop: '2px', accentColor: 'var(--btn-primary)', cursor: 'pointer'}} />
-                                              <div style={{flex: 1}}>
-                                                  <span style={{fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'bold', display: 'block', marginBottom: '4px'}}>Étape {index + 1}</span>
-                                                  <p style={{margin: '0 0 12px 0', fontSize: '14px', color: 'var(--text-main)', lineHeight: '1.5'}}>{etape.texte}</p>
-                                                  {etape.timer_min && (
-                                                      <button onClick={(e) => { e.preventDefault(); showToast(`Minuteur de ${etape.timer_min} min lancé sur votre appareil !`, "info"); }} style={{fontSize: '12px', background: 'var(--btn-primary)', color: 'white', padding: '6px 12px', borderRadius: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'}}>
-                                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                                          Lancer minuteur ({etape.timer_min} min)
-                                                      </button>
-                                                  )}
-                                              </div>
-                                          </label>
-                                      ))
-                                  ) : (
-                                      <div style={{fontSize: '14px', color: 'var(--text-secondary)', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                          {protocoleVisible.description || "Aucune instruction enregistrée."}
-                                      </div>
-                                  )}
-                              </div>
-                          </div>
-                      </div>
-                  )}
-                </div>
-              )}
-
-              {/* ========================================================= */}
-              {/* --- NOUVEL ONGLET DÉDIÉ : L'ACADÉMIE (FULL SCREEN) --- */}
-              {/* ========================================================= */}
-              {role === 'gerant' && activeTab === 'protocoles' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>L'Académie</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
-                      </div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
-                          {!modeEditionProtocole && (
-                              <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">Créer une Fiche Technique</button>
-                          )}
-                      </div>
-                  </div>
-
-                  {showAddPrestation && (
-                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                          <h3 style={{marginTop: 0}}>Nouvelle Prestation (Catalogue)</h3>
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                              <input type="text" className="input-fournisseur" placeholder="Nom de la prestation (ex: Coupe Homme)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
-                              <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
-                          </div>
-                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation</button>
-                      </div>
-                  )}
-
-                  <div className="caisse-split-container" style={{ display: 'block' }}>
-                      {/* VUE 1 : BIBLIOTHÈQUE (Masquée si création ou consultation) */}
-                      {!modeEditionProtocole && (
-                          <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
-                              <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', maxWidth: '400px'}}/>
-                              
-                              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
-                                  {(protocolesListe || []).filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
-                                      let stockSuffisant = true;
-                                      (proto.ingredients || []).forEach(ing => {
-                                          const articleDuStock = (catalogueListe || []).find(a => a.id_article === ing.id_article);
-                                          if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
-                                      });
-
-                                      return (
-                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
-                                              {proto.medias && proto.medias.apres ? (
-                                                  <div style={{height: '140px', width: '100%', background: '#ccc'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              ) : ( <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div> )}
-                                              
-                                              <div style={{padding: '16px'}}>
-                                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
-                                                      <span style={{fontSize: '15px', fontWeight: 'bold'}}>{proto.nom_prestation}</span>
-                                                      <span style={{width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
-                                                  </div>
-                                                  <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '12px'}}>
-                                                      {(proto.tags || []).map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
-                                                  </div>
-                                              </div>
-                                          </div>
-                                      );
-                                  })}
-                                  {(protocolesListe || []).length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
-                              </div>
-                          </div>
-                      )}
-
-                     {/* VUE 2 : ÉDITEUR (Plein Écran) */}
-                      {modeEditionProtocole === 'NEW' && (
-                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
-                              <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
-                              
-                              <div style={{marginBottom: '16px'}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
-                                  <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
-                                      <option value="">-- Choisir une prestation --</option>
-                                      {(catalogueListe || []).filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
-                                  </select>
-                              </div>
-
-                              <div style={{marginBottom: '24px'}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
-                                  <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
-                                      {TAGS_DISPONIBLES.map(tag => (
-                                          <button key={tag} onClick={() => toggleTag(tag)} style={{background: (nouveauProtocole.tags || []).includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: (nouveauProtocole.tags || []).includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
-                                      ))}
-                                  </div>
-                              </div>
-
-                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
-                                  <div style={{display: 'flex', gap: '12px'}}>
-                                      {['avant', 'pendant', 'apres'].map(type => (
-                                          <div key={type} style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
-                                              <label style={{fontSize: '11px', textTransform: 'capitalize', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
-                                              <div style={{height: '100px', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
-                                                  {nouveauProtocole.medias[type] ? <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <span style={{fontSize: '20px', color: 'var(--text-muted)'}}>+</span>}
-                                                  <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer'}} />
-                                              </div>
-                                          </div>
-                                      ))}
-                                  </div>
-                              </div>
-
-                              <div style={{marginBottom: '24px'}}>
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
-                                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
-                                      {(nouveauProtocole.etapes || []).map((etape, index) => (
-                                          <div 
-                                              key={etape.id_etape} 
-                                              draggable
-                                              onDragStart={(e) => e.dataTransfer.setData("dragIndex", index)}
-                                              onDragOver={(e) => e.preventDefault()}
-                                              onDrop={(e) => {
-                                                  const dragIndex = Number(e.dataTransfer.getData("dragIndex"));
-                                                  const dropIndex = index;
-                                                  const nouvellesEtapes = [...(nouveauProtocole.etapes || [])];
-                                                  const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1);
-                                                  nouvellesEtapes.splice(dropIndex, 0, draggedEtape);
-                                                  setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes });
-                                              }}
-                                              style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center', cursor: 'grab'}}
-                                              title="Maintenez cliqué pour déplacer"
-                                          >
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5}}>
-                                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                                              </div>
-                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
-                                              <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
-                                              {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ {etape.timer_min} min</div>}
-                                              <button onClick={() => supprimerEtapeRecette(etape.id_etape)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer'}}>✕</button>
-                                          </div>
-                                      ))}
-                                  </div>
-                                  <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
-                                      <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
-                                      <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
-                                      <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
-                                  </div>
-                              </div>
-
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
-                              <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
-                                  <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
-                                      <option value="">-- Ajouter un produit --</option>
-                                      {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
-                                  </select>
-                                  <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
-                                  <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
-                              </div>
-                              
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
-                                  {(nouveauProtocole.ingredients || []).map(ing => (
-                                      <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
-                                          <span>{ing.quantite_necessaire}x {ing.nom}</span>
-                                          <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
-                                      </div>
-                                  ))}
-                              </div>
-
-                              {(() => {
-                                  const prestaChoisie = (catalogueListe || []).find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
-                                  const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
-                                  const coutProduits = (nouveauProtocole.ingredients || []).reduce((acc, ing) => {
-                                      const art = (catalogueListe || []).find(a => a.id_article === ing.id_article);
-                                      return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0);
-                                  }, 0);
-                                  const margeValeur = prixVente - coutProduits;
-                                  const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
-                                  const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
-
-                                  return (nouveauProtocole.nom_prestation && (
-                                      <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                          <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
-                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité</span>
-                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
-                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
-                                          </div>
-                                          <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
-                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                  <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
-                                                  <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
-                                              </div>
-                                          </div>
-                                      </div>
-                                  ));
-                              })()}
-
-                              {/* BOUTONS ANNULER ET SAUVEGARDER */}
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <button onClick={() => setModeEditionProtocole(null)} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-input)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer'}}>Annuler</button>
-                                  <button className="btn-action" style={{flex: 2, padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
-                              </div>
-                          </div>
-                      )}
-                      
-                      {/* VUE 3 : LECTURE D'UNE FICHE EXISTANTE (Plein Écran) */}
-                      {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
-                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
-                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
-                                  <div>
-                                      <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
-                                      <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
-                                      <div style={{display: 'flex', gap: '8px'}}>
-                                          {(modeEditionProtocole.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
-                                      </div>
-                                  </div>
-                                  <div style={{display: 'flex', gap: '8px'}}>
-                                      <button onClick={() => {
-                                          setNouveauProtocole(modeEditionProtocole); // Charge les données dans le formulaire
-                                          setModeEditionProtocole('NEW'); // Bascule sur la vue éditeur
-                                      }} style={{background: 'var(--btn-primary)', border: 'none', color: 'white', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
-                                          Modifier la fiche
-                                      </button>
-                                      <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
-                                          Supprimer la fiche
-                                      </button>
-                                  </div>
-                              </div>
-
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
-                                  {['avant', 'pendant', 'apres'].map(type => (
-                                      modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
-                                          <div key={type} style={{flex: 1}}>
-                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              <span style={{fontSize: '10px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
-                                          </div>
-                                      )
-                                  ))}
-                              </div>
-
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
-                              <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
-                                  {(modeEditionProtocole.ingredients || []).map((ing, i) => (
-                                      <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== (modeEditionProtocole.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
-                                          <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
-                                      </div>
-                                  ))}
-                                  {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
-                              </div>
-
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {(modeEditionProtocole.etapes || []).map((etape, index) => (
-                                      <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                          <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
-                                          <div style={{flex: 1}}>
-                                              <p style={{margin: '0 0 8px 0', fontSize: '14px', lineHeight: '1.5'}}>{etape.texte}</p>
-                                              {etape.timer_min && <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ Minuteur : {etape.timer_min} min</span>}
-                                          </div>
-                                      </div>
-                                  ))}
-                                  {(!modeEditionProtocole.etapes || (modeEditionProtocole.etapes || []).length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
-                              </div>
-                          </div>
-                      )}
-                  </div>
-                  
-                  {/* CATALOGUE DES PRESTATIONS INTÉGRÉ DANS L'ACADÉMIE */}
-                  {!modeEditionProtocole && (
-                      <>
-                          <div className="section-titre" style={{marginTop: '32px'}}>Catalogue des Prestations</div>
-                          <div className="carte scan-carte">
-                              {(catalogueListe || []).filter(art => art.type_article === 'PRESTATION').length === 0 ? (
-                                  <div className="empty-state"><p>Aucune prestation au catalogue.</p></div>
-                              ) : (catalogueListe || []).filter(art => art.type_article === 'PRESTATION').map(art => (
-                                  <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
-                                      <span>
-                                          <strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € 
-                                      </span>
-                                      <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
-                                  </div>
-                              ))}
-                          </div>
-                      </>
-                  )}
-                </div>
-              )}
-
-              {role === 'gerant' && activeTab === 'produits' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
-                      </div>
-                  </div>
-
-                  {showAddProduit && (
-                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                          <h3 style={{marginTop: 0}}>Nouveau Produit (Revente/Labo)</h3>
-                          <div style={{display: 'flex', gap: '12px'}}>
-                            <input type="text" className="input-fournisseur" placeholder="Nom du produit (Laissez vide si réassort)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                            <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                          </div>
-                          <div style={{display: 'flex', gap: '12px', marginTop: '12px', marginBottom: '16px'}}>
-                            <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '120px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                            <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '70px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                            <input type="number" className="input-fournisseur" placeholder="Délai (j)" title="Délai moyen de livraison (jours)" style={{width: '90px'}} value={newArticle.delai_livraison_jours} onChange={(e) => setNewArticle({...newArticle, delai_livraison_jours: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                          </div>
-                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRODUIT_REVENTE'}); ajouterArticle(); setShowAddProduit(false); }} disabled={!newArticle.reference} style={{width: '100%'}}>{!newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
-                      </div>
-                  )}
-
-                  <div className="carte scan-carte">
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isStockExpanded ? '16px' : '0'}} onClick={() => setIsStockExpanded(!isStockExpanded)}>
-                          <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks</h3>
-                          <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isStockExpanded ? '▲' : '▼'}</span>
-                      </div>
-                      
-                      {isStockExpanded && (
+                      {!dashboardData ? (
+                          <div className="skeleton-loading" style={{height: '200px', borderRadius: '12px'}}></div>
+                      ) : (
                           <>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
-                                  <input type="text" className="input-fournisseur" placeholder="🔍 Chercher un produit..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} style={{flex: 1, minWidth: '200px'}} />
-                                  <select className="input-fournisseur" value={stockSortBy} onChange={e => setStockSortBy(e.target.value)} style={{width: 'auto', minWidth: '150px'}}>
-                                      <option value="nom">Trier par: Nom (A-Z)</option>
-                                      <option value="stock">Trier par: Quantité</option>
-                                  </select>
-                              </div>
-                              <div className="stock-container">
-                                {stocksData
-                                    .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
-                                    .sort((a, b) => {
-                                        if (stockSortBy === 'nom') return a.nom.localeCompare(b.nom);
-                                        if (stockSortBy === 'stock') return a.stock_actuel - b.stock_actuel;
-                                        return 0;
-                                    })
-                                    .map((produit) => {
-                                    const status = getStockStatus(produit.stock_actuel);
-                                    return (
-                                      <div className="stock-item" key={produit.id_article}>
-                                        <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
-                                        <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+                              <div className="cartes-financieres">
+                                  <div className="carte">
+                                      <div className="carte-titre-container">
+                                          <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+                                          <h3>Chiffre d'Affaires</h3>
                                       </div>
-                                    );
-                                })}
-                                {stocksData.length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
+                                      <p className="montant">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                                  </div>
+                                  <div className="carte">
+                                      <div className="carte-titre-container">
+                                          <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
+                                          <h3>Panier Moyen</h3>
+                                      </div>
+                                      <p className="montant">{dashboardData.finances?.panier_moyen || '0.00'} <span className="devise">€</span></p>
+                                  </div>
+                                  <div className="carte">
+                                      <div className="carte-titre-container">
+                                          <div className="icon" style={{color: 'var(--color-info)'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+                                          <h3>Commissions Dues</h3>
+                                      </div>
+                                      <p className="montant" style={{color: 'var(--color-info)'}}>{dashboardData.finances?.commissions_a_payer?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                                  </div>
+                              </div>
+                              
+                              <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '24px'}}>
+                                  <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                      <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
+                                      {(dashboardData.top_3_prestations || []).length > 0 ? (
+                                          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                              {(dashboardData.top_3_prestations || []).map((p, i) => (
+                                                  <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px'}}>
+                                                      <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                          <span style={{fontWeight: 'bold', color: 'var(--text-secondary)'}}>#{i+1}</span>
+                                                          <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{p.nom}</span>
+                                                      </div>
+                                                      <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(p.total_genere || 0).toFixed(2)} €</span>
+                                                  </div>
+                                              ))}
+                                          </div>
+                                      ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
+                                  </div>
+
+                                  <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                      <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
+                                      {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
+                                          <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
+                                              <div style={{textAlign: 'center'}}>
+                                                  <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
+                                                  <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
+                                              </div>
+                                              <div style={{flex: 1}}>
+                                                  <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
+                                                  {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
+                                              </div>
+                                          </div>
+                                      ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres pour afficher les avis.</p>}
+                                  </div>
                               </div>
                           </>
                       )}
-                  </div>
-                </div>
-              )}
-
-              {role === 'gerant' && activeTab === 'rh' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
-                      </div>
-                  </div>
-
-                  {showAddEmploye && (
-                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                          <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                            <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
-                            <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
-                          </div>
-
-                          <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo de profil (Optionnel)</label>
-                          <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                              <div className="rh-avatar" style={{width: '40px', height: '40px', flexShrink: 0, border: 'none', background: 'transparent'}}>
-                                  {newEmploye.photo_url ? (
-                                      <img src={newEmploye.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
-                                  ) : (
-                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--text-muted)', width: '24px', height: '24px'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                                  )}
-                              </div>
-                              <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleImageUpload} style={{fontSize: '12px', color: 'var(--text-main)'}} />
-                          </div>
-
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                            <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
-                            <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
-                          </div>
-                          <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.nom || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
-                      </div>
-                  )}
-                  
-                  {(rhData || []).length === 0 ? (
-                      <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
-                  ) : (
-                    <div className="rh-grid">
-                      {rhData.map(employe => (
-                        <div className="rh-carte" key={employe.id_employe}>
-                          <div className="rh-header-profil">
-                            <div className="rh-avatar">
-                              {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
-                            </div>
-                            <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
-                          </div>
-                          <div className="rh-stats-row">
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.produits_vendus}</span><span className="label">Produits</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
-                          </div>
-                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
-                          <div style={{marginTop: '8px'}}>
-                            <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
-                            {dessinerChronogramme(employe.historique_primes)}
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   )}
-                </div>
-              )}
 
-              {role === 'gerant' && activeTab === 'admin' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span></div>
-                      <ThemeToggle />
-                  </div>
-                  
-                  <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
-                     <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
-                     <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
-                  </div>
-              
-                  <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
-                  <div className="section-titre">Historique des bilans comptables</div>
-                  
-                  {(historiqueData || []).length === 0 ? (
-                      <div className="empty-state">
-                          <SvgEmptyState />
-                          <p>Aucune clôture de caisse (Z) effectuée pour le moment.</p>
+                  {/* VUE : PARAMÈTRES DU SALON */}
+                  {role === 'gerant' && activeTab === 'parametres' && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                        <div>
+                            <h1 style={{margin: 0}}>Paramètres</h1>
+                            <span className="date-subtitle" style={{margin: 0}}>Configuration de votre salon</span>
+                        </div>
+                        <button onClick={() => setActiveTab('accueil')} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', fontSize: '14px', cursor: 'pointer', color: 'var(--text-main)', padding: '8px 16px', borderRadius: '16px', fontWeight: 'bold'}}>← Retour</button>
                       </div>
-                  ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          {(historiqueData || []).map((anneeData) => (
-                              <div key={anneeData.annee} style={{ background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                                  
-                                  {/* DOSSIER ANNÉE */}
-                                  <div onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', background: 'var(--bg-card)', padding: '16px', fontWeight: 'bold', fontSize: '16px', color: 'var(--text-main)' }}>
-                                      <span style={{ fontSize: '20px' }}>{expandedYear === anneeData.annee ? '📂' : '📁'}</span> 
-                                      Année {anneeData.annee}
-                                  </div>
+                      
+                      <div className="carte scan-carte">
+                        <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
+                        <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
+                        
+                        <select className="input-fournisseur" value={configSalon.fidelite_type || 'NONE'} onChange={e => setConfigSalon({...configSalon, fidelite_type: e.target.value})} style={{marginBottom: '16px'}}>
+                            <option value="NONE">Désactivé</option>
+                            <option value="POINTS">Par Points (1€ = 1 point)</option>
+                            <option value="TAMPONS">Carte à Tampons (1 visite = 1 tampon)</option>
+                        </select>
 
-                                  {/* SOUS-DOSSIERS MOIS */}
-                                  {expandedYear === anneeData.annee && (
-                                      <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
-                                          {(anneeData.mois || []).map((moisData) => (
-                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                                                  
-                                                  <div onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px' }}>
-                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', color: 'var(--text-main)' }}>
-                                                          <span style={{ fontSize: '18px' }}>{expandedMonth === moisData.nom ? '📂' : '📁'}</span> 
-                                                          {moisData.nom}
-                                                      </div>
-                                                      <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)' }}>
-                                                          {moisData.total_mensuel?.toFixed(2) || '0.00'} €
-                                                      </span>
-                                                  </div>
+                        {configSalon.fidelite_type === 'POINTS' && (
+                            <div style={{display: 'flex', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                                <div style={{flex: 1}}>
+                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Points à atteindre</label>
+                                    <input type="number" className="input-fournisseur" placeholder="Ex: 100" value={configSalon.fidelite_points_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_seuil: e.target.value})} />
+                                </div>
+                                <div style={{flex: 1}}>
+                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Réduction offerte (€)</label>
+                                    <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_points_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_valeur: e.target.value})} />
+                                </div>
+                            </div>
+                        )}
 
-                                                  {/* FICHIERS DU MOIS */}
-                                                  {expandedMonth === moisData.nom && (
-                                                      <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                                          
-                                                          {/* Récapitulatif Mensuel (Fichier maitre) */}
-                                                          <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', border: '1px solid #bfdbfe', marginBottom: '8px' }}>
-                                                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📊 Bilan consolidé ({moisData.nom})</span>
-                                                              <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
-                                                          </div>
+                        {configSalon.fidelite_type === 'TAMPONS' && (
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                                <div>
+                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Nombre de passages requis</label>
+                                    <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_tampons_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_tampons_seuil: e.target.value})} />
+                                </div>
+                                <div style={{display: 'flex', gap: '12px'}}>
+                                    <div style={{flex: 1}}>
+                                        <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Type de récompense</label>
+                                        <select className="input-fournisseur" value={configSalon.fidelite_recompense_type || 'MONTANT'} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_type: e.target.value})}>
+                                            <option value="MONTANT">Remise fixe (€)</option>
+                                            <option value="POURCENTAGE">Pourcentage (%)</option>
+                                            <option value="PRODUIT">Produit / Service offert</option>
+                                        </select>
+                                    </div>
+                                    <div style={{flex: 1}}>
+                                        <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Valeur (Ex: 20, 10, Shampoing)</label>
+                                        <input type="text" className="input-fournisseur" value={configSalon.fidelite_recompense_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_valeur: e.target.value})} />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
-                                                          {/* Liste des jours du mois (Un fichier cliquable par jour) */}
-                                                          {(moisData.jours || []).map(jour => (
-                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'} title="Cliquez pour télécharger le PDF détaillé">
-                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                                      <span style={{ fontSize: '20px' }}>📄</span>
-                                                                      <span style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
-                                                                  </div>
-                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
-                                                                      <span style={{ fontSize: '16px' }}>⬇️</span>
-                                                                  </div>
-                                                              </div>
-                                                          ))}
-                                                      </div>
-                                                  )}
-                                              </div>
-                                          ))}
+                        <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '24px 0 8px 0'}}>📱 Relance SMS Auto</h4>
+                        <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                            <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Délai d'inactivité avant relance (Jours)</label>
+                            <input type="number" className="input-fournisseur" placeholder="Ex: 60" value={configSalon.fidelite_delai_sms || ''} onChange={e => setConfigSalon({...configSalon, fidelite_delai_sms: e.target.value})} />
+                            <p style={{fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Un SMS incitatif sera envoyé si le client ne vient pas pendant cette durée.</p>
+                        </div>
+                      </div>
+
+                      <div className="carte scan-carte">
+                        <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Google My Business</h3>
+                        <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
+                        <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
+                        <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} style={{marginBottom: '12px'}}/>
+                        <input type="text" className="input-fournisseur" placeholder="Google Location ID" value={configSalon.google_location_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_location_id: e.target.value})} />
+                      </div>
+
+                      <div className="carte scan-carte">
+                        <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Horaires de l'Agenda</h3>
+                        <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
+                        <div style={{display: 'flex', gap: '15px'}}>
+                          <div style={{flex: 1}}>
+                            <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Ouverture (0-23)</label>
+                            <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_ouverture || 8} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
+                          </div>
+                          <div style={{flex: 1}}>
+                            <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Fermeture (0-23)</label>
+                            <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_fermeture || 20} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="carte scan-carte">
+                        <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Boîte Mail (Robot Comptable)</h3>
+                        <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
+                        <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures || ''} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
+                        <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email || ''} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
+                      </div>
+                      
+                      <div className="carte scan-carte">
+                        <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Fidélisation (SMS Auto)</h3>
+                        <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
+                        <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
+                        <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name || ''} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} style={{marginBottom: '12px'}}/>
+                        <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps" value={configSalon.lien_google_maps || ''} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
+                      </div>
+
+                      <div className="carte scan-carte">
+                        <h3 style={{marginBottom: '5px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                            Alertes Urgences (Gérant)
+                        </h3>
+                        <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Recevez un SMS si une tâche de votre Centre d'Action arrive à expiration.</span>
+                        
+                        <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                            <div style={{flex: 1}}>
+                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Votre téléphone</label>
+                                <input type="tel" className="input-fournisseur" placeholder="Ex: +33612345678" value={configSalon.telephone_gerant || ''} onChange={(e) => setConfigSalon({...configSalon, telephone_gerant: e.target.value})} />
+                            </div>
+                            <div style={{display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '16px'}}>
+                                <input type="checkbox" id="alertes_sms" checked={configSalon.alertes_sms_actives || false} onChange={(e) => setConfigSalon({...configSalon, alertes_sms_actives: e.target.checked})} style={{width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--btn-primary)'}} />
+                                <label htmlFor="alertes_sms" style={{fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer', fontWeight: '600'}}>Activer les SMS</label>
+                            </div>
+                        </div>
+                      </div>
+
+                      <div className="carte scan-carte">
+                        <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>TPE Physique (Stripe Terminal)</h3>
+                        <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
+                        <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
+                      </div>
+
+                      <button className="btn-action" style={{marginTop: '8px', width: '100%'}} onClick={sauvegarderParametres}>Enregistrer la configuration</button>
+                    </div>
+                  )}
+                  
+                  {/* VUE : CAISSE & ENCAISSEMENT */}
+                  {role === 'gerant' && activeTab === 'caisse' && (
+                    <div className="admin-container caisse-split-container">
+                        {/* LEFT PANEL - CATALOGUE */}
+                        <div className="caisse-left-panel">
+                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                                <div><h1 style={{margin: 0}}>Caisse</h1></div>
+                                <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                                    <ThemeToggle />
+                                    <button onClick={() => setShowAddClient(!showAddClient)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Client">+</button>
+                                </div>
+                            </div>
+
+                            {showAddClient && (
+                                <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                                    <h3 style={{marginTop: 0}}>Nouveau Client</h3>
+                                    <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                      <input type="text" className="input-fournisseur" placeholder="Prénom" value={newClient.prenom} onChange={(e) => setNewClient({...newClient, prenom: e.target.value})} />
+                                      <input type="text" className="input-fournisseur" placeholder="Nom" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
+                                    </div>
+                                    <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                      <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
+                                      <input type="date" className="input-fournisseur" placeholder="Date de naissance" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} />
+                                    </div>
+                                    <button className="btn-action" onClick={() => {ajouterClient(); setShowAddClient(false);}} disabled={!newClient.nom} style={{width: '100%'}}>Enregistrer le client</button>
+                                </div>
+                            )}
+
+                            {!posEmploye ? (
+                                <div className="carte">
+                                    <h3 style={{color: 'var(--text-main)', marginBottom: '16px', fontWeight: '600', fontSize: '16px'}}>1. Qui réalise la vente ?</h3>
+                                    {(employesListe || []).length === 0 ? (
+                                        <div className="empty-state"><p>Aucun collaborateur enregistré.</p></div>
+                                    ) : (
+                                        <div className="grid-collaborateurs">
+                                            {(employesListe || []).map((emp, index) => (
+                                                <div key={emp.id_employe} onClick={() => handleSelectEmployeCaisse(emp.id_employe)}
+                                                    style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '24px 12px', borderRadius: 'var(--radius-card)', fontSize: '16px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', transition: 'transform 0.15s ease' }}>
+                                                    {(emp.nom || 'Inconnu').split(' ')[0]}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <>
+                                    <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                        <button onClick={() => { setPosType('PRESTATION'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
+                                        <button onClick={() => { setPosType('PRODUIT_REVENTE'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
+                                    </div>
+                                    <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}} />
+                                    
+                                    <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px'}}>
+                                        {(catalogueListe || [])
+                                            .filter(art => {
+                                                if (art.type_article !== posType) return false;
+                                                if (!rechercheCaisse) return true;
+                                                const searchClean = nettoyerTexteRecherche(rechercheCaisse);
+                                                const nomClean = nettoyerTexteRecherche(art.nom);
+                                                return nomClean.includes(searchClean);
+                                            })
+                                            .map(art => (
+                                            <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', transition: 'transform 0.1s'}} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
+                                                <span style={{fontWeight: '600', fontSize: '13px', color: 'var(--text-main)'}}>{art.nom}</span>
+                                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                                    <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(art.prix || 0).toFixed(2)}€</span>
+                                                    {posType === 'PRODUIT_REVENTE' && <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Stock: {art.stock_actuel}</span>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {(catalogueListe || []).filter(art => art.type_article === posType).length === 0 && (
+                                        <div className="empty-state"><SvgEmptyState /><p>Aucun élément dans cette catégorie.</p></div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+
+                        {/* RIGHT PANEL - PANIER & ENCAISSEMENT (FLOATING ACTION BAR SUR MOBILE) */}
+                        <div className="caisse-right-panel">
+                            {ticketGenere ? (
+                                <div style={{padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center'}}>
+                                    <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                                    <h2 style={{marginTop: 0, marginBottom: '8px', color: 'var(--text-main)', fontSize: '24px'}}>Paiement Validé</h2>
+                                    {ticketGenere.is_offline && <span style={{fontSize: '12px', color: 'var(--color-danger)', fontWeight: 'bold'}}>Ticket sauvegardé hors-ligne</span>}
+                                    <h1 style={{color: 'var(--text-main)', fontSize: '40px', margin: '0 0 24px 0', letterSpacing: '-0.02em'}}>{ticketGenere.montant.toFixed(2)} <span style={{fontSize: '24px', color: 'var(--text-secondary)'}}>€</span></h1>
+                                    
+                                    <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
+                                        <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
+                                        <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline || !navigator.onLine}>Envoyer</button></div>
+                                        <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}</button>
+                                    </div>
+                                    <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>Fermer (Sans reçu)</button>
+                                </div>
+                            ) : (
+                                <>
+                                    <div style={{padding: '16px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
+                                        <div className="ticket-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                                            <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '16px'}}>Ticket en cours</h3>
+                                            {posEmploye && <button onClick={() => { setPosEmploye(null); setClientsSuggeres([]); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
+                                        </div>
+                                        <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
+                                            <option value="">🤝 Client de passage...</option>
+                                            {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
+                                            {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>{c.nom} {c.prenom}</option>)}
+                                        </select>
+                                    </div>
+
+                                    <div className="ticket-lignes" style={{padding: '16px'}}>
+                                        {(panierCaisse || []).length === 0 ? (
+                                            <div className="empty-state" style={{marginTop: '10px'}}><p>Le ticket est vide.</p></div>
+                                        ) : (
+                                            (panierCaisse || []).map(item => (
+                                                <div key={item.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px'}}>
+                                                    <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                        <span style={{background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: 'var(--text-main)'}}>{item.quantite}x</span>
+                                                        <span style={{color: 'var(--text-main)'}}>{item.nom}</span>
+                                                    </div>
+                                                    <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                        <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{((item.prix_unitaire || 0) * (item.quantite || 1)).toFixed(2)}€</span>
+                                                        <button onClick={() => retirerDuPanier(item.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+
+                                    <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
+                                        {isEligibleFidelite && (
+                                            <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
+                                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                                    <div>
+                                                        <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}</span>
+                                                        <span style={{fontSize: '12px', color: 'var(--color-info)'}}>🎁 {texteRecompense}</span>
+                                                    </div>
+                                                    {!remiseAppliquee ? (
+                                                        <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
+                                                    ) : (
+                                                        <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>✅ Appliquée</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {remiseAppliquee && configSalon.fidelite_type !== 'NONE' && (
+                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px', color: 'var(--color-success)'}}>
+                                                <span style={{fontWeight: 'bold'}}>🎁 Remise Fidélité</span>
+                                                <span style={{fontWeight: 'bold'}}>-{Math.max(0, sousTotalCaisse - totalCaisse).toFixed(2)} €</span>
+                                            </div>
+                                        )}
+
+                                        <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
+                                            <span>Total TTC</span>
+                                            <span>{totalCaisse.toFixed(2)} €</span>
+                                        </div>
+
+                                        <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
+                                            <button onClick={() => setMethodePaiement('CARTE')} disabled={isOffline || !navigator.onLine} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CARTE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: (isOffline || !navigator.onLine) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', opacity: (isOffline || !navigator.onLine) ? 0.5 : 1, transition: 'all 0.15s'}}>💳 TPE</button>
+                                            <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'ESPECES' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'ESPECES' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>💶 Espèces</button>
+                                            <button onClick={() => setMethodePaiement('CHEQUE')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CHEQUE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CHEQUE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CHEQUE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>📝 Chèque</button>
+                                        </div>
+
+                                        {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
+                                        
+                                        <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye}>
+                                            {notificationCaisse && notificationCaisse.includes('⏳') ? "En attente du TPE..." : `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                  )}
+
+                  {/* VUE : CENTRE D'ACTION (TÂCHES) */}
+                  {role === 'gerant' && activeTab === 'actions' && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                          <div>
+                              <h1 style={{margin: 0}}>Centre d'Action</h1>
+                              <span className="date-subtitle" style={{margin: 0}}>Pilotez vos urgences administratives</span>
+                          </div>
+                          <ThemeToggle />
+                      </div>
+
+                      <div className="carte scan-carte">
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                              <input type="text" className="input-fournisseur" placeholder="Titre (ex: Payer l'URSSAF)" style={{flex: 2}} value={nouvelleTache.titre} onChange={e => setNouvelleTache({...nouvelleTache, titre: e.target.value})} />
+                              <input type="date" className="input-fournisseur" style={{flex: 1}} value={nouvelleTache.date_echeance} onChange={e => setNouvelleTache({...nouvelleTache, date_echeance: e.target.value})} />
+                          </div>
+                          <input type="text" className="input-fournisseur" placeholder="Détails (Optionnel)" style={{marginBottom: '16px'}} value={nouvelleTache.description} onChange={e => setNouvelleTache({...nouvelleTache, description: e.target.value})} />
+                          <button className="btn-action" style={{width: '100%'}} disabled={!nouvelleTache.titre} onClick={async () => {
+                              try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(nouvelleTache) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:''}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
+                          }}>Ajouter une tâche</button>
+                      </div>
+
+                      <div className="section-titre" style={{marginTop: '32px'}}>À traiter ({(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length})</div>
+                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                          {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').map(tache => (
+                              <div key={tache.id_tache} style={{background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-card)', border: '1px solid var(--border-color)', borderLeft: `4px solid ${getCouleurTache(tache)}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'var(--shadow-sm)', transition: 'all 0.2s ease'}}>
+                                  <div style={{display: 'flex', alignItems: 'flex-start', gap: '16px'}}>
+                                      <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: '2px solid var(--text-muted)', width: '24px', height: '24px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px'}}></button>
+                                      <div>
+                                          <h3 style={{margin: '0 0 4px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                              {tache.titre}
+                                              {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>DÉTECTÉ PAR IA</span>}
+                                          </h3>
+                                          {tache.description && <p style={{margin: '0 0 8px 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
+                                          {tache.date_echeance && <span style={{fontSize: '11px', fontWeight: 'bold', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
                                       </div>
-                                  )}
+                                  </div>
+                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer'}}>
+                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                                  </button>
+                              </div>
+                          ))}
+                          {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length === 0 && <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>}
+                      </div>
+
+                      <div className="section-titre" style={{marginTop: '32px'}}>Terminées</div>
+                      <div style={{display: 'flex', flexDirection: 'column', gap: '8px', opacity: 0.7}}>
+                          {(tachesListe || []).filter(t => t.statut === 'FAIT').map(tache => (
+                              <div key={tache.id_tache} style={{display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)'}}>
+                                  <span style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontSize: '13px'}}>{tache.titre}</span>
+                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Annuler</button>
                               </div>
                           ))}
                       </div>
+                    </div>
                   )}
-                </div>
-              )}
 
-              {/* === GOD MODE (SUPER-ADMIN) === */}
-              {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.id_salon === 38 && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0, color: '#aa3bff'}}>God Mode</h1><span className="date-subtitle" style={{margin: 0}}>Espace Fondateur STACK</span></div>
-                      <ThemeToggle />
-                  </div>
-                  
-                  {superAdminData ? (
-                      <div className="cartes-financieres">
-                          <div className="carte" style={{border: '1px solid #aa3bff'}}><div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div><p className="montant" style={{color: '#aa3bff'}}>{superAdminData.mrr_estime} <span className="devise">€ / mois</span></p></div>
-                          <div className="carte"><div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div><p className="montant">{superAdminData.salons_actifs} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData.total_salons} au total</span></p></div>
-                      </div>
-                  ) : <div className="skeleton-loading" style={{height: '120px', marginBottom: '32px'}}></div>}
-
-                  <div className="section-titre" style={{marginTop: '32px', color: '#aa3bff', borderColor: '#aa3bff'}}>Gestion des Salons (Clients)</div>
-                  <div className="carte scan-carte">
-                      {(superAdminSalons || []).map(salon => (
-                          <div key={salon.id_salon} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid var(--border-color)'}}>
-                              <div>
-                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
-                                      <strong style={{color: 'var(--text-main)', fontSize: '15px'}}>{salon.nom_salon}</strong><span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: 'var(--bg-app)', color: 'var(--text-secondary)'}}>ID: {salon.id_salon}</span>{salon.id_salon === 38 && <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#aa3bff', color: 'white'}}>Fondateur</span>}
-                                  </div>
-                                  <span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>{salon.email}</span>
-                              </div>
-                              <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
-                                  <span className="badge-discret" style={{ background: salon.statut_abonnement === 'actif' ? 'var(--bg-success)' : 'var(--bg-danger)', color: salon.statut_abonnement === 'actif' ? 'var(--color-success)' : 'var(--color-danger)' }}>{salon.statut_abonnement === 'actif' ? 'Abonné (Actif)' : 'Inactif / Impayé'}</span>
-                                  {salon.id_salon !== 38 && ( <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>{salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}</button> )}
+                 {/* VUE : AGENDA */}
+                 {activeTab === 'agenda' && (
+                    <div className="admin-container">
+                      <div className="agenda-header">
+                          <div style={{display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap'}}>
+                              <h1 style={{margin: 0}}>Agenda</h1>
+                              <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                                  <button onClick={() => changerPeriode(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>◀</button>
+                                  <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', padding: '0 10px'}}>{joursSemaine[0].toLocaleDateString('fr-FR', {month: 'short'})} {joursSemaine[0].getFullYear()}</span>
+                                  <button onClick={() => changerPeriode(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>▶</button>
+                                  <button onClick={resetToToday} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
                               </div>
                           </div>
-                      ))}
-                      {(superAdminSalons || []).length === 0 && <div className="empty-state"><p>Aucun salon chargé.</p></div>}
-                  </div>
-                </div>
-              )}
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
+                          </div>
+                      </div>
+
+                      {/* SÉLECTEUR MULTI-COLLABORATEURS */}
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
+                          {role === 'gerant' && (
+                              <button 
+                                  onClick={() => setFiltresEmployes([])} 
+                                  style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
+                                  Toute l'équipe
+                              </button>
+                          )}
+                          {role === 'gerant' && decodeToken(token)?.id_employe && (
+                              <button 
+                                  onClick={() => setFiltresEmployes([decodeToken(token)?.id_employe])} 
+                                  style={{ background: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
+                                  Ma Vue
+                              </button>
+                          )}
+                          {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>}
+                          {(employesListe || [])
+                              .filter(emp => role === 'gerant' || emp.id_employe === decodeToken(token)?.id_employe)
+                              .map((emp) => {
+                                  const originalIndex = (employesListe || []).findIndex(e => e.id_employe === emp.id_employe);
+                                  const isActive = role === 'employe' ? true : filtresEmployes.includes(emp.id_employe);
+                                  const color = COULEURS_EMPLOYES[originalIndex % COULEURS_EMPLOYES.length];
+                                  return (
+                                      <button 
+                                          key={emp.id_employe}
+                                          onClick={() => {
+                                              if (role === 'employe') return; 
+                                              if (isActive) { setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe)); } 
+                                              else { setFiltresEmployes([...filtresEmployes, emp.id_employe]); }
+                                          }}
+                                          style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
+                                          {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
+                                          {role === 'employe' ? `Mon Planning (${(emp.nom || '').split(' ')[0]})` : (emp.nom || '').split(' ')[0]}
+                                      </button>
+                                  );
+                              })}
+                      </div>
+
+                      <div className="week-calendar">
+                          <div className="week-header-row">
+                              <div className="time-spacer"></div>
+                              {joursSemaine.map((jour, index) => (
+                                  <div key={index} className={`day-header ${isToday(jour) ? 'today' : ''}`}>
+                                      <span className="day-name">{jour.toLocaleDateString('fr-FR', {weekday: 'short'})}</span>
+                                      <span className="day-number">{jour.getDate()}</span>
+                                  </div>
+                              ))}
+                          </div>
+                          <div className="week-body" style={{ overflowY: 'auto', background: 'var(--bg-card)' }}>
+                              <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
+                                  <div className="time-column" style={{ width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+                                      {Array.from({ length: nbHeures }).map((_, i) => (
+                                          <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>{heureDebutAgenda + i} h</div>
+                                      ))}
+                                  </div>
+                                  <div className="days-container">
+                                      {joursSemaine.map((jour, indexJour) => {
+                                          const dateStringJour = formatDateInput(jour);
+                                          const rdvsDuJourBruts = (planningData || []).filter(rdv => {
+                                              if(!rdv || !rdv.date_heure_debut) return false;
+                                              const rdvDateStr = (rdv.date_heure_debut || '').replace('Z', '').split('T')[0];
+                                              return rdvDateStr === dateStringJour && (filtresEmployes.length === 0 || filtresEmployes.includes(rdv.id_employe));
+                                          });
+                                          const sortedRdvs = rdvsDuJourBruts.map(rdv => {
+                                              const start = new Date((rdv.date_heure_debut || '').replace('Z', ''));
+                                              const end = new Date(start.getTime() + ((rdv.duree_minutes || 30) * 60000));
+                                              return { ...rdv, start, end };
+                                          }).sort((a, b) => a.start - b.start);
+                                          const clusters = []; let currentCluster = []; let clusterEnd = null;
+                                          sortedRdvs.forEach(rdv => {
+                                              if (currentCluster.length === 0) { currentCluster.push(rdv); clusterEnd = rdv.end; } 
+                                              else {
+                                                  if (rdv.start < clusterEnd) { currentCluster.push(rdv); if (rdv.end > clusterEnd) clusterEnd = rdv.end; } 
+                                                  else { clusters.push([...currentCluster]); currentCluster = [rdv]; clusterEnd = rdv.end; }
+                                              }
+                                          });
+                                          if (currentCluster.length > 0) clusters.push(currentCluster);
+
+                                          return (
+                                              <div key={indexJour} className="day-column">
+                                                  {clusters.flatMap((cluster) => {
+                                                      const clusterSize = cluster.length;
+                                                      return cluster.map((rdv, indexInCluster) => {
+                                                          const ECHELLE_HEURE = 80; const dureeReelle = rdv.duree_minutes || 30;
+                                                          const topPosition = ((rdv.start.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (rdv.start.getMinutes() * (ECHELLE_HEURE / 60));
+                                                          const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
+                                                          const empIndex = (employesListe || []).findIndex(e => e.id_employe === rdv.id_employe);
+                                                          const backgroundColor = empIndex >= 0 ? COULEURS_EMPLOYES[empIndex % COULEURS_EMPLOYES.length] : '#ccc';
+                                                          const widthPercent = clusterSize === 1 ? 100 : (100 - (clusterSize - 1) * 10);
+                                                          const leftOffset = clusterSize === 1 ? 0 : (indexInCluster * 10);
+                                                          const zIndex = 5 + indexInCluster;
+                                                          return (
+                                                              <div key={rdv.id_rdv} onClick={() => ouvrirRdvSelectionne(rdv)} className="rdv-card-accordeon"
+                                                                   style={{ position: 'absolute', left: `calc(2px + ${leftOffset}%)`, width: `calc(${widthPercent}% - 4px)`, boxSizing: 'border-box', top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827', borderRadius: '6px', padding: '4px 6px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.15)', cursor: 'pointer', zIndex: zIndex }}>
+                                                                  <div style={{fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</div>
+                                                                  <div style={{fontSize: '10px', opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.prestation}</div>
+                                                              </div>
+                                                          );
+                                                      });
+                                                  })}
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* MODAL RDV */}
+                      {showModalRdv && (
+                          <div className="modal-overlay">
+                              <div className="modal-content">
+                                  <div className="modal-header">
+                                      <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Nouveau Rendez-vous</h3>
+                                      <button className="modal-close-btn" onClick={() => setShowModalRdv(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                  </div>
+                                  <div style={{ position: 'relative', marginBottom: '12px' }}>
+                                      <input 
+                                          type="text" className="input-fournisseur" placeholder="Nom du Client ou N° de Téléphone" value={formRdv.nom_client} 
+                                          onChange={e => { setFormRdv({...formRdv, nom_client: e.target.value}); setShowDropdownClient(true); }} 
+                                          onFocus={() => setShowDropdownClient(true)} onBlur={() => setTimeout(() => setShowDropdownClient(false), 200)} 
+                                          style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }}
+                                      />
+                                      {showDropdownClient && (
+                                          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '6px', marginTop: '4px', zIndex: 1000, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+                                              {getClientsSuggeresPourRdv(formRdv.nom_client).map((cli, idx) => (
+                                                  <div key={cli.id_client} onClick={() => { setFormRdv({ ...formRdv, nom_client: formatNomClient(cli), telephone_client: cli.telephone || formRdv.telephone_client }); setShowDropdownClient(false); }} style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-app)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}><span style={{fontSize: '14px'}}>👤</span><span style={{color: 'var(--text-main)', fontSize: '13px', fontWeight: '600'}}>{formatNomClient(cli)}</span></div>
+                                                      {cli.telephone && <span style={{color: 'var(--text-secondary)', fontSize: '11px', background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px'}}>{cli.telephone}</span>}
+                                                  </div>
+                                              ))}
+                                              {formRdv.nom_client && !getClientsSuggeresPourRdv(formRdv.nom_client).find(c => formatNomClient(c).toLowerCase() === formRdv.nom_client.toLowerCase()) && (
+                                                  <div onClick={() => setShowDropdownClient(false)} style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                      <span style={{fontSize: '14px'}}>➕</span> Nouveau client : "{formRdv.nom_client}"
+                                                  </div>
+                                              )}
+                                          </div>
+                                      )}
+                                  </div>
+                                  <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
+                                  <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
+                                      <option value="">-- Choisir un collaborateur --</option>
+                                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                  </select>
+                                  <div style={{ position: 'relative', marginBottom: '12px' }}>
+                                      <input type="text" className="input-fournisseur" placeholder="Prestation (ex: Coupe Homme)" value={formRdv.prestation} onChange={e => { setFormRdv({...formRdv, prestation: e.target.value}); setShowDropdownPresta(true); }} onFocus={() => setShowDropdownPresta(true)} onBlur={() => setTimeout(() => setShowDropdownPresta(false), 200)} style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }} />
+                                      {showDropdownPresta && (
+                                          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '6px', marginTop: '4px', zIndex: 1000, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+                                              {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
+                                                  const isTop = dashboardData?.top_3_prestations?.find(p => (p.nom || '').toLowerCase() === (presta.nom || '').toLowerCase());
+                                                  return (
+                                                      <div key={presta.id_article} onClick={() => { setFormRdv({...formRdv, prestation: presta.nom}); setShowDropdownPresta(false); }} style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-app)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                                          <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                              {isTop && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Top</span>}
+                                                              <span style={{color: 'var(--text-main)', fontWeight: '500'}}>{presta.nom}</span>
+                                                          </div>
+                                                          <span style={{color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600'}}>{presta.prix} €</span>
+                                                      </div>
+                                                  )
+                                              })}
+                                              {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => (p.nom || '').toLowerCase() === (formRdv.prestation || '').toLowerCase()) && (
+                                                  <div onClick={() => setShowDropdownPresta(false)} style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                                      Utiliser "{formRdv.prestation}" (Texte libre)
+                                                  </div>
+                                              )}
+                                          </div>
+                                      )}
+                                  </div>
+                                  <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
+                                      <input type="date" className="input-fournisseur" value={formRdv.date} onChange={e => setFormRdv({...formRdv, date: e.target.value})} />
+                                      <input type="time" className="input-fournisseur" value={formRdv.heure} onChange={e => setFormRdv({...formRdv, heure: e.target.value})} />
+                                  </div>
+                                  <button onClick={creerRdvManuel} className="btn-action" style={{width:'100%'}}>Créer le rendez-vous</button>
+                              </div>
+                          </div>
+                      )}
+                    </div>
+                 )}
+
+                 {/* VUE : L'ACADÉMIE (PROTOCOLES) */}
+                 {role === 'gerant' && activeTab === 'protocoles' && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                          <div>
+                              <h1 style={{margin: 0}}>L'Académie</h1>
+                              <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
+                          </div>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
+                              {!modeEditionProtocole && (
+                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">Créer une Fiche</button>
+                              )}
+                          </div>
+                      </div>
+
+                      {showAddPrestation && (
+                          <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                              <h3 style={{marginTop: 0}}>Nouvelle Prestation (Catalogue)</h3>
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                  <input type="text" className="input-fournisseur" placeholder="Nom de la prestation (ex: Coupe Homme)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
+                                  <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
+                              </div>
+                              <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation</button>
+                          </div>
+                      )}
+
+                      <div className="caisse-split-container" style={{ display: 'block' }}>
+                          {!modeEditionProtocole && (
+                              <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
+                                  <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', maxWidth: '400px'}}/>
+                                  
+                                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
+                                      {(protocolesListe || []).filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
+                                          let stockSuffisant = true;
+                                          (proto.ingredients || []).forEach(ing => {
+                                              const articleDuStock = (catalogueListe || []).find(a => a.id_article === ing.id_article);
+                                              if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
+                                          });
+
+                                          return (
+                                              <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                                                  {proto.medias && proto.medias.apres ? (
+                                                      <div style={{height: '140px', width: '100%', background: '#ccc'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
+                                                  ) : ( <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div> )}
+                                                  
+                                                  <div style={{padding: '16px'}}>
+                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                                                          <span style={{fontSize: '15px', fontWeight: 'bold'}}>{proto.nom_prestation}</span>
+                                                          <span style={{width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
+                                                      </div>
+                                                      <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '12px'}}>
+                                                          {(proto.tags || []).map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
+                                                      </div>
+                                                  </div>
+                                              </div>
+                                          );
+                                      })}
+                                      {(protocolesListe || []).length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
+                                  </div>
+                              </div>
+                          )}
+
+                          {modeEditionProtocole === 'NEW' && (
+                              <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
+                                  <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
+                                  
+                                  <div style={{marginBottom: '16px'}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
+                                      <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
+                                          <option value="">-- Choisir une prestation --</option>
+                                          {(catalogueListe || []).filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
+                                      </select>
+                                  </div>
+
+                                  <div style={{marginBottom: '24px'}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
+                                      <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                                          {TAGS_DISPONIBLES.map(tag => (
+                                              <button key={tag} onClick={() => toggleTag(tag)} style={{background: (nouveauProtocole.tags || []).includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: (nouveauProtocole.tags || []).includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
+                                          ))}
+                                      </div>
+                                  </div>
+
+                                  <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                      <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
+                                      <div style={{display: 'flex', gap: '12px'}}>
+                                          {['avant', 'pendant', 'apres'].map(type => (
+                                              <div key={type} style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                                                  <label style={{fontSize: '11px', textTransform: 'capitalize', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
+                                                  <div style={{height: '100px', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
+                                                      {nouveauProtocole.medias[type] ? <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <span style={{fontSize: '20px', color: 'var(--text-muted)'}}>+</span>}
+                                                      <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer'}} />
+                                                  </div>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </div>
+
+                                  <div style={{marginBottom: '24px'}}>
+                                      <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
+                                      <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
+                                          {(nouveauProtocole.etapes || []).map((etape, index) => (
+                                              <div key={etape.id_etape} draggable onDragStart={(e) => e.dataTransfer.setData("dragIndex", index)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const dragIndex = Number(e.dataTransfer.getData("dragIndex")); const dropIndex = index; const nouvellesEtapes = [...(nouveauProtocole.etapes || [])]; const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1); nouvellesEtapes.splice(dropIndex, 0, draggedEtape); setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes }); }} style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center', cursor: 'grab'}} title="Maintenez cliqué pour déplacer">
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5}}>
+                                                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                                  </div>
+                                                  <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
+                                                  <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
+                                                  {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ {etape.timer_min} min</div>}
+                                                  <button onClick={() => supprimerEtapeRecette(etape.id_etape)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer'}}>✕</button>
+                                              </div>
+                                          ))}
+                                      </div>
+                                      <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
+                                          <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
+                                          <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
+                                          <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
+                                      </div>
+                                  </div>
+
+                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
+                                  <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
+                                      <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
+                                          <option value="">-- Ajouter un produit --</option>
+                                          {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
+                                      </select>
+                                      <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
+                                      <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
+                                  </div>
+                                  
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
+                                      {(nouveauProtocole.ingredients || []).map(ing => (
+                                          <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
+                                              <span>{ing.quantite_necessaire}x {ing.nom}</span>
+                                              <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
+                                          </div>
+                                      ))}
+                                  </div>
+
+                                  {(() => {
+                                      const prestaChoisie = (catalogueListe || []).find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
+                                      const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
+                                      const coutProduits = (nouveauProtocole.ingredients || []).reduce((acc, ing) => { const art = (catalogueListe || []).find(a => a.id_article === ing.id_article); return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0); }, 0);
+                                      const margeValeur = prixVente - coutProduits;
+                                      const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
+                                      const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
+
+                                      return (nouveauProtocole.nom_prestation && (
+                                          <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                              <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+                                                  <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité</span>
+                                                  <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
+                                                  <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
+                                              </div>
+                                              <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
+                                                  <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                      <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
+                                                      <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
+                                                  </div>
+                                              </div>
+                                          </div>
+                                      ));
+                                  })()}
+
+                                  <div style={{display: 'flex', gap: '12px'}}>
+                                      <button onClick={() => setModeEditionProtocole(null)} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-input)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer'}}>Annuler</button>
+                                      <button className="btn-action" style={{flex: 2, padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
+                                  </div>
+                              </div>
+                          )}
+                          
+                          {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
+                              <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
+                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
+                                      <div>
+                                          <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
+                                          <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
+                                          <div style={{display: 'flex', gap: '8px'}}>
+                                              {(modeEditionProtocole.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
+                                          </div>
+                                      </div>
+                                      <div style={{display: 'flex', gap: '8px'}}>
+                                          <button onClick={() => { setNouveauProtocole(modeEditionProtocole); setModeEditionProtocole('NEW'); }} style={{background: 'var(--btn-primary)', border: 'none', color: 'white', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                              Modifier la fiche
+                                          </button>
+                                          <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                              Supprimer la fiche
+                                          </button>
+                                      </div>
+                                  </div>
+
+                                  <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
+                                      {['avant', 'pendant', 'apres'].map(type => (
+                                          modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
+                                              <div key={type} style={{flex: 1}}>
+                                                  <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
+                                                  <span style={{fontSize: '10px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
+                                              </div>
+                                          )
+                                      ))}
+                                  </div>
+
+                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
+                                  <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
+                                      {(modeEditionProtocole.ingredients || []).map((ing, i) => (
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== (modeEditionProtocole.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                              <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
+                                          </div>
+                                      ))}
+                                      {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
+                                  </div>
+
+                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                      {(modeEditionProtocole.etapes || []).map((etape, index) => (
+                                          <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
+                                              <div style={{flex: 1}}>
+                                                  <p style={{margin: '0 0 8px 0', fontSize: '14px', lineHeight: '1.5'}}>{etape.texte}</p>
+                                                  {etape.timer_min && <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ Minuteur : {etape.timer_min} min</span>}
+                                              </div>
+                                          </div>
+                                      ))}
+                                      {(!modeEditionProtocole.etapes || (modeEditionProtocole.etapes || []).length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+                      
+                      {!modeEditionProtocole && (
+                          <>
+                              <div className="section-titre" style={{marginTop: '32px'}}>Catalogue des Prestations</div>
+                              <div className="carte scan-carte">
+                                  {(catalogueListe || []).filter(art => art.type_article === 'PRESTATION').length === 0 ? (
+                                      <div className="empty-state"><p>Aucune prestation au catalogue.</p></div>
+                                  ) : (catalogueListe || []).filter(art => art.type_article === 'PRESTATION').map(art => (
+                                      <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
+                                          <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € </span>
+                                          <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
+                                      </div>
+                                  ))}
+                              </div>
+                          </>
+                      )}
+                    </div>
+                 )}
+
+                 {/* VUE : PRODUITS (STOCKS) */}
+                 {role === 'gerant' && activeTab === 'produits' && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                          <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
+                          </div>
+                      </div>
+
+                      {showAddProduit && (
+                          <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                              <h3 style={{marginTop: 0}}>Nouveau Produit (Revente/Labo)</h3>
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                <input type="text" className="input-fournisseur" placeholder="Nom du produit (Laissez vide si réassort)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                                <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                              </div>
+                              <div style={{display: 'flex', gap: '12px', marginTop: '12px', marginBottom: '16px'}}>
+                                <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '120px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                                <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '70px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                                <input type="number" className="input-fournisseur" placeholder="Délai (j)" title="Délai moyen de livraison (jours)" style={{width: '90px'}} value={newArticle.delai_livraison_jours} onChange={(e) => setNewArticle({...newArticle, delai_livraison_jours: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
+                              </div>
+                              <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRODUIT_REVENTE'}); ajouterArticle(); setShowAddProduit(false); }} disabled={!newArticle.reference} style={{width: '100%'}}>{!newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
+                          </div>
+                      )}
+
+                      <div className="carte scan-carte">
+                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isStockExpanded ? '16px' : '0'}} onClick={() => setIsStockExpanded(!isStockExpanded)}>
+                              <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks</h3>
+                              <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isStockExpanded ? '▲' : '▼'}</span>
+                          </div>
+                          
+                          {isStockExpanded && (
+                              <>
+                                  <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
+                                      <input type="text" className="input-fournisseur" placeholder="🔍 Chercher un produit..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} style={{flex: 1, minWidth: '200px'}} />
+                                      <select className="input-fournisseur" value={stockSortBy} onChange={e => setStockSortBy(e.target.value)} style={{width: 'auto', minWidth: '150px'}}>
+                                          <option value="nom">Trier par: Nom (A-Z)</option>
+                                          <option value="stock">Trier par: Quantité</option>
+                                      </select>
+                                  </div>
+                                  <div className="stock-container">
+                                    {stocksData
+                                        .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
+                                        .sort((a, b) => {
+                                            if (stockSortBy === 'nom') return a.nom.localeCompare(b.nom);
+                                            if (stockSortBy === 'stock') return a.stock_actuel - b.stock_actuel;
+                                            return 0;
+                                        })
+                                        .map((produit) => {
+                                        const status = getStockStatus(produit.stock_actuel);
+                                        return (
+                                          <div className="stock-item" key={produit.id_article}>
+                                            <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
+                                            <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+                                          </div>
+                                        );
+                                    })}
+                                    {stocksData.length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
+                                  </div>
+                              </>
+                          )}
+                      </div>
+                    </div>
+                 )}
+
+                 {/* VUE : RH (ÉQUIPE) */}
+                 {role === 'gerant' && activeTab === 'rh' && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                          <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
+                          </div>
+                      </div>
+
+                      {showAddEmploye && (
+                          <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
+                              <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                                <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
+                              </div>
+
+                              <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo de profil (Optionnel)</label>
+                              <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                                  <div className="rh-avatar" style={{width: '40px', height: '40px', flexShrink: 0, border: 'none', background: 'transparent'}}>
+                                      {newEmploye.photo_url ? (
+                                          <img src={newEmploye.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
+                                      ) : (
+                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--text-muted)', width: '24px', height: '24px'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                      )}
+                                  </div>
+                                  <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleImageUpload} style={{fontSize: '12px', color: 'var(--text-main)'}} />
+                              </div>
+
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
+                                <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
+                              </div>
+                              <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.nom || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
+                          </div>
+                      )}
+                      
+                      {(rhData || []).length === 0 ? (
+                          <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
+                      ) : (
+                        <div className="rh-grid">
+                          {rhData.map(employe => (
+                            <div className="rh-carte" key={employe.id_employe}>
+                              <div className="rh-header-profil">
+                                <div className="rh-avatar">
+                                  {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
+                                </div>
+                                <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
+                              </div>
+                              <div className="rh-stats-row">
+                                <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
+                                <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.produits_vendus}</span><span className="label">Produits</span></div>
+                                <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
+                              </div>
+                              <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
+                              <div style={{marginTop: '8px'}}>
+                                <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
+                                {dessinerChronogramme(employe.historique_primes)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                 )}
+
+                 {/* VUE : ADMIN COMPTA */}
+                 {role === 'gerant' && activeTab === 'admin' && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                          <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span></div>
+                          <ThemeToggle />
+                      </div>
+                      
+                      <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
+                         <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
+                         <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
+                      </div>
+                  
+                      <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
+                      <div className="section-titre">Historique des bilans comptables</div>
+                      
+                      {(historiqueData || []).length === 0 ? (
+                          <div className="empty-state">
+                              <SvgEmptyState />
+                              <p>Aucune clôture de caisse (Z) effectuée pour le moment.</p>
+                          </div>
+                      ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              {(historiqueData || []).map((anneeData) => (
+                                  <div key={anneeData.annee} style={{ background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                                      <div onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', background: 'var(--bg-card)', padding: '16px', fontWeight: 'bold', fontSize: '16px', color: 'var(--text-main)' }}>
+                                          <span style={{ fontSize: '20px' }}>{expandedYear === anneeData.annee ? '📂' : '📁'}</span> 
+                                          Année {anneeData.annee}
+                                      </div>
+
+                                      {expandedYear === anneeData.annee && (
+                                          <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
+                                              {(anneeData.mois || []).map((moisData) => (
+                                                  <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                                                      
+                                                      <div onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px' }}>
+                                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', color: 'var(--text-main)' }}>
+                                                              <span style={{ fontSize: '18px' }}>{expandedMonth === moisData.nom ? '📂' : '📁'}</span> 
+                                                              {moisData.nom}
+                                                          </div>
+                                                          <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)' }}>
+                                                              {moisData.total_mensuel?.toFixed(2) || '0.00'} €
+                                                          </span>
+                                                      </div>
+
+                                                      {expandedMonth === moisData.nom && (
+                                                          <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                              <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', border: '1px solid #bfdbfe', marginBottom: '8px' }}>
+                                                                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📊 Bilan consolidé ({moisData.nom})</span>
+                                                                  <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
+                                                              </div>
+
+                                                              {(moisData.jours || []).map(jour => (
+                                                                  <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'} title="Cliquez pour télécharger le PDF détaillé">
+                                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                                          <span style={{ fontSize: '20px' }}>📄</span>
+                                                                          <span style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
+                                                                      </div>
+                                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                          <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
+                                                                          <span style={{ fontSize: '16px' }}>⬇️</span>
+                                                                      </div>
+                                                                  </div>
+                                                              ))}
+                                                          </div>
+                                                      )}
+                                                  </div>
+                                              ))}
+                                          </div>
+                                      )}
+                                  </div>
+                              ))}
+                          </div>
+                      )}
+                    </div>
+                 )}
+
+                 {/* === GOD MODE (SUPER-ADMIN) === */}
+                 {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.id_salon === 38 && (
+                    <div className="admin-container">
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                          <div><h1 style={{margin: 0, color: '#aa3bff'}}>God Mode</h1><span className="date-subtitle" style={{margin: 0}}>Espace Fondateur STACK</span></div>
+                          <ThemeToggle />
+                      </div>
+                      
+                      {superAdminData ? (
+                          <div className="cartes-financieres">
+                              <div className="carte" style={{border: '1px solid #aa3bff'}}><div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div><p className="montant" style={{color: '#aa3bff'}}>{superAdminData.mrr_estime} <span className="devise">€ / mois</span></p></div>
+                              <div className="carte"><div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div><p className="montant">{superAdminData.salons_actifs} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData.total_salons} au total</span></p></div>
+                          </div>
+                      ) : <div className="skeleton-loading" style={{height: '120px', marginBottom: '32px'}}></div>}
+
+                      <div className="section-titre" style={{marginTop: '32px', color: '#aa3bff', borderColor: '#aa3bff'}}>Gestion des Salons (Clients)</div>
+                      <div className="carte scan-carte">
+                          {(superAdminSalons || []).map(salon => (
+                              <div key={salon.id_salon} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid var(--border-color)'}}>
+                                  <div>
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
+                                          <strong style={{color: 'var(--text-main)', fontSize: '15px'}}>{salon.nom_salon}</strong><span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: 'var(--bg-app)', color: 'var(--text-secondary)'}}>ID: {salon.id_salon}</span>{salon.id_salon === 38 && <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#aa3bff', color: 'white'}}>Fondateur</span>}
+                                      </div>
+                                      <span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>{salon.email}</span>
+                                  </div>
+                                  <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+                                      <span className="badge-discret" style={{ background: salon.statut_abonnement === 'actif' ? 'var(--bg-success)' : 'var(--bg-danger)', color: salon.statut_abonnement === 'actif' ? 'var(--color-success)' : 'var(--color-danger)' }}>{salon.statut_abonnement === 'actif' ? 'Abonné (Actif)' : 'Inactif / Impayé'}</span>
+                                      {salon.id_salon !== 38 && ( <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>{salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}</button> )}
+                                  </div>
+                              </div>
+                          ))}
+                          {(superAdminSalons || []).length === 0 && <div className="empty-state"><p>Aucun salon chargé.</p></div>}
+                      </div>
+                    </div>
+                 )}
             </div>
           </div>
       </div>
       
+      {/* --- MODALES GLOBALES --- */}
       {confirmDialog && (
           <div className="modal-overlay">
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
