@@ -275,7 +275,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
     gap: 20px;
 }
 .rh-header-profil { display: flex; align-items: center; gap: 16px; }
-.rh-avatar { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; background-color: var(--bg-app); border: 2px solid var(--border-color); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.rh-avatar { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; background: var(--bg-app); border: 2px solid var(--border-color); display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .rh-avatar svg { width: 32px; height: 32px; color: var(--text-muted); }
 .rh-identite h3 { margin: 0 0 4px 0; font-size: 18px; color: var(--text-main); text-transform: capitalize; }
 .rh-role-badge { background: var(--bg-app); color: var(--text-secondary); border: 1px solid var(--border-color); padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -346,7 +346,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 /* ==========================================================================
    14. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   /* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
   .navbar-sidebar { 
       position: fixed !important;
@@ -386,13 +386,12 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       border-radius: 16px !important; /* Forme de la pilule */
       font-size: 10px !important; /* Micro typo iOS */
       font-weight: 500 !important;
-      color: var(--text-secondary) !important;
+      color: var(--text-main) !important;
       gap: 2px !important; 
       transition: background 0.2s ease !important;
   }
   .nav-item.active {
       background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair */
-      color: var(--text-main) !important;
   }
   body.dark-mode .nav-item.active {
       background: rgba(255, 255, 255, 0.12) !important;
