@@ -1251,6 +1251,51 @@ app.get('/api/factures/historique', verifierToken, async (req, res) => {
     }
 });
 
+
+app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const dateCible = req.params.date; // format YYYY-MM-DD
+    try {
+        const ventesResult = await pool.query(`
+            SELECT 
+                t.id_ticket, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
+                COALESCE(e.nom, 'Inconnu') as employe,
+                (SELECT string_agg(COALESCE(lt.nom_article_snapshot, c.nom), ', ') FROM lignes_ticket lt LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE lt.id_ticket = t.id_ticket) as prestations
+            FROM tickets t
+            LEFT JOIN employes e ON t.id_employe = e.id_employe
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'
+            ORDER BY t.date_creation ASC
+        `, [id_salon, dateCible]);
+
+        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateCible]);
+        const caTotal = parseFloat(caResult.rows[0].ca_total);
+
+        const doc = new PDFDocument();
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Bilan_${dateCible}.pdf"`);
+        doc.pipe(res);
+
+        doc.fontSize(22).fillColor('#a154f2').text(`Bilan Journalier - ${dateCible}`, { align: 'center' }).moveDown();
+        doc.fontSize(16).fillColor('#1c1c1e').text(`Chiffre d'Affaires du jour : ${caTotal.toFixed(2)} €`, { align: 'center' }).moveDown(2);
+        
+        doc.fontSize(14).fillColor('#8e8e93').text('Détail des ventes :', { underline: true }).moveDown();
+        doc.fontSize(12).fillColor('#3a3a3c');
+        
+        if (ventesResult.rowCount === 0) {
+            doc.text('Aucune vente ce jour-là.');
+        } else {
+            ventesResult.rows.forEach(v => {
+                doc.text(`[${v.heure}] Ticket #${v.id_ticket} - ${v.prestations}`);
+                doc.text(`Coiffeur : ${v.employe} | Paiement : ${v.methode_paiement} | Montant : ${parseFloat(v.total_ttc).toFixed(2)} €`);
+                doc.moveDown();
+            });
+        }
+        doc.end();
+    } catch (erreur) { 
+        res.status(500).send("Erreur lors de la génération du PDF journalier."); 
+    }
+});
+
 app.get('/api/export-pdf', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     try {
