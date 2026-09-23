@@ -1549,80 +1549,53 @@ async function executerRobotMarketingEtPredictif() {
             }
 
             // =================================================================
-            // --- 2. MOTEUR PRÉDICTIF D'INVENTAIRE (S'exécute toujours !) ---
+            // --- 2. MOTEUR PRÉDICTIF D'INVENTAIRE GLOBAL (SMART AGGREGATION) ---
             // =================================================================
-            const rdvsFuturs = await pool.query(`
-                SELECT r.prestation, MIN(r.date_heure_debut) as premier_rdv, COUNT(*) as nb_rdv
+            
+            // Cette requête SQL intelligente calcule la somme totale requise par produit 
+            // pour TOUS les RDV des 14 prochains jours, et ne sort que les articles en déficit.
+            const rupturesPredictives = await pool.query(`
+                SELECT 
+                    c.id_article,
+                    c.nom,
+                    c.stock_actuel,
+                    c.delai_livraison_jours,
+                    SUM(ra.quantite_necessaire) as total_besoin,
+                    MIN(r.date_heure_debut) as date_premier_besoin
                 FROM rendez_vous r
-                WHERE r.id_salon = $1 AND r.date_heure_debut BETWEEN NOW() AND NOW() + INTERVAL '14 days'
-                GROUP BY r.prestation
+                JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(r.prestation)
+                JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
+                JOIN catalogue c ON c.id_article = ra.id_article
+                WHERE r.id_salon = $1 
+                  AND r.date_heure_debut BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+                GROUP BY c.id_article, c.nom, c.stock_actuel, c.delai_livraison_jours
+                HAVING c.stock_actuel < SUM(ra.quantite_necessaire)
             `, [salon.id_salon]);
 
-            // LOG 1 — combien de prestations distinctes sont programmées sous 14 jours pour ce salon ?
-            console.log(`[ROBOT-STOCK] Salon #${salon.id_salon} : ${rdvsFuturs.rowCount} prestation(s) distincte(s) sous 14j ->`, rdvsFuturs.rows.map(r => `"${r.prestation}" x${r.nb_rdv}`));
+            console.log(`[ROBOT-STOCK] Salon #${salon.id_salon} : ${rupturesPredictives.rowCount} produit(s) en rupture prédictive globale.`);
 
-            for (let rdv of rdvsFuturs.rows) {
-                // CORRECTION A : TRIM() des deux côtés. "prestation" est un champ texte libre côté
-                // formulaire RDV (option "Texte libre"), un espace en trop suffit à faire échouer un
-                // ILIKE qui, sans wildcard, exige une égalité stricte (hors casse).
-                const protocole = await pool.query(`
-                    SELECT p.id_protocole 
-                    FROM protocoles p 
-                    WHERE p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM($2) LIMIT 1
-                `, [salon.id_salon, rdv.prestation]);
+            for (let rupture of rupturesPredictives.rows) {
+                const stockActuel = parseFloat(rupture.stock_actuel);
+                const besoinTotal = parseFloat(rupture.total_besoin);
+                const quantiteACommander = besoinTotal - stockActuel;
+                
+                // Calcul du délai : Date du PREMIER rdv impacté - Délai livraison - 1 jour marge
+                const dateAlerte = new Date(rupture.date_premier_besoin);
+                dateAlerte.setDate(dateAlerte.getDate() - (rupture.delai_livraison_jours || 3) - 1);
 
-                // LOG 2 — le protocole a-t-il été retrouvé pour cette prestation ?
-                if (protocole.rowCount === 0) {
-                    console.log(`[ROBOT-STOCK] Aucun protocole ne correspond exactement à "${rdv.prestation}" (salon #${salon.id_salon}) — vérifier le nom exact de la fiche technique.`);
-                    continue;
-                }
+                // Formatage exact demandé
+                const titreAlerte = `Commander ${quantiteACommander}x ${rupture.nom}`;
+                const descAlerte = `Rupture prédictive : Il faut un total de ${besoinTotal} unité(s) pour assurer l'ensemble des RDV des 14 prochains jours, mais vous n'avez que ${stockActuel} en stock. Échéance calculée avec le délai fournisseur (${rupture.delai_livraison_jours || 3}j) + 1j de marge.`;
 
-                // CORRECTION B : LEFT JOIN au lieu de JOIN. Avec un JOIN classique, un id_article
-                // de recette qui ne correspond plus à un article du catalogue (produit supprimé,
-                // mauvais id) fait disparaître silencieusement l'ingrédient — donc aucune alerte,
-                // aucune erreur. Le LEFT JOIN laisse la ligne apparaître (avec stock_actuel = NULL)
-                // pour qu'on puisse la détecter et la logger.
-                const ingredients = await pool.query(`
-                    SELECT r.id_article, r.quantite_necessaire, c.nom, c.stock_actuel, c.delai_livraison_jours
-                    FROM recettes_articles r
-                    LEFT JOIN catalogue c ON r.id_article = c.id_article
-                    WHERE r.id_protocole = $1
-                `, [protocole.rows[0].id_protocole]);
-
-                for (let ing of ingredients.rows) {
-                    if (ing.stock_actuel === null) {
-                        console.log(`[ROBOT-STOCK] Recette orpheline : id_article=${ing.id_article} introuvable dans le catalogue (protocole #${protocole.rows[0].id_protocole}).`);
-                        continue;
-                    }
-
-                    // CORRECTION C : typage explicite. node-postgres renvoie les colonnes NUMERIC
-                    // (quantite_necessaire, stock_actuel) et les COUNT()/bigint (nb_rdv) sous forme
-                    // de string. La multiplication JS les convertit déjà correctement en interne,
-                    // mais on le rend explicite pour éviter toute ambiguïté et pour que les logs
-                    // affichent de vraies valeurs numériques exploitables.
-                    const quantiteNecessaire = parseFloat(ing.quantite_necessaire);
-                    const nbRdv = parseInt(rdv.nb_rdv, 10);
-                    const stockActuel = parseFloat(ing.stock_actuel);
-                    const besoinTotal = quantiteNecessaire * nbRdv;
-
-                    // LOG 3 — la comparaison stock / besoin pour chaque ingrédient de chaque protocole
-                    console.log(`[ROBOT-STOCK] "${ing.nom}" -> stock=${stockActuel} | besoin=${besoinTotal} (${quantiteNecessaire} x ${nbRdv} rdv) => ${stockActuel < besoinTotal ? 'ALERTE' : 'stock suffisant'}`);
-
-                    if (stockActuel < besoinTotal) {
-                        const dateAlerte = new Date(rdv.premier_rdv);
-                        dateAlerte.setDate(dateAlerte.getDate() - (ing.delai_livraison_jours || 3));
-
-                        const titreAlerte = `⚠️ Rupture prédictive : ${ing.nom}`;
-                        const descAlerte = `Il vous manque ${(besoinTotal - stockActuel).toFixed(2)} unité(s) de "${ing.nom}" pour assurer vos ${nbRdv} rdv "${rdv.prestation}" prévus d'ici 14j. Commandez aujourd'hui ! (Délai : ${ing.delai_livraison_jours || 3}j)`;
-
-                        const exist = await pool.query(`SELECT 1 FROM taches_actions WHERE id_salon = $1 AND titre = $2 AND statut = 'A_FAIRE'`, [salon.id_salon, titreAlerte]);
-                        if (exist.rowCount === 0) {
-                            await pool.query(`INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')`, [salon.id_salon, titreAlerte, descAlerte, dateAlerte]);
-                            console.log(`[ROBOT-STOCK] ✅ Alerte insérée : "${titreAlerte}" (salon #${salon.id_salon}, échéance ${dateAlerte.toISOString().slice(0,10)})`);
-                        } else {
-                            console.log(`[ROBOT-STOCK] Alerte déjà existante (statut A_FAIRE) pour "${titreAlerte}" — insertion ignorée pour éviter un doublon.`);
-                        }
-                    }
+                // On évite d'inonder le gérant si la tâche existe déjà pour CE produit en mode A_FAIRE
+                const exist = await pool.query(`SELECT 1 FROM taches_actions WHERE id_salon = $1 AND titre = $2 AND statut = 'A_FAIRE'`, [salon.id_salon, titreAlerte]);
+                
+                if (exist.rowCount === 0) {
+                    await pool.query(
+                        `INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')`, 
+                        [salon.id_salon, titreAlerte, descAlerte, dateAlerte]
+                    );
+                    console.log(`[ROBOT-STOCK] ✅ Alerte insérée : "${titreAlerte}" (échéance ${dateAlerte.toISOString().slice(0,10)})`);
                 }
             }
 
