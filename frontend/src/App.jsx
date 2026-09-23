@@ -129,7 +129,7 @@ function App() {
 
   const nettoyerTexteRecherche = (texte) => {
       if (!texte) return '';
-      return texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      return String(texte).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
   };
   
   const [clientCaisse, setClientCaisse] = useState('');
@@ -321,9 +321,9 @@ function App() {
         .then(handleFetchError)
         .then(async (d) => {
             const config = { 
-                google_api_key: d.google_api_key || '', google_account_id: d.google_account_id || '', google_location_id: d.google_location_id || '', email_factures: d.email_reception_factures || '', mot_de_passe_email: d.mot_de_passe_app_email || '', brevo_api_key: d.brevo_api_key || '', sms_sender_name: d.sms_sender_name || 'MonSalon', lien_google_maps: d.lien_google_maps || '', stripe_reader_id: d.stripe_reader_id || '', heure_ouverture: d.heure_ouverture || 8, heure_fermeture: d.heure_fermeture || 20,
-                fidelite_type: d.fidelite_type || 'NONE', fidelite_points_seuil: d.fidelite_points_seuil || 100, fidelite_points_valeur: d.fidelite_points_valeur || 10, fidelite_tampons_seuil: d.fidelite_tampons_seuil || 10, fidelite_recompense_type: d.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d.fidelite_recompense_valeur || '10', fidelite_delai_sms: d.fidelite_delai_sms || 60,
-                telephone_gerant: d.telephone_gerant || '', alertes_sms_actives: d.alertes_sms_actives || false 
+                google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
+                fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
+                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false 
             };
             setConfigSalon(config);
             await localforage.setItem('configSalon', config);
@@ -377,7 +377,7 @@ function App() {
           });
           if(res.ok) {
               const data = await res.json();
-              setTachesIA(data);
+              setTachesIA(data || []);
           }
       } catch (e) { console.error("Erreur lecture IA", e); }
   };
@@ -440,8 +440,8 @@ function App() {
   }, [token, isAbonnementInactif]);
 
   useEffect(() => {
-      if (!modalIA && tachesIA && tachesIA.length > 0) {
-          setModalIA(tachesIA[0]);
+      if (!modalIA && tachesIA && (tachesIA || []).length > 0) {
+          setModalIA((tachesIA || [])[0]);
       }
   }, [tachesIA, modalIA]);
 
@@ -460,7 +460,7 @@ function App() {
           
           showToast("Action de l'IA confirmée !", "success");
           setModalIA(null);
-          setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
+          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
           setRefreshTrigger(prev => prev + 1); 
       } catch (e) { 
           showToast(`Erreur : ${e.message}`, "error"); 
@@ -475,7 +475,7 @@ function App() {
           });
           showToast("Tâche ignorée", "info");
           setModalIA(null);
-          setTachesIA(prev => prev.filter(t => t.id_tache !== tache.id_tache));
+          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
       } catch (e) { showToast("Erreur serveur.", "error"); }
   };
 
@@ -611,27 +611,24 @@ function App() {
   };
   const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
 
-  // ==========================================
-  // --- PROTOCOLES & RECETTES (FONCTIONS) ---
-  // ==========================================
   const ajouterIngredientRecette = () => {
       if (!ingredientTemp.id_article || !ingredientTemp.quantite_necessaire) return showToast("Sélectionnez un article et une quantité.", "error");
-      const art = catalogueListe.find(a => a.id_article.toString() === ingredientTemp.id_article);
-      if (nouveauProtocole.ingredients.find(i => i.id_article === art.id_article)) return showToast("Ingrédient déjà dans la recette.", "error");
-      setNouveauProtocole({ ...nouveauProtocole, ingredients: [...nouveauProtocole.ingredients, { id_article: art.id_article, nom: art.nom, quantite_necessaire: parseFloat(ingredientTemp.quantite_necessaire) }] });
+      const art = (catalogueListe || []).find(a => a.id_article?.toString() === ingredientTemp.id_article);
+      if ((nouveauProtocole.ingredients || []).find(i => i.id_article === art.id_article)) return showToast("Ingrédient déjà dans la recette.", "error");
+      setNouveauProtocole({ ...nouveauProtocole, ingredients: [...(nouveauProtocole.ingredients || []), { id_article: art.id_article, nom: art.nom, quantite_necessaire: parseFloat(ingredientTemp.quantite_necessaire) }] });
       setIngredientTemp({ id_article: '', quantite_necessaire: '' });
   };
-  const supprimerIngredientRecette = (id_article) => { setNouveauProtocole({ ...nouveauProtocole, ingredients: nouveauProtocole.ingredients.filter(i => i.id_article !== id_article) }); };
+  const supprimerIngredientRecette = (id_article) => { setNouveauProtocole({ ...nouveauProtocole, ingredients: (nouveauProtocole.ingredients || []).filter(i => i.id_article !== id_article) }); };
 
   const ajouterEtapeRecette = () => {
       if (!etapeTemp.texte) return showToast("La description de l'étape est requise.", "error");
-      setNouveauProtocole({ ...nouveauProtocole, etapes: [...nouveauProtocole.etapes, { ...etapeTemp, id_etape: Date.now() }] });
+      setNouveauProtocole({ ...nouveauProtocole, etapes: [...(nouveauProtocole.etapes || []), { ...etapeTemp, id_etape: Date.now() }] });
       setEtapeTemp({ texte: '', timer_min: '' });
   };
-  const supprimerEtapeRecette = (id_etape) => { setNouveauProtocole({ ...nouveauProtocole, etapes: nouveauProtocole.etapes.filter(e => e.id_etape !== id_etape) }); };
+  const supprimerEtapeRecette = (id_etape) => { setNouveauProtocole({ ...nouveauProtocole, etapes: (nouveauProtocole.etapes || []).filter(e => e.id_etape !== id_etape) }); };
 
   const toggleTag = (tag) => {
-      const tags = nouveauProtocole.tags.includes(tag) ? nouveauProtocole.tags.filter(t => t !== tag) : [...nouveauProtocole.tags, tag];
+      const tags = (nouveauProtocole.tags || []).includes(tag) ? (nouveauProtocole.tags || []).filter(t => t !== tag) : [...(nouveauProtocole.tags || []), tag];
       setNouveauProtocole({ ...nouveauProtocole, tags });
   };
 
@@ -673,15 +670,25 @@ function App() {
   };
 
   const getStockStatus = (q) => { const num = parseFloat(q); if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; };
-  const dessinerCourbe = (d) => { const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; };
-  const dessinerChronogramme = (d) => { const max = Math.max(...d) * 1.2; return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="var(--btn-primary)" rx="2" />)}</svg>); };
+  
+  const dessinerCourbe = (d) => { 
+      if (!d || !Array.isArray(d) || d.length === 0) return null;
+      const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); 
+      return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; 
+  };
+  
+  const dessinerChronogramme = (d) => { 
+      if (!d || !Array.isArray(d) || d.length === 0) return null;
+      const max = Math.max(...d) * 1.2 || 1; 
+      return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="var(--btn-primary)" rx="2" />)}</svg>); 
+  };
 
   const handleSelectEmployeCaisse = (id_employe) => {
       setPosEmploye(id_employe);
       const now = new Date();
       let matches = [];
 
-      const rdvsToday = planningData.filter(r => r.id_employe === id_employe && isToday(new Date(r.date_heure_debut.replace('Z', ''))));
+      const rdvsToday = (planningData || []).filter(r => r.id_employe === id_employe && r.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', ''))));
       rdvsToday.sort((a, b) => new Date(b.date_heure_debut.replace('Z', '')) - new Date(a.date_heure_debut.replace('Z', '')));
 
       for (let rdv of rdvsToday) {
@@ -690,10 +697,10 @@ function App() {
           if (diffMinutes > -30 && diffMinutes < 150) { 
               let clientInCRM = null;
               if (rdv.telephone_client) {
-                  clientInCRM = clientsListe.find(c => c.telephone === rdv.telephone_client);
+                  clientInCRM = (clientsListe || []).find(c => c.telephone === rdv.telephone_client);
               }
               if (!clientInCRM && rdv.nom_client) {
-                  clientInCRM = clientsListe.find(c => c.nom.toLowerCase() === rdv.nom_client.toLowerCase());
+                  clientInCRM = (clientsListe || []).find(c => (c.nom || '').toLowerCase() === (rdv.nom_client || '').toLowerCase());
               }
               if (clientInCRM && !matches.find(m => m.id_client === clientInCRM.id_client)) {
                   matches.push({ ...clientInCRM, prestation_rdv: rdv.prestation });
@@ -710,33 +717,33 @@ function App() {
   };
 
   const ajouterAuPanier = (article) => {
-      const exist = panierCaisse.find(item => item.id_article === article.id_article);
+      const exist = (panierCaisse || []).find(item => item.id_article === article.id_article);
       if (exist) {
-          setPanierCaisse(panierCaisse.map(item => item.id_article === article.id_article ? { ...item, quantite: item.quantite + 1 } : item));
+          setPanierCaisse((panierCaisse || []).map(item => item.id_article === article.id_article ? { ...item, quantite: item.quantite + 1 } : item));
       } else {
-          setPanierCaisse([...panierCaisse, { ...article, quantite: 1, prix_unitaire: parseFloat(article.prix) }]);
+          setPanierCaisse([...(panierCaisse || []), { ...article, quantite: 1, prix_unitaire: parseFloat(article.prix || 0) }]);
       }
   };
-  const retirerDuPanier = (id_article) => { setPanierCaisse(panierCaisse.filter(item => item.id_article !== id_article)); };
+  const retirerDuPanier = (id_article) => { setPanierCaisse((panierCaisse || []).filter(item => item.id_article !== id_article)); };
 
-  const sousTotalCaisse = panierCaisse.reduce((acc, item) => acc + (item.prix_unitaire * item.quantite), 0);
+  const sousTotalCaisse = (panierCaisse || []).reduce((acc, item) => acc + ((item.prix_unitaire || 0) * (item.quantite || 0)), 0);
   let totalCaisse = sousTotalCaisse;
   
   if (remiseAppliquee) {
       if (configSalon.fidelite_type === 'POINTS') {
-          totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur));
+          totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur || 0));
       } else if (configSalon.fidelite_type === 'TAMPONS') {
           if (configSalon.fidelite_recompense_type === 'MONTANT') {
-              totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur));
+              totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur || 0));
           } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
-              totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur) / 100));
+              totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur || 0) / 100));
           }
       }
   }
 
   const validerEncaisser = () => {
       if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
-      if(panierCaisse.length === 0) { showToast("Le ticket est vide.", "error"); return; }
+      if((panierCaisse || []).length === 0) { showToast("Le ticket est vide.", "error"); return; }
       
       const vraimentHorsLigne = isOffline || !navigator.onLine;
       if (vraimentHorsLigne && methodePaiement === 'CARTE') { showToast("Le TPE (Carte) nécessite une connexion.", "error"); return; }
@@ -760,8 +767,8 @@ function App() {
 
         setTicketGenere({
             id_ticket: offlineTicketId, montant: montant, client_id: clientCaisse,
-            client_nom: clientCaisse ? formatNomClient(clientsListe.find(c => c.id_client.toString() === clientCaisse)) : 'Client de passage',
-            client_email: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email : '',
+            client_nom: clientCaisse ? formatNomClient((clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)) : 'Client de passage',
+            client_email: clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email : '',
             lignes: lignes,
             is_offline: true
         });
@@ -784,11 +791,11 @@ function App() {
         setNotificationCaisse(null);
         setTicketGenere({
             id_ticket: data.id_ticket, montant: montant, client_id: clientCaisse,
-            client_nom: clientCaisse ? formatNomClient(clientsListe.find(c => c.id_client.toString() === clientCaisse)) : 'Client de passage',
-            client_email: clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email : '',
+            client_nom: clientCaisse ? formatNomClient((clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)) : 'Client de passage',
+            client_email: clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email : '',
             lignes: lignes
         });
-        setEmailTicketClient(clientCaisse ? clientsListe.find(c => c.id_client.toString() === clientCaisse)?.email || '' : '');
+        setEmailTicketClient(clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email || '' : '');
         
         setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('CARTE');
         chargerTout(); 
@@ -833,6 +840,7 @@ function App() {
           showToast("PDF téléchargé !", "success");
       } catch (error) { showToast("Erreur lors du téléchargement.", "error"); }
   };
+
   const sauvegarderParametres = async () => { 
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       showToast("Sauvegarde en cours..."); 
@@ -857,7 +865,7 @@ function App() {
   const ouvrirRdvSelectionne = (rdv) => {
       setRdvSelectionne(rdv);
       setIsEditingRdv(false);
-      const d = new Date(rdv.date_heure_debut.replace('Z', ''));
+      const d = new Date((rdv.date_heure_debut || '').replace('Z', ''));
       setEditRdvForm({
           date: formatDateInput(d),
           heure: d.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
@@ -908,19 +916,19 @@ function App() {
       return '#f59e0b'; 
   };
 
-  const nbTachesUrgentes = tachesListe.filter(t => t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
+  const nbTachesUrgentes = (tachesListe || []).filter(t => t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
 
   let clientCaisseObj = null;
   let isEligibleFidelite = false;
   let texteRecompense = '';
 
   if (clientCaisse) {
-      clientCaisseObj = clientsListe.find(c => c.id_client.toString() === clientCaisse);
+      clientCaisseObj = (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse);
       if (clientCaisseObj && configSalon.fidelite_type !== 'NONE') {
-          if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= configSalon.fidelite_points_seuil) {
+          if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= (configSalon.fidelite_points_seuil || 0)) {
               isEligibleFidelite = true;
               texteRecompense = `-${configSalon.fidelite_points_valeur}€ offerts`;
-          } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= configSalon.fidelite_tampons_seuil) {
+          } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= (configSalon.fidelite_tampons_seuil || 0)) {
               isEligibleFidelite = true;
               texteRecompense = configSalon.fidelite_recompense_type === 'MONTANT' ? `-${configSalon.fidelite_recompense_valeur}€ offerts` : 
                                 configSalon.fidelite_recompense_type === 'POURCENTAGE' ? `-${configSalon.fidelite_recompense_valeur}% appliqués` : 
@@ -1018,17 +1026,16 @@ function App() {
   const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
   const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
 
-  // --- MOTEUR DE RECHERCHE PRESTATIONS (MAX 5 RESULTATS) ---
   const getPrestationsSuggerees = (texteSaisi) => {
-      const prestationsDb = catalogueListe.filter(a => a.type_article === 'PRESTATION');
+      const prestationsDb = (catalogueListe || []).filter(a => a.type_article === 'PRESTATION');
       const searchClean = nettoyerTexteRecherche(texteSaisi);
 
       let resultats = [];
       
       if (!searchClean) {
-          const topNoms = dashboardData?.top_3_prestations?.map(p => p.nom?.toLowerCase() || '') || [];
-          const topPrestas = prestationsDb.filter(p => p.nom && topNoms.includes(p.nom.toLowerCase()));
-          const autresPrestas = prestationsDb.filter(p => !p.nom || !topNoms.includes(p.nom.toLowerCase()));
+          const topNoms = (dashboardData?.top_3_prestations || []).map(p => (p.nom || '').toLowerCase() || '') || [];
+          const topPrestas = prestationsDb.filter(p => p.nom && topNoms.includes((p.nom || '').toLowerCase()));
+          const autresPrestas = prestationsDb.filter(p => !p.nom || !topNoms.includes((p.nom || '').toLowerCase()));
           resultats = [...topPrestas, ...autresPrestas];
       } else {
           resultats = prestationsDb.filter(p => nettoyerTexteRecherche(p.nom).includes(searchClean));
@@ -1036,13 +1043,13 @@ function App() {
       
       return resultats.slice(0, 5); 
   };
-  // --- MOTEUR DE RECHERCHE CLIENTS CRM (MAX 5 RESULTATS) ---
+
   const getClientsSuggeresPourRdv = (texteSaisi) => {
-      if (!texteSaisi) return clientsListe.slice(0, 5);
+      if (!texteSaisi) return (clientsListe || []).slice(0, 5);
 
       const searchClean = nettoyerTexteRecherche(texteSaisi);
       
-      return clientsListe.filter(cli => {
+      return (clientsListe || []).filter(cli => {
           const nomComplet = nettoyerTexteRecherche(formatNomClient(cli));
           const tel = nettoyerTexteRecherche(cli.telephone || '');
           return nomComplet.includes(searchClean) || tel.includes(searchClean);
@@ -1052,7 +1059,6 @@ function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       
-      {/* CSS INJECTÉ POUR L'EFFET ACCORDÉON DES RDV */}
       <style>{`
           .rdv-card-accordeon {
               transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1064,14 +1070,12 @@ function App() {
           }
       `}</style>
 
-      {/* BANDEAU HORS-LIGNE CRITIQUE */}
       {isOffline && (
         <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', zIndex: 10000, width: '100%', boxSizing: 'border-box' }}>
             ⚠️ Connexion perdue. Mode hors-ligne activé. Les encaissements sont sauvegardés localement.
         </div>
       )}
 
-      {/* POP-UP INTELLIGENT DE L'IA (STOCK & RDV) */}
       {modalIA && (
           <div className="modal-overlay">
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
@@ -1089,16 +1093,16 @@ function App() {
                       {modalIA.type_tache === 'STOCK' && (
                           <>
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Article commandé</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.nom_produit || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.nom_produit || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
                               
                               <div style={{display: 'flex', gap: '12px'}}>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité</label>
-                                      <input type="number" className="input-fournisseur" value={modalIA.donnees.quantite || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
+                                      <input type="number" className="input-fournisseur" value={modalIA.donnees?.quantite || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
                                   </div>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Référence</label>
-                                      <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees.reference || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
+                                      <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees?.reference || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
                                   </div>
                               </div>
                           </>
@@ -1109,27 +1113,27 @@ function App() {
                               <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Client</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees.nom_client || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_client: e.target.value}})} />
+                                      <input className="input-fournisseur" value={modalIA.donnees?.nom_client || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_client: e.target.value}})} />
                                   </div>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
+                                      <input className="input-fournisseur" value={modalIA.donnees?.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
                                   </div>
                               </div>
                               
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Prestation demandée</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.prestation || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, prestation: e.target.value}})} />
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.prestation || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, prestation: e.target.value}})} />
 
                               <div style={{display: 'flex', gap: '12px'}}>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Date et Heure</label>
-                                      <input type="datetime-local" className="input-fournisseur" value={modalIA.donnees.date_heure_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_heure_debut: e.target.value}})} />
+                                      <input type="datetime-local" className="input-fournisseur" value={modalIA.donnees?.date_heure_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_heure_debut: e.target.value}})} />
                                   </div>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Coiffeur</label>
-                                      <select className="input-fournisseur" value={modalIA.donnees.id_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, id_employe: e.target.value}})}>
+                                      <select className="input-fournisseur" value={modalIA.donnees?.id_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, id_employe: e.target.value}})}>
                                           <option value="">-- Choisir --</option>
-                                          {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                                       </select>
                                   </div>
                               </div>
@@ -1139,16 +1143,16 @@ function App() {
                       {modalIA.type_tache === 'ACTION' && (
                           <>
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Action requise détectée</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees.titre || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, titre: e.target.value}})} />
+                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.titre || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, titre: e.target.value}})} />
                               
                               <div style={{display: 'flex', gap: '12px'}}>
                                   <div style={{flex: 1}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Échéance</label>
-                                      <input type="date" className="input-fournisseur" value={modalIA.donnees.date_echeance || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_echeance: e.target.value}})} />
+                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_echeance || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_echeance: e.target.value}})} />
                                   </div>
                               </div>
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)', marginTop: '12px', display: 'block'}}>Détails extraits</label>
-                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees.description || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, description: e.target.value}})} />
+                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.description || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, description: e.target.value}})} />
                           </>
                       )}
                   </div>
@@ -1177,7 +1181,7 @@ function App() {
              )}
              
              <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
-                 {tachesIA && tachesIA.some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
+                 {(tachesIA || []).some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
                  <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
              </div>
              
@@ -1189,7 +1193,7 @@ function App() {
                     </div>
                     
                     <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative', ...(isMobile ? { minWidth: '60px', padding: '4px', margin: 0, width: 'auto' } : {}) }}>
-                        {tachesIA && tachesIA.some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
+                        {(tachesIA || []).some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
                     </div>
                     
@@ -1214,7 +1218,195 @@ function App() {
 
           <div className="main-content" style={{ overflowY: 'auto', flex: 1, ...(isMobile ? { paddingTop: '65px', paddingBottom: '140px' } : { paddingBottom: '40px' }) }}>
             <div className={`dashboard-container ${activeTab === 'caisse' || activeTab === 'agenda' ? 'wide' : ''}`}>
-              
+
+              {/* ========================================================= */}
+              {/* --- VUE : TABLEAU DE BORD (ACCUEIL) --- */}
+              {/* ========================================================= */}
+              {role === 'gerant' && activeTab === 'accueil' && (
+                <div className="admin-container">
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div>
+                          <h1 style={{margin: 0}}>Tableau de Bord</h1>
+                          <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                      </div>
+                      <ThemeToggle />
+                  </div>
+                  {!dashboardData ? (
+                      <div className="skeleton-loading" style={{height: '200px', borderRadius: '12px'}}></div>
+                  ) : (
+                      <>
+                          <div className="cartes-financieres">
+                              <div className="carte">
+                                  <div className="carte-titre-container">
+                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+                                      <h3>Chiffre d'Affaires</h3>
+                                  </div>
+                                  <p className="montant">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                              </div>
+                              <div className="carte">
+                                  <div className="carte-titre-container">
+                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
+                                      <h3>Panier Moyen</h3>
+                                  </div>
+                                  <p className="montant">{dashboardData.finances?.panier_moyen || '0.00'} <span className="devise">€</span></p>
+                              </div>
+                              <div className="carte">
+                                  <div className="carte-titre-container">
+                                      <div className="icon" style={{color: 'var(--color-info)'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+                                      <h3>Commissions Dues</h3>
+                                  </div>
+                                  <p className="montant" style={{color: 'var(--color-info)'}}>{dashboardData.finances?.commissions_a_payer?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                              </div>
+                          </div>
+                          
+                          <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '24px'}}>
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
+                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
+                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                          {(dashboardData.top_3_prestations || []).map((p, i) => (
+                                              <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px'}}>
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                      <span style={{fontWeight: 'bold', color: 'var(--text-secondary)'}}>#{i+1}</span>
+                                                      <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{p.nom}</span>
+                                                  </div>
+                                                  <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(p.total_genere || 0).toFixed(2)} €</span>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
+                              </div>
+
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
+                                  {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
+                                          <div style={{textAlign: 'center'}}>
+                                              <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
+                                              <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
+                                          </div>
+                                          <div style={{flex: 1}}>
+                                              <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
+                                              {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
+                                          </div>
+                                      </div>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres (Compta) pour afficher les avis.</p>}
+                              </div>
+                          </div>
+                      </>
+                  )}
+                </div>
+              )}
+
+              {/* ========================================================= */}
+              {/* --- VUE : CAISSE & ENCAISSEMENT --- */}
+              {/* ========================================================= */}
+              {role === 'gerant' && activeTab === 'caisse' && (
+                <div className="admin-container" style={{display: 'flex', gap: '24px', height: '100%', flexDirection: isMobile ? 'column' : 'row'}}>
+                    {/* LEFT PANEL - CATALOGUE */}
+                    <div style={{flex: 2, display: 'flex', flexDirection: 'column'}}>
+                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                            <div><h1 style={{margin: 0}}>Caisse</h1></div>
+                            <ThemeToggle />
+                        </div>
+                        <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                            <button onClick={() => setPosType('PRESTATION')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: posType === 'PRESTATION' ? 'var(--btn-primary)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'white' : 'var(--text-main)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Prestations</button>
+                            <button onClick={() => setPosType('PRODUIT_REVENTE')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: 'none', fontWeight: 'bold', background: posType === 'PRODUIT_REVENTE' ? 'var(--btn-primary)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'white' : 'var(--text-main)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Produits</button>
+                        </div>
+                        <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '16px'}} />
+                        
+                        <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px'}}>
+                            {(catalogueListe || [])
+                                .filter(a => a.type_article === posType && ((a.nom || '').toLowerCase().includes((rechercheCaisse || '').toLowerCase()) || (a.reference && a.reference.toLowerCase().includes((rechercheCaisse || '').toLowerCase()))))
+                                .map(art => (
+                                <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', transition: 'transform 0.1s'}} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
+                                    <span style={{fontWeight: '600', fontSize: '13px', color: 'var(--text-main)'}}>{art.nom}</span>
+                                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                        <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(art.prix || 0).toFixed(2)}€</span>
+                                        {posType === 'PRODUIT_REVENTE' && <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Stock: {art.stock_actuel}</span>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* RIGHT PANEL - PANIER & ENCAISSEMENT */}
+                    <div style={{flex: 1, minWidth: '320px', background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
+                        {ticketGenere ? (
+                            <div style={{padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center'}}>
+                                <div style={{color: 'var(--color-success)', marginBottom: '16px', display: 'flex', justifyContent: 'center'}}><svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                                <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Paiement Validé</h2>
+                                <p style={{color: 'var(--text-secondary)', marginBottom: '24px'}}>{ticketGenere.montant.toFixed(2)} € encaissé par {methodePaiement}</p>
+                                
+                                <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px'}}>
+                                    <button onClick={() => envoyerTicketEco('email')} className="btn-action" style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>📧 Envoyer le ticket (E-mail)</button>
+                                    {configSalon.brevo_api_key && <button onClick={() => envoyerTicketEco('sms')} className="btn-action" style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>📱 Envoyer le ticket (SMS)</button>}
+                                </div>
+                                <button onClick={() => setTicketGenere(null)} className="btn-action">Nouveau Ticket</button>
+                            </div>
+                        ) : (
+                            <>
+                                <div style={{padding: '16px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
+                                    <select className="input-fournisseur" value={posEmploye || ''} onChange={e => handleSelectEmployeCaisse(e.target.value)} style={{marginBottom: '12px', background: 'var(--bg-card)'}}>
+                                        <option value="">👤 Sélectionner un collaborateur...</option>
+                                        {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                    </select>
+                                    <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => setClientCaisse(e.target.value)} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
+                                        <option value="">🤝 Client de passage...</option>
+                                        {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
+                                        {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client}>{c.nom} {c.prenom}</option>)}
+                                    </select>
+                                </div>
+
+                                <div style={{flex: 1, overflowY: 'auto', padding: '16px'}}>
+                                    {(panierCaisse || []).length === 0 ? (
+                                        <div className="empty-state" style={{marginTop: '40px'}}><p>Le ticket est vide.</p></div>
+                                    ) : (
+                                        (panierCaisse || []).map(item => (
+                                            <div key={item.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px'}}>
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                    <span style={{background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: 'var(--text-main)'}}>{item.quantite}x</span>
+                                                    <span style={{color: 'var(--text-main)'}}>{item.nom}</span>
+                                                </div>
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                    <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{((item.prix_unitaire || 0) * (item.quantite || 1)).toFixed(2)}€</span>
+                                                    <button onClick={() => retirerDuPanier(item.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+
+                                <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
+                                    {isEligibleFidelite && (
+                                        <div style={{background: 'var(--bg-success)', color: 'var(--color-success)', padding: '12px', borderRadius: '8px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                            <span style={{fontSize: '13px', fontWeight: 'bold'}}>🎁 Fidélité : {texteRecompense}</span>
+                                            <input type="checkbox" checked={remiseAppliquee} onChange={e => setRemiseAppliquee(e.target.checked)} style={{width: '18px', height: '18px', cursor: 'pointer'}} />
+                                        </div>
+                                    )}
+                                    
+                                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
+                                        <span>Total TTC</span>
+                                        <span>{totalCaisse.toFixed(2)} €</span>
+                                    </div>
+
+                                    <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
+                                        <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: methodePaiement === 'ESPECES' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--bg-info)' : 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>Espèces</button>
+                                        <button onClick={() => setMethodePaiement('CARTE')} style={{flex: 1, padding: '12px', borderRadius: '8px', border: methodePaiement === 'CARTE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--bg-info)' : 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>Carte TPE</button>
+                                    </div>
+
+                                    {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
+                                    
+                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye}>
+                                        Encaisser {totalCaisse.toFixed(2)} €
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+              )}
+
               {/* --- CENTRE D'ACTION (TÂCHES) --- */}
               {role === 'gerant' && activeTab === 'actions' && (
                 <div className="admin-container">
@@ -1237,9 +1429,9 @@ function App() {
                       }}>Ajouter une tâche</button>
                   </div>
 
-                  <div className="section-titre" style={{marginTop: '32px'}}>À traiter ({tachesListe.filter(t => t.statut === 'A_FAIRE').length})</div>
+                  <div className="section-titre" style={{marginTop: '32px'}}>À traiter ({(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length})</div>
                   <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                      {tachesListe.filter(t => t.statut === 'A_FAIRE').map(tache => (
+                      {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').map(tache => (
                           <div key={tache.id_tache} style={{background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-card)', border: '1px solid var(--border-color)', borderLeft: `4px solid ${getCouleurTache(tache)}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'var(--shadow-sm)', transition: 'all 0.2s ease'}}>
                               <div style={{display: 'flex', alignItems: 'flex-start', gap: '16px'}}>
                                   <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: '2px solid var(--text-muted)', width: '24px', height: '24px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px'}}></button>
@@ -1257,12 +1449,12 @@ function App() {
                               </button>
                           </div>
                       ))}
-                      {tachesListe.filter(t => t.statut === 'A_FAIRE').length === 0 && <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>}
+                      {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length === 0 && <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>}
                   </div>
 
                   <div className="section-titre" style={{marginTop: '32px'}}>Terminées</div>
                   <div style={{display: 'flex', flexDirection: 'column', gap: '8px', opacity: 0.7}}>
-                      {tachesListe.filter(t => t.statut === 'FAIT').map(tache => (
+                      {(tachesListe || []).filter(t => t.statut === 'FAIT').map(tache => (
                           <div key={tache.id_tache} style={{display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)'}}>
                               <span style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontSize: '13px'}}>{tache.titre}</span>
                               <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Annuler</button>
@@ -1307,10 +1499,10 @@ function App() {
                           </button>
                       )}
                       {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>}
-                      {employesListe
+                      {(employesListe || [])
                           .filter(emp => role === 'gerant' || emp.id_employe === decodeToken(token)?.id_employe)
                           .map((emp) => {
-                              const originalIndex = employesListe.findIndex(e => e.id_employe === emp.id_employe);
+                              const originalIndex = (employesListe || []).findIndex(e => e.id_employe === emp.id_employe);
                               const isActive = role === 'employe' ? true : filtresEmployes.includes(emp.id_employe);
                               const color = COULEURS_EMPLOYES[originalIndex % COULEURS_EMPLOYES.length];
                               return (
@@ -1323,7 +1515,7 @@ function App() {
                                       }}
                                       style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
                                       {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
-                                      {role === 'employe' ? `Mon Planning (${emp.nom.split(' ')[0]})` : emp.nom.split(' ')[0]}
+                                      {role === 'employe' ? `Mon Planning (${(emp.nom || '').split(' ')[0]})` : (emp.nom || '').split(' ')[0]}
                                   </button>
                               );
                           })}
@@ -1349,13 +1541,14 @@ function App() {
                               <div className="days-container" style={{ display: 'flex', flex: 1, position: 'relative' }}>
                                   {joursSemaine.map((jour, indexJour) => {
                                       const dateStringJour = formatDateInput(jour);
-                                      const rdvsDuJourBruts = planningData.filter(rdv => {
-                                          const rdvDateStr = rdv.date_heure_debut.replace('Z', '').split('T')[0];
+                                      const rdvsDuJourBruts = (planningData || []).filter(rdv => {
+                                          if(!rdv || !rdv.date_heure_debut) return false;
+                                          const rdvDateStr = (rdv.date_heure_debut || '').replace('Z', '').split('T')[0];
                                           return rdvDateStr === dateStringJour && (filtresEmployes.length === 0 || filtresEmployes.includes(rdv.id_employe));
                                       });
                                       const sortedRdvs = rdvsDuJourBruts.map(rdv => {
-                                          const start = new Date(rdv.date_heure_debut.replace('Z', ''));
-                                          const end = new Date(start.getTime() + (rdv.duree_minutes || 30) * 60000);
+                                          const start = new Date((rdv.date_heure_debut || '').replace('Z', ''));
+                                          const end = new Date(start.getTime() + ((rdv.duree_minutes || 30) * 60000));
                                           return { ...rdv, start, end };
                                       }).sort((a, b) => a.start - b.start);
                                       const clusters = []; let currentCluster = []; let clusterEnd = null;
@@ -1376,7 +1569,7 @@ function App() {
                                                       const ECHELLE_HEURE = 80; const dureeReelle = rdv.duree_minutes || 30;
                                                       const topPosition = ((rdv.start.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (rdv.start.getMinutes() * (ECHELLE_HEURE / 60));
                                                       const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
-                                                      const empIndex = employesListe.findIndex(e => e.id_employe === rdv.id_employe);
+                                                      const empIndex = (employesListe || []).findIndex(e => e.id_employe === rdv.id_employe);
                                                       const backgroundColor = empIndex >= 0 ? COULEURS_EMPLOYES[empIndex % COULEURS_EMPLOYES.length] : '#ccc';
                                                       const widthPercent = clusterSize === 1 ? 100 : (100 - (clusterSize - 1) * 10);
                                                       const leftOffset = clusterSize === 1 ? 0 : (indexInCluster * 10);
@@ -1471,7 +1664,7 @@ function App() {
                               <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
                               <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
                                   <option value="">-- Choisir un collaborateur --</option>
-                                  {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                               </select>
                               <div style={{ position: 'relative', marginBottom: '12px' }}>
                                   <input 
@@ -1497,7 +1690,7 @@ function App() {
                                           boxShadow: '0 4px 12px rgba(0,0,0,0.15)', overflow: 'hidden'
                                       }}>
                                           {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
-                                              const isTop = dashboardData?.top_3_prestations?.find(p => p.nom?.toLowerCase() === presta.nom?.toLowerCase());
+                                              const isTop = dashboardData?.top_3_prestations?.find(p => (p.nom || '').toLowerCase() === (presta.nom || '').toLowerCase());
                                               
                                               return (
                                                   <div 
@@ -1520,7 +1713,7 @@ function App() {
                                           })}
                                           
                                           {/* MODE TEXTE LIBRE : S'affiche uniquement si ce qu'on a tapé ne correspond à rien d'exact dans la liste */}
-                                          {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => p.nom?.toLowerCase() === formRdv.prestation.toLowerCase()) && (
+                                          {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => (p.nom || '').toLowerCase() === (formRdv.prestation || '').toLowerCase()) && (
                                               <div 
                                                   onClick={() => setShowDropdownPresta(false)}
                                                   style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}
@@ -1561,7 +1754,7 @@ function App() {
                                           
                                           {/* BOUTON VOIR LE PROTOCOLE */}
                                           {(() => {
-                                              const protoAssocie = protocolesListe.find(p => p.nom_prestation.toLowerCase() === rdvSelectionne.prestation.toLowerCase());
+                                              const protoAssocie = (protocolesListe || []).find(p => (p.nom_prestation || '').toLowerCase() === (rdvSelectionne.prestation || '').toLowerCase());
                                               if (protoAssocie) {
                                                   return (
                                                       <button onClick={() => { setRdvSelectionne(null); setProtocoleVisible(protoAssocie); }} style={{background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}}>
@@ -1581,7 +1774,7 @@ function App() {
                                   <>
                                       <select className="input-fournisseur" value={editRdvForm.id_employe} onChange={e => setEditRdvForm({...editRdvForm, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
                                           <option value="">-- Choisir un collaborateur --</option>
-                                          {employesListe.map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                                       </select>
                                       <input type="text" className="input-fournisseur" placeholder="Prestation" value={editRdvForm.prestation} onChange={e => setEditRdvForm({...editRdvForm, prestation: e.target.value})} style={{marginBottom:'12px'}}/>
                                       <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
@@ -1606,7 +1799,7 @@ function App() {
                                   <div>
                                       <h3 style={{margin: '0 0 8px 0', fontSize: '22px', color: 'var(--text-main)'}}>{protocoleVisible.nom_prestation}</h3>
                                       <div style={{display: 'flex', gap: '8px'}}>
-                                          {protocoleVisible.tags?.map(t => <span key={t} style={{fontSize: '11px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '2px 8px', borderRadius: '12px', border: '1px solid var(--border-color)'}}>{t}</span>)}
+                                          {(protocoleVisible.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '2px 8px', borderRadius: '12px', border: '1px solid var(--border-color)'}}>{t}</span>)}
                                       </div>
                                   </div>
                                   <button className="modal-close-btn" onClick={() => setProtocoleVisible(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -1626,9 +1819,9 @@ function App() {
                               
                               <div className="section-titre" style={{fontSize: '14px', marginTop: 0}}>Ingrédients (Préparation Labo)</div>
                               <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px', border: '1px dashed var(--border-color)'}}>
-                                  {protocoleVisible.ingredients && protocoleVisible.ingredients.length > 0 ? (
-                                      protocoleVisible.ingredients.map((ing, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i !== protocoleVisible.ingredients.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '14px', color: 'var(--text-main)', fontWeight: '600'}}>
+                                  {protocoleVisible.ingredients && (protocoleVisible.ingredients || []).length > 0 ? (
+                                      (protocoleVisible.ingredients || []).map((ing, i) => (
+                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i !== (protocoleVisible.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '14px', color: 'var(--text-main)', fontWeight: '600'}}>
                                               <span><span style={{color: 'var(--text-secondary)', marginRight: '8px'}}>🧪</span>{ing.nom}</span>
                                               <span>{ing.quantite_necessaire} doses / ml</span>
                                           </div>
@@ -1638,8 +1831,8 @@ function App() {
 
                               <div className="section-titre" style={{fontSize: '14px'}}>Déroulé de la prestation (To-Do List)</div>
                               <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {protocoleVisible.etapes && protocoleVisible.etapes.length > 0 ? (
-                                      protocoleVisible.etapes.map((etape, index) => (
+                                  {protocoleVisible.etapes && (protocoleVisible.etapes || []).length > 0 ? (
+                                      (protocoleVisible.etapes || []).map((etape, index) => (
                                           <label key={index} style={{display: 'flex', gap: '16px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', cursor: 'pointer', alignItems: 'flex-start'}}>
                                               <input type="checkbox" style={{width: '20px', height: '20px', marginTop: '2px', accentColor: 'var(--btn-primary)', cursor: 'pointer'}} />
                                               <div style={{flex: 1}}>
@@ -1703,10 +1896,10 @@ function App() {
                               <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', maxWidth: '400px'}}/>
                               
                               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
-                                  {protocolesListe.filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
+                                  {(protocolesListe || []).filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
                                       let stockSuffisant = true;
-                                      proto.ingredients?.forEach(ing => {
-                                          const articleDuStock = catalogueListe.find(a => a.id_article === ing.id_article);
+                                      (proto.ingredients || []).forEach(ing => {
+                                          const articleDuStock = (catalogueListe || []).find(a => a.id_article === ing.id_article);
                                           if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
                                       });
 
@@ -1722,13 +1915,13 @@ function App() {
                                                       <span style={{width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
                                                   </div>
                                                   <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '12px'}}>
-                                                      {proto.tags?.map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
+                                                      {(proto.tags || []).map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
                                                   </div>
                                               </div>
                                           </div>
                                       );
                                   })}
-                                  {protocolesListe.length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
+                                  {(protocolesListe || []).length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
                               </div>
                           </div>
                       )}
@@ -1742,7 +1935,7 @@ function App() {
                                   <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
                                   <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
                                       <option value="">-- Choisir une prestation --</option>
-                                      {catalogueListe.filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
+                                      {(catalogueListe || []).filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
                                   </select>
                               </div>
 
@@ -1750,7 +1943,7 @@ function App() {
                                   <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
                                   <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                                       {TAGS_DISPONIBLES.map(tag => (
-                                          <button key={tag} onClick={() => toggleTag(tag)} style={{background: nouveauProtocole.tags.includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: nouveauProtocole.tags.includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
+                                          <button key={tag} onClick={() => toggleTag(tag)} style={{background: (nouveauProtocole.tags || []).includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: (nouveauProtocole.tags || []).includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
                                       ))}
                                   </div>
                               </div>
@@ -1773,7 +1966,7 @@ function App() {
                               <div style={{marginBottom: '24px'}}>
                                   <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
                                   <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
-                                      {nouveauProtocole.etapes.map((etape, index) => (
+                                      {(nouveauProtocole.etapes || []).map((etape, index) => (
                                           <div 
                                               key={etape.id_etape} 
                                               draggable
@@ -1782,7 +1975,7 @@ function App() {
                                               onDrop={(e) => {
                                                   const dragIndex = Number(e.dataTransfer.getData("dragIndex"));
                                                   const dropIndex = index;
-                                                  const nouvellesEtapes = [...nouveauProtocole.etapes];
+                                                  const nouvellesEtapes = [...(nouveauProtocole.etapes || [])];
                                                   const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1);
                                                   nouvellesEtapes.splice(dropIndex, 0, draggedEtape);
                                                   setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes });
@@ -1811,14 +2004,14 @@ function App() {
                               <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
                                   <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
                                       <option value="">-- Ajouter un produit --</option>
-                                      {catalogueListe.filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
+                                      {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
                                   </select>
                                   <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
                                   <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
                               </div>
                               
                               <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
-                                  {nouveauProtocole.ingredients.map(ing => (
+                                  {(nouveauProtocole.ingredients || []).map(ing => (
                                       <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
                                           <span>{ing.quantite_necessaire}x {ing.nom}</span>
                                           <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
@@ -1827,10 +2020,10 @@ function App() {
                               </div>
 
                               {(() => {
-                                  const prestaChoisie = catalogueListe.find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
+                                  const prestaChoisie = (catalogueListe || []).find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
                                   const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
-                                  const coutProduits = nouveauProtocole.ingredients.reduce((acc, ing) => {
-                                      const art = catalogueListe.find(a => a.id_article === ing.id_article);
+                                  const coutProduits = (nouveauProtocole.ingredients || []).reduce((acc, ing) => {
+                                      const art = (catalogueListe || []).find(a => a.id_article === ing.id_article);
                                       return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0);
                                   }, 0);
                                   const margeValeur = prixVente - coutProduits;
@@ -1871,7 +2064,7 @@ function App() {
                                       <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
                                       <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
                                       <div style={{display: 'flex', gap: '8px'}}>
-                                          {modeEditionProtocole.tags?.map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
+                                          {(modeEditionProtocole.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
                                       </div>
                                   </div>
                                   <div style={{display: 'flex', gap: '8px'}}>
@@ -1900,17 +2093,17 @@ function App() {
 
                               <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
                               <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
-                                  {modeEditionProtocole.ingredients?.map((ing, i) => (
-                                      <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== modeEditionProtocole.ingredients.length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
+                                  {(modeEditionProtocole.ingredients || []).map((ing, i) => (
+                                      <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== (modeEditionProtocole.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
                                           <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
                                       </div>
                                   ))}
-                                  {(!modeEditionProtocole.ingredients || modeEditionProtocole.ingredients.length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
+                                  {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
                               </div>
 
                               <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
                               <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {modeEditionProtocole.etapes?.map((etape, index) => (
+                                  {(modeEditionProtocole.etapes || []).map((etape, index) => (
                                       <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
                                           <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
                                           <div style={{flex: 1}}>
@@ -1919,7 +2112,7 @@ function App() {
                                           </div>
                                       </div>
                                   ))}
-                                  {(!modeEditionProtocole.etapes || modeEditionProtocole.etapes.length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
+                                  {(!modeEditionProtocole.etapes || (modeEditionProtocole.etapes || []).length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
                               </div>
                           </div>
                       )}
@@ -1930,9 +2123,9 @@ function App() {
                       <>
                           <div className="section-titre" style={{marginTop: '32px'}}>Catalogue des Prestations</div>
                           <div className="carte scan-carte">
-                              {catalogueListe.filter(art => art.type_article === 'PRESTATION').length === 0 ? (
+                              {(catalogueListe || []).filter(art => art.type_article === 'PRESTATION').length === 0 ? (
                                   <div className="empty-state"><p>Aucune prestation au catalogue.</p></div>
-                              ) : catalogueListe.filter(art => art.type_article === 'PRESTATION').map(art => (
+                              ) : (catalogueListe || []).filter(art => art.type_article === 'PRESTATION').map(art => (
                                   <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
                                       <span>
                                           <strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € 
@@ -1990,7 +2183,7 @@ function App() {
                                   </select>
                               </div>
                               <div className="stock-container">
-                                {catalogueListe
+                                {(catalogueListe || [])
                                     .filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE')
                                     .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
                                     .sort((a, b) => {
@@ -2017,7 +2210,7 @@ function App() {
                                       </div>
                                     );
                                 })}
-                                {catalogueListe.filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE').length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
+                                {(catalogueListe || []).filter(art => art.type_article === 'PRODUIT_REVENTE' || art.type_article === 'CONSOMMABLE').length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
                               </div>
                           </>
                       )}
@@ -2063,11 +2256,11 @@ function App() {
                       </div>
                   )}
                   
-                  {rhData.length === 0 ? (
+                  {(rhData || []).length === 0 ? (
                       <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
                   ) : (
                     <div className="rh-grid">
-                      {rhData.map(employe => (
+                      {(rhData || []).map(employe => (
                         <div className="rh-carte" key={employe.id_employe} style={{position: 'relative'}}>
                           <button onClick={() => supprimerEmploye(employe.id_employe)} style={{position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '14px'}} title="Supprimer l'employé">🗑️</button>
                           <div className="rh-header-profil">
@@ -2077,11 +2270,11 @@ function App() {
                             <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
                           </div>
                           <div className="rh-stats-row">
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.produits_vendus}</span><span className="label">Produits</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles?.clients_coiffes || 0}</span><span className="label">Clients</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles?.produits_vendus || 0}</span><span className="label">Produits</span></div>
+                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{(((employe.performances_actuelles?.ca_genere || 0) / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
                           </div>
-                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
+                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{(employe.performances_actuelles?.prime_estimee || 0).toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
                           <div style={{marginTop: '8px'}}>
                             <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
                             {dessinerChronogramme(employe.historique_primes)}
@@ -2108,14 +2301,14 @@ function App() {
                   <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
                   <div className="section-titre">Historique des bilans comptables</div>
                   
-                  {historiqueData.length === 0 ? (
+                  {(historiqueData || []).length === 0 ? (
                       <div className="empty-state">
                           <SvgEmptyState />
                           <p>Aucune clôture de caisse (Z) effectuée pour le moment.</p>
                       </div>
                   ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          {historiqueData.map((anneeData) => (
+                          {(historiqueData || []).map((anneeData) => (
                               <div key={anneeData.annee} style={{ background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
                                   
                                   {/* DOSSIER ANNÉE */}
@@ -2127,7 +2320,7 @@ function App() {
                                   {/* SOUS-DOSSIERS MOIS */}
                                   {expandedYear === anneeData.annee && (
                                       <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
-                                          {anneeData.mois.map((moisData) => (
+                                          {(anneeData.mois || []).map((moisData) => (
                                               <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
                                                   
                                                   <div onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px' }}>
@@ -2136,7 +2329,7 @@ function App() {
                                                           {moisData.nom}
                                                       </div>
                                                       <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)' }}>
-                                                          {moisData.total_mensuel.toFixed(2)} €
+                                                          {moisData.total_mensuel?.toFixed(2) || '0.00'} €
                                                       </span>
                                                   </div>
 
@@ -2147,7 +2340,7 @@ function App() {
                                                           {/* Récapitulatif Mensuel (Fichier maitre) */}
                                                           <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', border: '1px solid #bfdbfe', marginBottom: '8px' }}>
                                                               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📊 Bilan consolidé ({moisData.nom})</span>
-                                                              <span>{moisData.total_mensuel.toFixed(2)} €</span>
+                                                              <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
                                                           </div>
 
                                                           {/* Liste des jours du mois (Un fichier cliquable par jour) */}
@@ -2158,7 +2351,7 @@ function App() {
                                                                       <span style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
                                                                   </div>
                                                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total.toFixed(2)} €</span>
+                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
                                                                       <span style={{ fontSize: '16px' }}>⬇️</span>
                                                                   </div>
                                                               </div>
@@ -2193,7 +2386,7 @@ function App() {
 
                   <div className="section-titre" style={{marginTop: '32px', color: '#aa3bff', borderColor: '#aa3bff'}}>Gestion des Salons (Clients)</div>
                   <div className="carte scan-carte">
-                      {superAdminSalons.map(salon => (
+                      {(superAdminSalons || []).map(salon => (
                           <div key={salon.id_salon} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid var(--border-color)'}}>
                               <div>
                                   <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
@@ -2207,7 +2400,7 @@ function App() {
                               </div>
                           </div>
                       ))}
-                      {superAdminSalons.length === 0 && <div className="empty-state"><p>Aucun salon chargé.</p></div>}
+                      {(superAdminSalons || []).length === 0 && <div className="empty-state"><p>Aucun salon chargé.</p></div>}
                   </div>
                 </div>
               )}
