@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import localforage from 'localforage';
 import './App.css';
+import LiquidTabBar from './LiquidTabBar';
+import Parametres from './Parametres';
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
@@ -1171,23 +1173,7 @@ function App() {
       )}
 
       {/* --- BARRE DE NAVIGATION (DESKTOP & MOBILE) --- */}
-      <div className="navbar-sidebar" onTouchMove={(e) => {
-          if (!isMobile) return;
-          const touch = e.touches[0];
-          const element = document.elementFromPoint(touch.clientX, touch.clientY);
-          if (element) {
-              const navItem = element.closest('.nav-item');
-              if (navItem && navItem.dataset.tab) {
-                  const tab = navItem.dataset.tab;
-                  if (tab === 'outils') {
-                      setIsOutilsMenuOpen(true);
-                  } else {
-                      setActiveTab(tab);
-                      setIsOutilsMenuOpen(false);
-                  }
-              }
-          }
-      }}>
+      <div className="navbar-sidebar">
           {/* VUE DESKTOP */}
           {!isMobile && (
               <>
@@ -1224,47 +1210,23 @@ function App() {
               </>
           )}
 
-          {/* VUE MOBILE (BOTTOM TAB BAR STRICTE À 5 ONGLETS) */}
+          {/* VUE MOBILE : BARRE "LIQUID GLASS" (voir LiquidTabBar.jsx) */}
           {isMobile && (
-              <>
-                  <div className="nav-indicator-wrapper">
-                      <div className="nav-indicator" style={{ transform: `translateX(${(isOutilsMenuOpen || ['protocoles', 'produits', 'rh', 'admin', 'superadmin'].includes(activeTab)) ? 400 : (activeTab === 'actions' ? 300 : (activeTab === 'agenda' ? 200 : (activeTab === 'caisse' ? 100 : 0)))}%)` }}>
-                          <div className="nav-indicator-pill"></div>
-                      </div>
-                  </div>
-                  <div data-tab="accueil" className={`nav-item ${activeTab === 'accueil' || activeTab === 'parametres' ? 'active' : ''}`} onClick={() => {setActiveTab('accueil'); setIsOutilsMenuOpen(false);}}>
-                      <span className="nav-icon" style={{position: 'relative'}}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-                      </span>
-                      <span>Bord</span>
-                  </div>
-                  <div data-tab="caisse" className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => {setActiveTab('caisse'); setIsOutilsMenuOpen(false);}}>
-                      <span className="nav-icon" style={{position: 'relative'}}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-                      </span>
-                      <span>Caisse</span>
-                  </div>
-                  <div data-tab="agenda" className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => {setActiveTab('agenda'); setIsOutilsMenuOpen(false);}}>
-                      <span className="nav-icon" style={{position: 'relative'}}>
-                          {(tachesIA || []).some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                      </span>
-                      <span>Agenda</span>
-                  </div>
-                  <div data-tab="actions" className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => {setActiveTab('actions'); setIsOutilsMenuOpen(false);}}>
-                      <span className="nav-icon" style={{position: 'relative'}}>
-                          {nbTachesUrgentes > 0 && <span className="badge-ia-rouge"></span>}
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                      </span>
-                      <span>Actions</span>
-                  </div>
-                  <div data-tab="outils" className={`nav-item ${isOutilsMenuOpen || ['protocoles', 'produits', 'rh', 'admin', 'superadmin'].includes(activeTab) ? 'active' : ''}`} onClick={() => setIsOutilsMenuOpen(true)}>
-                      <span className="nav-icon" style={{position: 'relative'}}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
-                      </span>
-                      <span>Outils</span>
-                  </div>
-              </>
+              <LiquidTabBar
+                  activeIndex={(isOutilsMenuOpen || ['protocoles', 'produits', 'rh', 'admin', 'superadmin'].includes(activeTab)) ? 4 : (activeTab === 'actions' ? 3 : (activeTab === 'agenda' ? 2 : (activeTab === 'caisse' ? 1 : 0)))}
+                  items={[
+                      { key: 'accueil', label: 'Bord', onSelect: () => { setActiveTab('accueil'); setIsOutilsMenuOpen(false); },
+                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
+                      { key: 'caisse', label: 'Caisse', onSelect: () => { setActiveTab('caisse'); setIsOutilsMenuOpen(false); },
+                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg> },
+                      { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), onSelect: () => { setActiveTab('agenda'); setIsOutilsMenuOpen(false); },
+                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+                      { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, onSelect: () => { setActiveTab('actions'); setIsOutilsMenuOpen(false); },
+                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
+                      { key: 'outils', label: 'Outils', onSelect: () => setIsOutilsMenuOpen(true),
+                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg> },
+                  ]}
+              />
           )}
       </div>
 
@@ -1385,136 +1347,18 @@ function App() {
                 </div>
               )}
 
-              {/* VUE : PARAMÈTRES DU SALON */}
+              {/* VUE : PARAMÈTRES DU SALON (liste style iOS — voir Parametres.jsx) */}
               {role === 'gerant' && activeTab === 'parametres' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                    <div>
-                        <h1 style={{margin: 0}}>Paramètres</h1>
-                        <span className="date-subtitle" style={{margin: 0}}>Configuration de votre salon</span>
-                    </div>
-                    <button onClick={() => setActiveTab('accueil')} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', fontSize: '14px', cursor: 'pointer', color: 'var(--text-main)', padding: '8px 16px', borderRadius: '16px', fontWeight: 'bold'}}>← Retour</button>
-                  </div>
-                  
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>🎁 Programme de Fidélité</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
-                    
-                    <select className="input-fournisseur" value={configSalon.fidelite_type || 'NONE'} onChange={e => setConfigSalon({...configSalon, fidelite_type: e.target.value})} style={{marginBottom: '16px'}}>
-                        <option value="NONE">Désactivé</option>
-                        <option value="POINTS">Par Points (1€ = 1 point)</option>
-                        <option value="TAMPONS">Carte à Tampons (1 visite = 1 tampon)</option>
-                    </select>
-
-                    {configSalon.fidelite_type === 'POINTS' && (
-                        <div style={{display: 'flex', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                            <div style={{flex: 1}}>
-                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Points à atteindre</label>
-                                <input type="number" className="input-fournisseur" placeholder="Ex: 100" value={configSalon.fidelite_points_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_seuil: e.target.value})} />
-                            </div>
-                            <div style={{flex: 1}}>
-                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Réduction offerte (€)</label>
-                                <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_points_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_points_valeur: e.target.value})} />
-                            </div>
-                        </div>
-                    )}
-
-                    {configSalon.fidelite_type === 'TAMPONS' && (
-                        <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                            <div>
-                                <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Nombre de passages requis</label>
-                                <input type="number" className="input-fournisseur" placeholder="Ex: 10" value={configSalon.fidelite_tampons_seuil || ''} onChange={e => setConfigSalon({...configSalon, fidelite_tampons_seuil: e.target.value})} />
-                            </div>
-                            <div style={{display: 'flex', gap: '12px'}}>
-                                <div style={{flex: 1}}>
-                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Type de récompense</label>
-                                    <select className="input-fournisseur" value={configSalon.fidelite_recompense_type || 'MONTANT'} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_type: e.target.value})}>
-                                        <option value="MONTANT">Remise fixe (€)</option>
-                                        <option value="POURCENTAGE">Pourcentage (%)</option>
-                                        <option value="PRODUIT">Produit / Service offert</option>
-                                    </select>
-                                </div>
-                                <div style={{flex: 1}}>
-                                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Valeur (Ex: 20, 10, Shampoing)</label>
-                                    <input type="text" className="input-fournisseur" value={configSalon.fidelite_recompense_valeur || ''} onChange={e => setConfigSalon({...configSalon, fidelite_recompense_valeur: e.target.value})} />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '24px 0 8px 0'}}>📱 Relance SMS Auto</h4>
-                    <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                        <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Délai d'inactivité avant relance (Jours)</label>
-                        <input type="number" className="input-fournisseur" placeholder="Ex: 60" value={configSalon.fidelite_delai_sms || ''} onChange={e => setConfigSalon({...configSalon, fidelite_delai_sms: e.target.value})} />
-                        <p style={{fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Un SMS incitatif sera envoyé si le client ne vient pas pendant cette durée.</p>
-                    </div>
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Google My Business</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez vos avis clients en direct.</span>
-                    <input type="text" className="input-fournisseur" placeholder="Clé API Google" value={configSalon.google_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, google_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Google Account ID" value={configSalon.google_account_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_account_id: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Google Location ID" value={configSalon.google_location_id || ''} onChange={(e) => setConfigSalon({...configSalon, google_location_id: e.target.value})} />
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Horaires de l'Agenda</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
-                    <div style={{display: 'flex', gap: '15px'}}>
-                      <div style={{flex: 1}}>
-                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Ouverture (0-23)</label>
-                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_ouverture || 8} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
-                      </div>
-                      <div style={{flex: 1}}>
-                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Fermeture (0-23)</label>
-                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_fermeture || 20} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Boîte Mail (Robot Comptable)</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
-                    <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures || ''} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email || ''} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
-                  </div>
-                  
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>Fidélisation (SMS Auto)</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
-                    <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name || ''} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps" value={configSalon.lien_google_maps || ''} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                        Alertes Urgences (Gérant)
-                    </h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Recevez un SMS si une tâche de votre Centre d'Action arrive à expiration.</span>
-                    
-                    <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                        <div style={{flex: 1}}>
-                            <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Votre téléphone</label>
-                            <input type="tel" className="input-fournisseur" placeholder="Ex: +33612345678" value={configSalon.telephone_gerant || ''} onChange={(e) => setConfigSalon({...configSalon, telephone_gerant: e.target.value})} />
-                        </div>
-                        <div style={{display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '16px'}}>
-                            <input type="checkbox" id="alertes_sms" checked={configSalon.alertes_sms_actives || false} onChange={(e) => setConfigSalon({...configSalon, alertes_sms_actives: e.target.checked})} style={{width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--btn-primary)'}} />
-                            <label htmlFor="alertes_sms" style={{fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer', fontWeight: '600'}}>Activer les SMS</label>
-                        </div>
-                    </div>
-                  </div>
-
-                  <div className="carte scan-carte">
-                    <h3 style={{marginBottom: '5px', color: 'var(--text-main)'}}>TPE Physique (Stripe Terminal)</h3>
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
-                    <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
-                  </div>
-
-                  <button className="btn-action" style={{marginTop: '8px', width: '100%'}} onClick={sauvegarderParametres}>Enregistrer la configuration</button>
-                </div>
+                <Parametres
+                  configSalon={configSalon}
+                  setConfigSalon={setConfigSalon}
+                  onSave={sauvegarderParametres}
+                  onBack={() => setActiveTab('accueil')}
+                  onLogout={seDeconnecter}
+                  salonId={decodeToken(token)?.id_salon}
+                  isDarkMode={isDarkMode}
+                  onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+                />
               )}
               
               {/* VUE : CAISSE & ENCAISSEMENT */}
