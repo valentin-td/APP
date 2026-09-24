@@ -1,0 +1,145 @@
+/* ==========================================================================
+   ONGLET PARAMÈTRES (liste style iOS) — utilisé par Parametres.jsx
+   Utilise les variables du thème (clair / sombre) définies dans App.css.
+   ========================================================================== */
+.st-page { animation: stSlideIn 0.28s cubic-bezier(0.32, 0.72, 0, 1); }
+@keyframes stSlideIn {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .st-page { animation: none; } }
+
+/* ---------- En-tête : bouton rond + titre centré ---------- */
+.st-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-bottom: 24px;
+}
+.st-back {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease;
+}
+.st-back:active { background: var(--bg-hover); }
+.st-back svg { width: 22px; height: 22px; }
+.st-title {
+  margin: 0;
+  padding: 0 56px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--text-main);
+}
+
+/* ---------- Bloc compte ---------- */
+.st-account { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
+.st-avatar {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #000;
+  color: #fff;
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.st-avatar svg { width: 30px; height: 30px; }
+.st-account-name { font-size: 17px; font-weight: 500; color: var(--text-main); word-break: break-word; }
+.st-account-id { font-size: 15px; color: var(--text-secondary); margin-top: 2px; }
+
+/* ---------- Groupes de lignes ---------- */
+.st-section-title {
+  margin: 28px 0 10px 0;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-main);
+}
+.st-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 4px 0;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.st-group-logout { margin-top: 28px; }
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease;
+}
+.st-row:active { background: var(--bg-hover); }
+.st-row-icon { display: flex; flex-shrink: 0; width: 24px; height: 24px; }
+.st-row-icon svg { width: 100%; height: 100%; }
+.st-row-label { flex: 1; min-width: 0; line-height: 1.3; }
+.st-row-value { flex-shrink: 0; font-size: 15px; color: var(--text-secondary); white-space: nowrap; }
+.st-row-chevron { display: flex; flex-shrink: 0; width: 16px; height: 16px; color: var(--text-main); }
+.st-row-chevron svg { width: 100%; height: 100%; }
+
+/* ---------- Interrupteur (mode sombre) ---------- */
+.st-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 46px;
+  height: 28px;
+  border-radius: 14px;
+  background: var(--text-muted);
+  transition: background 0.2s ease;
+}
+.st-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.st-switch.on { background: #34c759; }
+.st-switch.on::after { transform: translateX(18px); }
+
+/* ---------- Sous-pages ---------- */
+.st-detail .carte > span { display: block; margin-bottom: 16px !important; }
+
+.st-legal { white-space: pre-wrap; font-size: 15px; line-height: 1.65; color: var(--text-main); }
+.st-empty { text-align: center; padding: 28px 8px; color: var(--text-secondary); }
+.st-empty-icon { width: 40px; height: 40px; margin: 0 auto 12px; opacity: 0.7; }
+.st-empty-icon svg { width: 100%; height: 100%; }
+.st-empty p { margin: 0; font-size: 15px; }
