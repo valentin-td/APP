@@ -346,8 +346,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 /* ==========================================================================
    14. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
-@media (max-width: 767px) {
-  /* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
+/* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
   .navbar-sidebar { 
       position: fixed !important;
       flex-direction: row !important; 
@@ -386,15 +385,17 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       border-radius: 16px !important; /* Forme de la pilule */
       font-size: 10px !important; /* Micro typo iOS */
       font-weight: 500 !important;
-      color: var(--text-main) !important;
+      color: var(--text-secondary) !important;
       gap: 2px !important; 
       transition: background 0.2s ease !important;
   }
   .nav-item.active {
-      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair */
+      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair de votre photo */
+      color: var(--text-main) !important;
   }
   body.dark-mode .nav-item.active {
       background: rgba(255, 255, 255, 0.12) !important;
+      color: var(--text-main) !important;
   }
   .nav-icon { 
       width: 24px !important; 
