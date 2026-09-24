@@ -1279,19 +1279,24 @@ function App() {
 
               {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
               {role === 'gerant' && activeTab === 'accueil' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
-                          <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
-                      </div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                          </button>
+                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                  {/* EN-TÊTE FIXE */}
+                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                          <div>
+                              <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
+                              <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                          </div>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setActiveTab('parametres')} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, width: '22px', height: '22px', transition: 'color 0.2s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'} title="Paramètres">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                              </button>
+                          </div>
                       </div>
                   </div>
+                  {/* ZONE DÉFILANTE */}
+                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   {!dashboardData ? (
                       <div className="skeleton-loading" style={{height: '200px', borderRadius: '12px'}}></div>
                   ) : (
@@ -1356,10 +1361,11 @@ function App() {
                           </div>
                       </>
                   )}
+                  </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
 
-              {/* VUE : PARAMÈTRES DU SALON (liste style iOS — voir Parametres.jsx) */}
+              {/* VUE : PARAMÈTRES DU SALON */}
               {role === 'gerant' && activeTab === 'parametres' && (
                 <Parametres
                   configSalon={configSalon}
@@ -1572,15 +1578,20 @@ function App() {
 
               {/* VUE : CENTRE D'ACTION (TÂCHES) */}
               {role === 'gerant' && activeTab === 'actions' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>Centre d'Action</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Pilotez vos urgences administratives</span>
+                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                  {/* EN-TÊTE FIXE */}
+                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                          <div>
+                              <h1 style={{margin: 0}}>Centre d'Action</h1>
+                              <span className="date-subtitle" style={{margin: 0}}>Pilotez vos urgences administratives</span>
+                          </div>
+                          <ThemeToggle />
                       </div>
-                      <ThemeToggle />
                   </div>
 
+                  {/* ZONE DÉFILANTE */}
+                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   <div className="carte scan-carte">
                       <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
                           <input type="text" className="input-fournisseur" placeholder="Titre (ex: Payer l'URSSAF)" style={{flex: 2}} value={nouvelleTache.titre} onChange={e => setNouvelleTache({...nouvelleTache, titre: e.target.value})} />
@@ -1624,6 +1635,7 @@ function App() {
                           </div>
                       ))}
                   </div>
+                  </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
 
@@ -2213,15 +2225,20 @@ function App() {
 
               {/* VUE : PRODUITS (STOCKS) */}
               {role === 'gerant' && activeTab === 'produits' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
+                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                  {/* EN-TÊTE FIXE */}
+                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                          <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
+                          </div>
                       </div>
                   </div>
 
+                  {/* ZONE DÉFILANTE */}
+                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   {showAddProduit && (
                       <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
                           <h3 style={{marginTop: 0}}>Nouveau Produit (Revente/Labo)</h3>
@@ -2275,20 +2292,26 @@ function App() {
                           </>
                       )}
                   </div>
+                  </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
 
               {/* VUE : RH (ÉQUIPE) */}
               {role === 'gerant' && activeTab === 'rh' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
+                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                  {/* EN-TÊTE FIXE */}
+                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                          <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
+                          </div>
                       </div>
                   </div>
 
+                  {/* ZONE DÉFILANTE */}
+                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   {showAddEmploye && (
                       <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
                           <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
@@ -2343,17 +2366,23 @@ function App() {
                       ))}
                     </div>
                   )}
+                  </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
 
               {/* VUE : ADMIN COMPTA */}
               {role === 'gerant' && activeTab === 'admin' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span></div>
-                      <ThemeToggle />
+                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                  {/* EN-TÊTE FIXE */}
+                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                          <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span></div>
+                          <ThemeToggle />
+                      </div>
                   </div>
                   
+                  {/* ZONE DÉFILANTE */}
+                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
                      <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
                      <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
@@ -2420,6 +2449,7 @@ function App() {
                           ))}
                       </div>
                   )}
+                  </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
 
