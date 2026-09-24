@@ -348,32 +348,30 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
    ========================================================================== */
 @media (max-width: 767px) {
   /* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
-  .navbar-sidebar { 
+   .navbar-sidebar { 
       position: fixed !important;
       flex-direction: row !important; 
       align-items: center !important;
       top: auto !important; 
-      bottom: 0 !important; 
-      left: 0 !important;
-      right: 0 !important;
-      width: 100% !important; 
+      left: 12px !important;
+      right: 12px !important;
+      bottom: calc(8px + env(safe-area-inset-bottom)) !important; 
+      width: auto !important; 
       height: auto !important; 
-      padding: 8px 12px !important; 
-      padding-bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+      padding: 6px !important; 
       box-sizing: border-box !important; 
       justify-content: space-between !important; 
-      /* Effet Liquid Glass Apple pur */
-      background: rgba(255, 255, 255, 0.75) !important;
+      border-radius: 32px !important;
+      background: rgba(255, 255, 255, 0.55) !important;
       backdrop-filter: blur(30px) saturate(200%);
       -webkit-backdrop-filter: blur(30px) saturate(200%);
-      border-top: none !important; 
-      border-right: none !important;
-      box-shadow: 0 -0.5px 0 rgba(0,0,0,0.08) !important; 
+      border: none !important; 
+      box-shadow: 0 0 0 0.5px rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.6) !important; 
       z-index: 1000 !important;
   }
   body.dark-mode .navbar-sidebar {
-      background: rgba(24, 24, 27, 0.75) !important;
-      box-shadow: 0 -0.5px 0 rgba(255,255,255,0.1) !important;
+      background: rgba(44, 44, 46, 0.5) !important;
+      box-shadow: 0 0 0 0.5px rgba(255,255,255,0.12), 0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.10) !important;
   }
   .navbar-spacer { display: none !important; }
   
