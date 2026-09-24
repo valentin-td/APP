@@ -1849,7 +1849,8 @@ function App() {
                                       if (currentCluster.length > 0) clusters.push(currentCluster);
 
                                       return (
-                                          <div key={indexJour} className="day-column" style={isMobile ? { minWidth: 'calc(100vw - 96px)', scrollSnapAlign: 'start' } : {}}>
+                                          <div key={indexJour} className="day-column" style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}>
+                                              {clusters.flatMap((cluster) => {
                                               {clusters.flatMap((cluster) => {
                                                   const clusterSize = cluster.length;
                                                   return cluster.map((rdv, indexInCluster) => {
