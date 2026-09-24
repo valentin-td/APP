@@ -1953,20 +1953,30 @@ function App() {
 
               {/* VUE : L'ACADÉMIE (PROTOCOLES) */}
               {role === 'gerant' && activeTab === 'protocoles' && (
-                <div className="admin-container">
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div>
-                          <h1 style={{margin: 0}}>L'Académie</h1>
-                          <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
+                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                  
+                  {/* EN-TÊTE FIXE */}
+                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                          <div>
+                              <h1 style={{margin: 0}}>L'Académie</h1>
+                              <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
+                          </div>
+                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <ThemeToggle />
+                              <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
+                              {!modeEditionProtocole && (
+                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">Créer une Fiche</button>
+                              )}
+                          </div>
                       </div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
-                          {!modeEditionProtocole && (
-                              <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action">Créer une Fiche</button>
-                          )}
-                      </div>
+                      {!modeEditionProtocole && (
+                          <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', width: '100%', boxSizing: 'border-box'}}/>
+                      )}
                   </div>
+
+                  {/* ZONE DÉFILANTE */}
+                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
 
                   {showAddPrestation && (
                       <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
@@ -1982,8 +1992,6 @@ function App() {
                   <div className="caisse-split-container" style={{ display: 'block' }}>
                       {!modeEditionProtocole && (
                           <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
-                              <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', maxWidth: '400px'}}/>
-                              
                               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
                                   {(protocolesListe || []).filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
                                       let stockSuffisant = true;
@@ -2198,6 +2206,8 @@ function App() {
                           </div>
                       </>
                   )}
+
+                  </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
 
