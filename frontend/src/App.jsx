@@ -1629,7 +1629,7 @@ function App() {
 
              {/* VUE : AGENDA */}
              {activeTab === 'agenda' && (
-                <div className="admin-container">
+                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 160px)' } : {}}>
                   <div className="agenda-header">
                       <div className="agenda-title-group" style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
                           <h1 style={{margin: 0}}>Agenda</h1>
@@ -1685,7 +1685,7 @@ function App() {
                           })}
                   </div>
 
-                  <div className="week-calendar" style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div className="week-calendar" style={isMobile ? { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } : { display: 'flex', flexDirection: 'column' }}>
                       <div className="week-header-row" style={{ display: 'flex' }}>
                           <div className="time-spacer" style={isMobile ? { width: '48px', flexShrink: 0 } : { width: '64px', flexShrink: 0 }}></div>
                           {joursSemaine.map((jour, index) => (
@@ -1695,7 +1695,7 @@ function App() {
                               </div>
                           ))}
                       </div>
-                      <div className="week-body" style={{ overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden' }}>
+                      <div className="week-body" style={isMobile ? { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', flex: 1, paddingTop: '10px' } : { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', paddingTop: '10px' }}>
                           <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
                               <div className="time-column" style={isMobile ? { width: '48px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' } : { width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
                                   {Array.from({ length: nbHeures }).map((_, i) => (
