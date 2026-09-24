@@ -1754,7 +1754,7 @@ function App() {
              {activeTab === 'agenda' && (
                 <div className="admin-container">
                   <div className="agenda-header">
-                      <div style={{display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap'}}>
+                      <div className="agenda-title-group" style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
                           <h1 style={{margin: 0}}>Agenda</h1>
                           <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
                               <button onClick={() => changerPeriode(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>◀</button>
@@ -1763,14 +1763,14 @@ function App() {
                               <button onClick={resetToToday} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
                           </div>
                       </div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                      <div className="agenda-actions-group" style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
                           <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
                       </div>
                   </div>
 
                   {/* SÉLECTEUR MULTI-COLLABORATEURS */}
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
+                  <div className="agenda-filtres-scroll" style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center', overflowX: 'auto', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch', paddingBottom: '8px' }}>
                       {role === 'gerant' && (
                           <button 
                               onClick={() => setFiltresEmployes([])} 
