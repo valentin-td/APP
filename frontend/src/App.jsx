@@ -1769,23 +1769,23 @@ function App() {
                       </div>
                   </div>
 
-                  {/* SÉLECTEUR MULTI-COLLABORATEURS */}
-                  <div className="agenda-filtres-scroll" style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', marginBottom: '16px', alignItems: 'center', overflowX: 'auto', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch', paddingBottom: '8px' }}>
+                 {/* SÉLECTEUR MULTI-COLLABORATEURS */}
+                  <div className="agenda-filtres-scroll" style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', marginBottom: '16px', alignItems: 'center', overflowX: 'auto', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch', paddingBottom: '8px', width: '100%' }}>
                       {role === 'gerant' && (
                           <button 
                               onClick={() => setFiltresEmployes([])} 
-                              style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
+                              style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease', flexShrink: 0 }}>
                               Toute l'équipe
                           </button>
                       )}
                       {role === 'gerant' && decodeToken(token)?.id_employe && (
                           <button 
                               onClick={() => setFiltresEmployes([decodeToken(token)?.id_employe])} 
-                              style={{ background: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}>
+                              style={{ background: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease', flexShrink: 0 }}>
                               Ma Vue
                           </button>
                       )}
-                      {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px' }}></div>}
+                      {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px', flexShrink: 0 }}></div>}
                       {(employesListe || [])
                           .filter(emp => role === 'gerant' || emp.id_employe === decodeToken(token)?.id_employe)
                           .map((emp) => {
@@ -1800,7 +1800,7 @@ function App() {
                                           if (isActive) { setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe)); } 
                                           else { setFiltresEmployes([...filtresEmployes, emp.id_employe]); }
                                       }}
-                                      style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}>
+                                      style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease', flexShrink: 0 }}>
                                       {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
                                       {role === 'employe' ? `Mon Planning (${(emp.nom || '').split(' ')[0]})` : (emp.nom || '').split(' ')[0]}
                                   </button>
@@ -1808,24 +1808,24 @@ function App() {
                           })}
                   </div>
 
-                  <div className="week-calendar" style={isMobile ? { overflowX: 'auto', scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch' } : {}}>
-                      <div className="week-header-row" style={isMobile ? { width: 'max-content', minWidth: '100%' } : {}}>
-                          <div className="time-spacer" style={isMobile ? { position: 'sticky', left: 0, zIndex: 20, background: 'var(--bg-app)' } : {}}></div>
+                  <div className="week-calendar" style={{ display: 'flex', flexDirection: 'column' }}>
+                      <div className="week-header-row" style={{ display: 'flex' }}>
+                          <div className="time-spacer" style={isMobile ? { width: '48px', flexShrink: 0 } : { width: '64px', flexShrink: 0 }}></div>
                           {joursSemaine.map((jour, index) => (
-                              <div key={index} className={`day-header ${isToday(jour) ? 'today' : ''}`} style={isMobile ? { minWidth: 'calc(100vw - 96px)', scrollSnapAlign: 'start', padding: '16px 0', boxSizing: 'border-box' } : { padding: '16px 0' }}>
+                              <div key={index} className={`day-header ${isToday(jour) ? 'today' : ''}`} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}>
                                   <span className="day-name">{jour.toLocaleDateString('fr-FR', {weekday: 'short'})}</span>
                                   <span className="day-number">{jour.getDate()}</span>
                               </div>
                           ))}
                       </div>
-                      <div className="week-body" style={isMobile ? { overflowY: 'auto', background: 'var(--bg-card)', width: 'max-content', minWidth: '100%' } : { overflowY: 'auto', background: 'var(--bg-card)' }}>
+                      <div className="week-body" style={{ overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden' }}>
                           <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
-                              <div className="time-column" style={isMobile ? { position: 'sticky', left: 0, zIndex: 10, width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' } : { width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+                              <div className="time-column" style={isMobile ? { width: '48px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' } : { width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
                                   {Array.from({ length: nbHeures }).map((_, i) => (
                                       <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>{heureDebutAgenda + i} h</div>
                                   ))}
                               </div>
-                              <div className="days-container" style={isMobile ? { overflowX: 'visible' } : {}}>
+                              <div className="days-container" style={{ display: 'flex', flex: 1 }}>
                                   {joursSemaine.map((jour, indexJour) => {
                                       const dateStringJour = formatDateInput(jour);
                                       const rdvsDuJourBruts = (planningData || []).filter(rdv => {
