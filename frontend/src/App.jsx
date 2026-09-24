@@ -2139,7 +2139,7 @@ function App() {
                       )}
 
                       {modeEditionProtocole === 'NEW' && (
-                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
+                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '24px' }}>
                               <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
                               
                               <div style={{marginBottom: '16px'}}>
@@ -2249,7 +2249,7 @@ function App() {
                       )}
                       
                       {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
-                          <div className="caisse-right-panel" style={{ width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: isMobile ? '130px' : '24px' }}>
+                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '24px' }}>
                               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
                                   <div>
                                       <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
