@@ -403,7 +403,9 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   }
 
   /* 2. LAYOUT GLOBAL */
-  .main-content { margin-left: 0 !important; margin-bottom: 90px !important; }
+    /* 2. LAYOUT GLOBAL */
+  .app-root { height: auto !important; min-height: 100dvh; overflow: visible !important; }
+  .main-content { margin-left: 0 !important; margin-bottom: 0 !important; min-height: 0 !important; padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px)) !important; }
   .dashboard-container { padding: 24px 16px !important; }
   
   /* 3. AGENDA (SWIPE HORIZONTAL) */
