@@ -389,14 +389,27 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       transition: background 0.2s ease !important;
   }
   .nav-item.active {
-      background: rgba(0, 0, 0, 0.06) !important; 
+      background: transparent !important; 
       color: var(--text-main) !important;
   }
   body.dark-mode .nav-item.active {
-      background: rgba(255, 255, 255, 0.12) !important;
+      background: transparent !important;
       color: var(--text-main) !important;
   }
-  .nav-icon { 
+  .nav-indicator-wrapper {
+      position: absolute; top: 6px; bottom: 6px; left: 6px; right: 6px; display: flex; pointer-events: none; z-index: 0;
+  }
+  .nav-indicator {
+      width: 20%; height: 100%; transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1); padding: 0 4px; box-sizing: border-box;
+  }
+  .nav-indicator-pill {
+      width: 100%; height: 100%; background: rgba(0, 0, 0, 0.06); border-radius: 16px;
+  }
+  body.dark-mode .nav-indicator-pill {
+      background: rgba(255, 255, 255, 0.12);
+  }
+  .nav-item { z-index: 1; position: relative; }
+  .nav-icon {
       width: 24px !important; 
       height: 24px !important; 
       opacity: 1 !important;
