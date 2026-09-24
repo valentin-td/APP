@@ -346,7 +346,8 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
 /* ==========================================================================
    14. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
-/* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
+@media (max-width: 767px) {
+  /* 1. BOTTOM TAB BAR (NAVBAR) - LIQUID GLASS iOS */
   .navbar-sidebar { 
       position: fixed !important;
       flex-direction: row !important; 
@@ -390,7 +391,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       transition: background 0.2s ease !important;
   }
   .nav-item.active {
-      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair de votre photo */
+      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair */
       color: var(--text-main) !important;
   }
   body.dark-mode .nav-item.active {
