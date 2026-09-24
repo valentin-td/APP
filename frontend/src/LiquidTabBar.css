@@ -1,0 +1,121 @@
+/* ==========================================================================
+   BARRE D'ONGLETS LIQUID GLASS (mobile) — utilisée par LiquidTabBar.jsx
+   Le fond verre de la barre vient de .navbar-sidebar (App.css).
+   ========================================================================== */
+.lg-row {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  touch-action: none;                 /* indispensable : le glissement ne doit pas faire défiler la page */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.lg-tab {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 12px;
+  transition: color 0.2s ease;
+}
+.lg-tab.is-active { color: var(--text-main); font-weight: 600; }
+.lg-icon { position: relative; display: flex; width: 24px; height: 24px; }
+.lg-icon svg { width: 100%; height: 100%; display: block; fill: none; stroke: currentColor; }
+.lg-label { white-space: nowrap; }
+
+/* ---------- La lentille (pilule au repos → verre agrandi quand on appuie) ---------- */
+.lg-lens {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  pointer-events: none;
+  will-change: transform, width, height;
+  --amt: 0;                            /* 0 = pilule grise, 1 = lentille de verre (piloté par le JS) */
+}
+.lg-lens-shadow {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  opacity: var(--amt);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), 0 0 0 0.5px rgba(0, 0, 0, 0.10);
+}
+.lg-lens-clip {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  isolation: isolate;
+  -webkit-mask-image: -webkit-radial-gradient(white, black);   /* corrige le clipping arrondi de Safari */
+}
+/* Filtre "verre" uniquement quand la lentille est levée (sinon il rendrait l'icône de la pilule floue) */
+.lg-lens.is-lit .lg-lens-clip {
+  -webkit-backdrop-filter: saturate(170%) brightness(1.05);
+  backdrop-filter: saturate(170%) brightness(1.05);
+}
+.lg-lens-rest {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.06);
+  opacity: calc(1 - var(--amt));
+}
+.lg-lens-inner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 54px;
+  opacity: var(--amt);
+}
+.lg-clone {
+  display: flex;
+  height: 54px;
+  will-change: transform;
+}
+/* Dans la lentille : icônes agrandies, noires/blanches et plus épaisses */
+.lg-clone .lg-tab { color: var(--text-main); font-weight: 600; }
+.lg-clone .lg-icon svg { stroke-width: 1.9; }
+
+.lg-lens-glass {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  opacity: var(--amt);
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.05) 42%,
+    rgba(255, 255, 255, 0.05) 58%,
+    rgba(255, 255, 255, 0.22) 100%);
+  box-shadow:
+    inset 0 0 0 0.75px rgba(255, 255, 255, 0.65),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.75),
+    inset 0 -1.5px 1.5px rgba(255, 255, 255, 0.40),
+    inset 5px 0 9px -4px rgba(96, 165, 250, 0.55),     /* reflet bleu à gauche */
+    inset -5px 0 9px -4px rgba(244, 114, 182, 0.50);   /* reflet rose à droite */
+}
+
+/* ---------- Mode sombre ---------- */
+body.dark-mode .lg-lens-rest { background: rgba(255, 255, 255, 0.12); }
+body.dark-mode .lg-lens-shadow {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+}
+body.dark-mode .lg-lens-glass {
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.03) 42%,
+    rgba(255, 255, 255, 0.03) 58%,
+    rgba(255, 255, 255, 0.14) 100%);
+}
