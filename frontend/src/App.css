@@ -362,13 +362,13 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
       padding-bottom: calc(8px + env(safe-area-inset-bottom)) !important;
       box-sizing: border-box !important; 
       justify-content: space-between !important; 
-      /* Effet Liquid Glass Apple pur (Aucune bordure dure) */
+      /* Effet Liquid Glass Apple pur */
       background: rgba(255, 255, 255, 0.75) !important;
       backdrop-filter: blur(30px) saturate(200%);
       -webkit-backdrop-filter: blur(30px) saturate(200%);
       border-top: none !important; 
       border-right: none !important;
-      box-shadow: 0 -0.5px 0 rgba(0,0,0,0.08) !important; /* Ligne de séparation ultra fine iOS */
+      box-shadow: 0 -0.5px 0 rgba(0,0,0,0.08) !important; 
       z-index: 1000 !important;
   }
   body.dark-mode .navbar-sidebar {
@@ -377,21 +377,21 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   }
   .navbar-spacer { display: none !important; }
   
-  /* L'effet "Pilule" (Pill) de l'image 2 */
+  /* L'effet "Pilule" (Pill) */
   .nav-item { 
       min-width: 0 !important; 
       flex: 1 !important;
       padding: 8px 0 !important; 
       margin: 0 4px !important;
-      border-radius: 16px !important; /* Forme de la pilule */
-      font-size: 10px !important; /* Micro typo iOS */
+      border-radius: 16px !important; 
+      font-size: 10px !important; 
       font-weight: 500 !important;
       color: var(--text-secondary) !important;
       gap: 2px !important; 
       transition: background 0.2s ease !important;
   }
   .nav-item.active {
-      background: rgba(0, 0, 0, 0.06) !important; /* Le fond gris clair */
+      background: rgba(0, 0, 0, 0.06) !important; 
       color: var(--text-main) !important;
   }
   body.dark-mode .nav-item.active {
@@ -446,7 +446,7 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   .presta-nom, .stock-nom { font-size: 13px; }
   .montant-presta, .stock-quantite { font-size: 13px; }
   
-  /* 6. MODALES ANCRÉES EN BAS (Bottom Sheet Style) */
+  /* 6. MODALES ANCRÉES EN BAS */
   .modal-overlay { align-items: flex-end; padding: 0; }
   .modal-content {
       border-radius: 24px 24px 0 0;
@@ -466,8 +466,8 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   right: -2px;
   width: 8px;
   height: 8px;
-  background-color: #ff3b30; /* Rouge exact d'Apple */
+  background-color: #ff3b30;
   border-radius: 50%;
-  border: 1.5px solid var(--bg-app); /* Contour pour détacher du logo */
+  border: 1.5px solid var(--bg-app);
   z-index: 10;
 }
