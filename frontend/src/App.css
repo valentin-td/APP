@@ -435,22 +435,20 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   .grid-collaborateurs { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); }
   
   .caisse-right-panel { 
-      position: fixed !important; 
-      bottom: calc(88px + env(safe-area-inset-bottom)) !important;
-      left: 16px; 
-      right: 16px;
+      position: relative !important; 
       height: auto !important; 
-      max-height: 45vh;
+      max-height: none;
       border-radius: 16px;
       border: 1px solid var(--border-color);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-      z-index: 900;
+      box-shadow: var(--shadow-sm);
+      z-index: 1;
       padding: 16px;
+      margin-bottom: 24px;
   }
   .caisse-right-panel--waiting { display: none !important; }
-  .ticket-lignes { max-height: 20vh; overflow-y: auto; }
-  .caisse-left-panel { padding-bottom: calc(45vh + 80px); }
-  .caisse-left-panel--waiting { padding-bottom: 24px; }
+  .ticket-lignes { max-height: 40vh; overflow-y: auto; }
+  .caisse-left-panel { padding-bottom: 0; }
+  .caisse-left-panel--waiting { padding-bottom: 0; }
 
   /* 5. LISTES ET POLICES RÉDUITES */
   .presta-item, .stock-item { flex-direction: column; align-items: flex-start; gap: 6px; }
