@@ -1578,7 +1578,7 @@ function App() {
 
               {/* VUE : CENTRE D'ACTION (TÂCHES) */}
               {role === 'gerant' && activeTab === 'actions' && (
-                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px', zIndex: 10 } : {}}>
                   {/* EN-TÊTE FIXE */}
                   <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
@@ -1965,7 +1965,7 @@ function App() {
 
               {/* VUE : L'ACADÉMIE (PROTOCOLES) */}
               {role === 'gerant' && activeTab === 'protocoles' && (
-                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px', zIndex: 10 } : {}}>
                   
                   {/* EN-TÊTE FIXE */}
                   <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
@@ -2225,7 +2225,7 @@ function App() {
 
               {/* VUE : PRODUITS (STOCKS) */}
               {role === 'gerant' && activeTab === 'produits' && (
-                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px', zIndex: 10 } : {}}>
                   {/* EN-TÊTE FIXE */}
                   <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
@@ -2298,7 +2298,7 @@ function App() {
 
               {/* VUE : RH (ÉQUIPE) */}
               {role === 'gerant' && activeTab === 'rh' && (
-                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px', zIndex: 10 } : {}}>
                   {/* EN-TÊTE FIXE */}
                   <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
@@ -2372,7 +2372,7 @@ function App() {
 
               {/* VUE : ADMIN COMPTA */}
               {role === 'gerant' && activeTab === 'admin' && (
-                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px', zIndex: 10 } : {}}>
                   {/* EN-TÊTE FIXE */}
                   <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
