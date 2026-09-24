@@ -1074,7 +1074,7 @@ function App() {
 
   return (
     <>
-    <div className="app-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
       
       <style>{`
           .rdv-card-accordeon {
