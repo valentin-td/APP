@@ -1548,7 +1548,7 @@ function App() {
                                 </div>
                                 <input type="text" className="input-fournisseur" placeholder="🔍 Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}} />
                                 
-                                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px'}}>
+                                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px', maxHeight: isMobile ? '40vh' : 'none'}}>
                                     {(catalogueListe || [])
                                         .filter(art => {
                                             if (art.type_article !== posType) return false;
