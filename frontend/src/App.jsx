@@ -1770,7 +1770,7 @@ function App() {
                   </div>
 
                   {/* SÉLECTEUR MULTI-COLLABORATEURS */}
-                  <div className="agenda-filtres-scroll" style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center', overflowX: 'auto', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch', paddingBottom: '8px' }}>
+                  <div className="agenda-filtres-scroll" style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', marginBottom: '16px', alignItems: 'center', overflowX: 'auto', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch', paddingBottom: '8px' }}>
                       {role === 'gerant' && (
                           <button 
                               onClick={() => setFiltresEmployes([])} 
@@ -1808,24 +1808,24 @@ function App() {
                           })}
                   </div>
 
-                  <div className="week-calendar">
-                      <div className="week-header-row">
-                          <div className="time-spacer"></div>
+                  <div className="week-calendar" style={isMobile ? { overflowX: 'auto', scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch' } : {}}>
+                      <div className="week-header-row" style={isMobile ? { width: 'max-content', minWidth: '100%' } : {}}>
+                          <div className="time-spacer" style={isMobile ? { position: 'sticky', left: 0, zIndex: 20, background: 'var(--bg-app)' } : {}}></div>
                           {joursSemaine.map((jour, index) => (
-                              <div key={index} className={`day-header ${isToday(jour) ? 'today' : ''}`}>
+                              <div key={index} className={`day-header ${isToday(jour) ? 'today' : ''}`} style={isMobile ? { minWidth: 'calc(100vw - 96px)', scrollSnapAlign: 'start', padding: '16px 0', boxSizing: 'border-box' } : { padding: '16px 0' }}>
                                   <span className="day-name">{jour.toLocaleDateString('fr-FR', {weekday: 'short'})}</span>
                                   <span className="day-number">{jour.getDate()}</span>
                               </div>
                           ))}
                       </div>
-                      <div className="week-body" style={{ overflowY: 'auto', background: 'var(--bg-card)' }}>
+                      <div className="week-body" style={isMobile ? { overflowY: 'auto', background: 'var(--bg-card)', width: 'max-content', minWidth: '100%' } : { overflowY: 'auto', background: 'var(--bg-card)' }}>
                           <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
-                              <div className="time-column" style={{ width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+                              <div className="time-column" style={isMobile ? { position: 'sticky', left: 0, zIndex: 10, width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' } : { width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
                                   {Array.from({ length: nbHeures }).map((_, i) => (
                                       <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>{heureDebutAgenda + i} h</div>
                                   ))}
                               </div>
-                              <div className="days-container">
+                              <div className="days-container" style={isMobile ? { overflowX: 'visible' } : {}}>
                                   {joursSemaine.map((jour, indexJour) => {
                                       const dateStringJour = formatDateInput(jour);
                                       const rdvsDuJourBruts = (planningData || []).filter(rdv => {
