@@ -27,13 +27,13 @@ function App() {
 
       if (isDarkMode) {
           document.body.classList.add('dark-mode');
-          document.documentElement.style.backgroundColor = '#09090b'; // Force le fond racine
-          metaThemeColor.setAttribute('content', '#09090b'); // Colore la barre iOS/Android
+          document.documentElement.style.backgroundColor = '#0b0b0d'; // Force le fond racine
+          metaThemeColor.setAttribute('content', '#0b0b0d'); // Colore la barre iOS/Android
           localStorage.setItem('theme', 'dark');
       } else {
           document.body.classList.remove('dark-mode');
-          document.documentElement.style.backgroundColor = '#f9fafb';
-          metaThemeColor.setAttribute('content', '#f9fafb');
+          document.documentElement.style.backgroundColor = '#f6f6f7';
+          metaThemeColor.setAttribute('content', '#f6f6f7');
           localStorage.setItem('theme', 'light');
       }
   }, [isDarkMode]);
@@ -1298,7 +1298,7 @@ function App() {
                   {/* ZONE DÉFILANTE */}
                   <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   {!dashboardData ? (
-                      <div className="skeleton-loading" style={{height: '200px', borderRadius: '12px'}}></div>
+                      <div className="skeleton-loading" style={{height: '200px', borderRadius: 'var(--radius-card)'}}></div>
                   ) : (
                       <>
                           <div className="cartes-financieres">
@@ -1603,38 +1603,43 @@ function App() {
                       }}>Ajouter une tâche</button>
                   </div>
 
-                  <div className="section-titre" style={{marginTop: '32px'}}>À traiter ({(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length})</div>
-                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                      {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').map(tache => (
-                          <div key={tache.id_tache} style={{background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-card)', border: '1px solid var(--border-color)', borderLeft: `4px solid ${getCouleurTache(tache)}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'var(--shadow-sm)', transition: 'all 0.2s ease'}}>
-                              <div style={{display: 'flex', alignItems: 'flex-start', gap: '16px'}}>
-                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: '2px solid var(--text-muted)', width: '24px', height: '24px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px'}}></button>
-                                  <div>
-                                      <h3 style={{margin: '0 0 4px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                          {tache.titre}
-                                          {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'white', padding: '2px 6px', borderRadius: '4px'}}>DÉTECTÉ PAR IA</span>}
-                                      </h3>
-                                      {tache.description && <p style={{margin: '0 0 8px 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
-                                      {tache.date_echeance && <span style={{fontSize: '11px', fontWeight: 'bold', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
+                  <div className="section-label">À traiter ({(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length})</div>
+                  {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length === 0 ? (
+                      <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>
+                  ) : (
+                      <div className="list-group">
+                          {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').map(tache => (
+                              <div key={tache.id_tache} className="list-row" style={{alignItems: 'flex-start'}}>
+                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} title="Marquer comme terminée" style={{background: 'none', border: `2px solid ${getCouleurTache(tache)}`, width: '20px', height: '20px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px', padding: 0}}></button>
+                                  <div className="list-row-content">
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
+                                          <span className="list-row-label">{tache.titre}</span>
+                                          {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'var(--btn-text)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600'}}>DÉTECTÉ</span>}
+                                      </div>
+                                      {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
+                                      {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
                                   </div>
+                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px'}}>
+                                      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                                  </button>
                               </div>
-                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer'}}>
-                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                              </button>
-                          </div>
-                      ))}
-                      {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length === 0 && <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>}
-                  </div>
+                          ))}
+                      </div>
+                  )}
 
-                  <div className="section-titre" style={{marginTop: '32px'}}>Terminées</div>
-                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', opacity: 0.7}}>
-                      {(tachesListe || []).filter(t => t.statut === 'FAIT').map(tache => (
-                          <div key={tache.id_tache} style={{display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)'}}>
-                              <span style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontSize: '13px'}}>{tache.titre}</span>
-                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Annuler</button>
+                  {(tachesListe || []).filter(t => t.statut === 'FAIT').length > 0 && (
+                      <>
+                          <div className="section-label">Terminées</div>
+                          <div className="list-group" style={{opacity: 0.65}}>
+                              {(tachesListe || []).filter(t => t.statut === 'FAIT').map(tache => (
+                                  <div key={tache.id_tache} className="list-row">
+                                      <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400}}>{tache.titre}</span>
+                                      <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '12px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
+                                  </div>
+                              ))}
                           </div>
-                      ))}
-                  </div>
+                      </>
+                  )}
                   </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
@@ -2013,9 +2018,9 @@ function App() {
                                       });
 
                                       return (
-                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
                                               {proto.medias && proto.medias.apres ? (
-                                                  <div style={{height: '140px', width: '100%', background: '#ccc'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
+                                                  <div style={{height: '140px', width: '100%', background: 'var(--bg-hover)'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
                                               ) : ( <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div> )}
                                               
                                               <div style={{padding: '16px'}}>
@@ -2397,45 +2402,49 @@ function App() {
                           <p>Aucune clôture de caisse (Z) effectuée pour le moment.</p>
                       </div>
                   ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div className="list-group">
                           {(historiqueData || []).map((anneeData) => (
-                              <div key={anneeData.annee} style={{ background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                                  <div onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', background: 'var(--bg-card)', padding: '16px', fontWeight: 'bold', fontSize: '16px', color: 'var(--text-main)' }}>
-                                      <span style={{ fontSize: '20px' }}>{expandedYear === anneeData.annee ? '📂' : '📁'}</span> 
-                                      Année {anneeData.annee}
-                                  </div>
+                              <div key={anneeData.annee} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                  <button type="button" onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} className="list-row" style={{ fontWeight: '600', width: '100%' }}>
+                                      <span className="list-row-icon" style={{ transform: expandedYear === anneeData.annee ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
+                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                                      </span>
+                                      <span className="list-row-label" style={{ fontWeight: '600' }}>Année {anneeData.annee}</span>
+                                  </button>
 
                                   {expandedYear === anneeData.annee && (
-                                      <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
+                                      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
                                           {(anneeData.mois || []).map((moisData) => (
-                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-                                                  
-                                                  <div onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px' }}>
-                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', color: 'var(--text-main)' }}>
-                                                          <span style={{ fontSize: '18px' }}>{expandedMonth === moisData.nom ? '📂' : '📁'}</span> 
+                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', overflow: 'hidden', marginTop: '12px' }}>
+
+                                                  <button type="button" onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', width: '100%', boxSizing: 'border-box', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px', background: 'none', border: 'none', fontFamily: 'inherit' }}>
+                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '600', color: 'var(--text-main)' }}>
+                                                          <span style={{ display: 'flex', width: '14px', height: '14px', color: 'var(--text-secondary)', transform: expandedMonth === moisData.nom ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
+                                                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                                                          </span>
                                                           {moisData.nom}
                                                       </div>
-                                                      <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)' }}>
+                                                      <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)' }}>
                                                           {moisData.total_mensuel?.toFixed(2) || '0.00'} €
                                                       </span>
-                                                  </div>
+                                                  </button>
 
                                                   {expandedMonth === moisData.nom && (
                                                       <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                                          <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', border: '1px solid #bfdbfe', marginBottom: '8px' }}>
-                                                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>📊 Bilan consolidé ({moisData.nom})</span>
+                                                          <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: 'var(--radius-input)', fontSize: '13px', fontWeight: '600', border: '1px solid var(--border-color)', marginBottom: '8px' }}>
+                                                              <span>Bilan consolidé ({moisData.nom})</span>
                                                               <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
                                                           </div>
 
                                                           {(moisData.jours || []).map(jour => (
-                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px dashed var(--border-color)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'} title="Cliquez pour télécharger le PDF détaillé">
+                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'var(--bg-card)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'} title="Cliquez pour télécharger le PDF détaillé">
                                                                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                                      <span style={{ fontSize: '20px' }}>📄</span>
-                                                                      <span style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
+                                                                      <span style={{ display: 'flex', width: '17px', height: '17px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+                                                                      <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
                                                                   </div>
                                                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                       <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
-                                                                      <span style={{ fontSize: '16px' }}>⬇️</span>
+                                                                      <span style={{ display: 'flex', width: '15px', height: '15px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M5 21h14"/></svg></span>
                                                                   </div>
                                                               </div>
                                                           ))}
