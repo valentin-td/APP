@@ -409,8 +409,17 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   .dashboard-container { padding: 24px 16px !important; }
   
   /* 3. AGENDA (SWIPE HORIZONTAL) */
-  .agenda-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
-  .agenda-header > div { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  .agenda-header { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+  .agenda-title-group { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  .agenda-actions-group { width: 100%; justify-content: space-between; }
+
+  .agenda-filtres-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+  .agenda-filtres-scroll::-webkit-scrollbar { display: none; }
+  .agenda-filtres-scroll > button { flex-shrink: 0; }
+
+  .week-calendar { margin-top: 4px; }
+  .day-header { padding: 10px 4px; }
+  .time-spacer { width: 48px; }
   .days-container {
       overflow-x: auto;
       scroll-snap-type: x mandatory;
