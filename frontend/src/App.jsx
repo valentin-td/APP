@@ -1500,7 +1500,7 @@ function App() {
               {role === 'gerant' && activeTab === 'caisse' && (
                 <div className="admin-container caisse-split-container">
                     {/* LEFT PANEL - CATALOGUE */}
-                    <div className="caisse-left-panel">
+                    <div className={`caisse-left-panel ${!posEmploye ? 'caisse-left-panel--waiting' : ''}`}>
                         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                             <div><h1 style={{margin: 0}}>Caisse</h1></div>
                             <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
@@ -1575,7 +1575,7 @@ function App() {
                     </div>
 
                     {/* RIGHT PANEL - PANIER & ENCAISSEMENT (FLOATING ACTION BAR SUR MOBILE) */}
-                    <div className="caisse-right-panel">
+                    <div className={`caisse-right-panel ${!posEmploye ? 'caisse-right-panel--waiting' : ''}`}>
                         {ticketGenere ? (
                             <div style={{padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center'}}>
                                 <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
