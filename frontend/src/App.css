@@ -431,7 +431,8 @@ body.dark-mode .app-logo { mix-blend-mode: lighten; }
   }
   
   /* 4. CAISSE (FLOATING ACTION BAR & GRILLE) */
-  .caisse-split-container { flex-direction: column; gap: 16px; }
+  .caisse-split-container { flex-direction: column; gap: 16px; align-items: stretch; }
+  .caisse-left-panel { width: 100%; box-sizing: border-box; }
   .grid-collaborateurs { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); }
   
   .caisse-right-panel { 
