@@ -17,11 +17,23 @@ function App() {
   );
   
   useEffect(() => {
+      // On récupère ou on crée la balise qui contrôle la barre de statut mobile
+      let metaThemeColor = document.querySelector('meta[name="theme-color"]');
+      if (!metaThemeColor) {
+          metaThemeColor = document.createElement('meta');
+          metaThemeColor.name = 'theme-color';
+          document.head.appendChild(metaThemeColor);
+      }
+
       if (isDarkMode) {
           document.body.classList.add('dark-mode');
+          document.documentElement.style.backgroundColor = '#09090b'; // Force le fond racine
+          metaThemeColor.setAttribute('content', '#09090b'); // Colore la barre iOS/Android
           localStorage.setItem('theme', 'dark');
       } else {
           document.body.classList.remove('dark-mode');
+          document.documentElement.style.backgroundColor = '#f9fafb';
+          metaThemeColor.setAttribute('content', '#f9fafb');
           localStorage.setItem('theme', 'light');
       }
   }, [isDarkMode]);
