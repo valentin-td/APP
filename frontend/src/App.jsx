@@ -1279,7 +1279,7 @@ function App() {
 
               {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
               {role === 'gerant' && activeTab === 'accueil' && (
-                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 120px)', overflow: 'hidden' } : {}}>
+                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px' } : {}}>
                   {/* EN-TÊTE FIXE */}
                   <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
@@ -1641,7 +1641,7 @@ function App() {
 
              {/* VUE : AGENDA */}
              {activeTab === 'agenda' && (
-                <div className="admin-container" style={isMobile ? { display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 160px)' } : {}}>
+                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px' } : {}}>
                   <div className="agenda-header">
                       <div className="agenda-title-group" style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
                           <h1 style={{margin: 0}}>Agenda</h1>
@@ -1707,7 +1707,7 @@ function App() {
                               </div>
                           ))}
                       </div>
-                      <div className="week-body" style={isMobile ? { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', flex: 1, paddingTop: '10px' } : { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', paddingTop: '10px' }}>
+                      <div className="week-body" style={isMobile ? { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', flex: 1, paddingTop: '10px', paddingBottom: '120px' } : { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', paddingTop: '10px' }}>
                           <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
                               <div className="time-column" style={isMobile ? { width: '48px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' } : { width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
                                   {Array.from({ length: nbHeures }).map((_, i) => (
