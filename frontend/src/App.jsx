@@ -1851,7 +1851,7 @@ function App() {
                                       return (
                                           <div key={indexJour} className="day-column" style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}>
                                               {clusters.flatMap((cluster) => {
-                                              {clusters.flatMap((cluster) => {
+                                            
                                                   const clusterSize = cluster.length;
                                                   return cluster.map((rdv, indexInCluster) => {
                                                       const ECHELLE_HEURE = 80; const dureeReelle = rdv.duree_minutes || 30;
