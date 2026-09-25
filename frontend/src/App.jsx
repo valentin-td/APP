@@ -2577,7 +2577,7 @@ function App() {
 
               {/* VUE : MESSAGERIE (TEAMS STYLE) */}
               {activeTab === 'messagerie' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header chat-active" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+                <div className={isMobile ? "admin-container mobile-fixed-header chat-active" : "admin-container"} style={isMobile ? { zIndex: 10, display: 'flex', flexDirection: 'column' } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   {/* Sur Desktop, on garde le titre. Sur mobile, on le masque pour gagner de la place */}
                   {!isMobile && (
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
