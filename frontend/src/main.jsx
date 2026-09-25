@@ -3,15 +3,17 @@ import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import './index.css';
 
-// 🚨 DESTRUCTION TOTALE DU MODE HORS-LIGNE (PWA) 🚨
-// Ce script traque et désinstalle tous les anciens Service Workers 
-// qui bloquaient les mises à jour et les connexions en direct.
+// 📡 INSTALLATION DU SERVICE WORKER (NOTIFICATIONS PUSH)
+// On enregistre le nouveau SW dédié uniquement aux notifications push (pas de mise en cache offline agressive)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(function(registrations) {
-    for(let registration of registrations) {
-      registration.unregister();
-      console.log("💀 Ancien cache hors-ligne (PWA) détruit !");
-    }
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then((registration) => {
+        console.log('✅ Service Worker enregistré pour les Push Notifications. Scope:', registration.scope);
+      })
+      .catch((error) => {
+        console.error('❌ Échec de l\'enregistrement du Service Worker:', error);
+      });
   });
 }
 
