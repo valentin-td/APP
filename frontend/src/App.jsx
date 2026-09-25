@@ -1301,44 +1301,44 @@ function App() {
                       <div className="skeleton-loading" style={{height: '200px', borderRadius: 'var(--radius-card)'}}></div>
                   ) : (
                       <>
-                          <div className="cartes-financieres">
-                              <div className="carte">
-                                  <div className="carte-titre-container">
-                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
-                                      <h3>Chiffre d'Affaires</h3>
-                                  </div>
-                                  <p className="montant">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                          <div className="kpi-grid">
+                              <div className="kpi-card">
+                                  <span className="kpi-label">Chiffre d'affaires</span>
+                                  <p className="kpi-value">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="kpi-currency">€</span></p>
                               </div>
-                              <div className="carte">
-                                  <div className="carte-titre-container">
-                                      <div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
-                                      <h3>Panier Moyen</h3>
-                                  </div>
-                                  <p className="montant">{dashboardData.finances?.panier_moyen || '0.00'} <span className="devise">€</span></p>
+                              <div className="kpi-card">
+                                  <span className="kpi-label">Panier moyen</span>
+                                  <p className="kpi-value">{dashboardData.finances?.panier_moyen || '0.00'} <span className="kpi-currency">€</span></p>
                               </div>
-                              <div className="carte">
-                                  <div className="carte-titre-container">
-                                      <div className="icon" style={{color: 'var(--color-info)'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
-                                      <h3>Commissions Dues</h3>
-                                  </div>
-                                  <p className="montant" style={{color: 'var(--color-info)'}}>{dashboardData.finances?.commissions_a_payer?.toFixed(2) || '0.00'} <span className="devise">€</span></p>
+                              <div className="kpi-card kpi-card--accent">
+                                  <span className="kpi-label">Commissions dues</span>
+                                  <p className="kpi-value">{dashboardData.finances?.commissions_a_payer?.toFixed(2) || '0.00'} <span className="kpi-currency">€</span></p>
                               </div>
                           </div>
-                          
-                          <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '24px'}}>
+
+                          <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '8px'}}>
                               <div className="carte" style={{flex: 1, minWidth: '300px'}}>
                                   <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
                                   {(dashboardData.top_3_prestations || []).length > 0 ? (
-                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                          {(dashboardData.top_3_prestations || []).map((p, i) => (
-                                              <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px'}}>
-                                                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                                                      <span style={{fontWeight: 'bold', color: 'var(--text-secondary)'}}>#{i+1}</span>
-                                                      <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{p.nom}</span>
-                                                  </div>
-                                                  <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(p.total_genere || 0).toFixed(2)} €</span>
-                                              </div>
-                                          ))}
+                                      <div className="rank-list">
+                                          {(() => {
+                                              const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
+                                              return (dashboardData.top_3_prestations || []).map((p, i) => {
+                                                  const val = parseFloat(p.total_genere || 0);
+                                                  return (
+                                                      <div key={i} className="rank-row">
+                                                          <span className="rank-badge">{i + 1}</span>
+                                                          <div className="rank-info">
+                                                              <div className="rank-info-top">
+                                                                  <span className="rank-name">{p.nom}</span>
+                                                                  <span className="rank-value">{val.toFixed(2)} €</span>
+                                                              </div>
+                                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{width: `${(val / maxVal) * 100}%`}}></div></div>
+                                                          </div>
+                                                      </div>
+                                                  );
+                                              });
+                                          })()}
                                       </div>
                                   ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
                               </div>
