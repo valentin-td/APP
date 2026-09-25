@@ -17,15 +17,8 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
 
-// Les VAPID keys peuvent être générées une seule fois.
-// J'ai généré ces clés de test pour toi. Idéalement, elles doivent être dans ton fichier .env
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || 'BOMzR5zCXZY3yW3aX4_9kF2bW3e8K5L7mN9pQ1oR2sT4uV6wX8yZ0aB2cD4eF6gH8iJ0kL2mN4oP6qR8sT0uV2w';
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || 'aB3cD5eF7gH9iJ1kL3mN5oP7qR9sT1uV3wX5yZ7aB9c';
-webpush.setVapidDetails(
-    'mailto:contact@stack.fr',
-    vapidPublicKey,
-    vapidPrivateKey
-);
+let vapidPublicKey = "";
+let vapidPrivateKey = "";
 
 const groq = new OpenAI({
     apiKey: process.env.GROQ_API_KEY,
@@ -177,6 +170,23 @@ pool.query(`
     
     CREATE TABLE IF NOT EXISTS push_subscriptions (id_sub SERIAL PRIMARY KEY, id_salon INT, role VARCHAR(20), id_employe INT, endpoint TEXT, keys JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 `).then(async () => {
+    try {
+        await pool.query(`CREATE TABLE IF NOT EXISTS vapid_keys (id INT PRIMARY KEY, public_key TEXT, private_key TEXT)`);
+        const res = await pool.query('SELECT * FROM vapid_keys WHERE id = 1');
+        if (res.rowCount === 0) {
+            const keys = webpush.generateVAPIDKeys();
+            await pool.query('INSERT INTO vapid_keys (id, public_key, private_key) VALUES (1, $1, $2)', [keys.publicKey, keys.privateKey]);
+            vapidPublicKey = keys.publicKey;
+            vapidPrivateKey = keys.privateKey;
+            console.log("✅ Nouvelles clés VAPID générées et sauvegardées en BDD.");
+        } else {
+            vapidPublicKey = res.rows[0].public_key;
+            vapidPrivateKey = res.rows[0].private_key;
+            console.log("✅ Clés VAPID (Push) chargées depuis la BDD.");
+        }
+        webpush.setVapidDetails('mailto:contact@stack.fr', vapidPublicKey, vapidPrivateKey);
+    } catch (e) { console.error("Erreur init VAPID:", e); }
+
     try {
         await pool.query(`UPDATE clotures_caisse SET date_cloture = DATE(date_creation) WHERE date_cloture IS NULL;`);
         await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_DATE;`);
