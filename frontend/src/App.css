@@ -553,6 +553,26 @@ body.dark-mode .theme-toggle-btn:hover {
       scroll-snap-align: start;
   }
   
+  /* En-tête mobile fixe avec gestion du thème */
+  .mobile-fixed-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--bg-app);
+      display: flex;
+      flex-direction: column;
+      padding: max(24px, env(safe-area-inset-top)) 16px 0 16px;
+      z-index: 10;
+  }
+  .mobile-fixed-header-top {
+      flex-shrink: 0;
+      background-color: var(--bg-app);
+      z-index: 10;
+      padding-bottom: 8px;
+  }
+
   /* 4. CAISSE (FLOATING ACTION BAR & GRILLE) */
   .caisse-split-container { flex-direction: column; gap: 16px; align-items: stretch; }
   .caisse-left-panel { width: 100%; box-sizing: border-box; }
