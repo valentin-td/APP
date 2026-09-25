@@ -16,8 +16,10 @@
   --radius-card: 18px;
   --radius-input: 10px;
   --radius-button: 14px;
-    --shadow-sm: 0 2px 8px rgba(20,20,26,0.06), 0 1px 2px rgba(20,20,26,0.05);
+  --shadow-sm: 0 2px 8px rgba(20,20,26,0.06), 0 1px 2px rgba(20,20,26,0.05);
   --shadow-md: 0 12px 32px rgba(20,20,26,0.10), 0 2px 8px rgba(20,20,26,0.06);
+  --card-gradient: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+  --card-shadow: 0 1px 2px rgba(20,20,26,0.04), 0 10px 24px rgba(20,20,26,0.07);
   --color-success: #166534;
   --bg-success: #e7f6ec;
   --color-danger: #99251b;
@@ -41,6 +43,8 @@ body.dark-mode {
   --grid-line: #29292d;
   --shadow-sm: 0 2px 8px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.35);
   --shadow-md: 0 12px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.30);
+  --card-gradient: linear-gradient(180deg, #1c1c1f 0%, #18181b 100%);
+  --card-shadow: 0 1px 2px rgba(0,0,0,0.30), 0 10px 24px rgba(0,0,0,0.40);
   --color-success: #34d399;
   --bg-success: rgba(16, 185, 129, 0.15);
   --color-danger: #f87171;
@@ -83,7 +87,7 @@ h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 8px
    3. CARTES & CONTENEURS
    ========================================================================== */
 .carte, .top-prestations, .stock-container, .dossier-mois, .scan-carte, .reputation-carte, .export-carte {
-  background: var(--bg-card); border-radius: var(--radius-card); padding: 28px 24px; box-shadow: var(--shadow-sm); border: 1px solid var(--border-color); margin-bottom: 20px;
+  background: var(--card-gradient); border-radius: var(--radius-card); padding: 28px 24px; box-shadow: var(--card-shadow); border: 1px solid var(--border-color); margin-bottom: 20px;
 }
 .logo-container { display: flex; justify-content: center; align-items: center; margin-bottom: 32px; width: 100%; }
 .app-logo { width: 100%; max-width: 260px; height: auto; object-fit: contain; border: none; box-shadow: none; background: transparent; transition: all 0.3s ease; }
@@ -157,7 +161,7 @@ button.list-row { border: none; cursor: pointer; -webkit-tap-highlight-color: tr
 
 /* --- Cartes KPI (Tableau de Bord) : sobre, chiffré, inspiré Stripe/SumUp --- */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px; }
-.kpi-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-card); padding: 22px 24px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 10px; }
+.kpi-card { background: var(--card-gradient); border: 1px solid var(--border-color); border-radius: var(--radius-card); padding: 22px 24px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 10px; }
 .kpi-card--accent { border-color: var(--color-info); background: var(--bg-info); }
 .kpi-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
 .kpi-value { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-main); font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 6px; }
