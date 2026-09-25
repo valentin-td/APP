@@ -1072,6 +1072,17 @@ function App() {
       }).slice(0, 5); 
   };
 
+  const formatPortion = (qte) => {
+      const val = parseFloat(qte);
+      if (Math.abs(val - 0.13) < 0.01) return "1/8";
+      if (Math.abs(val - 0.25) < 0.01) return "1/4";
+      if (Math.abs(val - 0.33) < 0.01) return "1/3";
+      if (Math.abs(val - 0.5) < 0.01) return "1/2";
+      if (Math.abs(val - 0.67) < 0.01) return "2/3";
+      if (Math.abs(val - 0.75) < 0.01) return "3/4";
+      return val;
+  };
+
   return (
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
@@ -1932,7 +1943,7 @@ function App() {
                                       (protocoleVisible.ingredients || []).map((ing, i) => (
                                           <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i !== (protocoleVisible.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '14px', color: 'var(--text-main)', fontWeight: '600'}}>
                                               <span><span style={{color: 'var(--text-secondary)', marginRight: '8px'}}>🧪</span>{ing.nom}</span>
-                                              <span>{ing.quantite_necessaire} doses / ml</span>
+                                              <span>{formatPortion(ing.quantite_necessaire)} dose(s)</span>
                                           </div>
                                       ))
                                   ) : <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit à préparer.</span>}
@@ -2104,14 +2115,26 @@ function App() {
                                       <option value="">-- Ajouter un produit --</option>
                                       {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
                                   </select>
-                                  <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '80px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})} />
+                                  <select className="input-fournisseur" style={{width: '110px', padding: '11px 8px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})}>
+                                      <option value="">Portion</option>
+                                      <option value="0.13">1/8 dose</option>
+                                      <option value="0.25">1/4 dose</option>
+                                      <option value="0.33">1/3 dose</option>
+                                      <option value="0.5">1/2 dose</option>
+                                      <option value="0.67">2/3 dose</option>
+                                      <option value="0.75">3/4 dose</option>
+                                      <option value="1">1 dose</option>
+                                      <option value="1.5">1.5 dose</option>
+                                      <option value="2">2 doses</option>
+                                      <option value="3">3 doses</option>
+                                  </select>
                                   <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
                               </div>
                               
                               <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
                                   {(nouveauProtocole.ingredients || []).map(ing => (
-                                      <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
-                                          <span>{ing.quantite_necessaire}x {ing.nom}</span>
+                                      <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
+                                          <span><strong style={{color: 'var(--btn-primary)'}}>{formatPortion(ing.quantite_necessaire)} dose(s)</strong> de {ing.nom}</span>
                                           <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
                                       </div>
                                   ))}
@@ -2185,7 +2208,7 @@ function App() {
                               <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
                                   {(modeEditionProtocole.ingredients || []).map((ing, i) => (
                                       <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== (modeEditionProtocole.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
-                                          <span>{ing.nom}</span><strong>{ing.quantite_necessaire} doses/ml</strong>
+                                          <span>{ing.nom}</span><strong style={{color: 'var(--text-main)'}}>{formatPortion(ing.quantite_necessaire)} dose(s)</strong>
                                       </div>
                                   ))}
                                   {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
