@@ -160,6 +160,8 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS date_cloture DATE;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+
+    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 `).then(async () => {
     try {
         await pool.query(`UPDATE clotures_caisse SET date_cloture = DATE(date_creation) WHERE date_cloture IS NULL;`);
@@ -790,6 +792,41 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
         console.error("❌ Erreur export archive fiscale:", e);
         res.status(500).json({ erreur: "Erreur lors de la génération de l'archive fiscale." });
     }
+});
+
+// =========================================================================
+// --- MESSAGERIE INTERNE ---
+// =========================================================================
+app.get('/api/messages', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT m.*, e.nom as nom_expediteur, e.photo_url as photo_expediteur FROM messages m LEFT JOIN employes e ON m.id_expediteur = e.id_employe WHERE m.id_salon = $1 ORDER BY m.date_creation ASC`, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur messages." }); }
+});
+
+app.post('/api/messages', verifierToken, async (req, res) => {
+    const { id_destinataire, contenu, fichier_url, nom_expediteur, photo_expediteur } = req.body;
+    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : null;
+    try {
+        const dest = id_destinataire === 'gerant' ? null : (id_destinataire === 'salon' ? 0 : id_destinataire);
+        const result = await pool.query(
+            `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url) VALUES ($1, $2, $3, $4, $5) RETURNING id_message, date_creation`,
+            [req.user.id_salon, id_expediteur, dest, contenu, fichier_url || null]
+        );
+        const newMessage = {
+            id_message: result.rows[0].id_message,
+            id_salon: req.user.id_salon,
+            id_expediteur,
+            id_destinataire: dest,
+            contenu,
+            fichier_url,
+            date_creation: result.rows[0].date_creation,
+            nom_expediteur: req.user.role === 'employe' ? nom_expediteur : 'Gérant',
+            photo_expediteur: photo_expediteur || null
+        };
+        io.to(req.user.id_salon.toString()).emit('nouveauMessage', newMessage);
+        res.status(201).json(newMessage);
+    } catch (e) { res.status(500).json({ erreur: "Erreur envoi message." }); }
 });
 
 // =========================================================================
