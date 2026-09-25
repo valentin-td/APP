@@ -1166,16 +1166,16 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         doc.moveDown(4);
 
         // --- FONCTIONS UTILITAIRES DE DESSIN ---
-        const drawTableRow = (col1, col2, col3, isHeader = false) => {
+        const drawTableRow = (col1, col2, col3, isHeader = false, isTotal = false) => {
             if (doc.y > 750) doc.addPage();
             const startY = doc.y;
             
-            doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isHeader ? TEXT_DARK : TEXT_LIGHT).text(col1, 50, startY, { width: 50 });
-            doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isHeader ? TEXT_DARK : TEXT_LIGHT).text(col2, 100, startY, { width: 340 });
-            doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isHeader ? TEXT_DARK : TEXT_DARK).text(col3, 450, startY, { width: 95, align: 'right' });
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col1, 50, startY, { width: 50 });
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col2, 110, startY, { width: 330 });
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? THEME_COLOR : TEXT_DARK).text(col3, 450, startY, { width: 95, align: 'right' });
             
             const currentY = doc.y;
-            if (!isHeader) {
+            if (!isHeader && !isTotal) {
                 doc.moveTo(50, currentY + 5).lineTo(545, currentY + 5).lineWidth(0.5).strokeColor(LINE_COLOR).stroke();
             }
             doc.y = currentY + 12;
@@ -1191,10 +1191,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         // --- SECTION : RÉCAPITULATIF FINANCIER ---
         drawSectionHeader('Récapitulatif Global');
-        const totalLabelY = doc.y;
-        doc.font('Helvetica-Bold').fontSize(12).fillColor(TEXT_DARK).text("Total Encaissé", 50, totalLabelY);
-        doc.font('Helvetica-Bold').fontSize(14).fillColor(THEME_COLOR).text(`${caTotal.toFixed(2)} €`, 450, totalLabelY, { align: 'right' });
-        doc.y += 20;
+        drawTableRow('', 'Total Encaissé', `${caTotal.toFixed(2)} €`, false, true);
 
         // --- SECTION : DÉTAIL DES VENTES (LOI NF525) ---
         drawSectionHeader('Détail des Ventes (Loi NF525)');
