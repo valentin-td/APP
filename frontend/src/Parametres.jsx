@@ -20,6 +20,7 @@ const ICONS = {
   star: ico(<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>),
   mail: ico(<><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/></>),
   card: ico(<><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></>),
+  send: ico(<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>),
   moon: ico(<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>),
   file: ico(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 13"/></>),
   shield: ico(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></>),
@@ -35,7 +36,8 @@ const TITRES = {
   horaires: "Horaires de l'agenda",
   alertes: 'Alertes urgences (gérant)',
   google: 'Google My Business',
-  mail: 'Boîte mail (Robot comptable)',
+  mail: 'Boîte mail du salon',
+  export_compta: 'Exportations comptable',
   tpe: 'TPE physique (Stripe Terminal)',
   cgu: 'Conditions générales',
   confidentialite: 'Politique de confidentialité',
@@ -67,7 +69,8 @@ export default function Parametres({
     ] },
     { titre: 'Intégrations', lignes: [
       { id: 'google', icone: ICONS.star, label: 'Google My Business', valeur: statut(configSalon.google_api_key) },
-      { id: 'mail', icone: ICONS.mail, label: 'Boîte mail comptable', valeur: statut(configSalon.email_factures) },
+      { id: 'mail', icone: ICONS.mail, label: 'Boîte mail du salon', valeur: statut(configSalon.email_factures) },
+      { id: 'export_compta', icone: ICONS.send, label: 'Exportations comptable', valeur: statut(configSalon.email_comptable) },
       { id: 'tpe', icone: ICONS.card, label: 'TPE physique', valeur: statut(configSalon.stripe_reader_id) },
     ] },
     { titre: 'Informations légales', lignes: [
@@ -203,9 +206,23 @@ export default function Parametres({
       </>);
       case 'mail': return (<>
                   <div className="carte scan-carte">
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>L'IA analysera vos factures fournisseurs.</span>
-                    <input type="email" className="input-fournisseur" placeholder="Email du salon" value={configSalon.email_factures || ''} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', display: 'block'}}>Connectez la boîte mail de votre salon. L'IA analysera vos factures fournisseurs et cette adresse servira d'expéditeur.</span>
+                    <input type="email" className="input-fournisseur" placeholder="Email du salon (ex: contact@monsalon.com)" value={configSalon.email_factures || ''} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
                     <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email || ''} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
+                  </div>
+        {carteSauvegarde}
+      </>);
+      case 'export_compta': return (<>
+                  <div className="carte scan-carte">
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Le bilan mensuel sera envoyé automatiquement à cette adresse tous les mois. (La Boîte mail du salon doit être configurée au-dessus).</span>
+                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Adresse e-mail du comptable</label>
+                    <input type="email" className="input-fournisseur" placeholder="Ex: cabinet@expert-comptable.fr" value={configSalon.email_comptable || ''} onChange={(e) => setConfigSalon({...configSalon, email_comptable: e.target.value})} style={{marginBottom: '16px'}}/>
+                    
+                    <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
+                        <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Jour d'envoi automatique (1 à 31)</label>
+                        <input type="number" min="1" max="31" className="input-fournisseur" placeholder="Ex: 1 (le 1er du mois)" value={configSalon.jour_envoi_bilan || 1} onChange={(e) => setConfigSalon({...configSalon, jour_envoi_bilan: e.target.value})} />
+                        <p style={{fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Si le mois est plus court (ex: février), l'envoi se fera le dernier jour du mois.</p>
+                    </div>
                   </div>
         {carteSauvegarde}
       </>);
