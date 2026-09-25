@@ -5,6 +5,18 @@ import './App.css';
 import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
 
+// Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
@@ -134,6 +146,48 @@ function App() {
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
       setTimeout(() => setToast(null), 4000);
+  };
+
+  const activerNotificationsPush = async () => {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          showToast("Les notifications Push ne sont pas supportées par ce navigateur.", "error");
+          return;
+      }
+      try {
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') {
+              showToast("Vous avez refusé les notifications dans les réglages.", "error");
+              return;
+          }
+          const registration = await navigator.serviceWorker.ready;
+          
+          // 1. On récupère la clé publique du serveur
+          const response = await fetch('https://api-salon-backend.onrender.com/api/push/vapid-key');
+          const data = await response.json();
+          const convertedVapidKey = urlBase64ToUint8Array(data.publicKey);
+
+          // 2. On génère le ticket d'abonnement de cet appareil
+          const subscription = await registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: convertedVapidKey
+          });
+
+          // 3. On l'envoie au serveur
+          const resSub = await fetch('https://api-salon-backend.onrender.com/api/push/subscribe', {
+              method: 'POST',
+              headers: getAuthHeaders(true),
+              body: JSON.stringify({ subscription })
+          });
+
+          if(resSub.ok) {
+              showToast("Notifications activées avec succès sur ce téléphone !", "success");
+          } else {
+              showToast("Erreur lors de l'enregistrement côté serveur.", "error");
+          }
+      } catch (error) {
+          console.error(error);
+          showToast("Erreur lors de l'activation des notifications.", "error");
+      }
   };
 
   const [catalogueListe, setCatalogueListe] = useState([]);
