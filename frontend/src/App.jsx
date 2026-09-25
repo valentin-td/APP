@@ -2641,10 +2641,10 @@ function App() {
                                   const myReactId = role === 'employe' ? `emp_${myId}` : 'gerant';
 
                                   return (
-                                      <div key={msg.id_message} className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', width: '100%'}}>
+                                      <div key={msg.id_message} className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', maxWidth: '100%'}}>
                                           {!isMine && renderAvatar(msg.photo_expediteur, msg.nom_expediteur, 32)}
                                           
-                                          <div style={{display: 'flex', flexDirection: 'column', width: '100%', alignItems: isMine ? 'flex-end' : 'flex-start', minWidth: 0}}>
+                                          <div style={{display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', minWidth: 0}}>
                                               {!isMine && <span style={{fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', marginLeft: '4px'}}>{msg.nom_expediteur}</span>}
                                               
                                               <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexDirection: isMine ? 'row-reverse' : 'row', maxWidth: '100%', minWidth: 0}}>
