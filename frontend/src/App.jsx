@@ -97,6 +97,11 @@ function App() {
   const [protocoleVisible, setProtocoleVisible] = useState(null); 
   const [modeEditionProtocole, setModeEditionProtocole] = useState(null); 
   const [rechercheProtocole, setRechercheProtocole] = useState('');
+
+  const [messagesListe, setMessagesListe] = useState([]);
+  const [chatActif, setChatActif] = useState('salon');
+  const [msgInput, setMsgInput] = useState('');
+  const [msgFile, setMsgFile] = useState(null);
   
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
 
@@ -322,6 +327,7 @@ function App() {
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
     fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
+    fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
 
     if (decodeToken(token)?.id_salon === 38) {
         fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
@@ -371,6 +377,7 @@ function App() {
               });
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
+              newSocket.on('nouveauMessage', (data) => { setMessagesListe(prev => [...(prev || []), data]); });
               newSocket.on('connect_error', () => {});
               setSocket(newSocket);
               return () => newSocket.disconnect();
@@ -1083,6 +1090,50 @@ function App() {
       return val;
   };
 
+  const getInitials = (name) => {
+      if (!name) return '??';
+      const parts = name.trim().split(' ');
+      if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();
+      return name.substring(0, 2).toUpperCase();
+  };
+
+  const renderAvatar = (url, name, size = 40) => (
+      url ? 
+      <img src={url} alt={name} style={{width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border-color)'}} /> : 
+      <div style={{width: size, height: size, borderRadius: '50%', background: 'var(--btn-primary)', color: 'var(--btn-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.4, fontWeight: 'bold', flexShrink: 0, border: '1px solid var(--border-color)'}}>{getInitials(name || 'Inconnu')}</div>
+  );
+
+  const handleChatFileUpload = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => setMsgFile(reader.result);
+          reader.readAsDataURL(file);
+      }
+  };
+
+  const envoyerMessage = async () => {
+      if (!msgInput.trim() && !msgFile) return;
+      
+      const monProfil = role === 'employe' ? (employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe) : null;
+      
+      const payload = {
+          id_destinataire: chatActif,
+          contenu: msgInput.trim(),
+          fichier_url: msgFile,
+          nom_expediteur: monProfil?.nom,
+          photo_expediteur: monProfil?.photo_url
+      };
+
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/messages', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
+          if(res.ok) {
+              setMsgInput('');
+              setMsgFile(null);
+          }
+      } catch (e) { showToast("Erreur d'envoi du message", "error"); }
+  };
+
   return (
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
@@ -1229,6 +1280,7 @@ function App() {
                      </div>
                  )}
                  <div className="navbar-spacer"></div>
+                 <div className={`nav-item ${activeTab === 'messagerie' ? 'active' : ''}`} onClick={() => setActiveTab('messagerie')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span><span>Chat</span></div>
                  <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
               </>
           )}
@@ -1277,6 +1329,9 @@ function App() {
                               <div className="outil-btn-icon">⚡️</div><span className="outil-btn-label">God Mode</span>
                           </button>
                       )}
+                      <button className="outil-btn" onClick={() => {setActiveTab('messagerie'); setIsOutilsMenuOpen(false);}}>
+                          <div className="outil-btn-icon">💬</div><span className="outil-btn-label">Chat</span>
+                      </button>
                       <button className="outil-btn" onClick={() => {seDeconnecter(); setIsOutilsMenuOpen(false);}}>
                           <div className="outil-btn-icon" style={{color:'var(--color-danger)'}}>🚪</div><span className="outil-btn-label" style={{color:'var(--color-danger)'}}>Quitter</span>
                       </button>
@@ -2482,6 +2537,101 @@ function App() {
                       </div>
                   )}
                   </div> {/* FIN ZONE DÉFILANTE */}
+                </div>
+              )}
+
+              {/* VUE : MESSAGERIE (TEAMS STYLE) */}
+              {activeTab === 'messagerie' && (
+                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                          <div>
+                              <h1 style={{margin: 0}}>Messagerie</h1>
+                              <span className="date-subtitle" style={{margin: 0}}>Échanges d'équipe sécurisés</span>
+                          </div>
+                          <ThemeToggle />
+                      </div>
+                  </div>
+
+                  <div className="chat-wrapper">
+                      <div className="chat-sidebar">
+                          <div className="chat-header">Discussions</div>
+                          <div className="chat-contact-list">
+                              <div className={`chat-contact ${chatActif === 'salon' ? 'active' : ''}`} onClick={() => setChatActif('salon')}>
+                                  <div style={{width: isMobile ? 48 : 40, height: isMobile ? 48 : 40, borderRadius: '8px', background: 'var(--text-main)', color: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0}}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+                                  <div className="chat-contact-name" style={{fontWeight: '600'}}>{configSalon.nom_salon || 'Groupe Salon'}</div>
+                              </div>
+                              {role === 'gerant' && (employesListe || []).map(emp => (
+                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)}>
+                                      {renderAvatar(emp.photo_url, emp.nom, isMobile ? 48 : 40)}
+                                      <div className="chat-contact-name">{emp.nom}</div>
+                                  </div>
+                              ))}
+                              {role === 'employe' && (
+                                  <div className={`chat-contact ${chatActif === 'gerant' ? 'active' : ''}`} onClick={() => setChatActif('gerant')}>
+                                      {renderAvatar(null, 'Gérant', isMobile ? 48 : 40)}
+                                      <div className="chat-contact-name">Gérant</div>
+                                  </div>
+                              )}
+                              {role === 'employe' && (employesListe || []).filter(e => e.id_employe !== decodeToken(token)?.id_employe).map(emp => (
+                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)}>
+                                      {renderAvatar(emp.photo_url, emp.nom, isMobile ? 48 : 40)}
+                                      <div className="chat-contact-name">{emp.nom}</div>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+
+                      <div className="chat-main">
+                          <div className="chat-header">
+                              {chatActif === 'salon' ? (configSalon.nom_salon || 'Groupe Salon') : 
+                               chatActif === 'gerant' ? 'Gérant' : 
+                               ((employesListe || []).find(e => e.id_employe === chatActif)?.nom || 'Conversation')}
+                          </div>
+                          
+                          <div className="chat-messages">
+                              {messagesListe.filter(m => {
+                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : null;
+                                  if (chatActif === 'salon') return m.id_destinataire === 0;
+                                  if (role === 'employe') {
+                                      if (chatActif === 'gerant') return (m.id_expediteur === myId && m.id_destinataire === null) || (m.id_expediteur === null && m.id_destinataire === myId);
+                                      return (m.id_expediteur === myId && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === myId);
+                                  } else {
+                                      return (m.id_expediteur === null && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === null);
+                                  }
+                              }).map((msg) => {
+                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : null;
+                                  const isMine = msg.id_expediteur === myId;
+                                  return (
+                                      <div key={msg.id_message} className={`chat-msg-row ${isMine ? 'mine' : 'others'}`}>
+                                          {!isMine && renderAvatar(msg.photo_expediteur, msg.nom_expediteur, 32)}
+                                          <div style={{display: 'flex', flexDirection: 'column'}}>
+                                              {!isMine && <span style={{fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', marginLeft: '4px'}}>{msg.nom_expediteur}</span>}
+                                              <div className="chat-bubble">
+                                                  {msg.contenu}
+                                                  {msg.fichier_url && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                              </div>
+                                              <div className="chat-meta">
+                                                  <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  );
+                              })}
+                              <div ref={(el) => { if(el) el.scrollIntoView({ behavior: "smooth" }); }} />
+                          </div>
+
+                          <div className="chat-input-area">
+                              <button className="chat-btn chat-file-btn" onClick={() => document.getElementById('chat-file-upload').click()}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                              <input type="file" id="chat-file-upload" accept="image/*" style={{display:'none'}} onChange={handleChatFileUpload} />
+                              <div style={{flex: 1, position: 'relative'}}>
+                                  {msgFile && <div style={{position: 'absolute', bottom: '100%', left: '16px', marginBottom: '8px', background: 'var(--bg-hover)', padding: '4px 8px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>📷 Image jointe <button onClick={() => setMsgFile(null)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button></div>}
+                                  <textarea className="chat-input" placeholder="Écrire un nouveau message..." value={msgInput} onChange={e => setMsgInput(e.target.value)} onKeyDown={e => {if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }}} />
+                              </div>
+                              <button className="chat-btn" disabled={!msgInput.trim() && !msgFile} onClick={envoyerMessage}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+                          </div>
+                      </div>
+                  </div>
                 </div>
               )}
 
