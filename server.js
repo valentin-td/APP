@@ -63,8 +63,12 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
 io.on('connection', (socket) => {
-    socket.on('rejoindreSalon', (id_salon) => { 
-        socket.join(id_salon.toString()); 
+    socket.on('rejoindreSalon', (id_salon, token) => {
+        try {
+            const user = jwt.verify(token, process.env.JWT_SECRET);
+            if (String(user.id_salon) !== String(id_salon)) return; // salon non autorisé pour ce token
+            socket.join(id_salon.toString());
+        } catch (e) { /* token invalide ou absent : on ignore silencieusement la demande */ }
     });
 });
 
@@ -889,9 +893,17 @@ app.get('/api/messages', verifierToken, async (req, res) => {
 });
 
 app.post('/api/messages', verifierToken, async (req, res) => {
-    const { id_destinataire, contenu, fichier_url, nom_expediteur, photo_expediteur } = req.body;
+    const { id_destinataire, contenu, fichier_url } = req.body;
     const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : null;
     try {
+        let nom_expediteur = 'Gérant';
+        let photo_expediteur = null;
+        if (req.user.role === 'employe') {
+            const empRes = await pool.query('SELECT nom, photo_url FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.user.id_employe, req.user.id_salon]);
+            if (empRes.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable." });
+            nom_expediteur = empRes.rows[0].nom;
+            photo_expediteur = empRes.rows[0].photo_url;
+        }
         const dest = id_destinataire === 'gerant' ? null : (id_destinataire === 'salon' ? 0 : id_destinataire);
         const result = await pool.query(
             `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url) VALUES ($1, $2, $3, $4, $5) RETURNING id_message, date_creation`,
@@ -905,8 +917,8 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             contenu,
             fichier_url,
             date_creation: result.rows[0].date_creation,
-            nom_expediteur: req.user.role === 'employe' ? nom_expediteur : 'Gérant',
-            photo_expediteur: photo_expediteur || null
+            nom_expediteur,
+            photo_expediteur
         };
         io.to(req.user.id_salon.toString()).emit('nouveauMessage', newMessage);
         
