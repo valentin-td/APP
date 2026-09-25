@@ -102,7 +102,12 @@ function App() {
   const [chatActif, setChatActif] = useState('salon');
   const [msgInput, setMsgInput] = useState('');
   const [msgFile, setMsgFile] = useState(null);
+  const [editingMsgId, setEditingMsgId] = useState(null);
+  const [editMsgContent, setEditMsgContent] = useState('');
+  const [activeMenuId, setActiveMenuId] = useState(null);
+  const [activeReactionId, setActiveReactionId] = useState(null);
   
+  const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
 
   const [tachesIA, setTachesIA] = useState([]);
@@ -378,6 +383,9 @@ function App() {
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
               newSocket.on('nouveauMessage', (data) => { setMessagesListe(prev => [...(prev || []), data]); });
+              newSocket.on('messageModifie', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, contenu: data.contenu } : m)); });
+              newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => m.id_message !== data.id_message)); });
+              newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, reactions: data.reactions } : m)); });
               newSocket.on('connect_error', () => {});
               setSocket(newSocket);
               return () => newSocket.disconnect();
@@ -1132,6 +1140,25 @@ function App() {
               setMsgFile(null);
           }
       } catch (e) { showToast("Erreur d'envoi du message", "error"); }
+  };
+
+  const supprimerMessage = async (id) => {
+      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() }); setActiveMenuId(null); } catch (e) { showToast("Erreur de suppression", "error"); }
+  };
+
+  const demarrerEdition = (msg) => {
+      setEditingMsgId(msg.id_message);
+      setEditMsgContent(msg.contenu);
+      setActiveMenuId(null);
+  };
+
+  const validerEdition = async (id) => {
+      if(!editMsgContent.trim()) return setEditingMsgId(null);
+      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ contenu: editMsgContent.trim() }) }); setEditingMsgId(null); } catch (e) { showToast("Erreur de modification", "error"); }
+  };
+
+  const toggleReaction = async (id, emoji) => {
+      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); setActiveReactionId(null); } catch(e) { showToast("Erreur d'ajout de la réaction", "error"); }
   };
 
   return (
@@ -2602,17 +2629,74 @@ function App() {
                               }).map((msg) => {
                                   const myId = role === 'employe' ? decodeToken(token)?.id_employe : null;
                                   const isMine = msg.id_expediteur === myId;
+                                  const myReactId = role === 'employe' ? `emp_${myId}` : 'gerant';
+
                                   return (
-                                      <div key={msg.id_message} className={`chat-msg-row ${isMine ? 'mine' : 'others'}`}>
+                                      <div key={msg.id_message} className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative'}}>
                                           {!isMine && renderAvatar(msg.photo_expediteur, msg.nom_expediteur, 32)}
-                                          <div style={{display: 'flex', flexDirection: 'column'}}>
+                                          
+                                          <div style={{display: 'flex', flexDirection: 'column', width: '100%', alignItems: isMine ? 'flex-end' : 'flex-start'}}>
                                               {!isMine && <span style={{fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', marginLeft: '4px'}}>{msg.nom_expediteur}</span>}
-                                              <div className="chat-bubble">
-                                                  {msg.contenu}
-                                                  {msg.fichier_url && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                              
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexDirection: isMine ? 'row-reverse' : 'row'}}>
+                                                  
+                                                  {editingMsgId === msg.id_message ? (
+                                                      <div style={{display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
+                                                          <textarea value={editMsgContent} onChange={e => setEditMsgContent(e.target.value)} className="chat-input" style={{minHeight: '60px', width: '250px', border: '1px solid var(--border-focus)'}} />
+                                                          <div style={{display: 'flex', gap: '8px'}}>
+                                                              <button onClick={() => validerEdition(msg.id_message)} style={{background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Valider</button>
+                                                              <button onClick={() => setEditingMsgId(null)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Annuler</button>
+                                                          </div>
+                                                      </div>
+                                                  ) : (
+                                                      <div className="chat-bubble">
+                                                          {msg.contenu}
+                                                          {msg.fichier_url && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                                      </div>
+                                                  )}
+                                                  
+                                                  {isMine && !editingMsgId && (
+                                                      <div style={{position: 'relative'}}>
+                                                          <button className="chat-msg-actions-btn" onClick={() => setActiveMenuId(activeMenuId === msg.id_message ? null : msg.id_message)}>
+                                                              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                                                          </button>
+                                                          {activeMenuId === msg.id_message && (
+                                                              <div className="chat-msg-menu">
+                                                                  <button onClick={() => demarrerEdition(msg)}>✏️ Modifier</button>
+                                                                  <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}>🗑️ Supprimer</button>
+                                                              </div>
+                                                          )}
+                                                      </div>
+                                                  )}
+                                                  
+                                                  {!isMine && (
+                                                      <div style={{position: 'relative'}}>
+                                                          <button className="chat-msg-actions-btn" onClick={() => setActiveReactionId(activeReactionId === msg.id_message ? null : msg.id_message)}>
+                                                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm-3-10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm6 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm-3 5.5c2.326 0 4.316-1.42 5.127-3.5H8.873c.81 2.08 2.8 3.5 5.127 3.5z"/></svg>
+                                                          </button>
+                                                          {activeReactionId === msg.id_message && (
+                                                              <div className="chat-reaction-picker" onMouseLeave={() => setActiveReactionId(null)}>
+                                                                  {CHAT_EMOJIS.map(em => (
+                                                                      <button key={em} onClick={() => toggleReaction(msg.id_message, em)}>{em}</button>
+                                                                  ))}
+                                                              </div>
+                                                          )}
+                                                      </div>
+                                                  )}
                                               </div>
+                                              
+                                              {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                                                  <div className="chat-reactions-display" style={{justifyContent: isMine ? 'flex-end' : 'flex-start'}}>
+                                                      {Object.entries(msg.reactions).map(([em, users]) => (
+                                                          <div key={em} className={`chat-reaction-badge ${users.includes(myReactId) ? 'active' : ''}`} onClick={() => toggleReaction(msg.id_message, em)}>
+                                                              {em} {users.length}
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              )}
+                                              
                                               <div className="chat-meta">
-                                                  <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                                  <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}{msg.reactions && Object.keys(msg.reactions).length > 0 ? '' : ''}</span>
                                               </div>
                                           </div>
                                       </div>
