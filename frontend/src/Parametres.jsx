@@ -45,7 +45,7 @@ const TITRES = {
 
 export default function Parametres({
   configSalon, setConfigSalon, onSave, onBack, onLogout,
-  salonId, isDarkMode, onToggleTheme,
+  salonId, isDarkMode, onToggleTheme, onEnablePush
 }) {
   const [section, setSection] = useState(null);   // null = liste principale
 
@@ -180,6 +180,13 @@ export default function Parametres({
       </>);
       case 'alertes': return (<>
                   <div className="carte scan-carte">
+                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 16px 0'}}>🔔 Notifications sur ce téléphone</h4>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px'}}>Recevez des alertes en direct (messages, RDV, urgences) même si l'application est fermée.</span>
+                    <button type="button" className="btn-action" style={{ width: '100%', marginBottom: '24px' }} onClick={onEnablePush}>Activer les notifications de l'App</button>
+                    
+                    <div style={{borderBottom: '1px solid var(--border-color)', margin: '0 -24px 24px -24px'}}></div>
+                    
+                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 16px 0'}}>📱 Alertes SMS (Secours)</h4>
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Recevez un SMS si une tâche de votre Centre d'Action arrive à expiration.</span>
                     
                     <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
