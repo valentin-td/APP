@@ -2569,8 +2569,9 @@ function App() {
 
               {/* VUE : MESSAGERIE (TEAMS STYLE) */}
               {activeTab === 'messagerie' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
+                <div className={isMobile ? "admin-container mobile-fixed-header chat-active" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+                  {/* Sur Desktop, on garde le titre. Sur mobile, on le masque pour gagner de la place */}
+                  {!isMobile && (
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
                           <div>
                               <h1 style={{margin: 0}}>Messagerie</h1>
@@ -2578,7 +2579,7 @@ function App() {
                           </div>
                           <ThemeToggle />
                       </div>
-                  </div>
+                  )}
 
                   <div className="chat-wrapper">
                       <div className="chat-sidebar">
