@@ -1290,9 +1290,9 @@ function App() {
 
               {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
               {role === 'gerant' && activeTab === 'accueil' && (
-                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px' } : {}}>
+                <div key={isDarkMode ? 'dark' : 'light'} className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: isDarkMode ? '#0b0b0d' : '#f6f6f7', transition: 'background-color 0.3s ease', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px' } : {}}>
                   {/* EN-TÊTE FIXE */}
-                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                  <div style={isMobile ? { flexShrink: 0, backgroundColor: isDarkMode ? '#0b0b0d' : '#f6f6f7', transition: 'background-color 0.3s ease', zIndex: 10, paddingBottom: '8px' } : {}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
                           <div>
                               <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
@@ -1589,9 +1589,9 @@ function App() {
 
               {/* VUE : CENTRE D'ACTION (TÂCHES) */}
               {role === 'gerant' && activeTab === 'actions' && (
-                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px', zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+                <div key={isDarkMode ? 'dark' : 'light'} className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: isDarkMode ? '#0b0b0d' : '#f6f6f7', transition: 'background-color 0.3s ease', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px', zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   {/* EN-TÊTE FIXE */}
-                  <div style={isMobile ? { flexShrink: 0, background: 'var(--bg-app)', zIndex: 10, paddingBottom: '8px' } : {}}>
+                  <div style={isMobile ? { flexShrink: 0, backgroundColor: isDarkMode ? '#0b0b0d' : '#f6f6f7', transition: 'background-color 0.3s ease', zIndex: 10, paddingBottom: '8px' } : {}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
                           <div>
                               <h1 style={{margin: 0}}>Centre d'Action</h1>
@@ -1657,7 +1657,7 @@ function App() {
 
              {/* VUE : AGENDA */}
              {activeTab === 'agenda' && (
-                <div className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-app)', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px' } : {}}>
+                <div key={isDarkMode ? 'dark' : 'light'} className="admin-container" style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: isDarkMode ? '#0b0b0d' : '#f6f6f7', transition: 'background-color 0.3s ease', display: 'flex', flexDirection: 'column', padding: 'max(24px, env(safe-area-inset-top)) 16px 0 16px' } : {}}>
                   <div className="agenda-header">
                       <div className="agenda-title-group" style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
                           <h1 style={{margin: 0}}>Agenda</h1>
