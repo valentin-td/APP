@@ -529,9 +529,27 @@ body.dark-mode .theme-toggle-btn:hover {
     /* Les bulles peuvent prendre plus de place sur mobile */
     .chat-msg-row { max-width: 90%; }
     
-    /* Ajustement strict des marges du conteneur fixe pour s'assurer que ça ne dépasse pas sur la barre de menu (110px) */
-    .mobile-fixed-header.chat-active { padding-left: 0; padding-right: 0; padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: 110px; }
-}
+    /* Ancrage strict du chat sur mobile pour éviter tout dépassement */
+    .mobile-chat-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        /* On s'arrête exactement au-dessus de la barre de navigation (qui fait env. 80px de haut + marge bas) */
+        bottom: max(90px, calc(env(safe-area-inset-bottom, 0px) + 70px));
+        background: var(--bg-app);
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        padding-top: max(16px, env(safe-area-inset-top));
+    }
+    
+    .mobile-chat-container .chat-wrapper {
+        flex: 1;
+        min-height: 0; /* Crucial pour que le scroll interne fonctionne avec flexbox */
+        margin: 0;
+        height: auto;
+    }
 
 /* ==========================================================================
    15. RESPONSIVE DESIGN (MOBILE & TABLETTE)
