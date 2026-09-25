@@ -465,11 +465,11 @@ body.dark-mode .theme-toggle-btn:hover {
 .chat-contact { display: flex; align-items: center; gap: 12px; padding: 10px 20px; cursor: pointer; transition: background 0.2s; border-left: 3px solid transparent; }
 .chat-contact:hover { background: var(--bg-hover); }
 .chat-contact.active { background: var(--bg-info); border-left-color: var(--color-info); }
-.chat-messages { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 20px; display: flex; flex-direction: column; gap: 16px; background: var(--bg-app); }
+.chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; padding: 20px; display: flex; flex-direction: column; gap: 16px; background: var(--bg-app); }
 .chat-msg-row { display: flex; gap: 12px; max-width: 85%; }
 .chat-msg-row.mine { align-self: flex-end; flex-direction: row-reverse; }
 .chat-msg-row.others { align-self: flex-start; }
-.chat-bubble { padding: 12px 16px; border-radius: 14px; font-size: 14px; line-height: 1.4; box-shadow: var(--shadow-sm); word-break: break-word; }
+.chat-bubble { padding: 12px 16px; border-radius: 14px; font-size: 14px; line-height: 1.4; box-shadow: var(--shadow-sm); overflow-wrap: anywhere; word-wrap: break-word; word-break: break-word; white-space: pre-wrap; max-width: 100%; box-sizing: border-box; }
 .chat-msg-row.mine .chat-bubble { background: var(--btn-primary); color: var(--btn-text); border-bottom-right-radius: 4px; }
 .chat-msg-row.others .chat-bubble { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-top-left-radius: 4px; }
 .chat-meta { font-size: 11px; color: var(--text-secondary); margin-top: 4px; display: flex; gap: 8px; }
@@ -523,7 +523,7 @@ body.dark-mode .theme-toggle-btn:hover {
     
     /* La zone de chat s'étire vers le bas avec une hauteur bien plus grande que la largeur */
     .chat-main { border-radius: 24px 24px 0 0; border: none; margin: 0; flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg-app); box-shadow: 0 -4px 12px rgba(0,0,0,0.05); }
-    .chat-messages { padding: 16px; flex: 1; min-height: 0; background: transparent; }
+    .chat-messages { padding: 16px; flex: 1; min-height: 0; background: transparent; overflow-x: hidden; }
     .chat-input-area { padding: 12px 16px calc(110px + env(safe-area-inset-bottom, 0px)) 16px !important; border-radius: 0; flex-shrink: 0; background: var(--bg-card); border-top: 1px solid var(--border-color); }
     
     /* Les bulles peuvent prendre plus de place sur mobile */
