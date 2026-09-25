@@ -108,12 +108,12 @@ function App() {
   const [activeReactionId, setActiveReactionId] = useState(null);
   const messagesEndRef = React.useRef(null);
 
-  // Auto-scroll doux et contrôlé quand la liste des messages change
+  // Auto-scroll doux et contrôlé quand le nombre de messages change (pas lors d'une modif/suppression)
   useEffect(() => {
       if (messagesEndRef.current && activeTab === 'messagerie') {
-          messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+          messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
-  }, [messagesListe, chatActif, activeTab]);
+  }, [messagesListe.length, chatActif, activeTab]);
   
   const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
