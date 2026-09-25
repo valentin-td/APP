@@ -161,7 +161,8 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
 
-    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '{}';
 `).then(async () => {
     try {
         await pool.query(`UPDATE clotures_caisse SET date_cloture = DATE(date_creation) WHERE date_cloture IS NULL;`);
@@ -827,6 +828,48 @@ app.post('/api/messages', verifierToken, async (req, res) => {
         io.to(req.user.id_salon.toString()).emit('nouveauMessage', newMessage);
         res.status(201).json(newMessage);
     } catch (e) { res.status(500).json({ erreur: "Erreur envoi message." }); }
+});
+
+app.put('/api/messages/:id', verifierToken, async (req, res) => {
+    const { contenu } = req.body;
+    try {
+        await pool.query('UPDATE messages SET contenu = $1 WHERE id_message = $2 AND id_salon = $3', [contenu, req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('messageModifie', { id_message: parseInt(req.params.id), contenu });
+        res.json({ message: "Message modifié" });
+    } catch(e) { res.status(500).json({erreur: "Erreur lors de la modification"}); }
+});
+
+app.delete('/api/messages/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM messages WHERE id_message = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('messageSupprime', { id_message: parseInt(req.params.id) });
+        res.json({ message: "Message supprimé" });
+    } catch(e) { res.status(500).json({erreur: "Erreur lors de la suppression"}); }
+});
+
+app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
+    const { emoji } = req.body;
+    const monProfilId = req.user.role === 'employe' ? `emp_${req.user.id_employe}` : 'gerant';
+    try {
+        const msgRes = await pool.query('SELECT reactions FROM messages WHERE id_message = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        if(msgRes.rowCount === 0) return res.status(404).json({erreur: "Message introuvable"});
+        
+        let reactions = msgRes.rows[0].reactions || {};
+        if (typeof reactions === 'string') reactions = JSON.parse(reactions); 
+        
+        if (!reactions[emoji]) reactions[emoji] = [];
+        
+        if (reactions[emoji].includes(monProfilId)) {
+            reactions[emoji] = reactions[emoji].filter(id => id !== monProfilId);
+            if (reactions[emoji].length === 0) delete reactions[emoji];
+        } else {
+            reactions[emoji].push(monProfilId);
+        }
+        
+        await pool.query('UPDATE messages SET reactions = $1 WHERE id_message = $2', [JSON.stringify(reactions), req.params.id]);
+        io.to(req.user.id_salon.toString()).emit('messageReaction', { id_message: parseInt(req.params.id), reactions });
+        res.json({ message: "Réaction mise à jour" });
+    } catch(e) { res.status(500).json({erreur: "Erreur de réaction"}); }
 });
 
 // =========================================================================
