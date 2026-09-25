@@ -486,11 +486,11 @@ body.dark-mode .theme-toggle-btn:hover {
 .chat-msg-menu button { padding: 10px 12px; border: none; background: transparent; text-align: left; cursor: pointer; font-size: 12px; color: var(--text-main); transition: background 0.1s; font-weight: 500; }
 .chat-msg-menu button:hover { background: var(--bg-hover); }
 
-.chat-reaction-picker { position: absolute; bottom: 100%; margin-bottom: 6px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 24px; box-shadow: var(--shadow-md); z-index: 100; display: flex; padding: 6px; gap: 4px; width: max-content; }
+.chat-reaction-picker { position: absolute; bottom: 100%; margin-bottom: 6px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 24px; box-shadow: var(--shadow-md); z-index: 100; display: flex; padding: 6px; gap: 4px; width: max-content; max-width: 240px; flex-wrap: wrap; justify-content: center; }
 /* Menu aligné à droite pour "Mes messages" (s'ouvre vers la gauche) */
-.chat-msg-row.mine .chat-reaction-picker { right: 0; }
+.chat-msg-row.mine .chat-reaction-picker { right: 0; left: auto; }
 /* Menu aligné à gauche pour "Les autres" (s'ouvre vers la droite) */
-.chat-msg-row.others .chat-reaction-picker { left: 0; }
+.chat-msg-row.others .chat-reaction-picker { left: 0; right: auto; }
 
 .chat-reaction-picker button { background: transparent; border: none; cursor: pointer; font-size: 20px; padding: 6px; border-radius: 50%; transition: transform 0.1s; display: flex; align-items: center; justify-content: center;}
 .chat-reaction-picker button:hover { transform: scale(1.2); background: var(--bg-hover); }
@@ -509,26 +509,28 @@ body.dark-mode .theme-toggle-btn:hover {
     .chat-wrapper { flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
     
     /* La liste des contacts défile à l'horizontale en haut, comme des "Stories" */
-    .chat-sidebar { width: 100%; height: auto; flex-shrink: 0; box-shadow: none; border: none; background: transparent; border-radius: 0; }
+    .chat-sidebar { width: 100%; height: auto; flex-shrink: 0; box-shadow: none; border: none; background: transparent; border-radius: 0; min-height: 0; }
     .chat-header { display: none; } /* On cache les "Discussions" ou le nom du contact au dessus */
-    .chat-contact-list { display: flex; flex-direction: row; overflow-x: auto; padding: 0 16px 8px 16px; gap: 10px; margin: 0 -16px; }
+    .chat-contact-list { display: flex; flex-direction: row; overflow-x: auto; padding: 0 16px 8px 16px; gap: 8px; margin: 0 -16px; }
     .chat-contact-list::-webkit-scrollbar { display: none; } /* Cache la barre de scroll horizontale sur mobile */
     
-    .chat-contact { flex-direction: column; padding: 12px; border-left: none; border: 1px solid var(--border-color); border-radius: 16px; min-width: 80px; text-align: center; background: var(--bg-card); box-shadow: var(--shadow-sm); gap: 8px; }
+    /* Réduction de moitié des encarts de contacts */
+    .chat-contact { flex-direction: column; padding: 8px; border-left: none; border: 1px solid var(--border-color); border-radius: 12px; min-width: 64px; text-align: center; background: var(--bg-card); box-shadow: var(--shadow-sm); gap: 4px; }
     .chat-contact.active { border: 1px solid var(--btn-primary); background: var(--btn-primary); color: var(--btn-text); box-shadow: var(--shadow-md); }
-    .chat-contact-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; color: inherit; font-weight: 600; }
+    .chat-contact > div:first-child, .chat-contact > img { width: 32px !important; height: 32px !important; font-size: 14px !important; }
+    .chat-contact svg { width: 18px !important; height: 18px !important; }
+    .chat-contact-name { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; color: inherit; font-weight: 600; }
     
-
-    /* La zone de chat s'étire vers le bas */
-    .chat-main { border-radius: 24px 24px 0 0; border-bottom: none; border-left: none; border-right: none; margin: 0 -16px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
-    .chat-messages { padding: 20px 16px; flex: 1; min-height: 0; }
-    .chat-input-area { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-radius: 0; flex-shrink: 0; }
+    /* La zone de chat s'étire vers le bas avec une hauteur bien plus grande que la largeur */
+    .chat-main { border-radius: 24px 24px 0 0; border-bottom: none; border-left: none; border-right: none; margin: 0 -16px; flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg-app); box-shadow: 0 -4px 12px rgba(0,0,0,0.05); }
+    .chat-messages { padding: 16px; flex: 1; min-height: 0; background: transparent; }
+    .chat-input-area { padding: 12px 16px; border-radius: 0; flex-shrink: 0; background: var(--bg-card); border-top: 1px solid var(--border-color); }
     
     /* Les bulles peuvent prendre plus de place sur mobile */
     .chat-msg-row { max-width: 90%; }
     
-    /* Suppression des marges du conteneur fixe pour que le chat touche les bords */
-    .mobile-fixed-header.chat-active { padding-left: 0; padding-right: 0; padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: max(60px, calc(env(safe-area-inset-bottom, 0px) + 60px)); }
+    /* Ajustement strict des marges du conteneur fixe pour s'assurer que ça ne dépasse pas sur la barre de menu (110px) */
+    .mobile-fixed-header.chat-active { padding-left: 0; padding-right: 0; padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: 110px; }
 }
 
 /* ==========================================================================
