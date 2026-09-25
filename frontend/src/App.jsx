@@ -2662,8 +2662,8 @@ function App() {
                                                           </button>
                                                           {activeMenuId === msg.id_message && (
                                                               <div className="chat-msg-menu">
-                                                                  <button onClick={() => demarrerEdition(msg)}>✏️ Modifier</button>
-                                                                  <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}>🗑️ Supprimer</button>
+                                                                  <button onClick={() => demarrerEdition(msg)}> Modifier</button>
+                                                                  <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}> Supprimer</button>
                                                               </div>
                                                           )}
                                                       </div>
