@@ -457,7 +457,7 @@ body.dark-mode .theme-toggle-btn:hover {
 /* ==========================================================================
    14. MESSAGERIE (STYLE TEAMS / FINTECH)
    ========================================================================== */
-.chat-wrapper { display: flex; height: calc(100vh - 120px); gap: 20px; }
+.chat-wrapper { display: flex; height: calc(100vh - max(40px, env(safe-area-inset-top)) - 80px); gap: 20px; }
 .chat-sidebar { width: 280px; background: var(--bg-card); border-radius: var(--radius-card); border: 1px solid var(--border-color); display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-sm); }
 .chat-main { flex: 1; background: var(--bg-card); border-radius: var(--radius-card); border: 1px solid var(--border-color); display: flex; flex-direction: column; box-shadow: var(--shadow-sm); overflow: hidden; }
 .chat-header { padding: 16px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; font-weight: 600; color: var(--text-main); background: var(--bg-card); }
@@ -506,7 +506,7 @@ body.dark-mode .theme-toggle-btn:hover {
 
 @media (max-width: 767px) {
     /* Optimisation du wrapper pour qu'il prenne tout l'espace disponible sous l'encoche de l'iPhone */
-    .chat-wrapper { flex-direction: column; height: 100%; gap: 8px; padding-top: env(safe-area-inset-top); }
+    .chat-wrapper { flex-direction: column; height: calc(100vh - 80px); gap: 8px; }
     
     /* La liste des contacts défile à l'horizontale en haut, comme des "Stories" */
     .chat-sidebar { width: 100%; height: auto; flex-shrink: 0; box-shadow: none; border: none; background: transparent; border-radius: 0; }
