@@ -198,7 +198,7 @@ function App() {
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
-    telephone_gerant: '', alertes_sms_actives: false 
+    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1
   });
 
   const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
@@ -334,7 +334,7 @@ function App() {
             const config = { 
                 google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
                 fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
-                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false 
+                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1
             };
             setConfigSalon(config);
             await localforage.setItem('configSalon', config);
