@@ -106,7 +106,7 @@ function App() {
   const [editMsgContent, setEditMsgContent] = useState('');
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeReactionId, setActiveReactionId] = useState(null);
-  const messagesEndRef = React.useRef(null);
+  const messagesEndRef = useRef(null);
 
   // Auto-scroll doux et contrôlé (protection contre les undefined)
   useEffect(() => {
