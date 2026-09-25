@@ -108,12 +108,12 @@ function App() {
   const [activeReactionId, setActiveReactionId] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Auto-scroll doux et contrôlé (protection contre les undefined)
+  // Auto-scroll doux et contrôlé (syntaxe 100% compatible)
   useEffect(() => {
       if (messagesEndRef.current && activeTab === 'messagerie') {
-          messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
       }
-  }, [messagesListe?.length, chatActif, activeTab]);
+  }, [messagesListe, chatActif, activeTab]);
   
   const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
