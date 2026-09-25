@@ -478,7 +478,11 @@ body.dark-mode .theme-toggle-btn:hover {
       -webkit-backdrop-filter: blur(30px) saturate(200%);
       border: none !important; 
       box-shadow: 0 0 0 0.5px rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.6) !important; 
-      z-index: 1000 !important;
+      /* CORRECTION BUG CLIC MOBILE : On passe le z-index très haut pour contrer les autres vues */
+      z-index: 99999 !important;
+      /* On s'assure que la barre capte bien le toucher */
+      pointer-events: auto !important;
+      touch-action: manipulation !important;
   }
   body.dark-mode .navbar-sidebar {
       background: rgba(44, 44, 46, 0.5) !important;
