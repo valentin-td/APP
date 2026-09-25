@@ -440,7 +440,7 @@ function App() {
                   timeout: 5000,
               });
               newSocket.on('connect', () => {
-                  newSocket.emit('rejoindreSalon', user.id_salon);
+                  newSocket.emit('rejoindreSalon', user.id_salon, token);
               });
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
