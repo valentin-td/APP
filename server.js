@@ -1157,7 +1157,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         // --- HEADER ---
         try {
-            doc.image('./IMG_6805.JPG', doc.page.width - 150, 40, { width: 100 });
+            doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 });
         } catch(e) {
             doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' });
         }
@@ -1773,7 +1773,7 @@ async function executerEnvoiComptable() {
                 const TEXT_LIGHT = '#6b7280';
                 const LINE_COLOR = '#e5e7eb';
 
-                try { doc.image('./IMG_6805.JPG', doc.page.width - 150, 40, { width: 100 }); } catch(e) { doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' }); }
+                try { doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 }); } catch(e) { doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' }); }
 
                 doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
                 doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 95);
