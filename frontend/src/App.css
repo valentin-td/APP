@@ -543,7 +543,8 @@ body.dark-mode .theme-toggle-btn:hover {
         flex-direction: column !important;
         padding: max(16px, env(safe-area-inset-top)) 0 0 0 !important; 
         box-sizing: border-box !important;
-        width: 100vw !important;
+        width: 100%;
+        max-width: 100vw;
         overflow: hidden !important;
     }
     
