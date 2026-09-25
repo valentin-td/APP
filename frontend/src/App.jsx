@@ -2681,7 +2681,7 @@ function App() {
                           </div>
                           
                           <div className="chat-messages">
-                              {messagesListe.filter(m => {
+                              {(messagesListe || []).filter(m => {
                                   const myId = role === 'employe' ? decodeToken(token)?.id_employe : null;
                                   if (chatActif === 'salon') return m.id_destinataire === 0;
                                   if (role === 'employe') {
@@ -2760,7 +2760,7 @@ function App() {
                                               )}
                                               
                                               <div className="chat-meta">
-                                                  <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}{msg.reactions && Object.keys(msg.reactions).length > 0 ? '' : ''}</span>
+                                                  <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                               </div>
                                           </div>
                                       </div>
