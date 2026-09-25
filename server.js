@@ -1177,7 +1177,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
-        const doc = new PDFDocument();
+        // Configuration PDFKit (A4, Gestion des pages)
+        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
         let buffers = [];
         doc.on('data', buffers.push.bind(buffers));
         
@@ -1198,28 +1199,110 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="Liasse_Comptable.pdf"`);
         doc.pipe(res);
-        doc.fontSize(22).fillColor('#a154f2').text('Liasse Comptable Mensuelle', { align: 'center' }).moveDown();
-        doc.fontSize(16).fillColor('#1c1c1e').text(`Chiffre d'Affaires total : ${caTotal.toFixed(2)} €`, { align: 'center' }).moveDown();
-        
-        doc.fontSize(12).fillColor('#8e8e93').text('Détail des encaissements (Loi NF525) :', { align: 'center' });
-        caParMethodeResult.rows.forEach(m => {
-            doc.fillColor('#3a3a3c').text(`- ${m.methode_paiement} : ${parseFloat(m.total).toFixed(2)} €`, { align: 'center' });
-        });
-        doc.moveDown(2);
 
-        doc.fontSize(14).fillColor('#8e8e93').text('FACTURES (DÉPENSES)', { underline: true }).moveDown();
-        let totalDepenses = 0; doc.fontSize(12).fillColor('#3a3a3c');
-        if (facturesResult.rowCount === 0) { doc.text('Aucune facture scannée ce mois-ci.'); } 
-        else { facturesResult.rows.forEach(f => { doc.text(`- ${f.date} | ${f.nom_fournisseur} : ${parseFloat(f.montant_ttc).toFixed(2)} €`); totalDepenses += parseFloat(f.montant_ttc); }); }
-        doc.moveDown(); doc.fontSize(12).fillColor('#1c1c1e').text(`Total Dépenses : ${totalDepenses.toFixed(2)} €`, { align: 'right' }).moveDown(2);
-        
-        doc.fontSize(14).fillColor('#8e8e93').text('COMMISSIONS EMPLOYÉS', { underline: true }).moveDown();
-        let totalPrimes = 0; doc.fontSize(12).fillColor('#3a3a3c');
-        if (rhResult.rowCount === 0) { doc.text('Aucune commission enregistrée.'); } 
-        else { rhResult.rows.forEach(c => { doc.text(`- ${c.nom} : ${parseFloat(c.total_prime).toFixed(2)} €`); totalPrimes += parseFloat(c.total_prime); }); }
-        doc.moveDown(); doc.fontSize(12).fillColor('#1c1c1e').text(`Total Primes : ${totalPrimes.toFixed(2)} €`, { align: 'right' });
+        // --- PALETTE DE COULEURS (Inspiré du modèle comptable) ---
+        const THEME_COLOR = '#00B4D8'; // Cyan vif
+        const TEXT_DARK = '#1f2937';
+        const TEXT_LIGHT = '#6b7280';
+        const LINE_COLOR = '#e5e7eb';
+
+        // --- HEADER ---
+        // Logo STACK (En haut à droite)
+        try {
+            // Tente de charger le logo STACK fourni
+            doc.image('./IMG_6805.JPG', doc.page.width - 150, 40, { width: 100 });
+        } catch(e) {
+            // Fallback textuel de sécurité si l'image est introuvable
+            doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' });
+        }
+
+        // Titre Principal (En haut à gauche)
+        doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
+        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Générée le ${new Date().toLocaleDateString('fr-FR')}`, 50, 95);
+        doc.moveDown(4);
+
+        // --- FONCTIONS UTILITAIRES DE DESSIN ---
+        // Dessine une ligne du tableau avec la séparation grise
+        const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
+            const y = doc.y;
+            
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique')
+               .fontSize(isHeader ? 9 : 10)
+               .fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT)
+               .text(col1, 50, y);
+            
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique')
+               .fontSize(isHeader ? 9 : 10)
+               .fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT)
+               .text(col2, 450, y, { width: 95, align: 'right' });
+            
+            if (!isHeader && !isTotal) {
+                // Ligne de séparation grise fine
+                doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke();
+            }
+            doc.y += 18;
+        };
+
+        // Dessine l'en-tête de section avec la ligne Cyan épaisse
+        const drawSectionHeader = (title) => {
+            doc.moveDown(1.5);
+            doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
+            doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
+            doc.moveDown(0.5);
+        };
+
+        // --- SECTION 1 : ENCAISSEMENTS ---
+        drawSectionHeader('Chiffre d\'Affaires & Encaissements');
+        drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
+        caParMethodeResult.rows.forEach(m => {
+            drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`);
+        });
+        doc.moveDown(0.5);
+        drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
+
+        // --- SECTION 2 : DÉPENSES ---
+        drawSectionHeader('Dépenses (Factures Fournisseurs)');
+        drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
+        let totalDepenses = 0;
+        if (facturesResult.rowCount === 0) { 
+            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois-ci.', 50, doc.y);
+            doc.moveDown(1);
+        } else { 
+            facturesResult.rows.forEach(f => { 
+                drawTableRow(`${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`);
+                totalDepenses += parseFloat(f.montant_ttc); 
+            }); 
+        }
+        doc.moveDown(0.5);
+        drawTableRow('Total Dépenses', `${totalDepenses.toFixed(2)} €`, false, true);
+
+        // --- SECTION 3 : COMMISSIONS ---
+        drawSectionHeader('Commissions Employés');
+        drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
+        let totalPrimes = 0;
+        if (rhResult.rowCount === 0) { 
+            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y);
+        } else { 
+            rhResult.rows.forEach(c => { 
+                drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`);
+                totalPrimes += parseFloat(c.total_prime); 
+            }); 
+        }
+        doc.moveDown(0.5);
+        drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
+
+        // --- FOOTER (BARRE CYAN EN BAS DE TOUTES LES PAGES) ---
+        const pages = doc.bufferedPageRange();
+        for (let i = 0; i < pages.count; i++) {
+            doc.switchToPage(i);
+            doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR);
+        }
+
         doc.end();
-    } catch (erreur) { res.status(500).send("Erreur lors de la génération du PDF."); }
+    } catch (erreur) { 
+        console.error(erreur);
+        res.status(500).send("Erreur lors de la génération du PDF."); 
+    }
 });
 
 let isRobotRunning = false;
