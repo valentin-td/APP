@@ -1197,11 +1197,10 @@ function App() {
 
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/messages', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          if(res.ok) {
-              setMsgInput('');
-              setMsgFile(null);
-          }
-      } catch (e) { showToast("Erreur d'envoi du message", "error"); }
+          await handleFetchError(res);
+          setMsgInput('');
+          setMsgFile(null);
+      } catch (e) { if (e.message !== "Session expirée" && e.message !== "Abonnement inactif") showToast(e.message || "Erreur d'envoi du message", "error"); }
   };
 
   const supprimerMessage = async (id) => {
