@@ -1269,7 +1269,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         // --- HEADER ---
         try {
-            doc.image('./IMG_6805.JPG', doc.page.width - 150, 40, { width: 100 });
+            doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 });
         } catch(e) {
             doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' });
         }
