@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import localforage from 'localforage';
 import './App.css';
@@ -106,6 +106,14 @@ function App() {
   const [editMsgContent, setEditMsgContent] = useState('');
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeReactionId, setActiveReactionId] = useState(null);
+  const messagesEndRef = React.useRef(null);
+
+  // Auto-scroll doux et contrôlé quand la liste des messages change
+  useEffect(() => {
+      if (messagesEndRef.current && activeTab === 'messagerie') {
+          messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+      }
+  }, [messagesListe, chatActif, activeTab]);
   
   const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
@@ -2703,7 +2711,7 @@ function App() {
                                       </div>
                                   );
                               })}
-                              <div ref={(el) => { if(el) el.scrollIntoView({ behavior: "smooth" }); }} />
+                              <div ref={messagesEndRef} />
                           </div>
 
                           <div className="chat-input-area">
