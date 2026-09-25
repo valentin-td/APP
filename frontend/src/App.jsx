@@ -1531,6 +1531,7 @@ function App() {
                   salonId={decodeToken(token)?.id_salon}
                   isDarkMode={isDarkMode}
                   onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+                  onEnablePush={activerNotificationsPush}
                 />
               )}
               
