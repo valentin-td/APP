@@ -2577,7 +2577,7 @@ function App() {
 
               {/* VUE : MESSAGERIE (TEAMS STYLE) */}
               {activeTab === 'messagerie' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header chat-active" : "admin-container"} style={isMobile ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', flexDirection: 'column' } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+                <div className={isMobile ? "admin-container mobile-chat-container" : "admin-container"} style={!isMobile ? { display: 'flex', flexDirection: 'column', minHeight: '100%' } : {}}>
                   {/* Sur Desktop, on garde le titre. Sur mobile, on le masque pour gagner de la place */}
                   {!isMobile && (
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
@@ -2589,7 +2589,7 @@ function App() {
                       </div>
                   )}
 
-                  <div className="chat-wrapper" style={isMobile ? { flex: 1, height: 'auto', minHeight: 0, overflow: 'hidden' } : {}}>
+                  <div className="chat-wrapper">
                       <div className="chat-sidebar">
                           <div className="chat-header">Discussions</div>
                           <div className="chat-contact-list">
