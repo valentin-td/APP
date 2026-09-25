@@ -1138,69 +1138,13 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateCible]);
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
-        const doc = new PDFDocument();
+        // Configuration PDFKit (A4, Gestion des pages)
+        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="Bilan_${dateCible}.pdf"`);
         doc.pipe(res);
 
-        doc.fontSize(22).fillColor('#a154f2').text(`Bilan Journalier - ${dateCible}`, { align: 'center' }).moveDown();
-        doc.fontSize(16).fillColor('#1c1c1e').text(`Chiffre d'Affaires du jour : ${caTotal.toFixed(2)} €`, { align: 'center' }).moveDown(2);
-        
-        doc.fontSize(14).fillColor('#8e8e93').text('Détail des ventes :', { underline: true }).moveDown();
-        doc.fontSize(12).fillColor('#3a3a3c');
-        
-        if (ventesResult.rowCount === 0) {
-            doc.text('Aucune vente ce jour-là.');
-        } else {
-            ventesResult.rows.forEach(v => {
-                doc.text(`[${v.heure}] Ticket #${v.id_ticket} - ${v.prestations}`);
-                doc.text(`Coiffeur : ${v.employe} | Paiement : ${v.methode_paiement} | Montant : ${parseFloat(v.total_ttc).toFixed(2)} €`);
-                doc.moveDown();
-            });
-        }
-        doc.end();
-    } catch (erreur) { 
-        res.status(500).send("Erreur lors de la génération du PDF journalier."); 
-    }
-});
-
-app.get('/api/export-pdf', verifierToken, async (req, res) => {
-    const id_salon = req.user.id_salon;
-    try {
-        const configResult = await pool.query('SELECT email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : null;
-        
-        const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1`, [id_salon]);
-        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
-        const caParMethodeResult = await pool.query(`SELECT methode_paiement, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' GROUP BY methode_paiement`, [id_salon]);
-        const rhResult = await pool.query(`SELECT e.nom, COALESCE(SUM(c.montant_commission), 0) as total_prime FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.nom`, [id_salon]);
-        
-        const caTotal = parseFloat(caResult.rows[0].ca_total);
-
-        // Configuration PDFKit (A4, Gestion des pages)
-        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
-        let buffers = [];
-        doc.on('data', buffers.push.bind(buffers));
-        
-        doc.on('end', async () => {
-            const pdfData = Buffer.concat(buffers); 
-            if (salonConfig && salonConfig.email_reception_factures && salonConfig.mot_de_passe_app_email) {
-                try {
-                    let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: dechiffrer(salonConfig.mot_de_passe_app_email) } });
-                    await transporter.sendMail({
-                        from: `"SaaS Caisse" <${salonConfig.email_reception_factures}>`, to: salonConfig.email_reception_factures, 
-                        subject: '📊 Liasse Comptable Mensuelle', text: 'Bonjour, \nVeuillez trouver en pièce jointe la liasse comptable du mois avec le détail des encaissements.',
-                        attachments: [{ filename: `Liasse_Comptable_${Date.now()}.pdf`, content: pdfData }]
-                    });
-                } catch (emailError) {} 
-            }
-        });
-
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Liasse_Comptable.pdf"`);
-        doc.pipe(res);
-
-        // --- PALETTE DE COULEURS (Inspiré du modèle comptable) ---
+        // --- PALETTE DE COULEURS (Thème STACK) ---
         const THEME_COLOR = '#00B4D8'; // Cyan vif
         const TEXT_DARK = '#1f2937';
         const TEXT_LIGHT = '#6b7280';
@@ -1209,87 +1153,81 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // --- HEADER ---
         // Logo STACK (En haut à droite)
         try {
-            // Tente de charger le logo STACK fourni
             doc.image('./IMG_6805.JPG', doc.page.width - 150, 40, { width: 100 });
         } catch(e) {
-            // Fallback textuel de sécurité si l'image est introuvable
+            // Fallback si l'image est introuvable
             doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' });
         }
 
         // Titre Principal (En haut à gauche)
-        doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
-        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Générée le ${new Date().toLocaleDateString('fr-FR')}`, 50, 95);
+        doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Bilan Journalier', 50, 50);
+        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Date de clôture : ${new Date(dateCible).toLocaleDateString('fr-FR')}`, 50, 95);
         doc.moveDown(4);
 
         // --- FONCTIONS UTILITAIRES DE DESSIN ---
-        // Dessine une ligne du tableau avec la séparation grise
-        const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
-            const y = doc.y;
+        // Fonction pour les lignes avec 3 colonnes qui gère les sauts de page
+        const drawTableRow = (col1, col2, col3, isHeader = false) => {
+            // Saut de page automatique si on arrive tout en bas
+            if (doc.y > 750) doc.addPage();
             
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique')
+            const startY = doc.y;
+            
+            // Colonne 1 : Heure
+            doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica-Oblique')
                .fontSize(isHeader ? 9 : 10)
-               .fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT)
-               .text(col1, 50, y);
+               .fillColor(isHeader ? TEXT_DARK : TEXT_LIGHT)
+               .text(col1, 50, startY, { width: 50 });
             
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique')
+            // Colonne 2 : Détails de la vente
+            doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica-Oblique')
                .fontSize(isHeader ? 9 : 10)
-               .fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT)
-               .text(col2, 450, y, { width: 95, align: 'right' });
+               .fillColor(isHeader ? TEXT_DARK : TEXT_LIGHT)
+               .text(col2, 100, startY, { width: 340 });
             
-            if (!isHeader && !isTotal) {
+            // Colonne 3 : Montant
+            doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica-Oblique')
+               .fontSize(isHeader ? 9 : 10)
+               .fillColor(isHeader ? TEXT_DARK : TEXT_DARK) // Reste sombre pour les prix
+               .text(col3, 450, startY, { width: 95, align: 'right' });
+            
+            // On calcule le point le plus bas (au cas où la description s'étend sur 2 lignes)
+            const currentY = doc.y;
+            
+            if (!isHeader) {
                 // Ligne de séparation grise fine
-                doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke();
+                doc.moveTo(50, currentY + 5).lineTo(545, currentY + 5).lineWidth(0.5).strokeColor(LINE_COLOR).stroke();
             }
-            doc.y += 18;
+            doc.y = currentY + 12;
         };
 
-        // Dessine l'en-tête de section avec la ligne Cyan épaisse
         const drawSectionHeader = (title) => {
+            if (doc.y > 700) doc.addPage();
             doc.moveDown(1.5);
             doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
             doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
             doc.moveDown(0.5);
         };
 
-        // --- SECTION 1 : ENCAISSEMENTS ---
-        drawSectionHeader('Chiffre d\'Affaires & Encaissements');
-        drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
-        caParMethodeResult.rows.forEach(m => {
-            drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`);
-        });
-        doc.moveDown(0.5);
-        drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
+        // --- SECTION : RÉCAPITULATIF FINANCIER ---
+        drawSectionHeader('Récapitulatif Global');
+        const totalLabelY = doc.y;
+        doc.font('Helvetica-Bold').fontSize(12).fillColor(TEXT_DARK).text("Total Encaissé", 50, totalLabelY);
+        doc.font('Helvetica-Bold').fontSize(14).fillColor(THEME_COLOR).text(`${caTotal.toFixed(2)} €`, 450, totalLabelY, { align: 'right' });
+        doc.y += 20;
 
-        // --- SECTION 2 : DÉPENSES ---
-        drawSectionHeader('Dépenses (Factures Fournisseurs)');
-        drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
-        let totalDepenses = 0;
-        if (facturesResult.rowCount === 0) { 
-            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois-ci.', 50, doc.y);
-            doc.moveDown(1);
-        } else { 
-            facturesResult.rows.forEach(f => { 
-                drawTableRow(`${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`);
-                totalDepenses += parseFloat(f.montant_ttc); 
-            }); 
-        }
-        doc.moveDown(0.5);
-        drawTableRow('Total Dépenses', `${totalDepenses.toFixed(2)} €`, false, true);
+        // --- SECTION : DÉTAIL DES VENTES (LOI NF525) ---
+        drawSectionHeader('Détail des Ventes (Loi NF525)');
+        drawTableRow('HEURE', 'DÉTAIL (TICKET, PRESTATIONS, PAIEMENT)', 'MONTANT TTC', true);
 
-        // --- SECTION 3 : COMMISSIONS ---
-        drawSectionHeader('Commissions Employés');
-        drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
-        let totalPrimes = 0;
-        if (rhResult.rowCount === 0) { 
-            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y);
-        } else { 
-            rhResult.rows.forEach(c => { 
-                drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`);
-                totalPrimes += parseFloat(c.total_prime); 
-            }); 
+        if (ventesResult.rowCount === 0) {
+            doc.moveDown(0.5);
+            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune vente enregistrée ce jour-là.', 50, doc.y);
+        } else {
+            ventesResult.rows.forEach(v => {
+                const description = `Ticket #${v.id_ticket} - ${v.prestations} (Paiement: ${v.methode_paiement}, par ${v.employe})`;
+                drawTableRow(v.heure, description, `${parseFloat(v.total_ttc).toFixed(2)} €`);
+            });
         }
-        doc.moveDown(0.5);
-        drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
 
         // --- FOOTER (BARRE CYAN EN BAS DE TOUTES LES PAGES) ---
         const pages = doc.bufferedPageRange();
@@ -1301,7 +1239,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         doc.end();
     } catch (erreur) { 
         console.error(erreur);
-        res.status(500).send("Erreur lors de la génération du PDF."); 
+        res.status(500).send("Erreur lors de la génération du PDF journalier."); 
     }
 });
 
