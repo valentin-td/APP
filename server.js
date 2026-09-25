@@ -194,17 +194,21 @@ pool.query(`
     } catch (e) { }
 }).catch((e) => console.error("Erreur Init DB:", e));
 
-async function envoyerNotificationPush(id_salon, role_cible, payload) {
+async function envoyerNotificationPush(id_salon, cible, payload) {
     try {
         let query = 'SELECT endpoint, keys FROM push_subscriptions WHERE id_salon = $1';
         let params = [id_salon];
-        
-        if (role_cible === 'gerant') {
+
+        if (cible && cible.type === 'employe') {
+            query += " AND role = 'employe' AND id_employe = $2";
+            params.push(cible.id_employe);
+        } else if (cible === 'gerant') {
             query += " AND role = 'gerant'";
-        } else if (role_cible === 'employes') {
+        } else if (cible === 'employes') {
             query += " AND role = 'employe'";
         }
-        
+        // cible === 'salon' (message de groupe) : aucun filtre, tout le monde est notifié
+
         const subs = await pool.query(query, params);
         if (subs.rowCount === 0) return;
 
@@ -906,9 +910,16 @@ app.post('/api/messages', verifierToken, async (req, res) => {
         };
         io.to(req.user.id_salon.toString()).emit('nouveauMessage', newMessage);
         
-        // Envoi de la notification Push
-        const cible = req.user.role === 'gerant' ? 'employes' : 'gerant'; // Si c'est le gérant qui parle, on notifie les employés
-        envoyerNotificationPush(req.user.id_salon, cible, {
+        // Envoi de la notification Push : uniquement au(x) vrai(s) destinataire(s) du message
+        let cibleNotif;
+        if (dest === 0) {
+            cibleNotif = 'salon'; // message de groupe : tout le monde
+        } else if (dest === null) {
+            cibleNotif = 'gerant'; // message adressé au gérant
+        } else {
+            cibleNotif = { type: 'employe', id_employe: dest }; // message privé à un employé précis
+        }
+        envoyerNotificationPush(req.user.id_salon, cibleNotif, {
             title: `Nouveau message de ${newMessage.nom_expediteur}`,
             body: contenu.length > 40 ? contenu.substring(0, 40) + '...' : contenu,
             url: '/?tab=messagerie'
