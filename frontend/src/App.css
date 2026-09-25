@@ -546,11 +546,11 @@ body.dark-mode .theme-toggle-btn:hover {
     
     .mobile-chat-container .chat-wrapper {
         flex: 1;
-        min-height: 0; /* Crucial pour que le scroll interne fonctionne avec flexbox */
+        min-height: 0; 
         margin: 0;
         height: auto;
     }
-
+}
 /* ==========================================================================
    15. RESPONSIVE DESIGN (MOBILE & TABLETTE)
    ========================================================================== */
