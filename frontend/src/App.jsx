@@ -104,6 +104,8 @@ function App() {
   const [stockSearch, setStockSearch] = useState('');
   const [stockSortBy, setStockSortBy] = useState('nom');
   const [isStockExpanded, setIsStockExpanded] = useState(true);
+  const [stockMenuOuvert, setStockMenuOuvert] = useState(null);
+  const [modifStockDialog, setModifStockDialog] = useState(null);
   
   const [protocolesListe, setProtocolesListe] = useState([]);
   const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
@@ -845,6 +847,19 @@ function App() {
       }
   };
   const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
+
+  const confirmerModifStock = async () => {
+      if (!modifStockDialog) return;
+      const nouveauStock = parseInt(modifStockDialog.valeur);
+      if (isNaN(nouveauStock) || nouveauStock < 0) return showToast("Quantité invalide.", "error");
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/stocks/${modifStockDialog.id_article}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nouveau_stock: nouveauStock }) });
+          await handleFetchError(res);
+          setModifStockDialog(null);
+          chargerTout();
+          showToast("Stock mis à jour.", "success");
+      } catch (e) { showToast("Erreur lors de la mise à jour du stock.", "error"); }
+  };
 
   const ajouterIngredientRecette = () => {
       if (!ingredientTemp.id_article || !ingredientTemp.quantite_necessaire) return showToast("Sélectionnez un article et une quantité.", "error");
@@ -2668,9 +2683,21 @@ function App() {
                                     .map((produit) => {
                                     const status = getStockStatus(produit.stock_actuel);
                                     return (
-                                      <div className="stock-item" key={produit.id_article}>
+                                      <div className="stock-item" key={produit.id_article} style={{position: 'relative'}}>
                                         <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
-                                        <div className="stock-quantite-container"><span className="stock-quantite">{produit.stock_actuel}</span></div>
+                                        <div className="stock-quantite-container" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                            <span className="stock-quantite">{produit.stock_actuel}</span>
+                                            <button onClick={(e) => { e.stopPropagation(); setStockMenuOuvert(stockMenuOuvert === produit.id_article ? null : produit.id_article); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1}}>⋮</button>
+                                        </div>
+                                        {stockMenuOuvert === produit.id_article && (
+                                            <>
+                                                <div onClick={() => setStockMenuOuvert(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
+                                                <div className="chat-msg-menu" style={{top: '100%', bottom: 'auto', zIndex: 999, width: '170px'}}>
+                                                    <button onClick={() => { setModifStockDialog({ id_article: produit.id_article, nom: produit.nom, valeur: produit.stock_actuel }); setStockMenuOuvert(null); }}>Modifier la quantité</button>
+                                                    <button onClick={() => { setStockMenuOuvert(null); setConfirmDialog({ titre: "Supprimer le produit", message: `Voulez-vous vraiment supprimer "${produit.nom}" du catalogue ? Cette action est irréversible.`, btnTexte: "Supprimer", action: () => supprimerArticle(produit.id_article) }); }} style={{color: 'var(--color-danger)'}}>Supprimer</button>
+                                                </div>
+                                            </>
+                                        )}
                                       </div>
                                     );
                                 })}
@@ -3036,6 +3063,20 @@ function App() {
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => setConfirmDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
                       <button onClick={confirmDialog.action} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>{confirmDialog.btnTexte}</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {modifStockDialog && (
+          <div className="modal-overlay">
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '360px'}}>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Modifier le stock</h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px'}}>{modifStockDialog.nom}</p>
+                  <input type="number" min="0" value={modifStockDialog.valeur} onChange={(e) => setModifStockDialog({ ...modifStockDialog, valeur: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '16px', textAlign: 'center'}} autoFocus />
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => setModifStockDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
+                      <button onClick={confirmerModifStock} style={{flex: 1, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Enregistrer</button>
                   </div>
               </div>
           </div>
