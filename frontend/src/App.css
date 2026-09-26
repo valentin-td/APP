@@ -511,7 +511,7 @@ body.dark-mode .theme-toggle-btn:hover {
     /* La liste des contacts défile à l'horizontale en haut, comme des "Stories" */
     .chat-sidebar { width: 100%; height: auto; flex-shrink: 0; box-shadow: none; border: none; background: transparent; border-radius: 0; min-height: 0; }
     .chat-header { display: none; } /* On cache les "Discussions" ou le nom du contact au dessus */
-    .chat-contact-list { display: flex; flex-direction: row; overflow-x: auto; padding: 0 16px 8px 16px; gap: 8px; margin: 0 -16px; }
+    .chat-contact-list { display: flex; flex-direction: row; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 0 16px 8px 16px; gap: 8px; margin: 0 -16px; mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 24px), transparent 100%); -webkit-mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 24px), transparent 100%); }
     .chat-contact-list::-webkit-scrollbar { display: none; } /* Cache la barre de scroll horizontale sur mobile */
     
     /* Réduction de moitié des encarts de contacts */
