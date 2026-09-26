@@ -45,7 +45,7 @@ const TITRES = {
 
 export default function Parametres({
   configSalon, setConfigSalon, onSave, onBack, onLogout,
-  salonId, isDarkMode, onToggleTheme, onEnablePush
+  salonId, isDarkMode, onToggleTheme, onEnablePush, role
 }) {
   const [section, setSection] = useState(null);   // null = liste principale
 
@@ -58,7 +58,8 @@ export default function Parametres({
 
   const fideliteLabel = { NONE: 'Désactivé', POINTS: 'Points', TAMPONS: 'Tampons' }[configSalon.fidelite_type || 'NONE'];
 
-  const GROUPES = [
+  // Rôle "gerant" : accès complet. Rôle "salon" : uniquement les horaires. Rôle "employe" : rien de spécifique (affichage + légal + déconnexion seulement).
+  const groupesHaut = role === 'gerant' ? [
     { titre: null, lignes: [
       { id: 'fidelite', icone: ICONS.gift, label: 'Programme de fidélité', valeur: fideliteLabel },
       { id: 'sms', icone: ICONS.sms, label: 'Fidélisation SMS', valeur: statut(configSalon.brevo_api_key) },
@@ -73,6 +74,13 @@ export default function Parametres({
       { id: 'export_compta', icone: ICONS.send, label: 'Exportations comptable', valeur: statut(configSalon.email_comptable) },
       { id: 'tpe', icone: ICONS.card, label: 'TPE physique', valeur: statut(configSalon.stripe_reader_id) },
     ] },
+  ] : role === 'salon' ? [
+    { titre: 'Salon', lignes: [
+      { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
+    ] },
+  ] : [];
+
+  const groupesBas = [
     { titre: 'Informations légales', lignes: [
       { id: 'cgu', icone: ICONS.file, label: 'Conditions générales' },
       { id: 'confidentialite', icone: ICONS.shield, label: 'Politique de confidentialité' },
@@ -176,6 +184,13 @@ export default function Parametres({
                       </div>
                     </div>
                   </div>
+                  {role === 'gerant' && (
+                      <div className="carte scan-carte">
+                          <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 8px 0'}}>🔑 Accès "Salon" (poste partagé)</h4>
+                          <span style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '12px'}}>Ce code PIN permet de se connecter au poste d'accueil du salon (Caisse, Stock, Agenda, Académie, Messagerie, Clôture).</span>
+                          <input type="text" inputMode="numeric" maxLength="10" className="input-fournisseur" placeholder="Code PIN du salon" value={configSalon.pin_salon || ''} onChange={e => setConfigSalon({...configSalon, pin_salon: e.target.value.replace(/\D/g, '')})} />
+                      </div>
+                  )}
         {carteSauvegarde}
       </>);
       case 'alertes': return (<>
@@ -263,7 +278,7 @@ export default function Parametres({
             </div>
           </div>
 
-          {GROUPES.slice(0, 3).map((g, i) => (
+          {groupesHaut.map((g, i) => (
             <section key={i}>
               {g.titre && <h2 className="st-section-title">{g.titre}</h2>}
               <div className="st-group">
@@ -291,7 +306,7 @@ export default function Parametres({
             </div>
           </section>
 
-          {GROUPES.slice(3).map((g, i) => (
+          {groupesBas.map((g, i) => (
             <section key={'l' + i}>
               {g.titre && <h2 className="st-section-title">{g.titre}</h2>}
               <div className="st-group">
