@@ -122,6 +122,7 @@ function App() {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeReactionId, setActiveReactionId] = useState(null);
   const messagesEndRef = useRef(null);
+  const chatMessagesRef = useRef(null); // <-- LA LIGNE MANQUANTE EST ICI
   
 
   // Auto-scroll doux et contrôlé (syntaxe 100% compatible)
