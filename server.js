@@ -151,6 +151,7 @@ pool.query(`
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS alertes_sms_actives BOOLEAN DEFAULT FALSE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email_comptable VARCHAR(255);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS jour_envoi_bilan INT DEFAULT 1;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS derniere_verif_stock DATE;
 
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type_ticket VARCHAR(20) DEFAULT 'VENTE';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_ticket_origine INT REFERENCES tickets(id_ticket);
@@ -829,6 +830,14 @@ app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
         const r = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [req.user.id_salon]);
         res.json({ cloture_faite: r.rowCount > 0 });
     } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
+});
+
+app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Réservé au gérant." });
+    try {
+        await pool.query('UPDATE configuration_salon SET derniere_verif_stock = CURRENT_DATE WHERE id_salon = $1', [req.user.id_salon]);
+        res.json({ message: "Vérification des stocks enregistrée." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'enregistrement." }); }
 });
 
 app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
