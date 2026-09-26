@@ -113,6 +113,11 @@ function App() {
   const [modeEditionProtocole, setModeEditionProtocole] = useState(null); 
   const [rechercheProtocole, setRechercheProtocole] = useState('');
 
+  // --- DÉCLARATION DES LISTES (Remontées ici pour éviter le crash de l'écran blanc) ---
+  const [catalogueListe, setCatalogueListe] = useState([]);
+  const [employesListe, setEmployesListe] = useState([]);
+  const [clientsListe, setClientsListe] = useState([]);
+
   const [messagesListe, setMessagesListe] = useState([]);
   const [chatActif, setChatActif] = useState('salon');
   const [msgInput, setMsgInput] = useState('');
@@ -317,9 +322,6 @@ function App() {
       }
   };
 
-  const [catalogueListe, setCatalogueListe] = useState([]);
-  const [employesListe, setEmployesListe] = useState([]);
-
   // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
   const contactsTries = useMemo(() => {
       const roleUtilisateur = decodeToken(token)?.role;
@@ -335,7 +337,6 @@ function App() {
       }
       return base.sort((a, b) => (dernierMessageParConv[b.key] || 0) - (dernierMessageParConv[a.key] || 0));
   }, [employesListe, token, dernierMessageParConv]);
-  const [clientsListe, setClientsListe] = useState([]);
   
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '', gains: [] });
