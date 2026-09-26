@@ -1059,6 +1059,19 @@ app.post('/api/catalogue', verifierToken, async (req, res) => {
 
 app.delete('/api/catalogue/:id', verifierToken, async (req, res) => { try { const articleRes = await pool.query('SELECT nom, type_article, prix FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); if (articleRes.rowCount > 0) { await enregistrerJET(req.user.id_salon, 'SUPPRESSION_ARTICLE', { id_article: req.params.id, ...articleRes.rows[0] }); } res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }});
 
+app.put('/api/catalogue/:id/nom', verifierToken, async (req, res) => {
+    const nouveauNom = (req.body.nom || '').trim();
+    if (!nouveauNom) return res.status(400).json({ erreur: "Le nom ne peut pas être vide." });
+    try {
+        const doublon = await pool.query('SELECT 1 FROM catalogue WHERE id_salon = $1 AND id_article != $2 AND nom ILIKE $3', [req.user.id_salon, req.params.id, nouveauNom]);
+        if (doublon.rowCount > 0) return res.status(400).json({ erreur: "Une prestation porte déjà ce nom." });
+        const result = await pool.query('UPDATE catalogue SET nom = $1 WHERE id_article = $2 AND id_salon = $3 RETURNING id_article', [nouveauNom, req.params.id, req.user.id_salon]);
+        if (result.rowCount === 0) return res.status(404).json({ erreur: "Article introuvable." });
+        await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: req.params.id, action: 'RENOMMAGE', nouveau_nom: nouveauNom });
+        res.json({ message: "Nom mis à jour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors du renommage." }); }
+});
+
 app.get('/api/stocks', verifierToken, async (req, res) => { try { const stockResult = await pool.query(`SELECT id_article, nom, stock_actuel, seuil_alerte, type_article FROM catalogue WHERE id_salon = $1 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') ORDER BY nom ASC`, [req.user.id_salon]); res.json(stockResult.rows); } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }});
 
 app.put('/api/stocks/:id', verifierToken, async (req, res) => {
