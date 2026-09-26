@@ -1145,8 +1145,38 @@ function App() {
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
+          setClotureFaiteAujourdhui(true); // le bandeau de rappel disparaît immédiatement
       } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
   };
+
+  // --- Rappel de clôture journalière (bandeau) ---
+  const [clotureFaiteAujourdhui, setClotureFaiteAujourdhui] = useState(true);
+  const [heureActuelle, setHeureActuelle] = useState(new Date());
+
+  const verifierStatutCloture = async () => {
+      if (decodeToken(token)?.role !== 'gerant') return;
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture/statut', { headers: getAuthHeaders() });
+          const data = await handleFetchError(res);
+          setClotureFaiteAujourdhui(!!data.cloture_faite);
+      } catch (e) { /* échec silencieux : on retentera au prochain intervalle */ }
+  };
+
+  useEffect(() => {
+      if (!token) return;
+      verifierStatutCloture();
+      const intervalStatut = setInterval(verifierStatutCloture, 5 * 60 * 1000);
+      const intervalHorloge = setInterval(() => setHeureActuelle(new Date()), 60 * 1000);
+      return () => { clearInterval(intervalStatut); clearInterval(intervalHorloge); };
+  }, [token]);
+
+  const afficherRappelCloture = (() => {
+      if (decodeToken(token)?.role !== 'gerant' || clotureFaiteAujourdhui) return false;
+      const heureFermeture = parseFloat(configSalon.heure_fermeture) || 20;
+      const minutesFermeture = heureFermeture * 60;
+      const minutesActuelles = heureActuelle.getHours() * 60 + heureActuelle.getMinutes();
+      return minutesActuelles >= (minutesFermeture - 30);
+  })();
 
   const getCouleurTache = (tache) => {
       if (tache.statut === 'FAIT') return 'var(--color-success)'; 
@@ -1372,7 +1402,14 @@ function App() {
   return (
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
-      
+
+      {afficherRappelCloture && (
+          <div className="rappel-cloture-banner">
+              <span>N'oublie pas d'effectuer la Clôture Journalière</span>
+              <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
+          </div>
+      )}
+
       <style>{`
           .rdv-card-accordeon {
               transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
