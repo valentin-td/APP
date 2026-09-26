@@ -119,7 +119,7 @@ function App() {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeReactionId, setActiveReactionId] = useState(null);
   const messagesEndRef = useRef(null);
-  const messagesEndRef = useRef(null);
+  
 
   // Auto-scroll doux et contrôlé (syntaxe 100% compatible)
   useEffect(() => {
