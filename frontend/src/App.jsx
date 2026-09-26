@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import localforage from 'localforage';
 import './App.css';
@@ -119,7 +119,7 @@ function App() {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeReactionId, setActiveReactionId] = useState(null);
   const messagesEndRef = useRef(null);
-  const chatMessagesRef = useRef(null);
+  const messagesEndRef = useRef(null);
 
   // Auto-scroll doux et contrôlé (syntaxe 100% compatible)
   useEffect(() => {
@@ -127,6 +127,51 @@ function App() {
           messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
       }
   }, [messagesListe, chatActif, activeTab]);
+
+  // --- Pastilles de messages non lus ---
+  const [dernierLuParConv, setDernierLuParConv] = useState({});
+  useEffect(() => { localforage.getItem('dernierLuParConv').then(saved => { if (saved) setDernierLuParConv(saved); }); }, []);
+
+  // Identifie à quelle conversation (clé du contact) appartient un message
+  const getCleConversation = (msg, roleUtilisateur, myId) => {
+      if (msg.id_destinataire === 0) return 'salon';
+      if (roleUtilisateur === 'employe') {
+          if (msg.id_expediteur === myId) return msg.id_destinataire === null ? 'gerant' : msg.id_destinataire;
+          return msg.id_expediteur === null ? 'gerant' : msg.id_expediteur;
+      }
+      return msg.id_expediteur === null ? msg.id_destinataire : msg.id_expediteur;
+  };
+
+  // Calcule, pour chaque conversation, s'il reste des messages non lus
+  const nonLusParConv = useMemo(() => {
+      const roleUtilisateur = decodeToken(token)?.role;
+      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
+      const map = {};
+      (messagesListe || []).forEach(m => {
+          if (m.id_expediteur === myId) return; // mes propres messages ne comptent jamais comme non lus
+          const cle = getCleConversation(m, roleUtilisateur, myId);
+          if (m.id_message > (dernierLuParConv[cle] || 0)) map[cle] = true;
+      });
+      return map;
+  }, [messagesListe, dernierLuParConv, token]);
+
+  const aDesMessagesNonLus = Object.keys(nonLusParConv).length > 0;
+
+  // Marque la conversation actuellement ouverte comme lue
+  useEffect(() => {
+      if (activeTab !== 'messagerie') return;
+      const roleUtilisateur = decodeToken(token)?.role;
+      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
+      const idsConv = (messagesListe || []).filter(m => getCleConversation(m, roleUtilisateur, myId) === chatActif).map(m => m.id_message);
+      if (idsConv.length === 0) return;
+      const maxId = Math.max(...idsConv);
+      setDernierLuParConv(prev => {
+          if ((prev[chatActif] || 0) >= maxId) return prev;
+          const next = { ...prev, [chatActif]: maxId };
+          localforage.setItem('dernierLuParConv', next);
+          return next;
+      });
+  }, [chatActif, messagesListe, activeTab, token]);
 
   // Corrige le gel du scroll tactile iOS/WebKit quand l'app revient du premier plan
   // (bug connu : overflow-y:auto imbriqué dans un ancêtre position:fixed se fige après une mise en arrière-plan)
@@ -1391,7 +1436,10 @@ function App() {
                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#aa3bff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span style={{color: '#aa3bff', fontWeight: 'bold'}}>God Mode</span>
                      </div>
                  )}
-                 <div className={`nav-item ${activeTab === 'messagerie' ? 'active' : ''}`} onClick={() => setActiveTab('messagerie')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span><span>Chat</span></div>
+                 <div className={`nav-item ${activeTab === 'messagerie' ? 'active' : ''}`} onClick={() => setActiveTab('messagerie')} style={{ position: 'relative' }}>
+                     {aDesMessagesNonLus && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
+                     <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span><span>Chat</span>
+                 </div>
                  <div className="navbar-spacer"></div>
                  <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
               </>
@@ -1410,7 +1458,7 @@ function App() {
                         icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
                       { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, onSelect: () => { setActiveTab('actions'); setIsOutilsMenuOpen(false); },
                         icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
-                      { key: 'outils', label: 'Outils', onSelect: () => setIsOutilsMenuOpen(true),
+                      { key: 'outils', label: 'Outils', badge: aDesMessagesNonLus && !isOutilsMenuOpen, onSelect: () => setIsOutilsMenuOpen(true),
                         icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg> },
                   ]}
               />
@@ -1441,7 +1489,8 @@ function App() {
                               <div className="outil-btn-icon">⚡️</div><span className="outil-btn-label">God Mode</span>
                           </button>
                       )}
-                      <button className="outil-btn" onClick={() => {setActiveTab('messagerie'); setIsOutilsMenuOpen(false);}}>
+                      <button className="outil-btn" onClick={() => {setActiveTab('messagerie'); setIsOutilsMenuOpen(false);}} style={{position: 'relative'}}>
+                          {aDesMessagesNonLus && <span className="badge-ia-rouge" style={{top: '-2px', right: '-2px'}}></span>}
                           <div className="outil-btn-icon">💬</div><span className="outil-btn-label">Chat</span>
                       </button>
                       <button className="outil-btn" onClick={() => {seDeconnecter(); setIsOutilsMenuOpen(false);}}>
@@ -2671,24 +2720,28 @@ function App() {
                       <div className="chat-sidebar">
                           <div className="chat-header">Discussions</div>
                           <div className="chat-contact-list">
-                              <div className={`chat-contact ${chatActif === 'salon' ? 'active' : ''}`} onClick={() => setChatActif('salon')}>
+                              <div className={`chat-contact ${chatActif === 'salon' ? 'active' : ''}`} onClick={() => setChatActif('salon')} style={{position: 'relative'}}>
+                                  {nonLusParConv['salon'] && <span className="badge-ia-rouge"></span>}
                                   <div style={{width: isMobile ? 48 : 40, height: isMobile ? 48 : 40, borderRadius: '8px', background: 'var(--text-main)', color: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0}}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
                                   <div className="chat-contact-name" style={{fontWeight: '600'}}>{configSalon.nom_salon || 'Groupe Salon'}</div>
                               </div>
                               {role === 'gerant' && (employesListe || []).map(emp => (
-                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)}>
+                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)} style={{position: 'relative'}}>
+                                      {nonLusParConv[emp.id_employe] && <span className="badge-ia-rouge"></span>}
                                       {renderAvatar(emp.photo_url, emp.nom, isMobile ? 48 : 40)}
                                       <div className="chat-contact-name">{emp.nom}</div>
                                   </div>
                               ))}
                               {role === 'employe' && (
-                                  <div className={`chat-contact ${chatActif === 'gerant' ? 'active' : ''}`} onClick={() => setChatActif('gerant')}>
+                                  <div className={`chat-contact ${chatActif === 'gerant' ? 'active' : ''}`} onClick={() => setChatActif('gerant')} style={{position: 'relative'}}>
+                                      {nonLusParConv['gerant'] && <span className="badge-ia-rouge"></span>}
                                       {renderAvatar(null, 'Gérant', isMobile ? 48 : 40)}
                                       <div className="chat-contact-name">Gérant</div>
                                   </div>
                               )}
                               {role === 'employe' && (employesListe || []).filter(e => e.id_employe !== decodeToken(token)?.id_employe).map(emp => (
-                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)}>
+                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)} style={{position: 'relative'}}>
+                                      {nonLusParConv[emp.id_employe] && <span className="badge-ia-rouge"></span>}
                                       {renderAvatar(emp.photo_url, emp.nom, isMobile ? 48 : 40)}
                                       <div className="chat-contact-name">{emp.nom}</div>
                                   </div>
