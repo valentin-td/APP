@@ -383,24 +383,11 @@ function App() {
 
   const chargerTout = () => {
     const role = decodeToken(token)?.role;
-    if (role === 'employe') return; 
-    setDashboardData(null); 
-    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData');
+
+    // Ces données sont nécessaires à TOUS les rôles (la messagerie en a besoin pour employé comme pour gérant)
     fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
-    fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
-    fetchAndCache('/api/stocks', setStocksData, 'stocksData');
-    fetchAndCache('/api/rh', setRhData, 'rhData');
-    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
-    fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
-    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
     fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
 
-    if (decodeToken(token)?.id_salon === 38) {
-        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
-        fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
-    }
-    
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
         .then(async (d) => {
@@ -415,6 +402,23 @@ function App() {
             const cachedConf = await localforage.getItem('configSalon');
             if(cachedConf) setConfigSalon(cachedConf);
         });
+
+    if (role === 'employe') return; // à partir d'ici : uniquement les données de gestion réservées au gérant
+
+    setDashboardData(null); 
+    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData');
+    fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
+    fetchAndCache('/api/stocks', setStocksData, 'stocksData');
+    fetchAndCache('/api/rh', setRhData, 'rhData');
+    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
+    fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
+    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
+    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
+
+    if (decodeToken(token)?.id_salon === 38) {
+        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
+        fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
+    }
   };
 
   useEffect(() => {
