@@ -414,7 +414,7 @@ function App() {
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
-    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1
+    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null
   });
 
   const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -537,7 +537,7 @@ function App() {
             const config = { 
                 google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
                 fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
-                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1
+                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null
             };
             setConfigSalon(config);
             await localforage.setItem('configSalon', config);
@@ -1178,6 +1178,23 @@ function App() {
       return minutesActuelles >= (minutesFermeture - 30);
   })();
 
+  // --- Rappel de vérification manuelle des stocks (tous les 3 mois) ---
+  const validerVerifStock = async () => {
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/stocks/verification/fait', { method: 'POST', headers: getAuthHeaders() });
+          await handleFetchError(res);
+          setConfigSalon(prev => ({ ...prev, derniere_verif_stock: new Date().toISOString() }));
+      } catch (e) { showToast("Erreur lors de l'enregistrement.", "error"); }
+  };
+
+  const afficherRappelStock = (() => {
+      if (decodeToken(token)?.role !== 'gerant') return false;
+      if (!configSalon.derniere_verif_stock) return true;
+      const prochainRappel = new Date(configSalon.derniere_verif_stock);
+      prochainRappel.setMonth(prochainRappel.getMonth() + 3);
+      return heureActuelle >= prochainRappel;
+  })();
+
   const getCouleurTache = (tache) => {
       if (tache.statut === 'FAIT') return 'var(--color-success)'; 
       if (!tache.date_echeance) return '#f59e0b'; 
@@ -1403,10 +1420,20 @@ function App() {
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
 
-      {afficherRappelCloture && (
-          <div className="rappel-cloture-banner">
-              <span>N'oublie pas d'effectuer la Clôture Journalière</span>
-              <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
+      {(afficherRappelCloture || afficherRappelStock) && (
+          <div className="rappels-fixes-container">
+              {afficherRappelCloture && (
+                  <div className="rappel-cloture-banner">
+                      <span>N'oublie pas d'effectuer la Clôture Journalière</span>
+                      <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
+                  </div>
+              )}
+              {afficherRappelStock && (
+                  <div className="rappel-stock-banner">
+                      <span>Nous vous conseillons de vérifier les stocks manuellement</span>
+                      <button onClick={validerVerifStock}>Fait</button>
+                  </div>
+              )}
           </div>
       )}
 
