@@ -155,13 +155,24 @@ function App() {
       const roleUtilisateur = decodeToken(token)?.role;
       const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
       const map = {};
+      
+      // On prépare la liste des clés de contacts valides (pour ignorer les employés supprimés)
+      const clesActives = new Set(['salon']);
+      if (roleUtilisateur === 'employe') clesActives.add('gerant');
+      (employesListe || []).forEach(emp => clesActives.add(String(emp.id_employe)));
+
       (messagesListe || []).forEach(m => {
           if (m.id_expediteur === myId) return; // mes propres messages ne comptent jamais comme non lus
-          const cle = getCleConversation(m, roleUtilisateur, myId);
+          const cleBrute = getCleConversation(m, roleUtilisateur, myId);
+          if (cleBrute === null || cleBrute === undefined) return;
+          
+          const cle = String(cleBrute);
+          if (!clesActives.has(cle)) return; // On ignore ce message car le contact a été supprimé
+
           if (m.id_message > (dernierLuParConv[cle] || 0)) map[cle] = true;
       });
       return map;
-  }, [messagesListe, dernierLuParConv, token]);
+  }, [messagesListe, dernierLuParConv, token, employesListe]);
 
   const aDesMessagesNonLus = Object.keys(nonLusParConv).length > 0;
 
@@ -184,12 +195,16 @@ function App() {
       if (activeTab !== 'messagerie') return;
       const roleUtilisateur = decodeToken(token)?.role;
       const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
-      const idsConv = (messagesListe || []).filter(m => getCleConversation(m, roleUtilisateur, myId) === chatActif).map(m => m.id_message);
+      
+      const cleActuelleStr = String(chatActif);
+      const idsConv = (messagesListe || []).filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr).map(m => m.id_message);
+      
       if (idsConv.length === 0) return;
       const maxId = Math.max(...idsConv);
+      
       setDernierLuParConv(prev => {
-          if ((prev[chatActif] || 0) >= maxId) return prev;
-          const next = { ...prev, [chatActif]: maxId };
+          if ((prev[cleActuelleStr] || 0) >= maxId) return prev;
+          const next = { ...prev, [cleActuelleStr]: maxId };
           localforage.setItem('dernierLuParConv', next);
           return next;
       });
