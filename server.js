@@ -824,6 +824,13 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     } finally { clientDB.release(); }
 });
 
+app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [req.user.id_salon]);
+        res.json({ cloture_faite: r.rowCount > 0 });
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
+});
+
 app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     const { date_debut, date_fin } = req.query;
