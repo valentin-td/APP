@@ -848,6 +848,18 @@ function App() {
   };
   const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
 
+  const [modifNomDialog, setModifNomDialog] = useState(null);
+  const confirmerModifNom = async () => {
+      if (!modifNomDialog || !modifNomDialog.nom.trim()) return showToast("Le nom ne peut pas être vide.", "error");
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${modifNomDialog.id_article}/nom`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifNomDialog.nom.trim() }) });
+          await handleFetchError(res);
+          setModifNomDialog(null);
+          chargerTout();
+          showToast("Prestation renommée.", "success");
+      } catch (e) { showToast(e.message || "Erreur lors du renommage.", "error"); }
+  };
+
   const confirmerModifStock = async () => {
       if (!modifStockDialog) return;
       const nouveauStock = parseInt(modifStockDialog.valeur);
@@ -2614,8 +2626,12 @@ function App() {
                               ) : (catalogueListe || []).filter(art => art.type_article === 'PRESTATION').map(art => (
                                   <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
                                       <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € </span>
-                                      <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
+                                      <div style={{display: 'flex', gap: '16px'}}>
+                                          <button onClick={() => setModifNomDialog({ id_article: art.id_article, nom: art.nom })} style={{background:'none', border:'none', color:'var(--text-secondary)', cursor:'pointer', fontWeight: '500'}}>Renommer</button>
+                                          <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
+                                      </div>
                                   </div>
+                              ))}
                               ))}
                           </div>
                       </>
@@ -3077,6 +3093,19 @@ function App() {
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => setModifStockDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
                       <button onClick={confirmerModifStock} style={{flex: 1, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Enregistrer</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {modifNomDialog && (
+          <div className="modal-overlay">
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '360px'}}>
+                  <h2 style={{margin: '0 0 20px 0', color: 'var(--text-main)', fontSize: '20px'}}>Renommer la prestation</h2>
+                  <input type="text" value={modifNomDialog.nom} onChange={(e) => setModifNomDialog({ ...modifNomDialog, nom: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '14px'}} autoFocus />
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => setModifNomDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
+                      <button onClick={confirmerModifNom} disabled={!modifNomDialog.nom.trim()} style={{flex: 1, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: modifNomDialog.nom.trim() ? 'pointer' : 'not-allowed', opacity: modifNomDialog.nom.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Enregistrer</button>
                   </div>
               </div>
           </div>
