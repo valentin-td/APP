@@ -272,6 +272,30 @@ body.dark-mode .theme-toggle-btn:hover {
 }
 .theme-toggle-fixed { position: fixed; top: 24px; right: 24px; z-index: 1000; }
 
+.rappel-cloture-banner {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 9999;
+    background: var(--bg-card);
+    border: 1px solid var(--color-danger);
+    border-left: 4px solid var(--color-danger);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    max-width: 360px;
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rappel-cloture-banner span { font-size: 13px; font-weight: 500; color: var(--text-main); line-height: 1.4; }
+.rappel-cloture-banner button { flex-shrink: 0; background: var(--color-danger); color: #fff; border: none; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+
+@media (max-width: 768px) {
+    .rappel-cloture-banner { top: max(16px, env(safe-area-inset-top)); right: 12px; left: 12px; max-width: none; }
+}
+
 /* ==========================================================================
    7. BARRE DE NAVIGATION (DESKTOP) — INCHANGÉE, VALIDÉE PAR VALENTIN
    ========================================================================== */
