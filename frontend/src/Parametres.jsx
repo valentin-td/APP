@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import './Parametres.css';
 import { TEXTE_CONDITIONS_GENERALES, TEXTE_POLITIQUE_CONFIDENTIALITE } from './textesLegaux';
-
+ 
 /* ==========================================================================
    ONGLET PARAMÈTRES — liste style iOS (catégories → sous-pages)
    Les formulaires (fidélité, Google, horaires, mail, SMS, alertes, TPE) sont
