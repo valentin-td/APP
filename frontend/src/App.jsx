@@ -119,6 +119,7 @@ function App() {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeReactionId, setActiveReactionId] = useState(null);
   const messagesEndRef = useRef(null);
+  const chatMessagesRef = useRef(null);
 
   // Auto-scroll doux et contrôlé (syntaxe 100% compatible)
   useEffect(() => {
@@ -126,6 +127,25 @@ function App() {
           messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
       }
   }, [messagesListe, chatActif, activeTab]);
+
+  // Corrige le gel du scroll tactile iOS/WebKit quand l'app revient du premier plan
+  // (bug connu : overflow-y:auto imbriqué dans un ancêtre position:fixed se fige après une mise en arrière-plan)
+  useEffect(() => {
+      const debloquerScrollChat = () => {
+          if (document.visibilityState !== 'visible') return;
+          const el = chatMessagesRef.current;
+          if (!el) return;
+          el.style.overflowY = 'hidden';
+          void el.offsetHeight; // force le reflow
+          el.style.overflowY = 'auto';
+      };
+      document.addEventListener('visibilitychange', debloquerScrollChat);
+      window.addEventListener('pageshow', debloquerScrollChat);
+      return () => {
+          document.removeEventListener('visibilitychange', debloquerScrollChat);
+          window.removeEventListener('pageshow', debloquerScrollChat);
+      };
+  }, []);
   
   const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
@@ -2683,7 +2703,7 @@ function App() {
                                ((employesListe || []).find(e => e.id_employe === chatActif)?.nom || 'Conversation')}
                           </div>
                           
-                          <div className="chat-messages">
+                          <div className="chat-messages" ref={chatMessagesRef}>
                               {(messagesListe || []).filter(m => {
                                   const myId = role === 'employe' ? decodeToken(token)?.id_employe : null;
                                   if (chatActif === 'salon') return m.id_destinataire === 0;
