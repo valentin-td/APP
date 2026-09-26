@@ -169,26 +169,27 @@ function App() {
       const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
       const map = {};
       
-      // On prépare la liste des clés de contacts valides (pour ignorer les employés supprimés)
       const clesActives = new Set(['salon']);
       if (roleUtilisateur === 'employe') clesActives.add('gerant');
       (employesListe || []).forEach(emp => clesActives.add(String(emp.id_employe)));
 
       (messagesListe || []).forEach(m => {
-          if (m.id_expediteur === myId) return; // mes propres messages ne comptent jamais comme non lus
+          if (m.id_expediteur === myId) return;
           const cleBrute = getCleConversation(m, roleUtilisateur, myId);
           if (cleBrute === null || cleBrute === undefined) return;
           
           const cle = String(cleBrute);
-          if (!clesActives.has(cle)) return; // On ignore ce message car le contact a été supprimé
+          if (!clesActives.has(cle)) return;
 
-          // On force en nombre pour éviter que "10" soit considéré plus petit que "9"
+          // Si on est actuellement SUR cette conversation, on ne déclenche JAMAIS la pastille rouge
+          if (activeTab === 'messagerie' && String(chatActif) === cle) return;
+
           if (Number(m.id_message) > Number(dernierLuParConv[cle] || 0)) {
               map[cle] = true;
           }
       });
       return map;
-  }, [messagesListe, dernierLuParConv, token, employesListe]);
+  }, [messagesListe, dernierLuParConv, token, employesListe, activeTab, chatActif]);
 
   const aDesMessagesNonLus = Object.keys(nonLusParConv).length > 0;
 
@@ -206,25 +207,33 @@ function App() {
       return map;
   }, [messagesListe, token]);
 
-  // Marque la conversation actuellement ouverte comme lue
-  useEffect(() => {
+  // Marque la conversation actuellement ouverte comme lue sans déclencher de boucle infinie
+  const marquerConversationCommeLue = () => {
       if (activeTab !== 'messagerie') return;
+      
       const roleUtilisateur = decodeToken(token)?.role;
       const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
-      
       const cleActuelleStr = String(chatActif);
-      const idsConv = (messagesListe || []).filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr).map(m => Number(m.id_message));
+      
+      const idsConv = (messagesListe || [])
+          .filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr)
+          .map(m => Number(m.id_message));
       
       if (idsConv.length === 0) return;
       const maxId = Math.max(...idsConv);
-      
+
       setDernierLuParConv(prev => {
           if (Number(prev[cleActuelleStr] || 0) >= maxId) return prev;
           const next = { ...prev, [cleActuelleStr]: maxId };
           localforage.setItem('dernierLuParConv', next);
           return next;
       });
-  }, [chatActif, messagesListe, activeTab, token]);
+  };
+
+  // N'exécute le check que si l'onglet Chat est ouvert OU que l'on change de contact
+  useEffect(() => {
+      marquerConversationCommeLue();
+  }, [chatActif, activeTab, messagesListe.length]);
 
   // Corrige le gel du scroll tactile iOS/WebKit quand l'app revient du premier plan
   // (bug connu : overflow-y:auto imbriqué dans un ancêtre position:fixed se fige après une mise en arrière-plan)
