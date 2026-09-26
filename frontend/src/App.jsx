@@ -1770,6 +1770,7 @@ function App() {
                   onBack={() => setActiveTab('accueil')}
                   onLogout={seDeconnecter}
                   salonId={decodeToken(token)?.id_salon}
+                  role={role}
                   isDarkMode={isDarkMode}
                   onToggleTheme={() => setIsDarkMode(!isDarkMode)}
                   onEnablePush={activerNotificationsPush}
