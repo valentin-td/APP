@@ -134,7 +134,20 @@ function App() {
 
   // --- Pastilles de messages non lus ---
   const [dernierLuParConv, setDernierLuParConv] = useState({});
-  useEffect(() => { localforage.getItem('dernierLuParConv').then(saved => { if (saved) setDernierLuParConv(saved); }); }, []);
+  useEffect(() => { 
+      localforage.getItem('dernierLuParConv').then(saved => { 
+          if (saved) {
+              setDernierLuParConv(prev => {
+                  const next = { ...saved };
+                  // On garde toujours l'ID le plus élevé (évite que la mémoire locale écrase une lecture récente)
+                  for (let k in prev) {
+                      next[k] = Math.max(Number(next[k]) || 0, Number(prev[k]) || 0);
+                  }
+                  return next;
+              });
+          }
+      }); 
+  }, []);
 
   // Identifie à quelle conversation (clé du contact) appartient un message.
   // Renvoie null si le message ne concerne pas l'utilisateur courant (ex: échange entre deux autres employés).
@@ -169,7 +182,10 @@ function App() {
           const cle = String(cleBrute);
           if (!clesActives.has(cle)) return; // On ignore ce message car le contact a été supprimé
 
-          if (m.id_message > (dernierLuParConv[cle] || 0)) map[cle] = true;
+          // On force en nombre pour éviter que "10" soit considéré plus petit que "9"
+          if (Number(m.id_message) > Number(dernierLuParConv[cle] || 0)) {
+              map[cle] = true;
+          }
       });
       return map;
   }, [messagesListe, dernierLuParConv, token, employesListe]);
@@ -197,13 +213,13 @@ function App() {
       const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
       
       const cleActuelleStr = String(chatActif);
-      const idsConv = (messagesListe || []).filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr).map(m => m.id_message);
+      const idsConv = (messagesListe || []).filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr).map(m => Number(m.id_message));
       
       if (idsConv.length === 0) return;
       const maxId = Math.max(...idsConv);
       
       setDernierLuParConv(prev => {
-          if ((prev[cleActuelleStr] || 0) >= maxId) return prev;
+          if (Number(prev[cleActuelleStr] || 0) >= maxId) return prev;
           const next = { ...prev, [cleActuelleStr]: maxId };
           localforage.setItem('dernierLuParConv', next);
           return next;
