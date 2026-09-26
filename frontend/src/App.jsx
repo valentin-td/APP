@@ -175,22 +175,6 @@ function App() {
       return map;
   }, [messagesListe, token]);
 
-  // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
-  const contactsTries = useMemo(() => {
-      const roleUtilisateur = decodeToken(token)?.role;
-      const myIdActuel = decodeToken(token)?.id_employe;
-      let base;
-      if (roleUtilisateur === 'gerant') {
-          base = (employesListe || []).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }));
-      } else {
-          base = [
-              { key: 'gerant', nom: 'Gérant', photo_url: null },
-              ...(employesListe || []).filter(e => e.id_employe !== myIdActuel).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
-          ];
-      }
-      return base.sort((a, b) => (dernierMessageParConv[b.key] || 0) - (dernierMessageParConv[a.key] || 0));
-  }, [employesListe, token, dernierMessageParConv]);
-
   // Marque la conversation actuellement ouverte comme lue
   useEffect(() => {
       if (activeTab !== 'messagerie') return;
@@ -291,6 +275,22 @@ function App() {
 
   const [catalogueListe, setCatalogueListe] = useState([]);
   const [employesListe, setEmployesListe] = useState([]);
+
+  // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
+  const contactsTries = useMemo(() => {
+      const roleUtilisateur = decodeToken(token)?.role;
+      const myIdActuel = decodeToken(token)?.id_employe;
+      let base;
+      if (roleUtilisateur === 'gerant') {
+          base = (employesListe || []).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }));
+      } else {
+          base = [
+              { key: 'gerant', nom: 'Gérant', photo_url: null },
+              ...(employesListe || []).filter(e => e.id_employe !== myIdActuel).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
+          ];
+      }
+      return base.sort((a, b) => (dernierMessageParConv[b.key] || 0) - (dernierMessageParConv[a.key] || 0));
+  }, [employesListe, token, dernierMessageParConv]);
   const [clientsListe, setClientsListe] = useState([]);
   
   const [clientSelectionne, setClientSelectionne] = useState(null);
