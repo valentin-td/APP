@@ -132,14 +132,18 @@ function App() {
   const [dernierLuParConv, setDernierLuParConv] = useState({});
   useEffect(() => { localforage.getItem('dernierLuParConv').then(saved => { if (saved) setDernierLuParConv(saved); }); }, []);
 
-  // Identifie à quelle conversation (clé du contact) appartient un message
+  // Identifie à quelle conversation (clé du contact) appartient un message.
+  // Renvoie null si le message ne concerne pas l'utilisateur courant (ex: échange entre deux autres employés).
   const getCleConversation = (msg, roleUtilisateur, myId) => {
       if (msg.id_destinataire === 0) return 'salon';
       if (roleUtilisateur === 'employe') {
           if (msg.id_expediteur === myId) return msg.id_destinataire === null ? 'gerant' : msg.id_destinataire;
-          return msg.id_expediteur === null ? 'gerant' : msg.id_expediteur;
+          if (msg.id_destinataire === myId) return msg.id_expediteur === null ? 'gerant' : msg.id_expediteur;
+          return null;
       }
-      return msg.id_expediteur === null ? msg.id_destinataire : msg.id_expediteur;
+      if (msg.id_expediteur === null) return msg.id_destinataire;
+      if (msg.id_destinataire === null) return msg.id_expediteur;
+      return null;
   };
 
   // Calcule, pour chaque conversation, s'il reste des messages non lus
@@ -156,6 +160,36 @@ function App() {
   }, [messagesListe, dernierLuParConv, token]);
 
   const aDesMessagesNonLus = Object.keys(nonLusParConv).length > 0;
+
+  // Calcule, pour chaque conversation, la date du dernier message (pour le tri par récence)
+  const dernierMessageParConv = useMemo(() => {
+      const roleUtilisateur = decodeToken(token)?.role;
+      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
+      const map = {};
+      (messagesListe || []).forEach(m => {
+          const cle = getCleConversation(m, roleUtilisateur, myId);
+          if (cle === null || cle === undefined) return;
+          const t = new Date(m.date_creation).getTime();
+          if (!map[cle] || t > map[cle]) map[cle] = t;
+      });
+      return map;
+  }, [messagesListe, token]);
+
+  // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
+  const contactsTries = useMemo(() => {
+      const roleUtilisateur = decodeToken(token)?.role;
+      const myIdActuel = decodeToken(token)?.id_employe;
+      let base;
+      if (roleUtilisateur === 'gerant') {
+          base = (employesListe || []).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }));
+      } else {
+          base = [
+              { key: 'gerant', nom: 'Gérant', photo_url: null },
+              ...(employesListe || []).filter(e => e.id_employe !== myIdActuel).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
+          ];
+      }
+      return base.sort((a, b) => (dernierMessageParConv[b.key] || 0) - (dernierMessageParConv[a.key] || 0));
+  }, [employesListe, token, dernierMessageParConv]);
 
   // Marque la conversation actuellement ouverte comme lue
   useEffect(() => {
@@ -1437,7 +1471,7 @@ function App() {
                      </div>
                  )}
                  <div className={`nav-item ${activeTab === 'messagerie' ? 'active' : ''}`} onClick={() => setActiveTab('messagerie')} style={{ position: 'relative' }}>
-                     {aDesMessagesNonLus && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
+                     {aDesMessagesNonLus && <span className="badge-ia-rouge"></span>}
                      <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span><span>Chat</span>
                  </div>
                  <div className="navbar-spacer"></div>
@@ -2725,25 +2759,11 @@ function App() {
                                   <div style={{width: isMobile ? 48 : 40, height: isMobile ? 48 : 40, borderRadius: '8px', background: 'var(--text-main)', color: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0}}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
                                   <div className="chat-contact-name" style={{fontWeight: '600'}}>{configSalon.nom_salon || 'Groupe Salon'}</div>
                               </div>
-                              {role === 'gerant' && (employesListe || []).map(emp => (
-                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)} style={{position: 'relative'}}>
-                                      {nonLusParConv[emp.id_employe] && <span className="badge-ia-rouge"></span>}
-                                      {renderAvatar(emp.photo_url, emp.nom, isMobile ? 48 : 40)}
-                                      <div className="chat-contact-name">{emp.nom}</div>
-                                  </div>
-                              ))}
-                              {role === 'employe' && (
-                                  <div className={`chat-contact ${chatActif === 'gerant' ? 'active' : ''}`} onClick={() => setChatActif('gerant')} style={{position: 'relative'}}>
-                                      {nonLusParConv['gerant'] && <span className="badge-ia-rouge"></span>}
-                                      {renderAvatar(null, 'Gérant', isMobile ? 48 : 40)}
-                                      <div className="chat-contact-name">Gérant</div>
-                                  </div>
-                              )}
-                              {role === 'employe' && (employesListe || []).filter(e => e.id_employe !== decodeToken(token)?.id_employe).map(emp => (
-                                  <div key={emp.id_employe} className={`chat-contact ${chatActif === emp.id_employe ? 'active' : ''}`} onClick={() => setChatActif(emp.id_employe)} style={{position: 'relative'}}>
-                                      {nonLusParConv[emp.id_employe] && <span className="badge-ia-rouge"></span>}
-                                      {renderAvatar(emp.photo_url, emp.nom, isMobile ? 48 : 40)}
-                                      <div className="chat-contact-name">{emp.nom}</div>
+                              {contactsTries.map(c => (
+                                  <div key={c.key} className={`chat-contact ${chatActif === c.key ? 'active' : ''}`} onClick={() => setChatActif(c.key)} style={{position: 'relative'}}>
+                                      {nonLusParConv[c.key] && <span className="badge-ia-rouge"></span>}
+                                      {renderAvatar(c.photo_url, c.nom, isMobile ? 48 : 40)}
+                                      <div className="chat-contact-name">{c.nom}</div>
                                   </div>
                               ))}
                           </div>
