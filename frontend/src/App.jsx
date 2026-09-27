@@ -80,6 +80,7 @@ function App() {
   const [idSalonInput, setIdSalonInput] = useState(''); 
   const [nomEmployeInput, setNomEmployeInput] = useState('');
   const [pinEmployeInput, setPinEmployeInput] = useState('');
+  const [pinSalonInput, setPinSalonInput] = useState('');
 
   const [isAbonnementInactif, setIsAbonnementInactif] = useState(false);
   const [userRole, setUserRole] = useState('gerant'); 
@@ -726,9 +727,12 @@ function App() {
 
   const seConnecter = async () => {
     try {
-      const isEmploye = loginType === 'employe';
-      const endpoint = isEmploye ? 'https://api-salon-backend.onrender.com/api/employes/login-pin' : 'https://api-salon-backend.onrender.com/api/login';
-      const payload = isEmploye ? { id_salon: idSalonInput, nom_employe: nomEmployeInput, code_pin: pinEmployeInput } : { email: emailInput, mot_de_passe: motDePasseInput };
+      const endpoint = loginType === 'employe' ? 'https://api-salon-backend.onrender.com/api/employes/login-pin'
+                      : loginType === 'salon' ? 'https://api-salon-backend.onrender.com/api/salon/login-pin'
+                      : 'https://api-salon-backend.onrender.com/api/login';
+      const payload = loginType === 'employe' ? { id_salon: idSalonInput, nom_employe: nomEmployeInput, code_pin: pinEmployeInput }
+                     : loginType === 'salon' ? { id_salon: idSalonInput, pin: pinSalonInput }
+                     : { email: emailInput, mot_de_passe: motDePasseInput };
 
       const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
@@ -736,7 +740,7 @@ function App() {
       if (response.ok) { 
           localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); 
           const decoded = decodeToken(data.token); setUserRole(decoded.role || 'gerant');
-          if(decoded.role === 'employe') { setActiveTab('agenda'); } else { setActiveTab('accueil'); if(data.statut_abonnement !== 'actif') setIsAbonnementInactif(true); }
+          if(decoded.role === 'employe') { setActiveTab('agenda'); } else if (decoded.role === 'salon') { setActiveTab('accueil'); } else { setActiveTab('accueil'); if(data.statut_abonnement !== 'actif') setIsAbonnementInactif(true); }
       } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Mode hors-ligne ou erreur de connexion."); }
   };
@@ -1276,9 +1280,10 @@ function App() {
         <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
           <div className="logo-container"><img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" /></div>
 
-          <div style={{display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px'}}>
-             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Gérant</button>
-             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease'}}>Employé</button>
+          <div style={{display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '24px'}}>
+             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Gérant</button>
+             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Employé</button>
+             <button onClick={() => {setLoginType('salon'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'salon' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'salon' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Salon</button>
           </div>
           
           {isForgotPassword ? (
@@ -1304,12 +1309,18 @@ function App() {
                          {isLoginMode && <p style={{fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', margin:0}} onClick={() => setIsForgotPassword(true)}>Oublié ?</p>}
                       </div>
                    </>
-                ) : (
+                ) : loginType === 'employe' ? (
                    <>
                       <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
                       <input type="text" className="input-fournisseur" placeholder="Votre prénom" style={{marginBottom: '12px'}} value={nomEmployeInput} onChange={(e) => setNomEmployeInput(e.target.value)} />
                       <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN à 4 chiffres" value={pinEmployeInput} onChange={(e) => setPinEmployeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
                       <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '16px' }}>Accéder au Planning</button>
+                   </>
+                ) : (
+                   <>
+                      <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
+                      <input type="password" maxLength="10" inputMode="numeric" className="input-fournisseur" placeholder="Code PIN du salon" value={pinSalonInput} onChange={(e) => setPinSalonInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
+                      <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '16px' }}>Accéder au Salon</button>
                    </>
                 )}
              </>
