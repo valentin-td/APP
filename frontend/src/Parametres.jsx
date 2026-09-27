@@ -46,7 +46,7 @@ const TITRES = {
 
 export default function Parametres({
   configSalon, setConfigSalon, onSave, onBack, onLogout,
-  salonId, isDarkMode, onToggleTheme, onEnablePush, role
+  salonId, isDarkMode, onToggleTheme, onEnablePush, role, photoUrl, onUploadPhoto
 }) {
   const [section, setSection] = useState(null);   // null = liste principale
 
@@ -348,10 +348,18 @@ case 'cgu': return (
       {section === null ? (
         <>
           <div className="st-account">
-            <div className="st-avatar">{ICONS.person}</div>
+            {role === 'employe' ? (
+                <label className="st-avatar" style={{cursor: 'pointer', overflow: 'hidden', position: 'relative'}}>
+                    {photoUrl ? <img src={photoUrl} alt="Ma photo" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} /> : ICONS.person}
+                    <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={onUploadPhoto} style={{display: 'none'}} />
+                </label>
+            ) : (
+                <div className="st-avatar">{ICONS.person}</div>
+            )}
             <div>
               <div className="st-account-name">{configSalon.nom_salon || 'Mon salon'}</div>
               {salonId ? <div className="st-account-id">ID : {salonId}</div> : null}
+              {role === 'employe' && <div style={{fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px'}}>Touchez votre photo pour la modifier</div>}
             </div>
           </div>
 
