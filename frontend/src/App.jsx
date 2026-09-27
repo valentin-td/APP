@@ -1758,7 +1758,12 @@ function App() {
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                       <div><h1 style={{margin: 0}}>Tableau de bord</h1><span className="date-subtitle" style={{margin: 0}}>{configSalon.nom_salon || 'Salon'}</span></div>
-                      <ThemeToggle />
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82V9a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                          </button>
+                      </div>
                   </div>
                   <div className="carte" style={{padding: '28px', textAlign: 'center'}}>
                       <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Clients ce mois-ci</span>
@@ -1776,7 +1781,12 @@ function App() {
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
                       <div><h1 style={{margin: 0}}>Mon tableau de bord</h1><span className="date-subtitle" style={{margin: 0}}>Ce mois-ci</span></div>
-                      <ThemeToggle />
+                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <ThemeToggle />
+                          <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82V9a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                          </button>
+                      </div>
                   </div>
                   <div style={{display: 'flex', gap: '16px', flexWrap: 'wrap'}}>
                       <div className="carte" style={{padding: '24px', textAlign: 'center', flex: '1 1 200px'}}>
@@ -1903,7 +1913,7 @@ function App() {
               )}
               
               {/* VUE : CAISSE & ENCAISSEMENT */}
-              {role === 'gerant' && activeTab === 'caisse' && (
+              {(role === 'gerant' || role === 'salon') && activeTab === 'caisse' && (
                 <div className="admin-container caisse-split-container">
                     {/* LEFT PANEL - CATALOGUE */}
                     <div className={`caisse-left-panel ${!posEmploye ? 'caisse-left-panel--waiting' : ''}`}>
@@ -2492,7 +2502,7 @@ function App() {
               )}
 
               {/* VUE : L'ACADÉMIE (PROTOCOLES) */}
-              {role === 'gerant' && activeTab === 'protocoles' && (
+              {(role === 'gerant' || role === 'salon') && activeTab === 'protocoles' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   
                   {/* EN-TÊTE FIXE */}
@@ -2769,7 +2779,7 @@ function App() {
               )}
 
               {/* VUE : PRODUITS (STOCKS) */}
-              {role === 'gerant' && activeTab === 'produits' && (
+              {(role === 'gerant' || role === 'salon') && activeTab === 'produits' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   {/* EN-TÊTE FIXE */}
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
