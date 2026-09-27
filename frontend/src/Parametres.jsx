@@ -41,6 +41,7 @@ const TITRES = {
   tpe: 'TPE physique (Stripe Terminal)',
   cgu: 'Conditions générales',
   confidentialite: 'Politique de confidentialité',
+  nf525: 'Attestation Fiscale NF525',
 };
 
 export default function Parametres({
@@ -80,10 +81,11 @@ export default function Parametres({
     ] },
   ] : [];
 
-  const groupesBas = [
+const groupesBas = [
     { titre: 'Informations légales', lignes: [
       { id: 'cgu', icone: ICONS.file, label: 'Conditions générales' },
       { id: 'confidentialite', icone: ICONS.shield, label: 'Politique de confidentialité' },
+      { id: 'nf525', icone: ICONS.shield, label: 'Attestation Fiscale NF525' },
     ] },
   ];
 
@@ -248,15 +250,59 @@ export default function Parametres({
                   </div>
         {carteSauvegarde}
       </>);
-      case 'tpe': return (<>
+case 'tpe': return (<>
                   <div className="carte scan-carte">
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
                     <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
                   </div>
         {carteSauvegarde}
       </>);
-      case 'cgu': return pageLegale(TEXTE_CONDITIONS_GENERALES);
-      case 'confidentialite': return pageLegale(TEXTE_POLITIQUE_CONFIDENTIALITE);
+      
+      case 'cgu': return (
+        <div className="carte scan-carte" style={{ textAlign: 'left', lineHeight: '1.6', fontSize: '13px', color: 'var(--text-main)' }}>
+            <h2 style={{ marginTop: 0, fontSize: '18px' }}>Conditions Générales d'Utilisation et de Vente</h2>
+            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Édité par Valentin Tardy (STACK), 32 rue du Goujon, Strasbourg — SIRET : En cours d'immatriculation.</p>
+            <p><strong>1. Objet du contrat</strong><br/>L'application STACK est un logiciel en mode SaaS (Software as a Service) destiné à la gestion de salons de coiffure.</p>
+            <p><strong>2. Abonnement et Paiement</strong><br/>L'accès complet aux fonctionnalités nécessite un abonnement mensuel actif de 49,00 €. En cas de défaut de paiement, l'accès au tableau de bord sera suspendu.</p>
+            <p><strong>3. Conformité Caisse (NF525)</strong><br/>L'Utilisateur est seul responsable de réaliser ses clôtures de caisse (Z) quotidiennement et de ses déclarations fiscales.</p>
+            <p><strong>4. Intelligence Artificielle</strong><br/>Bien que l'IA soit conçue pour être précise, l'Utilisateur s'engage à vérifier les tâches générées avant de les valider.</p>
+        </div>
+      );
+
+      case 'confidentialite': return (
+        <div className="carte scan-carte" style={{ textAlign: 'left', lineHeight: '1.6', fontSize: '13px', color: 'var(--text-main)' }}>
+            <h2 style={{ marginTop: 0, fontSize: '18px' }}>Politique de Confidentialité (RGPD)</h2>
+            <p><strong>1. Rôles (RGPD)</strong><br/>Le gérant du salon agit en tant que Responsable de traitement des données de ses clients. STACK agit en tant que Sous-traitant.</p>
+            <p><strong>2. Données collectées</strong><br/>Nous hébergeons les données du salon (employés) et des clients finaux (coordonnées, historique) pour la gestion de l'agenda et de la fidélité.</p>
+            <p><strong>3. Sécurité et Inaltérabilité</strong><br/>Les mots de passe sont hachés cryptographiquement. Les historiques de caisse sont scellés par blockchain (hash) pour garantir leur inaltérabilité.</p>
+            <p><strong>4. Durée de conservation</strong><br/>Les données de facturation (tickets, Z, journal technique) sont conservées de manière inaltérable selon les durées légales en vigueur (généralement 6 ans).</p>
+            <p><strong>5. Exercice des Droits</strong><br/>Pour toute demande relative à vos données, contactez-nous à : <strong>contact@stack.fr</strong>.</p>
+        </div>
+      );
+
+      case 'nf525': return (
+        <div className="carte scan-carte" style={{ textAlign: 'left', lineHeight: '1.6', fontSize: '13px', color: 'var(--text-main)' }}>
+            <h2 style={{ marginTop: 0, fontSize: '18px' }}>Attestation de conformité — Logiciel STACK</h2>
+            <div style={{ background: 'var(--bg-info)', padding: '12px', borderRadius: '8px', color: 'var(--color-info)', marginBottom: '24px', fontSize: '12px' }}>
+                <strong>Base légale :</strong> article 286, I‑3° bis du Code général des impôts (CGI). Modèle inspiré du document administratif BOI‑LETTRE‑000242 publié par la DGFiP.
+            </div>
+
+            <h3 style={{ fontSize: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>Volet 1 — Rempli par l'éditeur du logiciel</h3>
+            <p><strong>Je soussigné,</strong> Valentin Tardy, agissant en qualité de Fondateur pour le compte de l'entreprise STACK (SIRET : En cours d'immatriculation, siège : 32 rue du Goujon, Strasbourg),</p>
+            <p><strong>atteste que</strong> le logiciel de caisse et de gestion dénommé <strong>« STACK »</strong> satisfait aux conditions d'inaltérabilité, de sécurisation, de conservation et d'archivage des données (ISCA) prévues à l'article 286, I‑3° bis du CGI, à savoir :</p>
+            <ul style={{ paddingLeft: '20px', marginBottom: '24px' }}>
+                <li><strong>Inaltérabilité :</strong> toute correction donne lieu à une écriture de compensation traçant l'opération initiale.</li>
+                <li><strong>Sécurisation :</strong> chaque écriture est scellée par un chaînage cryptographique (hash).</li>
+                <li><strong>Conservation :</strong> le journal des événements techniques (JET) est conservé et ne peut être purgé par l'utilisateur.</li>
+                <li><strong>Archivage :</strong> le logiciel permet l'extraction d'une archive fiscale reprenant l'intégralité des données brutes, signée cryptographiquement.</li>
+            </ul>
+
+            <h3 style={{ fontSize: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>Volet 2 — Rempli par le salon (Utilisateur)</h3>
+            <p>Je soussigné(e), représentant l'établissement <strong>{configSalon.nom_salon || 'Gérant du Salon'}</strong>, atteste utiliser ce logiciel pour enregistrer les règlements de mes clients, conformément à la réglementation fiscale en vigueur.</p>
+            <p style={{ fontStyle: 'italic', fontSize: '11px', color: 'var(--text-secondary)', marginTop: '16px' }}>Il est rappelé que l'établissement d'une fausse attestation est un délit pénal passible de 3 ans d'emprisonnement et de 45 000 € d'amende (Code pénal, art. 441‑1).</p>
+        </div>
+      );
+
       default: return null;
     }
   };
