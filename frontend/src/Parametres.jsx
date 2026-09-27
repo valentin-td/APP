@@ -259,7 +259,6 @@ case 'tpe': return (<>
       </>);
       
       case 'cgu': return (
-case 'cgu': return (
         <div className="carte scan-carte" style={{ textAlign: 'left', lineHeight: '1.6', fontSize: '13px', color: 'var(--text-main)' }}>
             <h2 style={{ marginTop: 0, fontSize: '18px' }}>Conditions Générales d'Utilisation et de Vente</h2>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Édité par Valentin Tardy (STACK), 32 rue du Goujon, Strasbourg — SIRET : En cours d'immatriculation.</p>
