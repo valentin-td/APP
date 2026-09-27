@@ -307,7 +307,7 @@ case 'cgu': return (
 
             <p><strong>5. Durée de conservation</strong><br/>Les données de facturation (tickets, Z de caisse, journal des événements techniques) sont conservées de manière inaltérable selon les durées légales en vigueur (généralement 6 ans en France). Les données clients peuvent être supprimées à tout moment par le gérant via l'interface.</p>
 
-            <p><strong>6. Exercice des Droits</strong><br/>Les utilisateurs de l'application (gérants et employés) peuvent exercer leurs droits d'accès, de rectification ou de suppression en nous contactant à <strong>contact@stack.fr</strong>. Les clients finaux doivent formuler ces demandes directement auprès de leur salon de coiffure.</p>
+            <p><strong>6. Exercice des Droits</strong><br/>Les utilisateurs de l'application (gérants et employés) peuvent exercer leurs droits d'accès, de rectification ou de suppression en nous contactant à <strong>stackcontact.fr@gmail.com</strong>. Les clients finaux doivent formuler ces demandes directement auprès de leur salon de coiffure.</p>
         </div>
       );
 
