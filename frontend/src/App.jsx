@@ -87,6 +87,8 @@ function App() {
 
   const [activeTab, setActiveTab] = useState('accueil');
   const [dashboardData, setDashboardData] = useState(null);
+  const [salonDashboardData, setSalonDashboardData] = useState(null);
+  const [employeDashboardData, setEmployeDashboardData] = useState(null);
   const [stocksData, setStocksData] = useState([]);
   const [rhData, setRhData] = useState([]);
   const [historiqueData, setHistoriqueData] = useState([]);
@@ -174,7 +176,7 @@ function App() {
   // Calcule, pour chaque conversation, s'il reste des messages non lus
   const nonLusParConv = useMemo(() => {
       const roleUtilisateur = decodeToken(token)?.role;
-      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
+      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
       const map = {};
       
       const clesActives = new Set(['salon']);
@@ -204,7 +206,7 @@ function App() {
   // Calcule, pour chaque conversation, la date du dernier message (pour le tri par récence)
   const dernierMessageParConv = useMemo(() => {
       const roleUtilisateur = decodeToken(token)?.role;
-      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
+      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
       const map = {};
       (messagesListe || []).forEach(m => {
           const cle = getCleConversation(m, roleUtilisateur, myId);
@@ -220,7 +222,7 @@ function App() {
       if (activeTab !== 'messagerie') return;
       
       const roleUtilisateur = decodeToken(token)?.role;
-      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : null;
+      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
       const cleActuelleStr = String(chatActif);
       
       const idsConv = (messagesListe || [])
@@ -332,6 +334,11 @@ function App() {
       let base;
       if (roleUtilisateur === 'gerant') {
           base = (employesListe || []).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }));
+      } else if (roleUtilisateur === 'salon') {
+          base = [
+              { key: 'gerant', nom: 'Gérant', photo_url: null },
+              ...(employesListe || []).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
+          ];
       } else {
           base = [
               { key: 'gerant', nom: 'Gérant', photo_url: null },
@@ -530,9 +537,13 @@ function App() {
   const chargerTout = () => {
     const role = decodeToken(token)?.role;
 
-    // Ces données sont nécessaires à TOUS les rôles (la messagerie en a besoin pour employé comme pour gérant)
+    // Ces données sont nécessaires à TOUS les rôles (la messagerie en a besoin pour employé comme pour gérant/salon)
     fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
     fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
+    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData'); // filtré côté serveur selon le rôle
+
+    if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData');
+    if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData');
 
     fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
         .then(handleFetchError)
@@ -556,7 +567,6 @@ function App() {
     fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
     fetchAndCache('/api/stocks', setStocksData, 'stocksData');
     fetchAndCache('/api/rh', setRhData, 'rhData');
-    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
     fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
@@ -1112,7 +1122,22 @@ function App() {
       } catch (error) { showToast("Erreur lors du téléchargement.", "error"); }
   };
 
-  const sauvegarderParametres = async () => { 
+  const modifierMaPhoto = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+          try {
+              const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${decodeToken(token)?.id_employe}/photo`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ photo_url: reader.result }) });
+              await handleFetchError(res);
+              chargerTout();
+              showToast("Photo mise à jour.", "success");
+          } catch (err) { showToast("Erreur lors de la mise à jour de la photo.", "error"); }
+      };
+      reader.readAsDataURL(file);
+  };
+
+  const sauvegarderParametres = async () => {
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       showToast("Sauvegarde en cours..."); 
       try { 
@@ -1454,6 +1479,35 @@ function App() {
       try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); setActiveReactionId(null); } catch(e) { showToast("Erreur d'ajout de la réaction", "error"); }
   };
 
+  const iconBord = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
+  const iconCaisse = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>;
+  const iconAgenda = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
+  const iconActions = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
+  const iconCompta = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>;
+  const iconOutils = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>;
+
+  const onglMobilesParRole = (r) => {
+      if (r === 'gerant') return [
+          { key: 'accueil', label: 'Bord', icon: iconBord },
+          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
+          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
+          { key: 'outils', label: 'Outils', icon: iconOutils },
+      ];
+      if (r === 'salon') return [
+          { key: 'accueil', label: 'Bord', icon: iconBord },
+          { key: 'caisse', label: 'Caisse', icon: iconCaisse },
+          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
+          { key: 'outils', label: 'Outils', icon: iconOutils },
+      ];
+      // employe
+      return [
+          { key: 'accueil', label: 'Bord', icon: iconBord },
+          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
+          { key: 'admin', label: 'Compta', icon: iconCompta },
+          { key: 'outils', label: 'Outils', icon: iconOutils },
+      ];
+  };
+
   return (
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
@@ -1588,7 +1642,7 @@ function App() {
           {/* VUE DESKTOP */}
           {!isMobile && (
               <>
-                 {role === 'gerant' && <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>}
+                 <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>
                  {role === 'gerant' && (
                      <div className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => setActiveTab('actions')} style={{ position: 'relative' }}>
                          {nbTachesUrgentes > 0 && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
@@ -1599,17 +1653,23 @@ function App() {
                      {(tachesIA || []).some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
                      <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
                  </div>
-                 {role === 'gerant' && (
+                 {role === 'salon' && (
+                     <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
+                 )}
+                 {(role === 'gerant' || role === 'salon') && (
                      <>
-                        <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
                         <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => setActiveTab('protocoles')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span></div>
                         <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative' }}>
                             {(tachesIA || []).some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
                             <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
                         </div>
-                        <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => setActiveTab('rh')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span></div>
-                        <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span></div>
                      </>
+                 )}
+                 {role === 'gerant' && (
+                     <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => setActiveTab('rh')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span></div>
+                 )}
+                 {(role === 'gerant' || role === 'salon' || role === 'employe') && (
+                     <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span></div>
                  )}
                  {decodeToken(token)?.id_salon === 38 && (
                      <div className={`nav-item ${activeTab === 'superadmin' ? 'active' : ''}`} onClick={() => setActiveTab('superadmin')}>
@@ -1628,19 +1688,17 @@ function App() {
           {/* VUE MOBILE : BARRE "LIQUID GLASS" (voir LiquidTabBar.jsx) */}
           {isMobile && (
               <LiquidTabBar
-                  activeIndex={(isOutilsMenuOpen || ['protocoles', 'produits', 'rh', 'admin', 'superadmin'].includes(activeTab)) ? 4 : (activeTab === 'actions' ? 3 : (activeTab === 'agenda' ? 2 : (activeTab === 'caisse' ? 1 : 0)))}
-                  items={[
-                      { key: 'accueil', label: 'Bord', onSelect: () => { setActiveTab('accueil'); setIsOutilsMenuOpen(false); },
-                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
-                      { key: 'caisse', label: 'Caisse', onSelect: () => { setActiveTab('caisse'); setIsOutilsMenuOpen(false); },
-                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg> },
-                      { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), onSelect: () => { setActiveTab('agenda'); setIsOutilsMenuOpen(false); },
-                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
-                      { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, onSelect: () => { setActiveTab('actions'); setIsOutilsMenuOpen(false); },
-                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
-                      { key: 'outils', label: 'Outils', badge: aDesMessagesNonLus && !isOutilsMenuOpen, onSelect: () => setIsOutilsMenuOpen(true),
-                        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg> },
-                  ]}
+                  activeIndex={(() => {
+                      const items = onglMobilesParRole(role);
+                      const idxOutils = items.length - 1;
+                      if (isOutilsMenuOpen || ['protocoles', 'produits', 'rh', 'superadmin'].includes(activeTab)) return idxOutils;
+                      const idx = items.findIndex(it => it.key === activeTab || (it.key === 'admin' && activeTab === 'admin'));
+                      return idx >= 0 ? idx : 0;
+                  })()}
+                  items={onglMobilesParRole(role).map(it => {
+                      if (it.key === 'outils') return { ...it, badge: aDesMessagesNonLus && !isOutilsMenuOpen, onSelect: () => setIsOutilsMenuOpen(true) };
+                      return { ...it, onSelect: () => { setActiveTab(it.key); setIsOutilsMenuOpen(false); } };
+                  })}
               />
           )}
       </div>
@@ -1652,19 +1710,27 @@ function App() {
               <div className={`outils-bottom-sheet ${isOutilsMenuOpen ? 'open' : ''}`}>
                   <h3 style={{margin: '0 0 16px 0', fontSize: '18px', textAlign: 'center'}}>Outils & Gestion</h3>
                   <div className="outils-grid">
-                      <button className="outil-btn" onClick={() => {setActiveTab('protocoles'); setIsOutilsMenuOpen(false);}}>
-                          <div className="outil-btn-icon">🎓</div><span className="outil-btn-label">Académie</span>
-                      </button>
-                      <button className="outil-btn" onClick={() => {setActiveTab('produits'); setIsOutilsMenuOpen(false);}}>
-                          <div className="outil-btn-icon">📦</div><span className="outil-btn-label">Stocks</span>
-                      </button>
-                      <button className="outil-btn" onClick={() => {setActiveTab('rh'); setIsOutilsMenuOpen(false);}}>
-                          <div className="outil-btn-icon">👥</div><span className="outil-btn-label">Équipe</span>
-                      </button>
-                      <button className="outil-btn" onClick={() => {setActiveTab('admin'); setIsOutilsMenuOpen(false);}}>
-                          <div className="outil-btn-icon">📁</div><span className="outil-btn-label">Compta</span>
-                      </button>
-                      {decodeToken(token)?.id_salon === 38 && (
+                      {(role === 'gerant' || role === 'salon') && (
+                          <button className="outil-btn" onClick={() => {setActiveTab('protocoles'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">🎓</div><span className="outil-btn-label">Académie</span>
+                          </button>
+                      )}
+                      {(role === 'gerant' || role === 'salon') && (
+                          <button className="outil-btn" onClick={() => {setActiveTab('produits'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">📦</div><span className="outil-btn-label">Stocks</span>
+                          </button>
+                      )}
+                      {role === 'gerant' && (
+                          <button className="outil-btn" onClick={() => {setActiveTab('rh'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">👥</div><span className="outil-btn-label">Équipe</span>
+                          </button>
+                      )}
+                      {(role === 'gerant' || role === 'salon') && (
+                          <button className="outil-btn" onClick={() => {setActiveTab('admin'); setIsOutilsMenuOpen(false);}}>
+                              <div className="outil-btn-icon">📁</div><span className="outil-btn-label">Compta</span>
+                          </button>
+                      )}
+                      {decodeToken(token)?.id_salon === 38 && role === 'gerant' && (
                           <button className="outil-btn" onClick={() => {setActiveTab('superadmin'); setIsOutilsMenuOpen(false);}}>
                               <div className="outil-btn-icon">⚡️</div><span className="outil-btn-label">God Mode</span>
                           </button>
@@ -1672,6 +1738,9 @@ function App() {
                       <button className="outil-btn" onClick={() => {setActiveTab('messagerie'); setIsOutilsMenuOpen(false);}} style={{position: 'relative'}}>
                           {aDesMessagesNonLus && <span className="badge-ia-rouge" style={{top: '-2px', right: '-2px'}}></span>}
                           <div className="outil-btn-icon">💬</div><span className="outil-btn-label">Chat</span>
+                      </button>
+                      <button className="outil-btn" onClick={() => {setActiveTab('parametres'); setIsOutilsMenuOpen(false);}}>
+                          <div className="outil-btn-icon">⚙️</div><span className="outil-btn-label">Réglages</span>
                       </button>
                       <button className="outil-btn" onClick={() => {seDeconnecter(); setIsOutilsMenuOpen(false);}}>
                           <div className="outil-btn-icon" style={{color:'var(--color-danger)'}}>🚪</div><span className="outil-btn-label" style={{color:'var(--color-danger)'}}>Quitter</span>
@@ -1685,6 +1754,49 @@ function App() {
         <div className={`dashboard-container ${['caisse', 'agenda', 'messagerie'].includes(activeTab) ? 'wide' : ''}`}>
 
               {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
+              {role === 'salon' && activeTab === 'accueil' && (
+                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Tableau de bord</h1><span className="date-subtitle" style={{margin: 0}}>{configSalon.nom_salon || 'Salon'}</span></div>
+                      <ThemeToggle />
+                  </div>
+                  <div className="carte" style={{padding: '28px', textAlign: 'center'}}>
+                      <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Clients ce mois-ci</span>
+                      <div style={{fontSize: '48px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{salonDashboardData?.nb_clients_mois ?? '—'}</div>
+                      {salonDashboardData && (
+                          <span style={{fontSize: '14px', fontWeight: '600', color: salonDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
+                              {salonDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(salonDashboardData.evolution_pourcentage)}% vs mois dernier
+                          </span>
+                      )}
+                  </div>
+                </div>
+              )}
+
+              {role === 'employe' && activeTab === 'accueil' && (
+                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Mon tableau de bord</h1><span className="date-subtitle" style={{margin: 0}}>Ce mois-ci</span></div>
+                      <ThemeToggle />
+                  </div>
+                  <div style={{display: 'flex', gap: '16px', flexWrap: 'wrap'}}>
+                      <div className="carte" style={{padding: '24px', textAlign: 'center', flex: '1 1 200px'}}>
+                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Mes clients</span>
+                          <div style={{fontSize: '40px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{employeDashboardData?.nb_clients_mois ?? '—'}</div>
+                          {employeDashboardData && (
+                              <span style={{fontSize: '13px', fontWeight: '600', color: employeDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
+                                  {employeDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(employeDashboardData.evolution_pourcentage)}%
+                              </span>
+                          )}
+                      </div>
+                      <div className="carte" style={{padding: '24px', textAlign: 'center', flex: '1 1 200px'}}>
+                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Ma commission</span>
+                          <div style={{fontSize: '40px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{(employeDashboardData?.commission_mois ?? 0).toFixed(2)} €</div>
+                          <span style={{fontSize: '13px', color: 'var(--text-muted)'}}>Mois en cours</span>
+                      </div>
+                  </div>
+                </div>
+              )}
+
               {role === 'gerant' && activeTab === 'accueil' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
                   {/* EN-TÊTE FIXE */}
@@ -1773,7 +1885,7 @@ function App() {
               )}
 
               {/* VUE : PARAMÈTRES DU SALON */}
-              {role === 'gerant' && activeTab === 'parametres' && (
+              {activeTab === 'parametres' && (
                 <Parametres
                   configSalon={configSalon}
                   setConfigSalon={setConfigSalon}
@@ -1785,6 +1897,8 @@ function App() {
                   isDarkMode={isDarkMode}
                   onToggleTheme={() => setIsDarkMode(!isDarkMode)}
                   onEnablePush={activerNotificationsPush}
+                  photoUrl={(employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe)?.photo_url}
+                  onUploadPhoto={modifierMaPhoto}
                 />
               )}
               
@@ -2814,6 +2928,54 @@ function App() {
               )}
 
               {/* VUE : ADMIN COMPTA */}
+              {role === 'salon' && activeTab === 'admin' && (
+                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                      <div><h1 style={{margin: 0}}>Comptabilité</h1><span className="date-subtitle" style={{margin: 0}}>Clôture NF525</span></div>
+                      <ThemeToggle />
+                  </div>
+                  <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
+                     <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
+                     <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
+                  </div>
+                </div>
+              )}
+
+              {role === 'employe' && activeTab === 'admin' && (
+                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                      <div><h1 style={{margin: 0}}>Ma comptabilité</h1><span className="date-subtitle" style={{margin: 0}}>Historique de mon chiffre d'affaires</span></div>
+                      <ThemeToggle />
+                  </div>
+                  {(historiqueData || []).length === 0 ? (
+                      <div className="empty-state"><SvgEmptyState /><p>Aucune vente enregistrée pour le moment.</p></div>
+                  ) : (
+                      <div className="list-group">
+                          {(historiqueData || []).map((anneeData) => (
+                              <div key={anneeData.annee} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                  <button type="button" onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} className="list-row" style={{ fontWeight: '600', width: '100%' }}>
+                                      <span className="list-row-icon" style={{ transform: expandedYear === anneeData.annee ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
+                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                                      </span>
+                                      <span className="list-row-label" style={{ fontWeight: '600' }}>Année {anneeData.annee}</span>
+                                  </button>
+                                  {expandedYear === anneeData.annee && (
+                                      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
+                                          {(anneeData.mois || []).map((moisData) => (
+                                              <div key={moisData.nom} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginTop: '12px', fontSize: '14px', fontWeight: '600', color: 'var(--text-main)' }}>
+                                                  <span>{moisData.nom}</span>
+                                                  <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} € de CA généré</span>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  )}
+                              </div>
+                          ))}
+                      </div>
+                  )}
+                </div>
+              )}
+
               {role === 'gerant' && activeTab === 'admin' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   {/* EN-TÊTE FIXE */}
@@ -2942,18 +3104,14 @@ function App() {
                           
                           <div className="chat-messages" ref={chatMessagesRef}>
                               {(messagesListe || []).filter(m => {
-                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : null;
+                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
                                   if (chatActif === 'salon') return m.id_destinataire === 0;
-                                  if (role === 'employe') {
-                                      if (chatActif === 'gerant') return (m.id_expediteur === myId && m.id_destinataire === null) || (m.id_expediteur === null && m.id_destinataire === myId);
-                                      return (m.id_expediteur === myId && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === myId);
-                                  } else {
-                                      return (m.id_expediteur === null && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === null);
-                                  }
+                                  if (chatActif === 'gerant') return (m.id_expediteur === myId && m.id_destinataire === null) || (m.id_expediteur === null && m.id_destinataire === myId);
+                                  return (m.id_expediteur === myId && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === myId);
                               }).map((msg) => {
-                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : null;
+                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
                                   const isMine = msg.id_expediteur === myId;
-                                  const myReactId = role === 'employe' ? `emp_${myId}` : 'gerant';
+                                  const myReactId = role === 'employe' ? `emp_${myId}` : (role === 'salon' ? 'salon' : 'gerant');
 
                                   return (
                                       <div key={msg.id_message} className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', maxWidth: '100%'}}>
