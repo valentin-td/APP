@@ -259,24 +259,55 @@ case 'tpe': return (<>
       </>);
       
       case 'cgu': return (
+case 'cgu': return (
         <div className="carte scan-carte" style={{ textAlign: 'left', lineHeight: '1.6', fontSize: '13px', color: 'var(--text-main)' }}>
             <h2 style={{ marginTop: 0, fontSize: '18px' }}>Conditions Générales d'Utilisation et de Vente</h2>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Édité par Valentin Tardy (STACK), 32 rue du Goujon, Strasbourg — SIRET : En cours d'immatriculation.</p>
-            <p><strong>1. Objet du contrat</strong><br/>L'application STACK est un logiciel en mode SaaS (Software as a Service) destiné à la gestion de salons de coiffure.</p>
-            <p><strong>2. Abonnement et Paiement</strong><br/>L'accès complet aux fonctionnalités nécessite un abonnement mensuel actif de 49,00 €. En cas de défaut de paiement, l'accès au tableau de bord sera suspendu.</p>
-            <p><strong>3. Conformité Caisse (NF525)</strong><br/>L'Utilisateur est seul responsable de réaliser ses clôtures de caisse (Z) quotidiennement et de ses déclarations fiscales.</p>
-            <p><strong>4. Intelligence Artificielle</strong><br/>Bien que l'IA soit conçue pour être précise, l'Utilisateur s'engage à vérifier les tâches générées avant de les valider.</p>
+            
+            <p><strong>1. Objet du contrat</strong><br/>L'application STACK est un logiciel en mode SaaS (Software as a Service) destiné à la gestion de salons de coiffure (caisse, agenda, stocks, ressources humaines et marketing).</p>
+            
+            <p><strong>2. Abonnement et Paiement</strong><br/>L'accès complet aux fonctionnalités de STACK (hors période d'essai ou mode restreint) nécessite un abonnement mensuel actif de 49,00 €. Les paiements sont sécurisés et traités par notre partenaire Stripe. L'abonnement est sans engagement de durée et peut être résilié à tout moment. En cas de défaut de paiement, l'accès au tableau de bord sera suspendu.</p>
+            
+            <p><strong>3. Conformité Caisse et Loi Anti-fraude (NF525)</strong><br/>STACK intègre un système de clôture journalière (Z de caisse) et un chaînage cryptographique des tickets pour garantir l'inaltérabilité des données financières.</p>
+            <ul style={{ paddingLeft: '20px', marginTop: '-10px' }}>
+                <li>L'Utilisateur est seul responsable de réaliser ses clôtures de caisse quotidiennement.</li>
+                <li>L'Utilisateur est seul responsable de ses déclarations fiscales et comptables. STACK agit comme un outil d'assistance et ne remplace pas les conseils d'un expert-comptable.</li>
+            </ul>
+
+            <p><strong>4. Fonctionnalités d'Intelligence Artificielle</strong><br/>L'application propose des outils automatisés (analyse d'e-mails pour la création de rendez-vous ou l'ajout de stock). Bien que l'IA soit conçue pour être précise, l'Utilisateur s'engage à vérifier les tâches générées avant de les valider. STACK ne saurait être tenu responsable d'une erreur d'interprétation de l'IA.</p>
+
+            <p><strong>5. Disponibilité du Service et Mode Hors-Ligne</strong><br/>L'éditeur s'efforce de maintenir l'accès au serveur 24h/24 et 7j/7. En cas de coupure réseau côté client, STACK propose un "Mode Hors-Ligne" permettant d'encaisser en espèces. L'Utilisateur s'engage à reconnecter son appareil à Internet pour synchroniser ces tickets dès que possible.</p>
+
+            <p><strong>6. Responsabilité</strong><br/>STACK décline toute responsabilité en cas de perte de chiffre d'affaires liée à une mauvaise utilisation du logiciel, à une panne matérielle de l'appareil de l'utilisateur, ou à un refus de paiement du terminal bancaire.</p>
         </div>
       );
 
       case 'confidentialite': return (
         <div className="carte scan-carte" style={{ textAlign: 'left', lineHeight: '1.6', fontSize: '13px', color: 'var(--text-main)' }}>
             <h2 style={{ marginTop: 0, fontSize: '18px' }}>Politique de Confidentialité (RGPD)</h2>
-            <p><strong>1. Rôles (RGPD)</strong><br/>Le gérant du salon agit en tant que Responsable de traitement des données de ses clients. STACK agit en tant que Sous-traitant.</p>
-            <p><strong>2. Données collectées</strong><br/>Nous hébergeons les données du salon (employés) et des clients finaux (coordonnées, historique) pour la gestion de l'agenda et de la fidélité.</p>
-            <p><strong>3. Sécurité et Inaltérabilité</strong><br/>Les mots de passe sont hachés cryptographiquement. Les historiques de caisse sont scellés par blockchain (hash) pour garantir leur inaltérabilité.</p>
-            <p><strong>4. Durée de conservation</strong><br/>Les données de facturation (tickets, Z, journal technique) sont conservées de manière inaltérable selon les durées légales en vigueur (généralement 6 ans).</p>
-            <p><strong>5. Exercice des Droits</strong><br/>Pour toute demande relative à vos données, contactez-nous à : <strong>contact@stack.fr</strong>.</p>
+            
+            <p><strong>1. Rôles et Responsabilités (RGPD)</strong><br/>Dans le cadre de l'utilisation de STACK, le gérant du salon de coiffure agit en tant que Responsable de traitement des données de ses clients. STACK agit en tant que Sous-traitant, fournissant uniquement l'infrastructure technique pour stocker et traiter ces données.</p>
+            
+            <p><strong>2. Données collectées et finalités</strong><br/>Nous collectons et hébergeons les données suivantes :</p>
+            <ul style={{ paddingLeft: '20px', marginTop: '-10px' }}>
+                <li><strong>Données du Salon :</strong> Nom, email, code PIN, taux de commission. Utilisées pour l'authentification et les primes.</li>
+                <li><strong>Données des Clients finaux :</strong> Prénom, nom, téléphone, email, date de naissance, historique d'achats et notes. Utilisées pour la gestion de l'agenda, la fidélité et l'envoi de SMS/Emails de rappel.</li>
+                <li><strong>Données Financières :</strong> Tickets de caisse, méthodes de paiement, clôtures. Utilisées pour la conformité légale et l'export comptable.</li>
+            </ul>
+
+            <p><strong>3. Services Tiers et Sous-traitants ultérieurs</strong><br/>Pour garantir le bon fonctionnement de l'application, STACK s'appuie sur des partenaires sécurisés :</p>
+            <ul style={{ paddingLeft: '20px', marginTop: '-10px' }}>
+                <li><strong>Render & PostgreSQL :</strong> Hébergement de l'application et de la base de données.</li>
+                <li><strong>Stripe :</strong> Traitement des paiements de l'abonnement et liaison avec le TPE.</li>
+                <li><strong>Brevo :</strong> Envoi des campagnes SMS (Rappels de RDV, anniversaires, fidélité).</li>
+                <li><strong>Groq (IA) :</strong> Traitement éphémère du texte des e-mails pour l'automatisation des tâches. Ces textes ne sont pas utilisés pour entraîner des modèles publics.</li>
+            </ul>
+
+            <p><strong>4. Sécurité et Inaltérabilité</strong><br/>Les mots de passe des utilisateurs sont hachés (bcrypt). Les mots de passe d'applications tierces (comme le mot de passe de la boîte mail du salon) sont chiffrés en base de données (AES-256). Les historiques de caisse sont scellés cryptographiquement.</p>
+
+            <p><strong>5. Durée de conservation</strong><br/>Les données de facturation (tickets, Z de caisse, journal des événements techniques) sont conservées de manière inaltérable selon les durées légales en vigueur (généralement 6 ans en France). Les données clients peuvent être supprimées à tout moment par le gérant via l'interface.</p>
+
+            <p><strong>6. Exercice des Droits</strong><br/>Les utilisateurs de l'application (gérants et employés) peuvent exercer leurs droits d'accès, de rectification ou de suppression en nous contactant à <strong>contact@stack.fr</strong>. Les clients finaux doivent formuler ces demandes directement auprès de leur salon de coiffure.</p>
         </div>
       );
 
