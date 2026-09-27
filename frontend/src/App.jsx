@@ -2817,7 +2817,7 @@ function App() {
                   {/* EN-TÊTE FIXE */}
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Robot IA & Clôtures NF525</span></div>
+                          <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Historique Comptable & Clôtures NF525</span></div>
                           <ThemeToggle />
                       </div>
                   </div>
