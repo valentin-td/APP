@@ -925,14 +925,14 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/messages', verifierToken, async (req, res) => {
     try {
-        const result = await pool.query(`SELECT m.*, e.nom as nom_expediteur, e.photo_url as photo_expediteur FROM messages m LEFT JOIN employes e ON m.id_expediteur = e.id_employe WHERE m.id_salon = $1 ORDER BY m.date_creation ASC`, [req.user.id_salon]);
+        const result = await pool.query(`SELECT m.*, COALESCE(e.nom, CASE WHEN m.id_expediteur = -1 THEN 'Salon' END) as nom_expediteur, e.photo_url as photo_expediteur FROM messages m LEFT JOIN employes e ON m.id_expediteur = e.id_employe WHERE m.id_salon = $1 ORDER BY m.date_creation ASC`, [req.user.id_salon]);
         res.json(result.rows);
     } catch (e) { res.status(500).json({ erreur: "Erreur messages." }); }
 });
 
 app.post('/api/messages', verifierToken, async (req, res) => {
     const { id_destinataire, contenu, fichier_url } = req.body;
-    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : null;
+    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
     try {
         let nom_expediteur = 'Gérant';
         let photo_expediteur = null;
@@ -941,6 +941,8 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             if (empRes.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable." });
             nom_expediteur = empRes.rows[0].nom;
             photo_expediteur = empRes.rows[0].photo_url;
+        } else if (req.user.role === 'salon') {
+            nom_expediteur = 'Salon';
         }
         const dest = id_destinataire === 'gerant' ? null : (id_destinataire === 'salon' ? 0 : id_destinataire);
         const result = await pool.query(
@@ -1038,6 +1040,14 @@ app.post('/api/employes', verifierToken, async (req, res) => {
 });
 app.delete('/api/employes/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }});
 
+app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
+    if (req.user.role !== 'employe' || parseInt(req.params.id) !== req.user.id_employe) return res.status(403).json({ erreur: "Action non autorisée." });
+    try {
+        await pool.query('UPDATE employes SET photo_url = $1 WHERE id_employe = $2 AND id_salon = $3', [req.body.photo_url || null, req.user.id_employe, req.user.id_salon]);
+        res.json({ message: "Photo mise à jour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour photo." }); }
+});
+
 app.get('/api/catalogue', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur catalogue."}); }});
 
 app.post('/api/catalogue', verifierToken, async (req, res) => { 
@@ -1108,7 +1118,42 @@ app.put('/api/stocks/:id', verifierToken, async (req, res) => {
 });
 app.get('/api/rh', verifierToken, async (req, res) => { const id_salon = req.user.id_salon; try { const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`; const rhResult = await pool.query(rhQuery, [id_salon]); const employesData = await Promise.all(rhResult.rows.map(async (emp) => { const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`; const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]); let historique = histoResult.rows.map(r => parseFloat(r.total_prime)); while(historique.length < 6) historique.unshift(0); if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0]; return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6) }; })); res.json(employesData); } catch (erreur) { res.status(500).json({ erreur: "Erreur requête RH." }); }});
 
-app.get('/api/dashboard', verifierToken, async (req, res) => { 
+app.get('/api/dashboard/salon', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    try {
+        const r = await pool.query(`
+            SELECT
+                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_actuel,
+                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_precedent
+            FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND id_client IS NOT NULL
+        `, [id_salon]);
+        const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
+        const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
+        const evolution = nbPrecedent > 0 ? Math.round(((nbActuel - nbPrecedent) / nbPrecedent) * 100) : (nbActuel > 0 ? 100 : 0);
+        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution });
+    } catch (e) { res.status(500).json({ erreur: "Erreur dashboard salon." }); }
+});
+
+app.get('/api/dashboard/employe', verifierToken, async (req, res) => {
+    if (req.user.role !== 'employe') return res.status(403).json({ erreur: "Réservé aux employés." });
+    const id_salon = req.user.id_salon;
+    const id_employe = req.user.id_employe;
+    try {
+        const r = await pool.query(`
+            SELECT
+                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_actuel,
+                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_precedent
+            FROM tickets WHERE id_salon = $1 AND id_employe = $2 AND statut != 'ANNULE' AND id_client IS NOT NULL
+        `, [id_salon, id_employe]);
+        const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
+        const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
+        const evolution = nbPrecedent > 0 ? Math.round(((nbActuel - nbPrecedent) / nbPrecedent) * 100) : (nbActuel > 0 ? 100 : 0);
+        const cResult = await pool.query(`SELECT COALESCE(SUM(montant_commission), 0) as total FROM commissions WHERE id_employe = $1 AND id_salon = $2 AND date_creation >= date_trunc('month', CURRENT_DATE)`, [id_employe, id_salon]);
+        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution, commission_mois: parseFloat(cResult.rows[0].total) });
+    } catch (e) { res.status(500).json({ erreur: "Erreur dashboard employé." }); }
+});
+
+app.get('/api/dashboard', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon; 
     try { 
         const statsResult = await pool.query(`SELECT COUNT(id_ticket) as nb_ventes, COALESCE(SUM(total_ttc), 0) as chiffre_affaires FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]); 
@@ -1327,6 +1372,7 @@ app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/factures/historique', verifierToken, async (req, res) => { 
     try { 
+        const filtreEmploye = req.user.role === 'employe';
         const query = `
             SELECT 
                 TO_CHAR(t.date_creation, 'YYYY-MM-DD') as date_brute,
@@ -1335,11 +1381,12 @@ app.get('/api/factures/historique', verifierToken, async (req, res) => {
                 EXTRACT(MONTH FROM t.date_creation) as mois, 
                 SUM(t.total_ttc) as total_jour
             FROM tickets t 
-            WHERE t.id_salon = $1 AND t.statut != 'ANNULE'
+            WHERE t.id_salon = $1 AND t.statut != 'ANNULE' ${filtreEmploye ? 'AND t.id_employe = $2' : ''}
             GROUP BY date_brute, date_formattee, annee, mois
             ORDER BY date_brute DESC
         `;
-        const result = await pool.query(query, [req.user.id_salon]); 
+        const params = filtreEmploye ? [req.user.id_salon, req.user.id_employe] : [req.user.id_salon];
+        const result = await pool.query(query, params);
 
         const historique = {};
         const moisNoms = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
