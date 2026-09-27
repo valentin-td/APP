@@ -6,7 +6,7 @@ import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
 
 // Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
-function urlBase64ToUint8Array(base64String) {
+function urlBase64ToUint8Array(base64String) { 
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
