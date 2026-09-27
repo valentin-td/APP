@@ -266,7 +266,7 @@ case 'cgu': return (
             
             <p><strong>1. Objet du contrat</strong><br/>L'application STACK est un logiciel en mode SaaS (Software as a Service) destiné à la gestion de salons de coiffure (caisse, agenda, stocks, ressources humaines et marketing).</p>
             
-            <p><strong>2. Abonnement et Paiement</strong><br/>L'accès complet aux fonctionnalités de STACK (hors période d'essai ou mode restreint) nécessite un abonnement mensuel actif de 49,00 €. Les paiements sont sécurisés et traités par notre partenaire Stripe. L'abonnement est sans engagement de durée et peut être résilié à tout moment. En cas de défaut de paiement, l'accès au tableau de bord sera suspendu.</p>
+            <p><strong>2. Abonnement et Paiement</strong><br/>L'accès complet aux fonctionnalités de STACK (hors période d'essai ou mode restreint) nécessite un abonnement mensuel actif de 29,00 €. Les paiements sont sécurisés et traités par notre partenaire Stripe. L'abonnement est sans engagement de durée et peut être résilié à tout moment. En cas de défaut de paiement, l'accès au tableau de bord sera suspendu.</p>
             
             <p><strong>3. Conformité Caisse et Loi Anti-fraude (NF525)</strong><br/>STACK intègre un système de clôture journalière (Z de caisse) et un chaînage cryptographique des tickets pour garantir l'inaltérabilité des données financières.</p>
             <ul style={{ paddingLeft: '20px', marginTop: '-10px' }}>
