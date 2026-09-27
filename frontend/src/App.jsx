@@ -2388,11 +2388,13 @@ function App() {
                               <h1 style={{margin: 0}}>L'Académie</h1>
                               <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
                           </div>
-                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <div style={{display: 'flex', gap: isMobile ? '8px' : '16px', alignItems: 'center'}}>
                               <ThemeToggle />
                               <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
                               {!modeEditionProtocole && (
-                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action" style={{ whiteSpace: 'nowrap', padding: isMobile ? '8px 12px' : '12px 18px', fontSize: isMobile ? '12px' : '14px' }}>Créer</button>
+                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action" style={{ whiteSpace: 'nowrap', flexShrink: 0, padding: isMobile ? '8px 12px' : '12px 18px', fontSize: isMobile ? '12px' : '14px' }}>
+                                      {isMobile ? 'Créer' : 'Créer une Fiche'}
+                                  </button>
                               )}
                           </div>
                       </div>
