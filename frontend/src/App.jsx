@@ -4,6 +4,7 @@ import localforage from 'localforage';
 import './App.css';
 import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
+import PopupLegal from './PopupLegal';
 
 // Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
 function urlBase64ToUint8Array(base64String) { 
@@ -84,6 +85,18 @@ function App() {
 
   const [isAbonnementInactif, setIsAbonnementInactif] = useState(false);
   const [userRole, setUserRole] = useState('gerant'); 
+  const [legalStatut, setLegalStatut] = useState(null); // null = inconnu / non concerné, sinon { accepte, en_attente, identite }
+
+  // Acceptation des documents contractuels : vérifiée à chaque connexion du gérant (échec réseau = on ne bloque pas)
+  useEffect(() => {
+    if (!token || decodeToken(token)?.role !== 'gerant') { setLegalStatut(null); return undefined; }
+    let annule = false;
+    fetch('https://api-salon-backend.onrender.com/api/legal/statut', { headers: { 'Authorization': `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!annule && d) setLegalStatut(d); })
+      .catch(() => {});
+    return () => { annule = true; };
+  }, [token]);
 
   const [activeTab, setActiveTab] = useState('accueil');
   const [dashboardData, setDashboardData] = useState(null);
@@ -1384,6 +1397,18 @@ function App() {
           )}
         </div>
       </div>
+    );
+  }
+
+  // Pop-up bloquant : le gérant doit accepter les documents contractuels avant tout (et avant le paiement)
+  if (token && userRole === 'gerant' && legalStatut && legalStatut.accepte === false) {
+    return (
+      <PopupLegal
+        apiBase="https://api-salon-backend.onrender.com"
+        token={token}
+        onAccepted={() => setLegalStatut({ ...legalStatut, accepte: true })}
+        onRefuse={seDeconnecter}
+      />
     );
   }
 
