@@ -524,9 +524,12 @@ function App() {
               } catch (e) { arret = "Réseau instable, synchronisation reportée."; break; }
 
               if (res.ok) {
+                  const data = await res.json().catch(() => ({}));
                   restants = restants.filter(t => t !== ticket);
                   nbOk++;
                   await localforage.setItem('offline_tickets', restants);
+                  // Si ce ticket est encore affiché à l'écran (reçu ouvert), on remplace son ID temporaire par le vrai ID serveur
+                  setTicketGenere(prev => (prev && prev.id_ticket === ticket._id_temp) ? { ...prev, id_ticket: data.id_ticket, is_offline: false } : prev);
                   continue;
               }
 
@@ -1097,7 +1100,7 @@ function App() {
             is_offline: true
         });
         
-        setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES'); setRechercheCaisse('');
+        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES'); setRechercheCaisse('');
         showToast("Ticket sauvegardé localement (Mode Hors-Ligne)", "success");
     };
 
@@ -1106,7 +1109,7 @@ function App() {
         return;
     }
 
-    if (methodePaiement === 'CARTE' && montant > 0) setNotificationCaisse(`⏳ Envoi de l'ordre au TPE physique. En attente de la carte...`);
+    if (methodePaiement === 'CARTE' && montant > 0) setNotificationCaisse(` Envoi de l'ordre au TPE physique. En attente de la carte...`);
     
     try {
         const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
@@ -1121,8 +1124,8 @@ function App() {
         });
         setEmailTicketClient(clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email || '' : '');
         
-        setPanierCaisse([]); setClientCaisse(''); setPosEmploye(''); setRemiseAppliquee(false); setMethodePaiement('CARTE');
-        chargerTout(); 
+        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('CARTE');
+        chargerTout();
     } catch (error) { 
         if(error.message === "Load failed" || error.message === "Failed to fetch" || !navigator.onLine) {
             setIsOffline(true);
@@ -2058,7 +2061,7 @@ function App() {
                                 
                                 <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
                                     <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
-                                    <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => envoyerTicketEco('email')} disabled={!emailTicketClient || isOffline || !navigator.onLine}>Envoyer</button></div>
+                                    <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => { if (isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error"); if (!emailTicketClient) return showToast("Saisissez d'abord l'email du client.", "error"); envoyerTicketEco('email'); }}>Envoyer</button></div>
                                     <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}</button>
                                 </div>
                                 <button onClick={() => setTicketGenere(null)} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}} onMouseOver={e => e.currentTarget.style.color = 'var(--text-main)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}>Fermer (Sans reçu)</button>
