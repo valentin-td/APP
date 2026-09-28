@@ -489,34 +489,64 @@ function App() {
       };
   }, [token, isOffline]);
 
+  const syncEnCours = useRef(false);
   const syncOfflineTickets = async () => {
-      if (!token) return;
+      if (!token || syncEnCours.current) return;
       const queue = await localforage.getItem('offline_tickets') || [];
       if (queue.length === 0) return;
-      
+      const idSalonActuel = decodeToken(token)?.id_salon;
+
+      syncEnCours.current = true;
       showToast(`Synchronisation de ${queue.length} ticket(s) en attente...`, "info");
-      let ticketsRestants = [];
-      
-      for (let ticket of queue) {
-          try {
-              await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { 
-                  method: 'POST', 
-                  headers: getAuthHeaders(true), 
-                  body: JSON.stringify(ticket) 
-              });
-          } catch (e) {
-              ticketsRestants.push(ticket);
+      let restants = [...queue];
+      let nbOk = 0, nbRejetes = 0, arret = null;
+
+      try {
+          // Ordre chronologique conservé : on s'arrête au premier échec temporaire
+          for (const ticket of queue) {
+              if (ticket._id_salon && idSalonActuel && String(ticket._id_salon) !== String(idSalonActuel)) continue; // ticket d'un autre salon : on n'y touche pas
+              let res;
+              try {
+                  res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(ticket) });
+              } catch (e) { arret = "Réseau instable, synchronisation reportée."; break; }
+
+              if (res.ok) {
+                  restants = restants.filter(t => t !== ticket);
+                  nbOk++;
+                  await localforage.setItem('offline_tickets', restants);
+                  continue;
+              }
+
+              const data = await res.json().catch(() => ({}));
+              if ([401, 402, 403, 423].includes(res.status) || res.status >= 500) {
+                  arret = res.status === 423 ? (data.erreur || "Clôture manquante : synchronisation reportée.")
+                        : res.status === 401 || res.status === 403 ? "Session expirée : reconnectez-vous, vos tickets sont conservés."
+                        : res.status === 402 ? "Abonnement inactif : vos tickets sont conservés."
+                        : "Serveur indisponible, synchronisation reportée.";
+                  break;
+              }
+
+              // Refus définitif (ex : donnée invalide) : on ne perd jamais le ticket, on le met de côté
+              const rejetes = await localforage.getItem('offline_tickets_rejetes') || [];
+              rejetes.push({ ...ticket, _erreur: data.erreur || `Erreur ${res.status}` });
+              await localforage.setItem('offline_tickets_rejetes', rejetes);
+              restants = restants.filter(t => t !== ticket);
+              await localforage.setItem('offline_tickets', restants);
+              nbRejetes++;
           }
-      }
-      
-      await localforage.setItem('offline_tickets', ticketsRestants);
-      if (ticketsRestants.length === 0) {
-          showToast("Tous les tickets hors-ligne ont été synchronisés !", "success");
-          chargerTout();
-      } else {
-          showToast("Réseau instable, synchronisation partielle.", "error");
-      }
+      } finally { syncEnCours.current = false; }
+
+      if (nbOk > 0) chargerTout();
+      if (nbRejetes > 0) showToast(`${nbRejetes} ticket(s) refusé(s) par le serveur, conservés à part. Contactez le support.`, "error");
+      else if (arret) showToast(arret, "error");
+      else if (nbOk > 0) showToast("Tous les tickets hors-ligne ont été synchronisés !", "success");
   };
+
+  // Nouvelle tentative automatique toutes les minutes tant qu'il reste des tickets en attente
+  useEffect(() => {
+      const t = setInterval(() => { if (navigator.onLine) syncOfflineTickets(); }, 60000);
+      return () => clearInterval(t);
+  }, [token]);
 
   const fetchAndCache = async (url, setter, cacheKey) => {
       try {
@@ -1040,7 +1070,7 @@ function App() {
 
     const forcerSauvegardeLocale = async () => {
         const offlineTicketId = `TKT-OFFLINE-${Date.now()}`;
-        const offlineTicket = { ...payloadTPE, _id_temp: offlineTicketId, date_creation: new Date().toISOString() };
+        const offlineTicket = { ...payloadTPE, _id_temp: offlineTicketId, _id_salon: decodeToken(token)?.id_salon, date_creation: new Date().toISOString() };
         
         const queue = await localforage.getItem('offline_tickets') || [];
         queue.push(offlineTicket);
@@ -1197,6 +1227,8 @@ function App() {
   const executerZDeCaisse = async () => {
       if(isOffline || !navigator.onLine) { setConfirmDialog(null); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
       setConfirmDialog(null);
+      const enAttente = await localforage.getItem('offline_tickets') || [];
+      if (enAttente.length > 0) { await syncOfflineTickets(); const reste = await localforage.getItem('offline_tickets') || []; if (reste.length > 0) return showToast(`${reste.length} ticket(s) hors-ligne à synchroniser avant la clôture.`, "error"); }
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders() });
           const data = await handleFetchError(res);
