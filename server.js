@@ -13,6 +13,7 @@ const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const legal = require('./legal');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -396,6 +397,9 @@ app.post('/api/reset-password', async (req, res) => {
     } catch (e) { res.status(400).json({ erreur: "Lien expiré, corrompu ou falsifié." }); }
 });
 
+// Module légal : acceptation électronique des documents contractuels (CGV, RGPD, SEPA, NF525, prêt du TPE)
+legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, nodemailer, crypto });
+
 app.post('/api/creer-checkout', async (req, res) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; 
@@ -405,6 +409,9 @@ app.post('/api/creer-checkout', async (req, res) => {
         try {
             const result = await pool.query('SELECT email, _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
             if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
+            // Le contrat doit être accepté AVANT le paiement / la création du mandat
+            const docsEnAttente = await legal.documentsEnAttente(pool, user.id_salon);
+            if (docsEnAttente.length > 0) return res.status(403).json({ erreur: "Vous devez d'abord accepter les conditions contractuelles.", require_legal: true });
             let customerId = result.rows[0]._customer_id;
             if (!customerId) {
                 const customer = await stripe.customers.create({ email: result.rows[0].email });
@@ -412,7 +419,7 @@ app.post('/api/creer-checkout', async (req, res) => {
                 await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
             }
             const session = await stripe.checkout.sessions.create({
-              customer: customerId, payment_method_types: ['card'],
+              customer: customerId, payment_method_types: process.env.STRIPE_SEPA === 'oui' ? ['card', 'sepa_debit'] : ['card'],
               line_items: [{ price: 'price_1UG3bh10YWspHc2C8J2bmXL0', quantity: 1 }], mode: 'subscription',
               success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
             });
