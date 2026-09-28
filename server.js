@@ -153,6 +153,9 @@ pool.query(`
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS jour_envoi_bilan INT DEFAULT 1;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS derniere_verif_stock DATE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pin_salon VARCHAR(10);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_temp_offline VARCHAR(64);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS date_synchro_hors_ligne TIMESTAMP;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_id_temp_offline ON tickets (id_salon, id_temp_offline) WHERE id_temp_offline IS NOT NULL;
 
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type_ticket VARCHAR(20) DEFAULT 'VENTE';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_ticket_origine INT REFERENCES tickets(id_ticket);
@@ -271,9 +274,26 @@ async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
 
 const verifierClotureZ = async (req, res, next) => {
     const id_salon = req.user.id_salon;
+    const idTemp = req.body && req.body._id_temp ? String(req.body._id_temp).slice(0, 64) : null;
     try {
+        let dateTicket = null; // null = ticket encaissé en direct
+        if (idTemp) {
+            if (req.body.methode_paiement === 'CARTE') return res.status(400).json({ erreur: "Un paiement par carte ne peut pas être enregistré hors-ligne." });
+            // Anti-doublon : ticket déjà synchronisé -> on répond OK sans rien recréer
+            const doublon = await pool.query('SELECT id_ticket FROM tickets WHERE id_salon = $1 AND id_temp_offline = $2', [id_salon, idTemp]);
+            if (doublon.rowCount > 0) return res.json({ message: "Ticket déjà synchronisé.", id_ticket: doublon.rows[0].id_ticket, deja_synchronise: true });
+            // On conserve la vraie date d'encaissement (max 7 jours, pas dans le futur) si son jour n'est pas déjà clôturé
+            const d = new Date(req.body.date_creation);
+            const maintenant = Date.now();
+            if (!isNaN(d) && d.getTime() <= maintenant + 5 * 60 * 1000 && d.getTime() >= maintenant - 7 * 24 * 3600 * 1000) {
+                const ferme = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE($2::timestamp)', [id_salon, d.toISOString()]);
+                if (ferme.rowCount === 0) dateTicket = d.toISOString();
+            }
+        }
+        req.dateTicketEffective = dateTicket;
+        req.idTempOffline = idTemp;
         const jourBloquant = await pool.query(
-            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < CURRENT_DATE AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`, [id_salon]
+            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < DATE(COALESCE($2::timestamp, NOW())) AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`, [id_salon, dateTicket]
         );
         if (jourBloquant.rowCount > 0 && jourBloquant.rows[0].jour) {
             return res.status(423).json({ erreur: `Clôture (Z) manquante pour le ${new Date(jourBloquant.rows[0].jour).toLocaleDateString()}. Effectuez la clôture avant d'encaisser.`, z_manquant: jourBloquant.rows[0].jour });
@@ -585,8 +605,8 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         const numeroTicket = `TKT-${methode.substring(0,2)}-` + Date.now();
         
         const ticketResult = await clientDB.query(
-            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE') RETURNING id_ticket;`, 
-            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode]
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END) RETURNING id_ticket;`, 
+            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null]
         );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
 
@@ -625,8 +645,8 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
                 if (employe) {
                     const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
                     const montant_commission = (total_ligne * (taux / 100)).toFixed(2);
-                    await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon) VALUES ($1, $2, $3, $4, $5, $6)`, 
-                    [id_employe, idNouveauTicket, total_ligne, montant_commission, type_article, id_salon]);
+                    await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon, date_creation) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, NOW()))`, 
+                    [id_employe, idNouveauTicket, total_ligne, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
                 }
             }
         }
