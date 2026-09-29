@@ -635,7 +635,7 @@ function App() {
       }
   }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif, joursSemaine]);
 
-  useEffect(() => { 
+  useEffect(() => { const verifierTachesIAEnBase = async () => {
       if (token && !isAbonnementInactif) { 
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
           chargerTout(); 
@@ -662,7 +662,7 @@ function App() {
   }, [token, isAbonnementInactif, isOffline]);
 
   const verifierTachesIAEnBase = async () => {
-      if (!token || isAbonnementInactif || !['gerant', 'salon'].includes(decodeToken(token)?.role)) return;
+      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { 
               headers: getAuthHeaders(), 
@@ -677,7 +677,7 @@ function App() {
   };
 
   useEffect(() => {
-      if (!token || isAbonnementInactif || !['gerant', 'salon'].includes(decodeToken(token)?.role)) return;
+      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
       
       const user = decodeToken(token);
       let eventSource = null;
