@@ -587,6 +587,7 @@ function App() {
     fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
     fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData'); // filtré côté serveur selon le rôle
+    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
 
     if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData');
     if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData');
@@ -614,7 +615,6 @@ function App() {
     fetchAndCache('/api/stocks', setStocksData, 'stocksData');
     fetchAndCache('/api/rh', setRhData, 'rhData');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
     fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
 
     if (decodeToken(token)?.id_salon === 38) {
@@ -1557,6 +1557,7 @@ function App() {
           { key: 'accueil', label: 'Bord', icon: iconBord },
           { key: 'caisse', label: 'Caisse', icon: iconCaisse },
           { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
+          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
           { key: 'outils', label: 'Outils', icon: iconOutils },
       ];
       // employe
@@ -1564,6 +1565,7 @@ function App() {
           { key: 'accueil', label: 'Bord', icon: iconBord },
           { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
           { key: 'admin', label: 'Compta', icon: iconCompta },
+          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
           { key: 'outils', label: 'Outils', icon: iconOutils },
       ];
   };
@@ -1714,7 +1716,7 @@ function App() {
           {!isMobile && (
               <>
                  <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>
-                 {role === 'gerant' && (
+                 {(role === 'gerant' || role === 'salon' || role === 'employe') && (
                      <div className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => setActiveTab('actions')} style={{ position: 'relative' }}>
                          {nbTachesUrgentes > 0 && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span>Actions</span>
@@ -2181,7 +2183,7 @@ function App() {
               )}
 
               {/* VUE : CENTRE D'ACTION (TÂCHES) */}
-              {role === 'gerant' && activeTab === 'actions' && (
+              {(role === 'gerant' || role === 'salon' || role === 'employe') && activeTab === 'actions' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   {/* EN-TÊTE FIXE */}
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
@@ -2236,9 +2238,9 @@ function App() {
                           <div className="section-label">Terminées</div>
                           <div className="list-group" style={{opacity: 0.65}}>
                               {(tachesListe || []).filter(t => t.statut === 'FAIT').map(tache => (
-                                  <div key={tache.id_tache} className="list-row">
-                                      <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400}}>{tache.titre}</span>
-                                      <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '12px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
+                                  <div key={tache.id_tache} className="list-row" style={{minHeight: '36px', padding: '8px 16px'}}>
+                                      <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>{tache.titre}</span>
+                                      <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
                                   </div>
                               ))}
                           </div>
