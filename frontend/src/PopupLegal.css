@@ -1,0 +1,44 @@
+/* Pop-up d'acceptation légale — reprend les variables du thème (clair/sombre) */
+.pl-overlay { position: fixed; inset: 0; z-index: 20000; background: rgba(20,20,26,0.55); display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+.pl-carte { width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 22px; padding: 28px 24px calc(24px + env(safe-area-inset-bottom)); box-shadow: var(--shadow-md); box-sizing: border-box; -webkit-overflow-scrolling: touch; }
+.pl-titre { font-size: 30px; font-weight: 700; text-align: center; margin: 4px 0 12px; letter-spacing: -0.02em; }
+.pl-intro { font-size: 14px; color: var(--text-secondary); text-align: center; margin: 0 0 20px; line-height: 1.5; }
+.pl-muted { text-align: center; color: var(--text-secondary); }
+.pl-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+.pl-champ { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+.pl-input { width: 100%; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-input); background: var(--bg-app); color: var(--text-main); font-size: 15px; font-family: inherit; outline: none; }
+.pl-input:focus { border-color: var(--border-focus); background: var(--bg-card); }
+.pl-input::placeholder { color: var(--text-muted); font-style: italic; }
+.pl-input:disabled { opacity: 0.6; }
+.pl-liste { border: 1px solid var(--border-color); border-radius: 16px; overflow: hidden; margin-bottom: 16px; }
+.pl-ligne { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; background: transparent; border: none; border-bottom: 1px solid var(--border-color); color: var(--text-main); font-size: 15px; font-family: inherit; text-align: left; cursor: pointer; }
+.pl-ligne:last-child { border-bottom: none; }
+.pl-ligne:hover { background: var(--bg-hover); }
+.pl-ligne-titre { flex: 1; font-weight: 500; }
+.pl-badge { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.pl-badge-ok { color: var(--color-success); }
+.pl-chevron { color: var(--text-muted); font-size: 20px; }
+.pl-cases { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.pl-case { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.4; cursor: pointer; }
+.pl-case input { margin-top: 3px; width: 18px; height: 18px; flex-shrink: 0; }
+.pl-case-off { opacity: 0.45; cursor: not-allowed; }
+.pl-mention { margin-bottom: 8px; }
+.pl-aide-champ { display: block; margin-top: 6px; font-size: 12px; font-weight: 400; color: var(--text-secondary); }
+.pl-erreur { color: var(--color-danger); background: var(--bg-danger); padding: 10px 12px; border-radius: 10px; font-size: 13px; margin: 8px 0; }
+.pl-actions { display: flex; gap: 10px; margin-top: 18px; }
+.pl-btn { flex: 1; padding: 13px 16px; border-radius: var(--radius-button); font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; text-align: center; text-decoration: none; box-sizing: border-box; }
+.pl-btn-pri { background: var(--btn-primary); color: var(--btn-text); border: 1px solid var(--btn-primary); }
+.pl-btn-sec { background: transparent; color: var(--text-main); border: 1px solid var(--border-color); }
+.pl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.pl-petit { flex: 0 0 auto; padding: 8px 14px; font-size: 13px; }
+.pl-lecteur { position: fixed; inset: 0; z-index: 20001; background: rgba(20,20,26,0.6); display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+.pl-lecteur-carte { width: 100%; max-width: 640px; max-height: 88vh; display: flex; flex-direction: column; gap: 12px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 20px; padding: 18px; box-sizing: border-box; }
+.pl-lecteur-tete { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pl-lecteur-texte { overflow-y: auto; white-space: pre-wrap; font-size: 13px; line-height: 1.55; color: var(--text-main); padding-right: 4px; -webkit-overflow-scrolling: touch; }
+.pl-lien { flex: none; }
+@media (max-width: 767px) {
+  .pl-overlay { align-items: flex-end; padding: 0; }
+  .pl-carte { max-height: 94vh; border-radius: 22px 22px 0 0; }
+  .pl-lecteur { align-items: flex-end; padding: 0; }
+  .pl-lecteur-carte { max-height: 92vh; border-radius: 22px 22px 0 0; }
+}
