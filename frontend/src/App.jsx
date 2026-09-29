@@ -662,7 +662,7 @@ function App() {
   }, [token, isAbonnementInactif, isOffline]);
 
   const verifierTachesIAEnBase = async () => {
-      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
+      if (!token || isAbonnementInactif || !['gerant', 'salon'].includes(decodeToken(token)?.role)) return;
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { 
               headers: getAuthHeaders(), 
@@ -677,7 +677,7 @@ function App() {
   };
 
   useEffect(() => {
-      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
+      if (!token || isAbonnementInactif || !['gerant', 'salon'].includes(decodeToken(token)?.role)) return;
       
       const user = decodeToken(token);
       let eventSource = null;
@@ -1608,17 +1608,28 @@ function App() {
 
       {modalIA && (
           <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      <span style={{fontSize: '48px'}}>🤖</span>
+              <div className="modal-content" style={{maxWidth: '420px'}}>
+                  <div style={{display: 'flex', alignItems: 'flex-start', gap: '14px', marginBottom: '20px'}}>
+                      <div style={{width: '42px', height: '42px', borderRadius: '12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--text-main)'}}>
+                          {modalIA.type_tache === 'STOCK' ? (
+                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                          ) : modalIA.type_tache === 'RDV' ? (
+                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          ) : (
+                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                          )}
+                      </div>
+                      <div style={{flex: 1, minWidth: 0}}>
+                          <span className="badge-discret" style={{background: 'var(--bg-app)', color: 'var(--text-secondary)', marginBottom: '6px'}}>Détection automatique</span>
+                          <h2 style={{margin: '2px 0 2px 0', color: 'var(--text-main)', fontSize: '17px'}}>
+                              {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : "Nouvelle action détectée"}
+                          </h2>
+                          <p style={{fontSize: '13px', color: 'var(--text-secondary)', margin: 0}}>
+                              {modalIA.type_tache === 'STOCK' ? "Extrait d'une facture reçue par e-mail" : modalIA.type_tache === 'RDV' ? "Extrait d'un e-mail de réservation" : "Extrait d'un e-mail entrant"}
+                          </p>
+                      </div>
                   </div>
-                  <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>
-                      {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : "Nouvelle action"}
-                  </h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
-                      {modalIA.type_tache === 'STOCK' ? "L'IA a extrait cette facture :" : "L'IA a lu cet e-mail de réservation :"}
-                  </p>
-                  
+
                   <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px'}}>
                       {modalIA.type_tache === 'STOCK' && (
                           <>
