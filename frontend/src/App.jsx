@@ -1307,7 +1307,7 @@ function App() {
       return '#f59e0b'; 
   };
 
-  const nbTachesUrgentes = (tachesListe || []).filter(t => t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
+  const nbTachesUrgentes = (tachesListe || []).filter(t => (t.proprietaire || 'gerant') === (role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role) && t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
 
   let clientCaisseObj = null;
   let isEligibleFidelite = false;
@@ -2205,47 +2205,59 @@ function App() {
                       </div>
                       <input type="text" className="input-fournisseur" placeholder="Détails (Optionnel)" style={{marginBottom: '16px'}} value={nouvelleTache.description} onChange={e => setNouvelleTache({...nouvelleTache, description: e.target.value})} />
                       <button className="btn-action" style={{width: '100%'}} disabled={!nouvelleTache.titre} onClick={async () => {
-                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(nouvelleTache) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:''}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
+                          const proprietaireActuel = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role;
+                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...nouvelleTache, proprietaire: proprietaireActuel}) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:''}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
                       }}>Ajouter une tâche</button>
                   </div>
 
-                  <div className="section-label">À traiter ({(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length})</div>
-                  {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').length === 0 ? (
-                      <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>
-                  ) : (
-                      <div className="list-group">
-                          {(tachesListe || []).filter(t => t.statut === 'A_FAIRE').map(tache => (
-                              <div key={tache.id_tache} className="list-row" style={{alignItems: 'flex-start'}}>
-                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} title="Marquer comme terminée" style={{background: 'none', border: `2px solid ${getCouleurTache(tache)}`, width: '20px', height: '20px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px', padding: 0}}></button>
-                                  <div className="list-row-content">
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
-                                          <span className="list-row-label">{tache.titre}</span>
-                                          {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'var(--btn-text)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600'}}>DÉTECTÉ</span>}
-                                      </div>
-                                      {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
-                                      {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
-                                  </div>
-                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px'}}>
-                                      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                                  </button>
-                              </div>
-                          ))}
-                      </div>
-                  )}
+                  {(() => {
+                      const proprietaireActuel = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role;
+                      const mesTaches = (tachesListe || []).filter(t => (t.proprietaire || 'gerant') === proprietaireActuel);
+                      const tachesAFaire = mesTaches.filter(t => t.statut === 'A_FAIRE');
+                      const tachesFaites = mesTaches.filter(t => t.statut === 'FAIT');
 
-                  {(tachesListe || []).filter(t => t.statut === 'FAIT').length > 0 && (
-                      <>
-                          <div className="section-label">Terminées</div>
-                          <div className="list-group" style={{opacity: 0.65}}>
-                              {(tachesListe || []).filter(t => t.statut === 'FAIT').map(tache => (
-                                  <div key={tache.id_tache} className="list-row" style={{minHeight: '36px', padding: '8px 16px'}}>
-                                      <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>{tache.titre}</span>
-                                      <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
+                      return (
+                          <>
+                              <div className="section-label">À traiter ({tachesAFaire.length})</div>
+                              {tachesAFaire.length === 0 ? (
+                                  <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>
+                              ) : (
+                                  <div className="list-group">
+                                      {tachesAFaire.map(tache => (
+                                          <div key={tache.id_tache} className="list-row" style={{alignItems: 'flex-start'}}>
+                                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} title="Marquer comme terminée" style={{background: 'none', border: `2px solid ${getCouleurTache(tache)}`, width: '20px', height: '20px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px', padding: 0}}></button>
+                                              <div className="list-row-content">
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
+                                                      <span className="list-row-label">{tache.titre}</span>
+                                                      {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'var(--btn-text)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600'}}>DÉTECTÉ</span>}
+                                                  </div>
+                                                  {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
+                                                  {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
+                                              </div>
+                                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px'}}>
+                                                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                                              </button>
+                                          </div>
+                                      ))}
                                   </div>
-                              ))}
-                          </div>
-                      </>
-                  )}
+                              )}
+
+                              {tachesFaites.length > 0 && (
+                                  <>
+                                      <div className="section-label">Terminées</div>
+                                      <div className="list-group" style={{opacity: 0.65}}>
+                                          {tachesFaites.map(tache => (
+                                              <div key={tache.id_tache} className="list-row" style={{minHeight: '36px', padding: '8px 16px'}}>
+                                                  <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>{tache.titre}</span>
+                                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </>
+                              )}
+                          </>
+                      );
+                  })()}
                   </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
               )}
