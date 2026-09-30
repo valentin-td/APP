@@ -241,11 +241,11 @@ function App() {
       
       const roleUtilisateur = decodeToken(token)?.role;
       const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
+      const monProfilId = roleUtilisateur === 'employe' ? `emp_${myId}` : (roleUtilisateur === 'salon' ? 'salon' : 'gerant');
       const cleActuelleStr = String(chatActif);
       
-      const idsConv = (messagesListe || [])
-          .filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr)
-          .map(m => Number(m.id_message));
+      const messagesConv = (messagesListe || []).filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr);
+      const idsConv = messagesConv.map(m => Number(m.id_message));
       
       if (idsConv.length === 0) return;
       const maxId = Math.max(...idsConv);
@@ -256,6 +256,11 @@ function App() {
           localforage.setItem('dernierLuParConv', next);
           return next;
       });
+
+      const idsAVoir = messagesConv.filter(m => m.id_expediteur !== myId && !(m.vu_par || []).includes(monProfilId)).map(m => m.id_message);
+      if (idsAVoir.length > 0) {
+          fetch('https://api-salon-backend.onrender.com/api/messages/vu', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ids: idsAVoir }) }).catch(() => {});
+      }
   };
 
   // N'exécute le check que si l'onglet Chat est ouvert OU que l'on change de contact
@@ -283,6 +288,24 @@ function App() {
   }, []);
   
   const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
+  const [vuParOuvertMsgId, setVuParOuvertMsgId] = useState(null);
+
+  const formatDateSeparateur = (dateStr) => {
+      const d = new Date(dateStr);
+      const maintenant = new Date();
+      const hier = new Date(); hier.setDate(hier.getDate() - 1);
+      if (d.toDateString() === maintenant.toDateString()) return "Aujourd'hui";
+      if (d.toDateString() === hier.toDateString()) return "Hier";
+      return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: d.getFullYear() !== maintenant.getFullYear() ? 'numeric' : undefined });
+  };
+
+  const resoudreProfilVu = (idProfil) => {
+      if (idProfil === 'gerant') return { nom: 'Gérant', photo_url: null };
+      if (idProfil === 'salon') return { nom: 'Salon', photo_url: null };
+      const idEmp = parseInt(String(idProfil).replace('emp_', ''));
+      const emp = (employesListe || []).find(e => e.id_employe === idEmp);
+      return { nom: emp?.nom || 'Employé', photo_url: emp?.photo_url || null };
+  };
   const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
 
   const [tachesIA, setTachesIA] = useState([]);
@@ -659,6 +682,7 @@ function App() {
               newSocket.on('messageModifie', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, contenu: data.contenu } : m)); });
               newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => m.id_message !== data.id_message)); });
               newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, reactions: data.reactions } : m)); });
+              newSocket.on('messageVu', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, vu_par: data.vu_par } : m)); });
               newSocket.on('connect_error', () => {});
               setSocket(newSocket);
               return () => newSocket.disconnect();
@@ -3251,19 +3275,35 @@ function App() {
                                ((employesListe || []).find(e => e.id_employe === chatActif)?.nom || 'Conversation')}
                           </div>
                           
+                          <style>{`
+                              .chat-date-separateur { display: flex; justify-content: center; margin: 8px 0; }
+                              .chat-date-separateur span { font-size: 11px; font-weight: 600; color: var(--text-secondary); background: var(--bg-app); border: 1px solid var(--border-color); border-radius: 12px; padding: 4px 12px; }
+                              .chat-vu-par { position: absolute; bottom: -9px; right: 4px; display: flex; cursor: pointer; z-index: 2; }
+                              .chat-vu-par-bulle { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--bg-card); background: var(--bg-app); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+                              .chat-vu-par-plus { font-size: 8px; font-weight: 700; color: var(--text-secondary); }
+                              .chat-vu-par-liste { position: absolute; bottom: 20px; right: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: var(--shadow-md); padding: 10px; min-width: 160px; z-index: 20; }
+                              .chat-vu-par-liste-titre { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+                              .chat-vu-par-liste-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-main); white-space: nowrap; }
+                          `}</style>
                           <div className="chat-messages" ref={chatMessagesRef}>
                               {(messagesListe || []).filter(m => {
                                   const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
                                   if (chatActif === 'salon') return m.id_destinataire === 0;
                                   if (chatActif === 'gerant') return (m.id_expediteur === myId && m.id_destinataire === null) || (m.id_expediteur === null && m.id_destinataire === myId);
                                   return (m.id_expediteur === myId && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === myId);
-                              }).map((msg) => {
+                              }).map((msg, idxMsg, tableauMsgsConv) => {
                                   const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
                                   const isMine = msg.id_expediteur === myId;
                                   const myReactId = role === 'employe' ? `emp_${myId}` : (role === 'salon' ? 'salon' : 'gerant');
+                                  const messagePrecedent = tableauMsgsConv[idxMsg - 1];
+                                  const changerDeJour = !messagePrecedent || new Date(msg.date_creation).toDateString() !== new Date(messagePrecedent.date_creation).toDateString();
 
                                   return (
-                                      <div key={msg.id_message} className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', maxWidth: '100%'}}>
+                                      <div key={msg.id_message} style={{display: 'contents'}}>
+                                      {changerDeJour && (
+                                          <div className="chat-date-separateur"><span>{formatDateSeparateur(msg.date_creation)}</span></div>
+                                      )}
+                                      <div className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', maxWidth: '100%'}}>
                                           {!isMine && renderAvatar(msg.photo_expediteur, msg.nom_expediteur, 32)}
                                           
                                           <div style={{display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', minWidth: 0}}>
@@ -3280,9 +3320,38 @@ function App() {
                                                           </div>
                                                       </div>
                                                   ) : (
-                                                      <div className="chat-bubble">
-                                                          {msg.contenu}
-                                                          {msg.fichier_url && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                                      <div style={{position: 'relative'}}>
+                                                          <div className="chat-bubble">
+                                                              {msg.contenu}
+                                                              {msg.fichier_url && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                                          </div>
+                                                          {isMine && msg.vu_par && msg.vu_par.length > 0 && (
+                                                              <div className="chat-vu-par" onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(vuParOuvertMsgId === msg.id_message ? null : msg.id_message); }}>
+                                                                  {msg.vu_par.slice(0, 3).map((idProfil, i) => {
+                                                                      const dernierEtTropPlein = i === 2 && msg.vu_par.length > 3;
+                                                                      const profil = resoudreProfilVu(idProfil);
+                                                                      return (
+                                                                          <div key={idProfil} className="chat-vu-par-bulle" style={{ marginLeft: i === 0 ? 0 : '-8px' }}>
+                                                                              {dernierEtTropPlein ? <span className="chat-vu-par-plus">+{msg.vu_par.length - 2}</span> : renderAvatar(profil.photo_url, profil.nom, 14)}
+                                                                          </div>
+                                                                      );
+                                                                  })}
+                                                                  {vuParOuvertMsgId === msg.id_message && (
+                                                                      <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)}>
+                                                                          <div className="chat-vu-par-liste-titre">Vu par</div>
+                                                                          {msg.vu_par.map(idProfil => {
+                                                                              const profil = resoudreProfilVu(idProfil);
+                                                                              return (
+                                                                                  <div key={idProfil} className="chat-vu-par-liste-item">
+                                                                                      {renderAvatar(profil.photo_url, profil.nom, 22)}
+                                                                                      <span>{profil.nom}</span>
+                                                                                  </div>
+                                                                              );
+                                                                          })}
+                                                                      </div>
+                                                                  )}
+                                                              </div>
+                                                          )}
                                                       </div>
                                                   )}
                                                   
@@ -3330,6 +3399,7 @@ function App() {
                                                   <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                               </div>
                                           </div>
+                                      </div>
                                       </div>
                                   );
                               })}
