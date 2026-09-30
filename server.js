@@ -122,6 +122,7 @@ const pool = new Pool({
 pool.query(`
     CREATE TABLE IF NOT EXISTS ia_taches_attente (id_tache SERIAL PRIMARY KEY, id_salon INT, type_tache VARCHAR(50), donnees JSONB, statut VARCHAR(20) DEFAULT 'ATTENTE', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS taches_actions (id_tache SERIAL PRIMARY KEY, id_salon INT, titre VARCHAR(255), description TEXT, date_echeance DATE, statut VARCHAR(20) DEFAULT 'A_FAIRE', source VARCHAR(20) DEFAULT 'MANUEL', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS avis_demandes (id_demande SERIAL PRIMARY KEY, id_salon INT, telephone VARCHAR(30), prenom VARCHAR(100), token VARCHAR(64) UNIQUE, id_rdv INT, statut VARCHAR(20) DEFAULT 'EN_ATTENTE', note INT, commentaire TEXT, date_prevue TIMESTAMP DEFAULT NOW(), date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS protocoles (id_protocole SERIAL PRIMARY KEY, id_salon INT, nom_prestation VARCHAR(255), description TEXT, photo_url TEXT, delai_livraison_jours INT DEFAULT 3, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS etapes JSONB DEFAULT '[]';
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
@@ -563,6 +564,43 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 // =========================================================================
 // --- L'ENCAISSEMENT & MÉTHODES DE PAIEMENT (SMART POS) ---
 // =========================================================================
+app.get('/api/avis/info/:token', async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT a.prenom, a.statut, a.note, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1`, [req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou expiré." });
+        const d = r.rows[0];
+        res.json({ prenom: d.prenom, nom_salon: d.nom_salon, etape: d.statut === 'REPONDU' ? 'termine' : (d.note && d.note <= 3 ? 'commentaire' : 'notation') });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/avis/:token/note', async (req, res) => {
+    const note = parseInt(req.body.note);
+    if (!note || note < 1 || note > 5) return res.status(400).json({ erreur: "Note invalide." });
+    try {
+        const r = await pool.query(`UPDATE avis_demandes SET note = $1, statut = CASE WHEN $1 >= 4 THEN 'REPONDU' ELSE statut END WHERE token = $2 AND note IS NULL RETURNING id_salon`, [note, req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà utilisé." });
+        if (note >= 4) {
+            const salonInfo = await pool.query('SELECT lien_google_maps FROM configuration_salon WHERE id_salon = $1', [r.rows[0].id_salon]);
+            return res.json({ besoin_commentaire: false, lien_google_maps: salonInfo.rows[0]?.lien_google_maps || null });
+        }
+        res.json({ besoin_commentaire: true });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/avis/:token/commentaire', async (req, res) => {
+    try {
+        const r = await pool.query(`UPDATE avis_demandes SET commentaire = $1, statut = 'REPONDU' WHERE token = $2 AND note <= 3 AND statut != 'REPONDU' RETURNING id_salon, telephone, prenom, note`, [req.body.commentaire || '', req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà traité." });
+        const d = r.rows[0];
+        await pool.query(
+            `INSERT INTO taches_actions (id_salon, titre, description, source) VALUES ($1, $2, $3, 'AVIS_CLIENT')`,
+            [d.id_salon, `Avis client insatisfait (${d.note}★) à recontacter`, `${d.prenom || 'Un client'} (${d.telephone}) a laissé une note de ${d.note}/5 : "${req.body.commentaire || '(aucun commentaire)'}"`]
+        );
+        envoyerNotificationPush(d.id_salon, 'gerant', { title: "Avis client à traiter", body: `Note de ${d.note}/5 reçue, un commentaire vous attend dans Actions.`, url: '/?tab=actions' });
+        res.json({ message: "Merci pour votre retour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
 app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
     const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement } = req.body;
     const id_salon = req.user.id_salon;
@@ -805,12 +843,31 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
             if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
         } else if (methode === 'sms') {
             if (!config.brevo_api_key) return res.status(400).json({ erreur: "Clé Brevo non configurée." });
-            const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1', [id_client]);
-            if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro." });
+            let telephoneEnvoi;
+            if (id_client) {
+                const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1', [id_client]);
+                if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro." });
+                telephoneEnvoi = client.rows[0].telephone;
+            } else {
+                telephoneEnvoi = (req.body.telephone || '').trim();
+                if (!telephoneEnvoi) return res.status(400).json({ erreur: "Numéro de téléphone requis." });
+            }
             await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
                 method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
-                body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: client.rows[0].telephone, content: textRecap })
+                body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: telephoneEnvoi, content: textRecap })
             });
+
+            // Client non identifié dans la base -> on programme l'enquête de satisfaction (1h30 après l'envoi du ticket)
+            if (!id_client) {
+                const clientConnu = await pool.query('SELECT 1 FROM clients WHERE telephone = $1 AND id_salon = $2', [telephoneEnvoi, id_salon]);
+                if (clientConnu.rowCount === 0) {
+                    const tokenAvis = crypto.randomBytes(24).toString('hex');
+                    await pool.query(
+                        `INSERT INTO avis_demandes (id_salon, telephone, token, statut, date_prevue) VALUES ($1, $2, $3, 'EN_ATTENTE', NOW() + INTERVAL '1.5 hours')`,
+                        [id_salon, telephoneEnvoi, tokenAvis]
+                    );
+                }
+            }
         }
         res.json({ message: "Ticket envoyé." });
     } catch (error) { res.status(500).json({ erreur: "Erreur envoi ticket." }); }
@@ -1990,6 +2047,37 @@ async function executerRobotMarketingEtPredictif() {
                     if (client.telephone) {
                         await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`);
                     }
+                }
+
+                // --- ENQUÊTE DE SATISFACTION : RDV terminés depuis 1 à 2h, jamais venus auparavant ---
+                const rdvTermines = await pool.query(`
+                    SELECT r.id_rdv, r.nom_client, r.telephone_client
+                    FROM rendez_vous r
+                    WHERE r.id_salon = $1
+                      AND r.telephone_client IS NOT NULL AND r.telephone_client != ''
+                      AND (r.date_heure_debut + (r.duree_minutes || ' minutes')::interval) BETWEEN NOW() - INTERVAL '2 hours' AND NOW() - INTERVAL '1 hour'
+                      AND NOT EXISTS (SELECT 1 FROM avis_demandes a WHERE a.id_rdv = r.id_rdv)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM tickets t JOIN clients c ON t.id_client = c.id_client
+                          WHERE c.telephone = r.telephone_client AND t.id_salon = $1 AND t.statut = 'VALIDE'
+                      )
+                `, [salon.id_salon]);
+
+                for (let rdv of rdvTermines.rows) {
+                    const tokenAvis = crypto.randomBytes(24).toString('hex');
+                    await pool.query(
+                        `INSERT INTO avis_demandes (id_salon, telephone, prenom, token, id_rdv, statut, date_prevue) VALUES ($1, $2, $3, $4, $5, 'EN_ATTENTE', NOW())`,
+                        [salon.id_salon, rdv.telephone_client, (rdv.nom_client || '').split(' ')[0], tokenAvis, rdv.id_rdv]
+                    );
+                }
+
+                // --- ENQUÊTE DE SATISFACTION : envoi des demandes arrivées à échéance ---
+                const avisAEnvoyer = await pool.query(`SELECT * FROM avis_demandes WHERE id_salon = $1 AND statut = 'EN_ATTENTE' AND date_prevue <= NOW()`, [salon.id_salon]);
+                for (let demande of avisAEnvoyer.rows) {
+                    const lienAvis = `https://app-salon-caiss.onrender.com/avis/${demande.token}`;
+                    const texteAvis = `Bonjour ${demande.prenom || ''}, merci pour votre première visite chez ${salon.nom_salon} ! Qu'avez-vous pensé de votre prestation ? Donnez votre avis ici : ${lienAvis}`;
+                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, demande.telephone, texteAvis);
+                    await pool.query(`UPDATE avis_demandes SET statut = 'ENVOYE' WHERE id_demande = $1`, [demande.id_demande]);
                 }
             }
 
