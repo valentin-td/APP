@@ -120,8 +120,11 @@ function App() {
   const [stockSearch, setStockSearch] = useState('');
   const [stockSortBy, setStockSortBy] = useState('nom');
   const [isStockExpanded, setIsStockExpanded] = useState(true);
+  const [isTachesTermineesExpanded, setIsTachesTermineesExpanded] = useState(false);
   const [stockMenuOuvert, setStockMenuOuvert] = useState(null);
   const [modifStockDialog, setModifStockDialog] = useState(null);
+  const [employeMenuOuvert, setEmployeMenuOuvert] = useState(null);
+  const [modifEmployeDialog, setModifEmployeDialog] = useState(null);
   
   const [protocolesListe, setProtocolesListe] = useState([]);
   const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
@@ -877,6 +880,7 @@ function App() {
   const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
   const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
+  const sauvegarderModifEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${modifEmployeDialog.id_employe}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifEmployeDialog.nom, code_pin: modifEmployeDialog.code_pin, taux_commission_prestation: modifEmployeDialog.taux_commission_prestation, taux_commission_produit: modifEmployeDialog.taux_commission_produit }) }); await handleFetchError(res); chargerTout(); showToast("Employé mis à jour.", "success"); setModifEmployeDialog(null); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   
   const ajouterArticle = async () => { 
       if(isOffline) return showToast("Désactivé hors-ligne", "error"); 
@@ -2253,14 +2257,24 @@ function App() {
 
                               {tachesFaites.length > 0 && (
                                   <>
-                                      <div className="section-label">Terminées</div>
-                                      <div className="list-group" style={{opacity: 0.65}}>
-                                          {tachesFaites.map(tache => (
-                                              <div key={tache.id_tache} className="list-row" style={{minHeight: '36px', padding: '8px 16px'}}>
-                                                  <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>{tache.titre}</span>
-                                                  <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
+                                      <div className="carte scan-carte" style={{marginTop: '16px'}}>
+                                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isTachesTermineesExpanded ? '12px' : '0'}} onClick={() => setIsTachesTermineesExpanded(!isTachesTermineesExpanded)}>
+                                              <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '15px'}}>Terminées ({tachesFaites.length})</h3>
+                                              <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isTachesTermineesExpanded ? '▲' : '▼'}</span>
+                                          </div>
+                                          {isTachesTermineesExpanded && (
+                                              <div className="list-group" style={{opacity: 0.65}}>
+                                                  {tachesFaites.map(tache => (
+                                                      <div key={tache.id_tache} className="list-row" style={{minHeight: '36px', padding: '8px 16px'}}>
+                                                          <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>{tache.titre}</span>
+                                                          <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
+                                                          <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px', marginLeft: '4px'}}>
+                                                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                                                          </button>
+                                                      </div>
+                                                  ))}
                                               </div>
-                                          ))}
+                                          )}
                                       </div>
                                   </>
                               )}
@@ -3006,12 +3020,22 @@ function App() {
                   ) : (
                     <div className="rh-grid">
                       {rhData.map(employe => (
-                        <div className="rh-carte" key={employe.id_employe}>
+                        <div className="rh-carte" key={employe.id_employe} style={{position: 'relative'}}>
                           <div className="rh-header-profil">
                             <div className="rh-avatar">
                               {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
                             </div>
-                            <div className="rh-identite"><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
+                            <div className="rh-identite" style={{flex: 1}}><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
+                            <button onClick={(e) => { e.stopPropagation(); setEmployeMenuOuvert(employeMenuOuvert === employe.id_employe ? null : employe.id_employe); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1, alignSelf: 'flex-start'}}>⋮</button>
+                            {employeMenuOuvert === employe.id_employe && (
+                                <>
+                                    <div onClick={() => setEmployeMenuOuvert(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
+                                    <div className="chat-msg-menu" style={{top: '40px', right: '0', bottom: 'auto', zIndex: 999, width: '170px'}}>
+                                        <button onClick={() => { setModifEmployeDialog({ id_employe: employe.id_employe, nom: employe.nom, code_pin: '', taux_commission_prestation: employe.taux_commission_prestation ?? '', taux_commission_produit: employe.taux_commission_produit ?? '' }); setEmployeMenuOuvert(null); }}>Modifier</button>
+                                        <button onClick={() => { setEmployeMenuOuvert(null); setConfirmDialog({ titre: "Supprimer l'employé", message: `Voulez-vous vraiment supprimer "${employe.nom}" ? Cette action est irréversible.`, btnTexte: "Supprimer", action: () => supprimerEmploye(employe.id_employe) }); }} style={{color: 'var(--color-danger)'}}>Supprimer</button>
+                                    </div>
+                                </>
+                            )}
                           </div>
                           <div className="rh-stats-row">
                             <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
@@ -3026,6 +3050,27 @@ function App() {
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {modifEmployeDialog && (
+                      <div className="modal-overlay">
+                          <div className="modal-content">
+                              <div className="modal-header">
+                                  <h3 style={{margin: 0, fontSize: '18px'}}>Modifier {modifEmployeDialog.nom}</h3>
+                                  <button className="modal-close-btn" onClick={() => setModifEmployeDialog(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                              </div>
+                              <input type="text" className="input-fournisseur" placeholder="Nom du collaborateur" value={modifEmployeDialog.nom} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, nom: e.target.value})} style={{marginBottom: '12px'}} />
+                              <input type="password" maxLength="4" className="input-fournisseur" placeholder="Nouveau PIN (laisser vide pour ne pas changer)" value={modifEmployeDialog.code_pin} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, code_pin: e.target.value})} style={{marginBottom: '12px'}} />
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
+                                  <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={modifEmployeDialog.taux_commission_prestation} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, taux_commission_prestation: e.target.value})} />
+                                  <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={modifEmployeDialog.taux_commission_produit} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, taux_commission_produit: e.target.value})} />
+                              </div>
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                  <button onClick={() => setModifEmployeDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer'}}>Annuler</button>
+                                  <button onClick={sauvegarderModifEmploye} className="btn-action" style={{flex: 2}} disabled={!modifEmployeDialog.nom}>Enregistrer</button>
+                              </div>
+                          </div>
+                      </div>
                   )}
                   </div> {/* FIN ZONE DÉFILANTE */}
                 </div>
