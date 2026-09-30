@@ -3283,8 +3283,8 @@ function App() {
                               .chat-vu-par { position: absolute; bottom: -9px; right: 4px; display: flex; cursor: pointer; z-index: 2; }
                               .chat-vu-par-bulle { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--bg-card); background: var(--bg-app); overflow: hidden; display: flex; align-items: center; justify-content: center; }
                               .chat-vu-par-plus { font-size: 8px; font-weight: 700; color: var(--text-secondary); }
-                              .chat-vu-par-liste { position: absolute; bottom: 20px; right: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: var(--shadow-md); padding: 10px; min-width: 160px; z-index: 20; }
-                              .chat-vu-par-liste-titre { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+                              .chat-vu-par-liste { position: absolute; bottom: 20px; right: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: var(--shadow-md); padding: 10px; min-width: 160px; z-index: 20; max-height: 150px; overflow-y: auto; }
+                              .chat-vu-par-liste-titre { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; position: sticky; top: 0; background: var(--bg-card); padding-bottom: 4px; z-index: 2; }
                               .chat-vu-par-liste-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-main); white-space: nowrap; }
                           `}</style>
                           <div className="chat-messages" ref={chatMessagesRef}>
