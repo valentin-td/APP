@@ -3339,7 +3339,7 @@ function App() {
                                                                       );
                                                                   })}
                                                                   {vuParOuvertMsgId === msg.id_message && (
-                                                                      <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)}>
+                                                                      <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)} onClick={(e) => e.stopPropagation()}>
                                                                           <div className="chat-vu-par-liste-titre">Vu par</div>
                                                                           {msg.vu_par.map(idProfil => {
                                                                               const profil = resoudreProfilVu(idProfil);
