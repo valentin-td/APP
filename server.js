@@ -882,6 +882,7 @@ app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
 });
 
+app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
     if (!['gerant', 'salon'].includes(req.user.role)) return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
     try {
         await pool.query('UPDATE configuration_salon SET derniere_verif_stock = CURRENT_DATE WHERE id_salon = $1', [req.user.id_salon]);
