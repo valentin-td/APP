@@ -4,7 +4,7 @@ import localforage from 'localforage';
 import './App.css';
 import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
-import PopupLegal from './PopupLegal';
+import PopupLegal from './PopupLegal'; 
 
 // Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
 function urlBase64ToUint8Array(base64String) { 
