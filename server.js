@@ -177,6 +177,7 @@ pool.query(`
 
     CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '{}';
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS vu_par JSONB DEFAULT '[]';
     
     CREATE TABLE IF NOT EXISTS push_subscriptions (id_sub SERIAL PRIMARY KEY, id_salon INT, role VARCHAR(20), id_employe INT, endpoint TEXT, keys JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 `).then(async () => {
@@ -984,7 +985,8 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             fichier_url,
             date_creation: result.rows[0].date_creation,
             nom_expediteur,
-            photo_expediteur
+            photo_expediteur,
+            vu_par: []
         };
         io.to(req.user.id_salon.toString()).emit('nouveauMessage', newMessage);
         
@@ -1022,6 +1024,25 @@ app.delete('/api/messages/:id', verifierToken, async (req, res) => {
         io.to(req.user.id_salon.toString()).emit('messageSupprime', { id_message: parseInt(req.params.id) });
         res.json({ message: "Message supprimé" });
     } catch(e) { res.status(500).json({erreur: "Erreur lors de la suppression"}); }
+});
+
+app.post('/api/messages/vu', verifierToken, async (req, res) => {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(id => parseInt(id)).filter(n => !isNaN(n)) : [];
+    if (ids.length === 0) return res.json({ message: "Rien à marquer." });
+    const monId = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
+    const monProfilId = req.user.role === 'employe' ? `emp_${req.user.id_employe}` : (req.user.role === 'salon' ? 'salon' : 'gerant');
+    try {
+        const result = await pool.query(
+            `UPDATE messages SET vu_par = CASE WHEN COALESCE(vu_par, '[]'::jsonb) @> to_jsonb($1::text) THEN vu_par ELSE COALESCE(vu_par, '[]'::jsonb) || to_jsonb($1::text) END
+             WHERE id_message = ANY($2::int[]) AND id_salon = $3 AND id_expediteur IS DISTINCT FROM $4
+             RETURNING id_message, vu_par`,
+            [monProfilId, ids, req.user.id_salon, monId]
+        );
+        result.rows.forEach(row => {
+            io.to(req.user.id_salon.toString()).emit('messageVu', { id_message: row.id_message, vu_par: row.vu_par });
+        });
+        res.json({ message: "Marqué comme vu." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur marquage vu." }); }
 });
 
 app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
