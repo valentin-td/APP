@@ -177,12 +177,14 @@ function App() {
   const getCleConversation = (msg, roleUtilisateur, myId) => {
       if (msg.id_destinataire === 0) return 'salon';
       if (roleUtilisateur === 'employe') {
-          if (msg.id_expediteur === myId) return msg.id_destinataire === null ? 'gerant' : msg.id_destinataire;
-          if (msg.id_destinataire === myId) return msg.id_expediteur === null ? 'gerant' : msg.id_expediteur;
+          if (msg.id_expediteur === myId) return (msg.id_destinataire === null || msg.id_destinataire === -1) ? 'gerant' : msg.id_destinataire;
+          if (msg.id_destinataire === myId) return (msg.id_expediteur === null || msg.id_expediteur === -1) ? 'gerant' : msg.id_expediteur;
           return null;
       }
-      if (msg.id_expediteur === null) return msg.id_destinataire;
-      if (msg.id_destinataire === null) return msg.id_expediteur;
+      // Vue gérant ou salon : l'autre extrémité de la conversation est celle qui n'est ni null (gérant) ni -1 (salon)
+      const estIdentitePatron = (v) => v === null || v === -1;
+      if (estIdentitePatron(msg.id_expediteur) && !estIdentitePatron(msg.id_destinataire)) return msg.id_destinataire;
+      if (estIdentitePatron(msg.id_destinataire) && !estIdentitePatron(msg.id_expediteur)) return msg.id_expediteur;
       return null;
   };
 
@@ -1514,9 +1516,19 @@ function App() {
 
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/messages', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          await handleFetchError(res);
+          const data = await handleFetchError(res);
           setMsgInput('');
           setMsgFile(null);
+          // Marquage "lu" immédiat, sans attendre l'effet ni l'écho du socket : évite le faux badge si on ferme/recharge juste après
+          if (data && data.id_message) {
+              const cleStr = String(chatActif);
+              setDernierLuParConv(prev => {
+                  if (Number(prev[cleStr] || 0) >= Number(data.id_message)) return prev;
+                  const next = { ...prev, [cleStr]: Number(data.id_message) };
+                  localforage.setItem('dernierLuParConv', next);
+                  return next;
+              });
+          }
       } catch (e) { if (e.message !== "Session expirée" && e.message !== "Abonnement inactif") showToast(e.message || "Erreur d'envoi du message", "error"); }
   };
 
