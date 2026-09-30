@@ -635,7 +635,7 @@ function App() {
       }
   }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif, joursSemaine]);
 
-  useEffect(() => { const verifierTachesIAEnBase = async () => {
+  useEffect(() => {
       if (token && !isAbonnementInactif) { 
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
           chargerTout(); 
