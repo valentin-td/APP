@@ -21,7 +21,13 @@ function urlBase64ToUint8Array(base64String) {
 // Fonction sortie du composant pour être accessible partout sans erreur d'initialisation
 const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
 
+import AvisPublic from './AvisPublic.jsx';
+
 function App() {
+  if (window.location.pathname.startsWith('/avis/')) {
+      return <AvisPublic token={window.location.pathname.split('/avis/')[1]} />;
+  }
+
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -397,6 +403,7 @@ function App() {
 
   const [ticketGenere, setTicketGenere] = useState(null);
   const [emailTicketClient, setEmailTicketClient] = useState('');
+  const [telephoneTicketClient, setTelephoneTicketClient] = useState('');
 
   const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null });
@@ -1171,7 +1178,7 @@ function App() {
   const envoyerTicketEco = async (methode) => {
       if(isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error");
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, methode }) });
+      const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, telephone: telephoneTicketClient, methode }) });
           await handleFetchError(res);
           showToast(`Ticket envoyé par ${methode.toUpperCase()} !`, "success");
           setTicketGenere(null);
@@ -2114,7 +2121,14 @@ function App() {
                                 <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
                                     <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
                                     <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => { if (isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error"); if (!emailTicketClient) return showToast("Saisissez d'abord l'email du client.", "error"); envoyerTicketEco('email'); }}>Envoyer</button></div>
-                                    <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={!ticketGenere.client_id || isOffline || !navigator.onLine} style={{width: '100%', background: ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--bg-app)', color: ticketGenere.client_id ? 'var(--btn-text)' : 'var(--text-muted)', border: `1px solid ${ticketGenere.client_id ? 'var(--btn-primary)' : 'var(--border-color)'}`}}>Envoyer par SMS {ticketGenere.client_id ? `(${ticketGenere.client_nom})` : '(Client inconnu)'}</button>
+                                    {ticketGenere.client_id ? (
+                                        <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={isOffline || !navigator.onLine} style={{width: '100%'}}>Envoyer par SMS ({ticketGenere.client_nom})</button>
+                                    ) : (
+                                        <div style={{display: 'flex', gap: '8px'}}>
+                                            <input type="tel" className="input-fournisseur" placeholder="Numéro du client" value={telephoneTicketClient} onChange={e => setTelephoneTicketClient(e.target.value)} style={{flex: 1}} />
+                                            <button className="btn-action" onClick={() => { if (isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error"); if (!telephoneTicketClient) return showToast("Saisissez d'abord le numéro du client.", "error"); envoyerTicketEco('sms'); }}>Envoyer</button>
+                                        </div>
+                                    )}
                                 </div>
                                 <button onClick={() => setTicketGenere(null)} className="hover-text-main" style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}}>Fermer (Sans reçu)</button>
                             </div>
