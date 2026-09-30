@@ -259,7 +259,9 @@ function App() {
 
       const idsAVoir = messagesConv.filter(m => m.id_expediteur !== myId && !(m.vu_par || []).includes(monProfilId)).map(m => m.id_message);
       if (idsAVoir.length > 0) {
-          fetch('https://api-salon-backend.onrender.com/api/messages/vu', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ids: idsAVoir }) }).catch(() => {});
+          fetch('https://api-salon-backend.onrender.com/api/messages/vu', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ids: idsAVoir }) })
+              .then(async (res) => { if (!res.ok) { const d = await res.json().catch(() => ({})); console.error('Erreur marquage vu :', res.status, d.erreur); } })
+              .catch((e) => console.error('Erreur réseau marquage vu :', e));
       }
   };
 
