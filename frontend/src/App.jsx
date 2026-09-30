@@ -1309,7 +1309,7 @@ function App() {
       return '#f59e0b'; 
   };
 
-  const nbTachesUrgentes = (tachesListe || []).filter(t => (t.proprietaire || 'gerant') === (role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role) && t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
+  const nbTachesUrgentes = (tachesListe || []).filter(t => (t.proprietaire || 'gerant') === (userRole === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : userRole) && t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
 
   let clientCaisseObj = null;
   let isEligibleFidelite = false;
