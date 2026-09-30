@@ -1892,7 +1892,7 @@ function App() {
               {role === 'employe' && activeTab === 'accueil' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Mon tableau de bord</h1><span className="date-subtitle" style={{margin: 0}}>Ce mois-ci</span></div>
+                      <div><h1 style={{margin: 0}}>Bienvenue {(employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe)?.nom || ''}</h1><span className="date-subtitle" style={{margin: 0}}>Votre tableau de bord — ce mois-ci</span></div>
                       <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
                           <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
@@ -3137,9 +3137,32 @@ function App() {
                                   {expandedYear === anneeData.annee && (
                                       <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
                                           {(anneeData.mois || []).map((moisData) => (
-                                              <div key={moisData.nom} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginTop: '12px', fontSize: '14px', fontWeight: '600', color: 'var(--text-main)' }}>
-                                                  <span>{moisData.nom}</span>
-                                                  <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} € de CA généré</span>
+                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', overflow: 'hidden', marginTop: '12px' }}>
+                                                  <button type="button" onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', width: '100%', boxSizing: 'border-box', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px', background: 'none', border: 'none', fontFamily: 'inherit' }}>
+                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '600', color: 'var(--text-main)' }}>
+                                                          <span style={{ display: 'flex', width: '14px', height: '14px', color: 'var(--text-secondary)', transform: expandedMonth === moisData.nom ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
+                                                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                                                          </span>
+                                                          {moisData.nom}
+                                                      </div>
+                                                      <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)' }}>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
+                                                  </button>
+                                                  {expandedMonth === moisData.nom && (
+                                                      <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                          {(moisData.jours || []).map(jour => (
+                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} className="hover-bg-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} title="Cliquez pour télécharger le PDF détaillé">
+                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                                      <span style={{ display: 'flex', width: '17px', height: '17px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+                                                                      <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
+                                                                  </div>
+                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
+                                                                      <span style={{ display: 'flex', width: '15px', height: '15px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M5 21h14"/></svg></span>
+                                                                  </div>
+                                                              </div>
+                                                          ))}
+                                                      </div>
+                                                  )}
                                               </div>
                                           ))}
                                       </div>
