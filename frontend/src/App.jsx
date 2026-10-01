@@ -1958,10 +1958,14 @@ function App() {
                                   <span className="kpi-label">Panier moyen</span>
                                   <p className="kpi-value">{dashboardData.finances?.panier_moyen || '0.00'} <span className="kpi-currency">€</span></p>
                               </div>
-                              <div className="kpi-card kpi-card--accent">
-                                  <span className="kpi-label">Commissions dues</span>
-                                  <p className="kpi-value">{dashboardData.finances?.commissions_a_payer?.toFixed(2) || '0.00'} <span className="kpi-currency">€</span></p>
-                              </div>
+                          <div className="kpi-card kpi-card--accent">
+                              <span className="kpi-label">Ma commission (mois en cours)</span>
+                              <p className="kpi-value">{(dashboardData.commission_mois ?? 0).toFixed ? dashboardData.commission_mois.toFixed(2) : dashboardData.commission_mois} <span className="kpi-currency">€</span></p>
+                          </div>
+                          <div className="kpi-card">
+                              <span className="kpi-label">Mes produits vendus (mois en cours)</span>
+                              <p className="kpi-value">{dashboardData.nb_produits_vendus ?? 0}</p>
+                          </div>
                           </div>
 
                           <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '8px'}}>
