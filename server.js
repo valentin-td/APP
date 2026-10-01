@@ -1254,7 +1254,8 @@ app.get('/api/dashboard/employe', verifierToken, async (req, res) => {
         const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
         const evolution = nbPrecedent > 0 ? Math.round(((nbActuel - nbPrecedent) / nbPrecedent) * 100) : (nbActuel > 0 ? 100 : 0);
         const cResult = await pool.query(`SELECT COALESCE(SUM(montant_commission), 0) as total FROM commissions WHERE id_employe = $1 AND id_salon = $2 AND date_creation >= date_trunc('month', CURRENT_DATE)`, [id_employe, id_salon]);
-        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution, commission_mois: parseFloat(cResult.rows[0].total) });
+        const pResult = await pool.query(`SELECT COUNT(CASE WHEN type_vente != 'PRESTATION' THEN 1 END) as total FROM commissions WHERE id_employe = $1 AND id_salon = $2 AND date_creation >= date_trunc('month', CURRENT_DATE)`, [id_employe, id_salon]);
+        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution, commission_mois: parseFloat(cResult.rows[0].total), nb_produits_vendus: parseInt(pResult.rows[0].total) || 0 });
     } catch (e) { res.status(500).json({ erreur: "Erreur dashboard employé." }); }
 });
 
@@ -1533,7 +1534,11 @@ app.get('/api/factures/historique', verifierToken, async (req, res) => {
 app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     const dateCible = req.params.date;
+    const estEmploye = req.user.role === 'employe';
+    const id_employe = req.user.id_employe;
     try {
+        const filtreEmploye = estEmploye ? ' AND t.id_employe = $3' : '';
+        const paramsVentes = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
         const ventesResult = await pool.query(`
             SELECT 
                 t.id_ticket, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
@@ -1541,12 +1546,27 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                 (SELECT string_agg(COALESCE(lt.nom_article_snapshot, c.nom), ', ') FROM lignes_ticket lt LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE lt.id_ticket = t.id_ticket) as prestations
             FROM tickets t
             LEFT JOIN employes e ON t.id_employe = e.id_employe
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'${filtreEmploye}
             ORDER BY t.date_creation ASC
-        `, [id_salon, dateCible]);
+        `, paramsVentes);
 
-        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateCible]);
+        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total);
+
+        // Clients reçus, commission et produits vendus (bilan individuel employé, ou salon entier pour le gérant)
+        const filtreEmployeCommissions = estEmploye ? ' AND c.id_employe = $3' : '';
+        const paramsStats = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
+        const statsResult = await pool.query(`
+            SELECT
+                COUNT(DISTINCT c.id_ticket) as nb_clients,
+                COALESCE(SUM(c.montant_commission), 0) as commission_totale,
+                COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as nb_produits_vendus
+            FROM commissions c
+            WHERE c.id_salon = $1 AND DATE(c.date_creation) = $2${filtreEmployeCommissions}
+        `, paramsStats);
+        const nbClients = parseInt(statsResult.rows[0].nb_clients) || 0;
+        const commissionTotale = parseFloat(statsResult.rows[0].commission_totale) || 0;
+        const nbProduitsVendus = parseInt(statsResult.rows[0].nb_produits_vendus) || 0;
 
         // Configuration PDFKit (A4, Gestion des pages)
         const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
@@ -1597,8 +1617,12 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         };
 
         // --- SECTION : RÉCAPITULATIF FINANCIER ---
-        drawSectionHeader('Récapitulatif Global');
+        // --- SECTION : RÉCAPITULATIF FINANCIER ---
+        drawSectionHeader(estEmploye ? 'Mon Récapitulatif' : 'Récapitulatif Global');
         drawTableRow('', 'Total Encaissé', `${caTotal.toFixed(2)} €`, false, true);
+        drawTableRow('', estEmploye ? 'Clients servis' : 'Clients reçus', `${nbClients}`, false, true);
+        drawTableRow('', 'Produits vendus', `${nbProduitsVendus}`, false, true);
+        if (estEmploye) drawTableRow('', 'Ma commission du jour', `${commissionTotale.toFixed(2)} €`, false, true);
 
         // --- SECTION : DÉTAIL DES VENTES (LOI NF525) ---
         drawSectionHeader('Détail des Ventes (Loi NF525)');
