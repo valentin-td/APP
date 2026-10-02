@@ -71,6 +71,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Corrige le bug du double-clic (double-tap) sur Safari iPhone */
+button, a, input, select, textarea, .list-row, .outil-btn, .chat-contact, .nav-item, .rdv-card-accordeon, .stock-item, .presta-item, .chat-btn, .btn-action {
+  touch-action: manipulation; 
+  -webkit-tap-highlight-color: transparent;
+}
+
 .dashboard-container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
 .dashboard-container.wide { max-width: 1100px; }
 .main-content { flex-grow: 1; margin-left: 88px; transition: margin-left 0.3s ease; min-height: 100vh; }
@@ -729,7 +735,8 @@ body.dark-mode .theme-toggle-btn {
       border-radius: 24px 24px 0 0;
       max-height: 90vh;
       margin-bottom: 0;
-      padding-bottom: calc(32px + env(safe-area-inset-bottom));
+      /* Remonte le contenu (padding) pour éviter qu'il ne passe sous la barre Liquid Glass sur iPhone */
+      padding-bottom: calc(120px + env(safe-area-inset-bottom)); 
       animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 }
