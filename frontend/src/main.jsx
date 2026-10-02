@@ -8,7 +8,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
     environment: import.meta.env.MODE,
-    tracesSampleRate: 0.1,
+    tracesSampleRate: 0.1, 
   });
 }
 // 📡 INSTALLATION DU SERVICE WORKER (NOTIFICATIONS PUSH)
