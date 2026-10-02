@@ -27,7 +27,7 @@
     "socket.io-client": "^4.8.3",
     "stripe": "^22.6.2",
     "openai": "^4.28.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
     "express-rate-limit": "^8.6.2",
     "@sentry/node": "^10.69.0"
   },
