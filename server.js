@@ -572,6 +572,19 @@ app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
 app.post('/api/rdv', verifierToken, async (req, res) => {
     const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes } = req.body;
     try {
+        // --- NOUVEAU : VERIFICATION DES ABSENCES ---
+        if (id_employe) {
+            const dateRDV = date_heure_debut.split('T')[0];
+            const absence = await pool.query(
+                `SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`,
+                [req.user.id_salon, id_employe, dateRDV]
+            );
+            if (absence.rowCount > 0) {
+                return res.status(400).json({ erreur: `Impossible : L'employé est en ${absence.rows[0].type_demande.replace('_', ' ')} à cette date.` });
+            }
+        }
+        // ------------------------------------------
+
         await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30]);
         io.to(req.user.id_salon.toString()).emit('nouveauRDV');
         res.status(201).json({ message: "RDV ajouté." });
@@ -599,15 +612,37 @@ app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
 });
 
 app.get('/api/planning', verifierToken, async (req, res) => {
-    const startDate = req.query.startDate; const endDate = req.query.endDate;
+    const startDate = req.query.startDate; 
+    const endDate = req.query.endDate;
+    
     try {
-        let query = `SELECT r.*, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.id_salon = $1 AND DATE(r.date_heure_debut) >= $2 AND DATE(r.date_heure_debut) <= $3`;
-        const params = [req.user.id_salon, startDate, endDate];
-        if (req.user.role === 'employe') { query += ` AND r.id_employe = $4`; params.push(req.user.id_employe); }
-        query += ` ORDER BY r.date_heure_debut ASC`;
-        const result = await pool.query(query, params);
-        res.json(result.rows);
-    } catch (e) { res.status(500).json({ erreur: "Erreur lecture agenda." }); }
+        // 1. Récupérer les rendez-vous normaux
+        let queryRdv = `SELECT r.*, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.id_salon = $1 AND DATE(r.date_heure_debut) >= $2 AND DATE(r.date_heure_debut) <= $3`;
+        const paramsRdv = [req.user.id_salon, startDate, endDate];
+        if (req.user.role === 'employe') { 
+            queryRdv += ` AND r.id_employe = $4`; 
+            paramsRdv.push(req.user.id_employe); 
+        }
+        queryRdv += ` ORDER BY r.date_heure_debut ASC`;
+        const rdvResult = await pool.query(queryRdv, paramsRdv);
+
+        // 2. Récupérer les absences (Congés validés / en attente & Arrêts maladie)
+        let queryAbs = `SELECT a.*, e.nom as nom_employe FROM absences_employes a LEFT JOIN employes e ON a.id_employe = e.id_employe WHERE a.id_salon = $1 AND a.statut != 'REFUSE' AND a.date_fin >= $2 AND a.date_debut <= $3`;
+        const paramsAbs = [req.user.id_salon, startDate, endDate];
+        if (req.user.role === 'employe') { 
+            queryAbs += ` AND a.id_employe = $4`; 
+            paramsAbs.push(req.user.id_employe); 
+        }
+        const absResult = await pool.query(queryAbs, paramsAbs);
+
+        // 3. Renvoyer les deux objets au frontend
+        res.json({
+            rendez_vous: rdvResult.rows,
+            absences: absResult.rows
+        });
+    } catch (e) { 
+        res.status(500).json({ erreur: "Erreur lecture agenda." }); 
+    }
 });
 
 // =========================================================================
