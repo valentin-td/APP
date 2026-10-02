@@ -21,7 +21,15 @@ const webpush = require('web-push');
 const Sentry = require('@sentry/node');
 
 if (process.env.SENTRY_DSN) {
-    Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV || 'production', tracesSampleRate: 0.1 });
+    Sentry.init({
+        dsn: process.env.SENTRY_DSN,
+        environment: process.env.NODE_ENV || 'production',
+        tracesSampleRate: 0.1,
+        integrations: [
+            new Sentry.Integrations.Http({ tracing: true }),
+            new Sentry.Integrations.Express({ app }),
+        ],
+    });
     console.log("Sentry (monitoring d'erreurs) activé.");
 } else {
     console.log("SENTRY_DSN absent : monitoring d'erreurs désactivé.");
@@ -72,6 +80,13 @@ function dechiffrer(text) {
 
 console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
+
+// Le request handler de Sentry DOIT être le premier middleware
+if (process.env.SENTRY_DSN) {
+    app.use(Sentry.Handlers.requestHandler());
+    app.use(Sentry.Handlers.tracingHandler());
+}
+
 app.use(cors());
 
 const server = http.createServer(app);
@@ -2428,7 +2443,10 @@ app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, 
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
 });
 
-if (process.env.SENTRY_DSN) Sentry.setupExpressErrorHandler(app);
+// Le error handler de Sentry DOIT être avant tous les autres middlewares d'erreur
+if (process.env.SENTRY_DSN) {
+    app.use(Sentry.Handlers.errorHandler());
+}
 
 app.get("/debug-sentry", function mainHandler(req, res) {
   throw new Error("My first Sentry error!");
