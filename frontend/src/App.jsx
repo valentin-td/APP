@@ -1051,7 +1051,8 @@ function App() {
       const now = new Date();
       let matches = [];
 
-      const rdvsToday = (planningData || []).filter(r => r.id_employe === id_employe && r.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', ''))));
+      const listeRdvs = Array.isArray(planningData) ? planningData : (planningData.rendez_vous || []);
+      const rdvsToday = listeRdvs.filter(r => r.id_employe === id_employe && r.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', ''))));
       rdvsToday.sort((a, b) => new Date(a.date_heure_debut.replace('Z', '')).getTime() - new Date(b.date_heure_debut.replace('Z', '')).getTime());
 
       for (let rdv of rdvsToday) {
@@ -2428,7 +2429,10 @@ function App() {
                               <div className="days-container" style={{ display: 'flex', flex: 1 }}>
                                   {joursSemaine.map((jour, indexJour) => {
                                       const dateStringJour = formatDateInput(jour);
-                                      const rdvsDuJourBruts = (planningData || []).filter(rdv => {
+                                      const listeRdvs = Array.isArray(planningData) ? planningData : (planningData.rendez_vous || []);
+                                      const listeAbsences = Array.isArray(planningData) ? [] : (planningData.absences || []);
+
+                                      const rdvsDuJourBruts = listeRdvs.filter(rdv => {
                                           if(!rdv || !rdv.date_heure_debut) return false;
                                           const rdvDateStr = (rdv.date_heure_debut || '').replace('Z', '').split('T')[0];
                                           return rdvDateStr === dateStringJour && (filtresEmployes.length === 0 || filtresEmployes.includes(rdv.id_employe));
@@ -2448,8 +2452,50 @@ function App() {
                                       });
                                       if (currentCluster.length > 0) clusters.push(currentCluster);
 
+                                      const absencesDuJour = listeAbsences.filter(abs => {
+                                          if(!abs || !abs.date_debut || !abs.date_fin) return false;
+                                          const dateD = abs.date_debut.split('T')[0];
+                                          const dateF = abs.date_fin.split('T')[0];
+                                          return dateStringJour >= dateD && dateStringJour <= dateF && (filtresEmployes.length === 0 || filtresEmployes.includes(abs.id_employe));
+                                      });
+
                                       return (
                                           <div key={indexJour} className="day-column" style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}>
+                                              {absencesDuJour.map(abs => {
+                                                  const ECHELLE_HEURE = 80;
+                                                  let startH = heureDebutAgenda;
+                                                  let endH = heureFinAgenda;
+                                                  const dDebut = abs.date_debut.split('T')[0];
+                                                  const dFin = abs.date_fin.split('T')[0];
+                                                  
+                                                  if (dateStringJour === dDebut && abs.moment_debut === 'APRES_MIDI') startH = 13;
+                                                  if (dateStringJour === dFin && abs.moment_fin === 'MATIN') endH = 13;
+                                                  
+                                                  startH = Math.max(heureDebutAgenda, startH);
+                                                  endH = Math.min(heureFinAgenda, endH);
+                                                  if (startH >= endH) return null;
+                                                  
+                                                  const topAbs = (startH - heureDebutAgenda) * ECHELLE_HEURE;
+                                                  const hauteurAbs = (endH - startH) * ECHELLE_HEURE;
+                                                  
+                                                  const isMaladie = abs.type_demande === 'ARRET_MALADIE';
+                                                  const isAttente = abs.statut === 'EN_ATTENTE';
+                                                  
+                                                  const bgStyle = isMaladie 
+                                                      ? 'repeating-linear-gradient(45deg, #fee2e2, #fee2e2 10px, #fecaca 10px, #fecaca 20px)'
+                                                      : (isAttente 
+                                                          ? 'repeating-linear-gradient(45deg, #f3f4f6, #f3f4f6 10px, #e5e7eb 10px, #e5e7eb 20px)'
+                                                          : 'repeating-linear-gradient(45deg, #e0f2fe, #e0f2fe 10px, #bae6fd 10px, #bae6fd 20px)');
+                                                  const borderColor = isMaladie ? '#ef4444' : (isAttente ? '#9ca3af' : '#38bdf8');
+                                                  const textColor = isMaladie ? '#991b1b' : (isAttente ? '#4b5563' : '#075985');
+                                                  
+                                                  return (
+                                                      <div key={`abs-${abs.id_absence}`} style={{ position: 'absolute', left: '2px', width: 'calc(100% - 4px)', boxSizing: 'border-box', top: `${topAbs}px`, height: `${hauteurAbs}px`, background: bgStyle, border: `1px solid ${borderColor}`, borderRadius: '6px', padding: '6px', opacity: 0.85, zIndex: 4, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                                                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: textColor, textShadow: '0 0 3px rgba(255,255,255,0.8)' }}>{isMaladie ? 'Arrêt Maladie' : (isAttente ? 'Congé (Attente)' : 'Congé Validé')}</span>
+                                                          <span style={{ fontSize: '11px', color: textColor, fontWeight: '600', textShadow: '0 0 3px rgba(255,255,255,0.8)' }}>{abs.nom_employe}</span>
+                                                      </div>
+                                                  );
+                                              })}
                                               {clusters.flatMap((cluster) => {
                                             
                                                   const clusterSize = cluster.length;
