@@ -29,7 +29,9 @@
     "openai": "^4.28.0",
     "web-push": "^3.6.7",
     "express-rate-limit": "^8.6.2",
-    "@sentry/node": "^10.69.0"
+    "@sentry/node": "^10.69.0",
+    "@aws-sdk/client-s3": "^3.500.0",
+    "@aws-sdk/s3-request-presigner": "^3.500.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
