@@ -19,6 +19,18 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
 const Sentry = require('@sentry/node');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+
+// Initialisation du client Cloudflare R2
+const s3Client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.net`,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+});
 
 if (process.env.SENTRY_DSN) {
     Sentry.init({
@@ -196,6 +208,24 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
 
     CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS absences_employes (
+        id_absence SERIAL PRIMARY KEY,
+        id_salon INT NOT NULL,
+        id_employe INT NOT NULL,
+        type_demande VARCHAR(20) NOT NULL, 
+        nature_absence VARCHAR(50) NOT NULL, 
+        type_prolongation VARCHAR(20) DEFAULT 'INITIAL', 
+        date_debut DATE NOT NULL,
+        moment_debut VARCHAR(10) DEFAULT 'MATIN', 
+        date_fin DATE NOT NULL,
+        moment_fin VARCHAR(10) DEFAULT 'APRES_MIDI', 
+        heures_sortie VARCHAR(100), 
+        commentaire TEXT,
+        fichier_cle_r2 TEXT, 
+        statut VARCHAR(20) DEFAULT 'EN_ATTENTE', 
+        motif_refus TEXT,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '{}';
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS vu_par JSONB DEFAULT '[]';
     
@@ -1277,6 +1307,106 @@ app.put('/api/stocks/:id', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour du stock." }); }
 });
 app.get('/api/rh', verifierToken, async (req, res) => { const id_salon = req.user.id_salon; try { const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`; const rhResult = await pool.query(rhQuery, [id_salon]); const employesData = await Promise.all(rhResult.rows.map(async (emp) => { const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`; const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]); let historique = histoResult.rows.map(r => parseFloat(r.total_prime)); while(historique.length < 6) historique.unshift(0); if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0]; return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6) }; })); res.json(employesData); } catch (erreur) { res.status(500).json({ erreur: "Erreur requête RH." }); }});
+// =========================================================================
+// --- MODULE RH : CONGÉS ET ARRÊTS MALADIE ---
+// =========================================================================
+
+// 1. L'employé dépose une absence (Congé ou Arrêt)
+app.post('/api/rh/absences', verifierToken, async (req, res) => {
+    const { type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fichier_base64, nom_fichier, type_mime } = req.body;
+    const id_salon = req.user.id_salon;
+    const id_employe = req.user.role === 'employe' ? req.user.id_employe : req.body.id_employe;
+
+    try {
+        let fileKey = null;
+
+        // S'il y a un fichier (ex: justificatif médical), on l'envoie sur Cloudflare R2
+        if (fichier_base64 && nom_fichier) {
+            const extension = nom_fichier.split('.').pop();
+            fileKey = `salons/${id_salon}/employes/${id_employe}/absences/${Date.now()}.${extension}`;
+            const buffer = Buffer.from(fichier_base64.replace(/^data:.*,/, ''), 'base64');
+
+            await s3Client.send(new PutObjectCommand({
+                Bucket: process.env.R2_BUCKET_NAME, Key: fileKey, Body: buffer, ContentType: type_mime,
+            }));
+        }
+
+        // Si c'est un arrêt maladie, il est imposé (VALIDE direct). Si c'est un congé, il est EN_ATTENTE.
+        const statutInitial = type_demande === 'ARRET_MALADIE' ? 'VALIDE' : 'EN_ATTENTE';
+
+        const result = await pool.query(
+            `INSERT INTO absences_employes (id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fichier_cle_r2, statut)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id_absence`,
+            [id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fileKey, statutInitial]
+        );
+
+        // Récupérer le nom de l'employé pour les notifications
+        const emp = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [id_employe]);
+        const nomEmploye = emp.rows[0].nom;
+
+        if (type_demande === 'ARRET_MALADIE') {
+            // Action 1: On bloque l'agenda en créant une tâche "Urgente" pour le gérant
+            await pool.query(
+                "INSERT INTO taches_actions (id_salon, titre, description, source) VALUES ($1, $2, $3, 'IA')",
+                [id_salon, `URGENCE : Arrêt maladie de ${nomEmploye}`, `${nomEmploye} a déposé un arrêt maladie du ${date_debut} au ${date_fin}. Vérifiez l'agenda pour déplacer ses rendez-vous.`]
+            );
+            // Action 2: Notification Push instantanée
+            envoyerNotificationPush(id_salon, 'gerant', { title: "Arrêt Maladie", body: `${nomEmploye} est en arrêt maladie jusqu'au ${date_fin}.`, url: '/?tab=actions' });
+            res.json({ message: "Arrêt maladie enregistré. Le gérant a été notifié." });
+        
+        } else {
+            // C'est une demande de congé : Notification simple au gérant
+            envoyerNotificationPush(id_salon, 'gerant', { title: "Demande de congés", body: `${nomEmploye} a posé une demande du ${date_debut} au ${date_fin}.`, url: '/?tab=equipe' });
+            res.json({ message: "Demande de congés envoyée au gérant pour validation." });
+        }
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lors de l'enregistrement de l'absence." });
+    }
+});
+
+// 2. Le gérant Valide ou Refuse un congé
+app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    
+    const { statut, motif_refus } = req.body; // statut = 'VALIDE' ou 'REFUSE'
+    try {
+        const absRes = await pool.query(
+            `UPDATE absences_employes SET statut = $1, motif_refus = $2 WHERE id_absence = $3 AND id_salon = $4 RETURNING id_employe, date_debut, date_fin, type_demande`,
+            [statut, motif_refus, req.params.id, req.user.id_salon]
+        );
+        
+        if (absRes.rowCount > 0) {
+            const absence = absRes.rows[0];
+            const message = statut === 'VALIDE' 
+                ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${absence.date_debut.toLocaleDateString()} au ${absence.date_fin.toLocaleDateString()} ont été validés.` 
+                : `Votre demande a été refusée. Motif : ${motif_refus}`;
+                
+            envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
+        }
+        res.json({ message: `Demande passée au statut : ${statut}` });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la décision." }); }
+});
+
+// 3. Lire un justificatif sécurisé (Lien éphémère de 15 minutes)
+app.get('/api/rh/absences/:id/justificatif', verifierToken, async (req, res) => {
+    try {
+        // Seul le gérant ou l'employé concerné peut voir le document
+        const absenceRes = await pool.query(
+            'SELECT fichier_cle_r2 FROM absences_employes WHERE id_absence = $1 AND id_salon = $2',
+            [req.params.id, req.user.id_salon]
+        );
+
+        if (absenceRes.rowCount === 0 || !absenceRes.rows[0].fichier_cle_r2) {
+            return res.status(404).json({ erreur: "Aucun justificatif trouvé." });
+        }
+
+        // Génération d'une URL temporaire
+        const command = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: absenceRes.rows[0].fichier_cle_r2 });
+        const urlTemporaire = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+
+        res.json({ url: urlTemporaire });
+    } catch (e) { res.status(500).json({ erreur: "Erreur génération lien sécurisé." }); }
+});
 
 app.get('/api/dashboard/salon', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
