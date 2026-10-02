@@ -123,6 +123,7 @@ pool.query(`
     CREATE TABLE IF NOT EXISTS ia_taches_attente (id_tache SERIAL PRIMARY KEY, id_salon INT, type_tache VARCHAR(50), donnees JSONB, statut VARCHAR(20) DEFAULT 'ATTENTE', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS taches_actions (id_tache SERIAL PRIMARY KEY, id_salon INT, titre VARCHAR(255), description TEXT, date_echeance DATE, statut VARCHAR(20) DEFAULT 'A_FAIRE', source VARCHAR(20) DEFAULT 'MANUEL', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS avis_demandes (id_demande SERIAL PRIMARY KEY, id_salon INT, telephone VARCHAR(30), prenom VARCHAR(100), token VARCHAR(64) UNIQUE, id_rdv INT, statut VARCHAR(20) DEFAULT 'EN_ATTENTE', note INT, commentaire TEXT, date_prevue TIMESTAMP DEFAULT NOW(), date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS sms_opt_out (id_salon INT, telephone VARCHAR(20), date_creation TIMESTAMP DEFAULT NOW(), PRIMARY KEY (id_salon, telephone));
     CREATE TABLE IF NOT EXISTS protocoles (id_protocole SERIAL PRIMARY KEY, id_salon INT, nom_prestation VARCHAR(255), description TEXT, photo_url TEXT, delai_livraison_jours INT DEFAULT 3, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS etapes JSONB DEFAULT '[]';
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
@@ -566,10 +567,36 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/avis/info/:token', async (req, res) => {
     try {
-        const r = await pool.query(`SELECT a.prenom, a.statut, a.note, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1`, [req.params.token]);
+        const r = await pool.query(`SELECT a.prenom, a.statut, a.note, a.id_salon, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1 AND a.date_creation > NOW() - INTERVAL '30 days'`, [req.params.token]);
         if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou expiré." });
         const d = r.rows[0];
         res.json({ prenom: d.prenom, nom_salon: d.nom_salon, etape: d.statut === 'REPONDU' ? 'termine' : (d.note && d.note <= 3 ? 'commentaire' : 'notation') });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.get('/api/avis/stats', verifierToken, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE statut IN ('ENVOYE', 'REPONDU')) as nb_envoyes,
+                COUNT(*) FILTER (WHERE statut = 'REPONDU') as nb_repondus,
+                ROUND(AVG(note) FILTER (WHERE note IS NOT NULL)::numeric, 1) as note_moyenne,
+                COUNT(*) FILTER (WHERE note >= 4) as nb_positifs,
+                COUNT(*) FILTER (WHERE note IS NOT NULL AND note <= 3) as nb_negatifs
+            FROM avis_demandes WHERE id_salon = $1
+        `, [req.user.id_salon]);
+        res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ erreur: "Erreur statistiques avis." }); }
+});
+
+app.post('/api/avis/:token/stop', async (req, res) => {
+    try {
+        const r = await pool.query('SELECT id_salon, telephone FROM avis_demandes WHERE token = $1', [req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide." });
+        const { id_salon, telephone } = r.rows[0];
+        await pool.query('INSERT INTO sms_opt_out (id_salon, telephone) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id_salon, normaliserTelephone(telephone)]);
+        await pool.query(`UPDATE avis_demandes SET statut = 'ANNULE' WHERE id_salon = $1 AND telephone = $2 AND statut = 'EN_ATTENTE'`, [id_salon, telephone]);
+        res.json({ message: "Vous ne recevrez plus ce type de message." });
     } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
 });
 
@@ -859,8 +886,10 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
 
             // Client non identifié dans la base -> on programme l'enquête de satisfaction (1h30 après l'envoi du ticket)
             if (!id_client) {
-                const clientConnu = await pool.query('SELECT 1 FROM clients WHERE telephone = $1 AND id_salon = $2', [telephoneEnvoi, id_salon]);
-                if (clientConnu.rowCount === 0) {
+                const telNormalise = normaliserTelephone(telephoneEnvoi);
+                const dejaOptOut = await pool.query('SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = $2', [id_salon, telNormalise]);
+                const clientConnu = await pool.query(`SELECT 1 FROM clients WHERE id_salon = $1 AND RIGHT(regexp_replace(telephone, '\\D', '', 'g'), 9) = $2`, [id_salon, telNormalise]);
+                if (clientConnu.rowCount === 0 && dejaOptOut.rowCount === 0) {
                     const tokenAvis = crypto.randomBytes(24).toString('hex');
                     await pool.query(
                         `INSERT INTO avis_demandes (id_salon, telephone, token, statut, date_prevue) VALUES ($1, $2, $3, 'EN_ATTENTE', NOW() + INTERVAL '1.5 hours')`,
@@ -1997,6 +2026,60 @@ app.delete('/api/protocoles/:id', verifierToken, async (req, res) => {
 // =========================================================================
 // --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES & PRÉDICTIONS ---
 // =========================================================================
+// Compare deux numéros en ne gardant que les 9 derniers chiffres : 0612345678, +33612345678 et 0033612345678 deviennent identiques
+const normaliserTelephone = (tel) => String(tel || '').replace(/\D/g, '').slice(-9);
+
+async function executerRobotAvisSatisfaction() {
+    let salons;
+    try {
+        salons = (await pool.query("SELECT * FROM configuration_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''")).rows;
+    } catch (e) { console.error("[ROBOT-AVIS] Impossible de charger les salons :", e); return; }
+
+    for (let salon of salons) {
+        try {
+            // --- Détection : RDV terminés depuis 1 à 2h, jamais venus auparavant (comparaison sur les 9 derniers chiffres du numéro) ---
+            const rdvTermines = await pool.query(`
+                SELECT r.id_rdv, r.nom_client, r.telephone_client
+                FROM rendez_vous r
+                WHERE r.id_salon = $1
+                  AND r.telephone_client IS NOT NULL AND r.telephone_client != ''
+                  AND (r.date_heure_debut + (r.duree_minutes || ' minutes')::interval) BETWEEN NOW() - INTERVAL '2 hours' AND NOW() - INTERVAL '1 hour'
+                  AND NOT EXISTS (SELECT 1 FROM avis_demandes a WHERE a.id_rdv = r.id_rdv)
+                  AND NOT EXISTS (SELECT 1 FROM sms_opt_out o WHERE o.id_salon = $1 AND o.telephone = RIGHT(regexp_replace(r.telephone_client, '\\D', '', 'g'), 9))
+                  AND NOT EXISTS (
+                      SELECT 1 FROM tickets t JOIN clients c ON t.id_client = c.id_client
+                      WHERE t.id_salon = $1 AND t.statut = 'VALIDE'
+                        AND RIGHT(regexp_replace(c.telephone, '\\D', '', 'g'), 9) = RIGHT(regexp_replace(r.telephone_client, '\\D', '', 'g'), 9)
+                  )
+            `, [salon.id_salon]);
+
+            for (let rdv of rdvTermines.rows) {
+                try {
+                    const tokenAvis = crypto.randomBytes(24).toString('hex');
+                    await pool.query(
+                        `INSERT INTO avis_demandes (id_salon, telephone, prenom, token, id_rdv, statut, date_prevue) VALUES ($1, $2, $3, $4, $5, 'EN_ATTENTE', NOW())`,
+                        [salon.id_salon, rdv.telephone_client, (rdv.nom_client || '').split(' ')[0], tokenAvis, rdv.id_rdv]
+                    );
+                } catch (e) { console.error(`[ROBOT-AVIS] Échec enregistrement RDV ${rdv.id_rdv} (salon ${salon.id_salon}) :`, e); }
+            }
+
+            // --- Envoi : demandes (RDV ou caisse) arrivées à échéance, et expirées au-delà de 30 jours ---
+            const avisAEnvoyer = await pool.query(`SELECT * FROM avis_demandes WHERE id_salon = $1 AND statut = 'EN_ATTENTE' AND date_prevue <= NOW() AND date_creation > NOW() - INTERVAL '30 days'`, [salon.id_salon]);
+            for (let demande of avisAEnvoyer.rows) {
+                try {
+                    const dejaOptOut = await pool.query('SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = $2', [salon.id_salon, normaliserTelephone(demande.telephone)]);
+                    if (dejaOptOut.rowCount > 0) { await pool.query(`UPDATE avis_demandes SET statut = 'ANNULE' WHERE id_demande = $1`, [demande.id_demande]); continue; }
+
+                    const lienAvis = `https://app-salon-caiss.onrender.com/avis/${demande.token}`;
+                    const texteAvis = `Bonjour ${demande.prenom || ''}, merci pour votre première visite chez ${salon.nom_salon} ! Qu'avez-vous pensé de votre prestation ? Donnez votre avis ici : ${lienAvis}`;
+                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, demande.telephone, texteAvis);
+                    await pool.query(`UPDATE avis_demandes SET statut = 'ENVOYE' WHERE id_demande = $1`, [demande.id_demande]);
+                } catch (e) { console.error(`[ROBOT-AVIS] Échec envoi demande ${demande.id_demande} (salon ${salon.id_salon}) :`, e); }
+            }
+        } catch (e) { console.error(`[ROBOT-AVIS] Échec traitement salon ${salon.id_salon} :`, e); }
+    }
+}
+
 async function executerRobotMarketingEtPredictif() {
     try {
         // CORRECTION 1 : On récupère TOUS les salons (même ceux qui n'ont pas configuré les SMS)
@@ -2060,7 +2143,7 @@ async function executerRobotMarketingEtPredictif() {
                     }
                 }
 
-                const anniversaires = await pool.query(`
+                                const anniversaires = await pool.query(`
                     SELECT * FROM clients 
                     WHERE id_salon = $1 
                     AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
@@ -2072,39 +2155,7 @@ async function executerRobotMarketingEtPredictif() {
                         await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`);
                     }
                 }
-
-                // --- ENQUÊTE DE SATISFACTION : RDV terminés depuis 1 à 2h, jamais venus auparavant ---
-                const rdvTermines = await pool.query(`
-                    SELECT r.id_rdv, r.nom_client, r.telephone_client
-                    FROM rendez_vous r
-                    WHERE r.id_salon = $1
-                      AND r.telephone_client IS NOT NULL AND r.telephone_client != ''
-                      AND (r.date_heure_debut + (r.duree_minutes || ' minutes')::interval) BETWEEN NOW() - INTERVAL '2 hours' AND NOW() - INTERVAL '1 hour'
-                      AND NOT EXISTS (SELECT 1 FROM avis_demandes a WHERE a.id_rdv = r.id_rdv)
-                      AND NOT EXISTS (
-                          SELECT 1 FROM tickets t JOIN clients c ON t.id_client = c.id_client
-                          WHERE c.telephone = r.telephone_client AND t.id_salon = $1 AND t.statut = 'VALIDE'
-                      )
-                `, [salon.id_salon]);
-
-                for (let rdv of rdvTermines.rows) {
-                    const tokenAvis = crypto.randomBytes(24).toString('hex');
-                    await pool.query(
-                        `INSERT INTO avis_demandes (id_salon, telephone, prenom, token, id_rdv, statut, date_prevue) VALUES ($1, $2, $3, $4, $5, 'EN_ATTENTE', NOW())`,
-                        [salon.id_salon, rdv.telephone_client, (rdv.nom_client || '').split(' ')[0], tokenAvis, rdv.id_rdv]
-                    );
-                }
-
-                // --- ENQUÊTE DE SATISFACTION : envoi des demandes arrivées à échéance ---
-                const avisAEnvoyer = await pool.query(`SELECT * FROM avis_demandes WHERE id_salon = $1 AND statut = 'EN_ATTENTE' AND date_prevue <= NOW()`, [salon.id_salon]);
-                for (let demande of avisAEnvoyer.rows) {
-                    const lienAvis = `https://app-salon-caiss.onrender.com/avis/${demande.token}`;
-                    const texteAvis = `Bonjour ${demande.prenom || ''}, merci pour votre première visite chez ${salon.nom_salon} ! Qu'avez-vous pensé de votre prestation ? Donnez votre avis ici : ${lienAvis}`;
-                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, demande.telephone, texteAvis);
-                    await pool.query(`UPDATE avis_demandes SET statut = 'ENVOYE' WHERE id_demande = $1`, [demande.id_demande]);
-                }
             }
-
             // =================================================================
             // --- 2. MOTEUR PRÉDICTIF D'INVENTAIRE GLOBAL (SMART AGGREGATION) ---
             // =================================================================
@@ -2299,6 +2350,8 @@ async function executerEnvoiComptable() {
 // Planification automatique
 cron.schedule('0 8 * * *', () => { executerEnvoiComptable(); }); // Envoi automatique au comptable à 8h00
 cron.schedule('0 9 * * *', () => { executerRobotMarketingEtPredictif(); }); // IA / Marketing à 9h00
+cron.schedule('*/10 9-19 * * *', () => { executerRobotAvisSatisfaction(); }); // Enquêtes de satisfaction, toutes les 10 min entre 9h et 20h
+cron.schedule('0 4 * * *', () => { executerRobotAvisSatisfaction(); }); // + un passage unique dans le creux de nuit (20h-9h)
 
 app.get('/api/admin/forcer-robot', async (req, res) => { 
     executerRobotComptable(); 
