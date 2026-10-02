@@ -3,6 +3,7 @@ require('dotenv').config();
 
 console.log("Étape 2 : Chargement des modules...");
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const { Pool } = require('pg');
 const PDFDocument = require('pdfkit');
@@ -17,6 +18,19 @@ const legal = require('./legal');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
+const Sentry = require('@sentry/node');
+
+if (process.env.SENTRY_DSN) {
+    Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV || 'production', tracesSampleRate: 0.1 });
+    console.log("Sentry (monitoring d'erreurs) activé.");
+} else {
+    console.log("SENTRY_DSN absent : monitoring d'erreurs désactivé.");
+}
+
+process.on('uncaughtException', (e) => { console.error('[CRASH] Exception non interceptée :', e); if (process.env.SENTRY_DSN) Sentry.captureException(e); });
+process.on('unhandledRejection', (e) => { console.error('[CRASH] Promesse rejetée non interceptée :', e); if (process.env.SENTRY_DSN) Sentry.captureException(e); });
+
+const signalerErreur = (e, contexte) => { console.error(`[${contexte}]`, e); if (process.env.SENTRY_DSN) Sentry.captureException(e, { tags: { contexte } }); };
 
 let vapidPublicKey = "";
 let vapidPrivateKey = "";
@@ -565,7 +579,15 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 // =========================================================================
 // --- L'ENCAISSEMENT & MÉTHODES DE PAIEMENT (SMART POS) ---
 // =========================================================================
-app.get('/api/avis/info/:token', async (req, res) => {
+const limiteurAvisPublic = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erreur: "Trop de tentatives, réessayez plus tard." }
+});
+
+app.get('/api/avis/info/:token', limiteurAvisPublic, async (req, res) => {
     try {
         const r = await pool.query(`SELECT a.prenom, a.statut, a.note, a.id_salon, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1 AND a.date_creation > NOW() - INTERVAL '30 days'`, [req.params.token]);
         if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou expiré." });
@@ -600,7 +622,7 @@ app.post('/api/avis/:token/stop', async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
 });
 
-app.post('/api/avis/:token/note', async (req, res) => {
+app.post('/api/avis/:token/note', limiteurAvisPublic, async (req, res) => {
     const note = parseInt(req.body.note);
     if (!note || note < 1 || note > 5) return res.status(400).json({ erreur: "Note invalide." });
     try {
@@ -614,7 +636,7 @@ app.post('/api/avis/:token/note', async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
 });
 
-app.post('/api/avis/:token/commentaire', async (req, res) => {
+app.post('/api/avis/:token/commentaire', limiteurAvisPublic, async (req, res) => {
     try {
         const r = await pool.query(`UPDATE avis_demandes SET commentaire = $1, statut = 'REPONDU' WHERE token = $2 AND note <= 3 AND statut != 'REPONDU' RETURNING id_salon, telephone, prenom, note`, [req.body.commentaire || '', req.params.token]);
         if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà traité." });
@@ -2405,6 +2427,8 @@ app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, 
         res.json({ message: `Le salon #${req.params.id} est maintenant ${statut}.` });
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
 });
+
+if (process.env.SENTRY_DSN) Sentry.setupExpressErrorHandler(app);
 
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
