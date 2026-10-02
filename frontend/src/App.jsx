@@ -470,7 +470,8 @@ function App() {
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [showModalAbsence, setShowModalAbsence] = useState(false);
   const [ongletAbsence, setOngletAbsence] = useState('CONGES');
-  const [formAbsence, setFormAbsence] = useState({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: '', moment_debut: 'MATIN', date_fin: '', moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
+  const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+  const [formAbsence, setFormAbsence] = useState({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
   const [showDropdownPresta, setShowDropdownPresta] = useState(false);
   const [showDropdownClient, setShowDropdownClient] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
@@ -1258,11 +1259,11 @@ function App() {
           const data = await handleFetchError(res);
           showToast(data.message, "success");
           setShowModalAbsence(false);
-          setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: '', moment_debut: 'MATIN', date_fin: '', moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
+          const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+          setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
           chargerTout(); setRefreshTrigger(prev => prev + 1);
       } catch (e) { showToast(e.message || "Erreur de soumission", "error"); }
   };
-
   const handleUploadJustificatifAbsence = (e) => {
       const file = e.target.files[0];
       if (file) {
