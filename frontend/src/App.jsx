@@ -468,6 +468,9 @@ function App() {
   const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '' });
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showModalRdv, setShowModalRdv] = useState(false);
+  const [showModalAbsence, setShowModalAbsence] = useState(false);
+  const [ongletAbsence, setOngletAbsence] = useState('CONGES');
+  const [formAbsence, setFormAbsence] = useState({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: '', moment_debut: 'MATIN', date_fin: '', moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
   const [showDropdownPresta, setShowDropdownPresta] = useState(false);
   const [showDropdownClient, setShowDropdownClient] = useState(false);
   const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
@@ -1245,6 +1248,29 @@ function App() {
           if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); }
       } catch(e) { showToast("Erreur de création.", "error"); }
   }
+
+  const soumettreAbsence = async () => {
+      if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
+      if(!formAbsence.date_debut || !formAbsence.date_fin) return showToast("Veuillez sélectionner les dates.", "error");
+      try {
+          const payload = { ...formAbsence, type_demande: ongletAbsence };
+          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/absences', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
+          const data = await handleFetchError(res);
+          showToast(data.message, "success");
+          setShowModalAbsence(false);
+          setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: '', moment_debut: 'MATIN', date_fin: '', moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
+          chargerTout(); setRefreshTrigger(prev => prev + 1);
+      } catch (e) { showToast(e.message || "Erreur de soumission", "error"); }
+  };
+
+  const handleUploadJustificatifAbsence = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => setFormAbsence({ ...formAbsence, fichier_base64: reader.result, nom_fichier: file.name, type_mime: file.type });
+          reader.readAsDataURL(file);
+      }
+  };
 
   const ouvrirRdvSelectionne = (rdv) => {
       setRdvSelectionne(rdv);
@@ -2366,6 +2392,12 @@ function App() {
                       </div>
                       <div className="agenda-actions-group" style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
+                          {role !== 'salon' && (
+                              <button onClick={() => setShowModalAbsence(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px 16px', borderRadius: 'var(--radius-input)', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px'}}>
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>
+                                  Absence
+                              </button>
+                          )}
                           <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
                       </div>
                   </div>
@@ -2591,6 +2623,97 @@ function App() {
                                   <input type="time" className="input-fournisseur" value={formRdv.heure} onChange={e => setFormRdv({...formRdv, heure: e.target.value})} />
                               </div>
                               <button onClick={creerRdvManuel} className="btn-action" style={{width:'100%'}}>Créer le rendez-vous</button>
+                          </div>
+                      </div>
+                  )}
+
+                  {showModalAbsence && (
+                      <div className="modal-overlay" style={{ zIndex: 9999 }}>
+                          <div className="modal-content" style={{ maxWidth: '450px' }}>
+                              <div className="modal-header">
+                                  <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Déclarer une absence</h3>
+                                  <button className="modal-close-btn" onClick={() => setShowModalAbsence(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                              </div>
+
+                              <div style={{ display: 'flex', marginBottom: '20px', background: 'var(--bg-app)', padding: '4px', borderRadius: '8px' }}>
+                                  <button onClick={() => setOngletAbsence('CONGES')} style={{ flex: 1, padding: '8px', border: 'none', background: ongletAbsence === 'CONGES' ? 'var(--bg-card)' : 'transparent', color: ongletAbsence === 'CONGES' ? 'var(--text-main)' : 'var(--text-secondary)', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer', boxShadow: ongletAbsence === 'CONGES' ? 'var(--shadow-sm)' : 'none' }}>Congés</button>
+                                  <button onClick={() => setOngletAbsence('ARRET_MALADIE')} style={{ flex: 1, padding: '8px', border: 'none', background: ongletAbsence === 'ARRET_MALADIE' ? 'var(--bg-card)' : 'transparent', color: ongletAbsence === 'ARRET_MALADIE' ? 'var(--color-danger)' : 'var(--text-secondary)', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer', boxShadow: ongletAbsence === 'ARRET_MALADIE' ? 'var(--shadow-sm)' : 'none' }}>Arrêt Maladie</button>
+                              </div>
+
+                              {role === 'gerant' && (
+                                  <select className="input-fournisseur" value={formAbsence.id_employe || ''} onChange={e => setFormAbsence({...formAbsence, id_employe: e.target.value})} style={{marginBottom: '16px'}}>
+                                      <option value="">-- Concerne quel collaborateur ? --</option>
+                                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                  </select>
+                              )}
+
+                              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                                  <div style={{ flex: 1 }}>
+                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Nature</label>
+                                      <select className="input-fournisseur" value={formAbsence.nature_absence} onChange={e => setFormAbsence({...formAbsence, nature_absence: e.target.value})}>
+                                          {ongletAbsence === 'CONGES' ? (
+                                              <>
+                                                  <option value="CP">Congés Payés (CP)</option>
+                                                  <option value="SANS_SOLDE">Congé Sans Solde</option>
+                                                  <option value="RTT">Récupération / RTT</option>
+                                                  <option value="EVENEMENT">Événement Familial</option>
+                                              </>
+                                          ) : (
+                                              <>
+                                                  <option value="MALADIE_ORDINAIRE">Maladie Ordinaire</option>
+                                                  <option value="ACCIDENT_TRAVAIL">Accident du Travail</option>
+                                                  <option value="MATERNITE">Congé Maternité/Paternité</option>
+                                              </>
+                                          )}
+                                      </select>
+                                  </div>
+                                  {ongletAbsence === 'ARRET_MALADIE' && (
+                                      <div style={{ flex: 1 }}>
+                                          <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Type</label>
+                                          <select className="input-fournisseur" value={formAbsence.type_prolongation} onChange={e => setFormAbsence({...formAbsence, type_prolongation: e.target.value})}>
+                                              <option value="INITIAL">Arrêt Initial</option>
+                                              <option value="PROLONGATION">Prolongation</option>
+                                          </select>
+                                      </div>
+                                  )}
+                              </div>
+
+                              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                                  <div style={{ flex: 1 }}>
+                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Date de début</label>
+                                      <input type="date" className="input-fournisseur" value={formAbsence.date_debut} onChange={e => setFormAbsence({...formAbsence, date_debut: e.target.value})} style={{ marginBottom: '4px' }} />
+                                      <select className="input-fournisseur" value={formAbsence.moment_debut} onChange={e => setFormAbsence({...formAbsence, moment_debut: e.target.value})}>
+                                          <option value="MATIN">Matin</option>
+                                          <option value="APRES_MIDI">Après-midi</option>
+                                      </select>
+                                  </div>
+                                  <div style={{ flex: 1 }}>
+                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Date de fin (Inclus)</label>
+                                      <input type="date" className="input-fournisseur" value={formAbsence.date_fin} onChange={e => setFormAbsence({...formAbsence, date_fin: e.target.value})} style={{ marginBottom: '4px' }} />
+                                      <select className="input-fournisseur" value={formAbsence.moment_fin} onChange={e => setFormAbsence({...formAbsence, moment_fin: e.target.value})}>
+                                          <option value="MATIN">Matin</option>
+                                          <option value="APRES_MIDI">Après-midi</option>
+                                      </select>
+                                  </div>
+                              </div>
+
+                              {(ongletAbsence === 'ARRET_MALADIE' || formAbsence.nature_absence === 'EVENEMENT') && (
+                                  <div style={{ marginBottom: '16px', background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', border: '1px dashed var(--border-color)' }}>
+                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px' }}>Justificatif (Volet 3 ou Document légal)</label>
+                                      <input type="file" accept="image/*,application/pdf" onChange={handleUploadJustificatifAbsence} style={{ fontSize: '12px', color: 'var(--text-main)', width: '100%' }} />
+                                      {formAbsence.nom_fichier && <span style={{ fontSize: '11px', color: 'var(--color-success)', display: 'block', marginTop: '4px' }}>✅ Fichier prêt ({formAbsence.nom_fichier})</span>}
+                                  </div>
+                              )}
+
+                              {ongletAbsence === 'ARRET_MALADIE' && (
+                                  <input type="text" className="input-fournisseur" placeholder="Heures de sorties autorisées (Optionnel)" value={formAbsence.heures_sortie} onChange={e => setFormAbsence({...formAbsence, heures_sortie: e.target.value})} style={{ marginBottom: '16px' }} />
+                              )}
+
+                              <textarea className="input-fournisseur" placeholder="Un commentaire (Optionnel) ?" rows="2" value={formAbsence.commentaire} onChange={e => setFormAbsence({...formAbsence, commentaire: e.target.value})} style={{ marginBottom: '24px' }} />
+
+                              <button onClick={soumettreAbsence} className="btn-action" style={{ width: '100%', background: ongletAbsence === 'ARRET_MALADIE' ? 'var(--color-danger)' : 'var(--btn-primary)' }}>
+                                  {ongletAbsence === 'ARRET_MALADIE' ? "Déclarer l'Arrêt Maladie" : "Envoyer la demande"}
+                              </button>
                           </div>
                       </div>
                   )}
