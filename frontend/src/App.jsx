@@ -106,6 +106,7 @@ function App() {
 
   const [activeTab, setActiveTab] = useState('accueil');
   const [dashboardData, setDashboardData] = useState(null);
+  const [avisStats, setAvisStats] = useState(null);
   const [salonDashboardData, setSalonDashboardData] = useState(null);
   const [employeDashboardData, setEmployeDashboardData] = useState(null);
   const [stocksData, setStocksData] = useState([]);
@@ -648,6 +649,7 @@ function App() {
 
     setDashboardData(null); 
     fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData');
+    fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats');
     fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
     fetchAndCache('/api/stocks', setStocksData, 'stocksData');
     fetchAndCache('/api/rh', setRhData, 'rhData');
@@ -1984,6 +1986,34 @@ function App() {
                                           })()}
                                       </div>
                                   ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
+                              </div>
+
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Enquêtes de satisfaction</h3>
+                                  {avisStats && parseInt(avisStats.nb_envoyes) > 0 ? (
+                                      <>
+                                          <div style={{display: 'flex', gap: '24px', marginBottom: '14px'}}>
+                                              <div>
+                                                  <span style={{fontSize: '24px', fontWeight: '700', color: 'var(--text-main)'}}>{avisStats.nb_envoyes}</span>
+                                                  <p style={{margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>SMS envoyés</p>
+                                              </div>
+                                              <div>
+                                                  <span style={{fontSize: '24px', fontWeight: '700', color: 'var(--text-main)'}}>{avisStats.nb_repondus}</span>
+                                                  <p style={{margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>Réponses ({avisStats.nb_envoyes > 0 ? Math.round((avisStats.nb_repondus / avisStats.nb_envoyes) * 100) : 0}%)</p>
+                                              </div>
+                                              {avisStats.note_moyenne && (
+                                                  <div>
+                                                      <span style={{fontSize: '24px', fontWeight: '700', color: 'var(--text-main)'}}>{avisStats.note_moyenne} ★</span>
+                                                      <p style={{margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>Note moyenne</p>
+                                                  </div>
+                                              )}
+                                          </div>
+                                          <div style={{display: 'flex', gap: '8px', fontSize: '12px'}}>
+                                              <span style={{color: 'var(--color-success)'}}>👍 {avisStats.nb_positifs} positifs</span>
+                                              <span style={{color: 'var(--color-danger)'}}>👎 {avisStats.nb_negatifs} à améliorer</span>
+                                          </div>
+                                      </>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucune enquête envoyée pour le moment.</p>}
                               </div>
 
                               <div className="carte" style={{flex: 1, minWidth: '300px'}}>
