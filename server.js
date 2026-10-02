@@ -25,10 +25,6 @@ if (process.env.SENTRY_DSN) {
         dsn: process.env.SENTRY_DSN,
         environment: process.env.NODE_ENV || 'production',
         tracesSampleRate: 0.1,
-        integrations: [
-            new Sentry.Integrations.Http({ tracing: true }),
-            new Sentry.Integrations.Express({ app }),
-        ],
     });
     console.log("Sentry (monitoring d'erreurs) activé.");
 } else {
@@ -80,13 +76,6 @@ function dechiffrer(text) {
 
 console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
-
-// Le request handler de Sentry DOIT être le premier middleware
-if (process.env.SENTRY_DSN) {
-    app.use(Sentry.Handlers.requestHandler());
-    app.use(Sentry.Handlers.tracingHandler());
-}
-
 app.use(cors());
 
 const server = http.createServer(app);
@@ -2443,14 +2432,14 @@ app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, 
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
 });
 
-// Le error handler de Sentry DOIT être avant tous les autres middlewares d'erreur
-if (process.env.SENTRY_DSN) {
-    app.use(Sentry.Handlers.errorHandler());
-}
-
 app.get("/debug-sentry", function mainHandler(req, res) {
   throw new Error("My first Sentry error!");
 });
+
+// Sentry v10 : On utilise la nouvelle fonction dédiée
+if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+}
 
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
