@@ -2432,9 +2432,6 @@ app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, 
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
 });
 
-app.get("/debug-sentry", function mainHandler(req, res) {
-  throw new Error("My first Sentry error!");
-});
 
 // Sentry v10 : On utilise la nouvelle fonction dédiée
 if (process.env.SENTRY_DSN) {
