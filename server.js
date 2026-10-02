@@ -2430,5 +2430,9 @@ app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, 
 
 if (process.env.SENTRY_DSN) Sentry.setupExpressErrorHandler(app);
 
+app.get("/debug-sentry", function mainHandler(req, res) {
+  throw new Error("My first Sentry error!");
+});
+
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
