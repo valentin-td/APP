@@ -5,7 +5,7 @@ console.log("Étape 2 : Chargement des modules...");
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
-const { Pool } = require('pg');
+const { Pool } = require('pg'); 
 const PDFDocument = require('pdfkit');
 const nodemailer = require('nodemailer');
 const { ImapFlow } = require('imapflow');
