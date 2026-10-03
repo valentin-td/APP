@@ -679,7 +679,8 @@ function App() {
               fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
           }
       }
-  }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif, joursSemaine]);
+  // Retrait de joursSemaine pour stopper la boucle infinie de requêtes (surchauffe)
+  }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
   useEffect(() => {
       if (token && !isAbonnementInactif) { 
