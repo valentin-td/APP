@@ -210,6 +210,8 @@ pool.query(`
     CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 
     CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+
+    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS absences_employes (
         id_absence SERIAL PRIMARY KEY,
         id_salon INT NOT NULL,
@@ -2016,7 +2018,6 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 app.get('/api/export-pdf', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     try {
-        // --- CORRECTION : Définition des dates du mois en cours (Sécurisé par fuseau horaire) ---
         const today = new Date();
         const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -2025,7 +2026,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         const dateDebutStr = formatYMD(firstDayOfMonth);
         const dateFinStr = formatYMD(lastDayOfMonth);
 
-        const configResult = await pool.query('SELECT email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const configResult = await pool.query('SELECT email_reception_factures, mot_de_passe_app_email, nom_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : null;
         
         const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
@@ -2042,9 +2043,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             ORDER BY e.nom ASC, a.date_debut ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
 
-        const caTotal = parseFloat(caResult.rows[0].ca_total);
+        const caTotal = parseFloat(caResult.rows[0].ca_total || 0);
 
-        // Configuration PDFKit (A4, Gestion des pages)
         const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
         let buffers = [];
         doc.on('data', buffers.push.bind(buffers));
@@ -2069,37 +2069,29 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="Liasse_Comptable.pdf"`);
         doc.pipe(res);
 
-        // --- PALETTE DE COULEURS ---
-        const THEME_COLOR = '#00B4D8'; // Cyan vif
+        const THEME_COLOR = '#00B4D8';
         const TEXT_DARK = '#1f2937';
         const TEXT_LIGHT = '#6b7280';
         const LINE_COLOR = '#e5e7eb';
 
-        // --- HEADER ---
         try {
             doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 });
         } catch(e) {
             doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' });
         }
 
-        // Titre Principal
         doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
         doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 50, 95);
         doc.moveDown(4);
 
-        // --- FONCTIONS UTILITAIRES DE DESSIN ---
         const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
+            if (doc.y > 750) doc.addPage();
             const y = doc.y;
+            const text1 = col1 != null ? String(col1) : '';
+            const text2 = col2 != null ? String(col2) : '';
             
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique')
-               .fontSize(isHeader ? 9 : 10)
-               .fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT)
-               .text(col1, 50, y);
-            
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique')
-               .fontSize(isHeader ? 9 : 10)
-               .fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT)
-               .text(col2, 450, y, { width: 95, align: 'right' });
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(text1, 50, y);
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(text2, 450, y, { width: 95, align: 'right' });
             
             if (!isHeader && !isTotal) {
                 doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke();
@@ -2108,22 +2100,21 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         };
 
         const drawSectionHeader = (title) => {
+            if (doc.y > 700) doc.addPage();
             doc.moveDown(1.5);
-            doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
+            doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(String(title || '').toUpperCase(), 50, doc.y);
             doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
             doc.moveDown(0.5);
         };
 
-        // --- SECTION 1 : ENCAISSEMENTS ---
         drawSectionHeader('Chiffre d\'Affaires & Encaissements');
         drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
         caParMethodeResult.rows.forEach(m => {
-            drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`);
+            drawTableRow(m.methode_paiement || 'Autre', `${parseFloat(m.total || 0).toFixed(2)} €`);
         });
         doc.moveDown(0.5);
         drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
 
-        // --- SECTION 2 : DÉPENSES ---
         drawSectionHeader('Dépenses (Factures Fournisseurs)');
         drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
         let totalDepenses = 0;
@@ -2132,14 +2123,13 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             doc.moveDown(1);
         } else { 
             facturesResult.rows.forEach(f => { 
-                drawTableRow(`${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`);
-                totalDepenses += parseFloat(f.montant_ttc); 
+                drawTableRow(`${f.nom_fournisseur || 'Facture'} (${f.date || ''})`, `${parseFloat(f.montant_ttc || 0).toFixed(2)} €`);
+                totalDepenses += parseFloat(f.montant_ttc || 0); 
             }); 
         }
         doc.moveDown(0.5);
         drawTableRow('Total Dépenses', `${totalDepenses.toFixed(2)} €`, false, true);
 
-        // --- SECTION 3 : COMMISSIONS ---
         drawSectionHeader('Commissions Employés');
         drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
         let totalPrimes = 0;
@@ -2147,14 +2137,13 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y);
         } else { 
             rhResult.rows.forEach(c => { 
-                drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`);
-                totalPrimes += parseFloat(c.total_prime); 
+                drawTableRow(c.nom || 'Employé', `${parseFloat(c.total_prime || 0).toFixed(2)} €`);
+                totalPrimes += parseFloat(c.total_prime || 0); 
             }); 
         }
         doc.moveDown(0.5);
         drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
 
-        // --- NOUVELLE SECTION : ABSENCES & VARIABLES DE PAIE ---
         doc.addPage();
         doc.font('Helvetica-Bold').fontSize(24).fillColor(THEME_COLOR).text('Variables de Paie & Absences', 50, 50);
         doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 50, 80);
@@ -2166,12 +2155,12 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         } else {
             drawTableRow('EMPLOYÉ & NATURE', 'DATES', true);
             absencesResult.rows.forEach(abs => {
-                const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence})` : `Congé (${abs.nature_absence})`;
+                const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence || ''})` : `Congé (${abs.nature_absence || ''})`;
                 const docsFournis = abs.fichier_cle_r2 ? " (Justificatif fourni)" : "";
-                drawTableRow(
-                    `${abs.nom_employe} - ${natureStr.replace('_', ' ')}${docsFournis}`, 
-                    `Du ${new Date(abs.date_debut).toLocaleDateString('fr-FR')} au ${new Date(abs.date_fin).toLocaleDateString('fr-FR')}`
-                );
+                let dateD = ''; let dateF = '';
+                try { dateD = new Date(abs.date_debut).toLocaleDateString('fr-FR'); } catch(e){}
+                try { dateF = new Date(abs.date_fin).toLocaleDateString('fr-FR'); } catch(e){}
+                drawTableRow(`${abs.nom_employe || ''} - ${natureStr.replace('_', ' ')}${docsFournis}`, `Du ${dateD} au ${dateF}`);
             });
         }
 
