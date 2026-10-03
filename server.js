@@ -159,6 +159,8 @@ pool.query(`
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';
     ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS delai_livraison_jours INT DEFAULT 3;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
     CREATE TABLE IF NOT EXISTS recettes_articles (id_recette SERIAL PRIMARY KEY, id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE, id_article INT, quantite_necessaire NUMERIC(10,2) DEFAULT 1);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
@@ -524,14 +526,14 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon } = req.body; 
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes } = req.body; 
     try { 
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
         if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
         const updateQuery = pin_salon !== undefined
-            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, pin_salon = $17 WHERE id_salon = $16`
-            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15 WHERE id_salon = $16`; 
-        const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon];
+            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, pin_salon = $18 WHERE id_salon = $16`
+            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17 WHERE id_salon = $16`; 
+        const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0];
         if (pin_salon !== undefined) params.push(pin_salon || null);
         await pool.query(updateQuery, params);
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
@@ -574,33 +576,72 @@ app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
 });
 
 app.post('/api/rdv', verifierToken, async (req, res) => {
-    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes } = req.body;
+    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes, forcer_ajout } = req.body;
     try {
-        // --- NOUVEAU : VERIFICATION DES ABSENCES ---
         if (id_employe) {
             const dateRDV = date_heure_debut.split('T')[0];
-            const absence = await pool.query(
-                `SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`,
-                [req.user.id_salon, id_employe, dateRDV]
+            const absence = await pool.query(`SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`, [req.user.id_salon, id_employe, dateRDV]);
+            if (absence.rowCount > 0) return res.status(400).json({ erreur: `Impossible : L'employé est en ${absence.rows[0].type_demande.replace('_', ' ')} à cette date.` });
+        }
+
+        const dureeReelle = parseInt(duree_minutes) || 30;
+
+        if (id_employe && !forcer_ajout) {
+            const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+            const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+            const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
+
+            const rdvExistants = await pool.query(
+                `SELECT id_rdv FROM rendez_vous 
+                 WHERE id_salon = $1 AND id_employe = $2 
+                 AND (
+                    (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
+                    AND 
+                    (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
+                 )`,
+                [req.user.id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage]
             );
-            if (absence.rowCount > 0) {
-                return res.status(400).json({ erreur: `Impossible : L'employé est en ${absence.rows[0].type_demande.replace('_', ' ')} à cette date.` });
+
+            if (rdvExistants.rowCount > 0) {
+                return res.status(409).json({ erreur: "Un rendez-vous est déjà prévu sur cette plage horaire pour ce coiffeur. Êtes-vous sûr de vouloir l'ajouter quand même ?" });
             }
         }
-        // ------------------------------------------
 
-        await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes || 30]);
+        await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, dureeReelle]);
         io.to(req.user.id_salon.toString()).emit('nouveauRDV');
         res.status(201).json({ message: "RDV ajouté." });
     } catch (e) { res.status(500).json({ erreur: "Erreur création RDV." }); }
 });
 
 app.put('/api/rdv/:id', verifierToken, async (req, res) => {
-    const { id_employe, prestation, date_heure_debut } = req.body;
+    const { id_employe, prestation, date_heure_debut, duree_minutes, forcer_ajout } = req.body;
     try {
+        const dureeReelle = parseInt(duree_minutes) || 30;
+
+        if (id_employe && !forcer_ajout) {
+            const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+            const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+            const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
+
+            const rdvExistants = await pool.query(
+                `SELECT id_rdv FROM rendez_vous 
+                 WHERE id_salon = $1 AND id_employe = $2 AND id_rdv != $6
+                 AND (
+                    (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
+                    AND 
+                    (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
+                 )`,
+                [req.user.id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage, req.params.id]
+            );
+
+            if (rdvExistants.rowCount > 0) {
+                return res.status(409).json({ erreur: "Un rendez-vous est déjà prévu sur cette plage horaire pour ce coiffeur. Êtes-vous sûr de vouloir le modifier quand même ?" });
+            }
+        }
+
         await pool.query(
-            `UPDATE rendez_vous SET id_employe = $1, prestation = $2, date_heure_debut = $3 WHERE id_rdv = $4 AND id_salon = $5`, 
-            [id_employe, prestation, date_heure_debut, req.params.id, req.user.id_salon]
+            `UPDATE rendez_vous SET id_employe = $1, prestation = $2, date_heure_debut = $3, duree_minutes = $4 WHERE id_rdv = $5 AND id_salon = $6`, 
+            [id_employe, prestation, date_heure_debut, dureeReelle, req.params.id, req.user.id_salon]
         );
         io.to(req.user.id_salon.toString()).emit('nouveauRDV');
         res.json({ message: "Rendez-vous modifié." });
@@ -1357,7 +1398,8 @@ app.post('/api/catalogue', verifierToken, async (req, res) => {
             } 
         } 
         
-        const inserted = await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_article', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, tvaFormattee, delaiFormatte, req.user.id_salon]); 
+        const dureePresta = parseInt(req.body.duree_estimee_minutes) || 30;
+        const inserted = await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours, duree_estimee_minutes, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id_article', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, tvaFormattee, delaiFormatte, dureePresta, req.user.id_salon]);
         await enregistrerJET(req.user.id_salon, 'CREATION_ARTICLE', { id_article: inserted.rows[0].id_article, nom, type_article: typeArticleFormatte, prix: prixFormatte, taux_tva: tvaFormattee }); 
         res.status(201).json({ message: "Article ajouté avec succès !" }); 
     } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }
