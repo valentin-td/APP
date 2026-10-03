@@ -1895,12 +1895,21 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         const configResult = await pool.query('SELECT email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : null;
         
-        const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1`, [id_salon]);
-        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
-        const caParMethodeResult = await pool.query(`SELECT methode_paiement, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' GROUP BY methode_paiement`, [id_salon]);
-        const rhResult = await pool.query(`SELECT e.nom, COALESCE(SUM(c.montant_commission), 0) as total_prime FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.nom`, [id_salon]);
-        
-        const caTotal = parseFloat(caResult.rows[0].ca_total);
+        const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+                const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+                const caParMethodeResult = await pool.query(`SELECT methode_paiement, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
+                const rhResult = await pool.query(`SELECT e.nom, COALESCE(SUM(c.montant_commission), 0) as total_prime FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3 WHERE e.id_salon = $1 GROUP BY e.nom`, [id_salon, dateDebutStr, dateFinStr]);
+                
+                const absencesResult = await pool.query(`
+                    SELECT a.type_demande, a.nature_absence, a.date_debut, a.date_fin, a.fichier_cle_r2, e.nom as nom_employe
+                    FROM absences_employes a
+                    JOIN employes e ON a.id_employe = e.id_employe
+                    WHERE a.id_salon = $1 AND a.statut = 'VALIDE'
+                      AND a.date_debut <= $3 AND a.date_fin >= $2
+                    ORDER BY e.nom ASC, a.date_debut ASC
+                `, [id_salon, dateDebutStr, dateFinStr]);
+
+                const caTotal = parseFloat(caResult.rows[0].ca_total);
 
         // Configuration PDFKit (A4, Gestion des pages)
         const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
@@ -2542,6 +2551,27 @@ async function executerEnvoiComptable() {
                 if (rhResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y); } 
                 else { rhResult.rows.forEach(c => { drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`); totalPrimes += parseFloat(c.total_prime); }); }
                 doc.moveDown(0.5); drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
+
+                // --- NOUVELLE SECTION : ABSENCES & VARIABLES DE PAIE ---
+                doc.addPage();
+                doc.font('Helvetica-Bold').fontSize(24).fillColor(THEME_COLOR).text('Variables de Paie & Absences', 50, 50);
+                doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 80);
+                doc.moveDown(3);
+
+                drawSectionHeader('Registre des Absences Validées');
+                if (absencesResult.rowCount === 0) {
+                    doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune absence enregistrée sur cette période.', 50, doc.y);
+                } else {
+                    drawTableRow('EMPLOYÉ & NATURE', 'DATES', true);
+                    absencesResult.rows.forEach(abs => {
+                        const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence})` : `Congé (${abs.nature_absence})`;
+                        const docsFournis = abs.fichier_cle_r2 ? " (Justificatif fourni)" : "";
+                        drawTableRow(
+                            `${abs.nom_employe} - ${natureStr.replace('_', ' ')}${docsFournis}`, 
+                            `Du ${new Date(abs.date_debut).toLocaleDateString('fr-FR')} au ${new Date(abs.date_fin).toLocaleDateString('fr-FR')}`
+                        );
+                    });
+                }
 
                 const pages = doc.bufferedPageRange();
                 for (let i = 0; i < pages.count; i++) { doc.switchToPage(i); doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR); }
