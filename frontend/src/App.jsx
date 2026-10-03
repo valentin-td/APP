@@ -672,18 +672,22 @@ function App() {
     }
   };
 
+  // Extraction des dates en nombres primitifs purs pour garantir la stabilité absolue du useEffect
+  const planningStartTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[0].getTime() : 0;
+  const planningEndTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[joursSemaine.length - 1].getTime() : 0;
+
   useEffect(() => {
-      if (token && !isAbonnementInactif && joursSemaine && joursSemaine.length > 0) {
-          const startStr = formatDateInput(joursSemaine[0]); 
-          const endStr = formatDateInput(joursSemaine[joursSemaine.length - 1]);
+      if (token && !isAbonnementInactif && planningStartTs > 0) {
+          const startStr = formatDateInput(new Date(planningStartTs)); 
+          const endStr = formatDateInput(new Date(planningEndTs));
           fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData');
           
           if (decodeToken(token)?.role === 'employe') {
               fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
           }
       }
-  // Retrait de joursSemaine pour stopper la boucle infinie de requêtes (surchauffe)
-  }, [currentDate, windowWidth, activeTab, refreshTrigger, token, isAbonnementInactif]);
+  // On n'utilise QUE des valeurs numériques et strings. Fini le windowWidth qui fluctue avec les barres de défilement !
+  }, [planningStartTs, planningEndTs, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
   useEffect(() => {
       if (token && !isAbonnementInactif) { 
