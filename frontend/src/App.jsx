@@ -602,9 +602,12 @@ function App() {
       else if (nbOk > 0) showToast("Tous les tickets hors-ligne ont été synchronisés !", "success");
   };
 
-  // Nouvelle tentative automatique toutes les minutes tant qu'il reste des tickets en attente
+  // Nouvelle tentative automatique toutes les 5 minutes uniquement si hors-ligne
   useEffect(() => {
-      const t = setInterval(() => { if (navigator.onLine) syncOfflineTickets(); }, 60000);
+      if (!token) return;
+      const t = setInterval(() => { 
+          if (navigator.onLine && !syncEnCours.current) syncOfflineTickets(); 
+      }, 300000);
       return () => clearInterval(t);
   }, [token]);
 
@@ -756,14 +759,7 @@ function App() {
       };
       
       ouvrirConnexionSSE();
-      
-      watchdogId = setInterval(() => {
-          if (Date.now() - dernierSignal > 40000) {
-              ouvrirConnexionSSE();
-          }
-      }, 10000);
 
-      verifierTachesIAEnBase();
       const onFocus = () => verifierTachesIAEnBase();
       const onVisibilityChange = () => {
           if (document.visibilityState === 'visible') verifierTachesIAEnBase();
@@ -771,14 +767,13 @@ function App() {
       window.addEventListener('focus', onFocus);
       window.addEventListener('visibilitychange', onVisibilityChange);
 
-      const intervalId = setInterval(verifierTachesIAEnBase, 15000);
-
       return () => {
           window.removeEventListener('focus', onFocus);
           window.removeEventListener('visibilitychange', onVisibilityChange);
-          clearInterval(intervalId);
-          clearInterval(watchdogId);
-          if (eventSource) eventSource.close();
+          if (eventSource) {
+              eventSource.close();
+              eventSource = null;
+          }
       };
   }, [token, isAbonnementInactif]);
 
@@ -1984,64 +1979,9 @@ function App() {
                               </button>
                           </div>
                       </div>
-              </div>
-
-              {/* ZONE DÉFILANTE */}
-              <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-              
-              {/* PANNEAU DE CONTRÔLE : DEMANDES DE CONGÉS EN ATTENTE */}
-              {absencesRH && absencesRH.filter(a => a.statut === 'EN_ATTENTE').length > 0 && (
-                  <div className="carte scan-carte" style={{ marginBottom: '24px', borderColor: 'var(--color-info)', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.15)' }}>
-                      <h3 style={{ marginTop: 0, color: 'var(--text-main)', marginBottom: '16px' }}>⚠️ Absences en attente</h3>
-                      <div className="list-group" style={{ marginBottom: 0 }}>
-                          {absencesRH.filter(a => a.statut === 'EN_ATTENTE').map(abs => (
-                              <div key={abs.id_absence} className="list-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px', padding: '16px' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                      <div>
-                                          <strong style={{ display: 'block', fontSize: '15px', color: 'var(--text-main)', marginBottom: '4px' }}>{abs.nom_employe}</strong>
-                                          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Du {new Date(abs.date_debut).toLocaleDateString('fr-FR')} au {new Date(abs.date_fin).toLocaleDateString('fr-FR')}</span>
-                                      </div>
-                                      <span className="badge-discret" style={{ background: 'var(--bg-info)', color: 'var(--color-info)' }}>{abs.nature_absence.replace('_', ' ')}</span>
-                                  </div>
-                                  {abs.commentaire && <div style={{ fontSize: '13px', fontStyle: 'italic', color: 'var(--text-secondary)', padding: '8px', background: 'var(--bg-app)', borderRadius: '6px' }}>"{abs.commentaire}"</div>}
-                                  
-                                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                                      {abs.fichier_cle_r2 && (
-                                          <button onClick={async () => {
-                                              try {
-                                                  const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/justificatif`, { headers: getAuthHeaders() });
-                                                  const data = await handleFetchError(res);
-                                                  window.open(data.url, '_blank');
-                                              } catch(e) { showToast("Justificatif indisponible", "error"); }
-                                          }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Justificatif</button>
-                                      )}
-                                      <button onClick={async () => {
-                                              const motif = prompt("Motif du refus (obligatoire) :");
-                                              if (motif) {
-                                                  try {
-                                                      const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) });
-                                                      await handleFetchError(res);
-                                                      showToast("Demande refusée", "success"); 
-                                                      chargerTout(); setRefreshTrigger(prev => prev+1);
-                                                  } catch(e) { showToast(e.message || "Erreur", "error"); }
-                                              }
-                                          }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Refuser</button>
-                                          <button onClick={async () => {
-                                              try {
-                                                  const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE', motif_refus: null }) });
-                                                  await handleFetchError(res);
-                                                  showToast("Absence validée", "success"); 
-                                                  chargerTout(); setRefreshTrigger(prev => prev+1);
-                                              } catch(e) { showToast(e.message || "Erreur", "error"); }
-                                          }} className="btn-action" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }}>Valider</button>
-                                  </div>
-                              </div>
-                          ))}
-                      </div>
                   </div>
-              )}
-
-              {showAddEmploye && (? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                  {/* ZONE DÉFILANTE */}
+                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   {!dashboardData ? (
                       <div className="skeleton-loading" style={{height: '200px', borderRadius: 'var(--radius-card)'}}></div>
                   ) : (
@@ -3289,6 +3229,59 @@ function App() {
 
                   {/* ZONE DÉFILANTE */}
                   <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                  
+                  {/* PANNEAU DE CONTRÔLE : DEMANDES DE CONGÉS EN ATTENTE */}
+                  {absencesRH && absencesRH.filter(a => a.statut === 'EN_ATTENTE').length > 0 && (
+                      <div className="carte scan-carte" style={{ marginBottom: '24px', borderColor: 'var(--color-info)', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.15)' }}>
+                          <h3 style={{ marginTop: 0, color: 'var(--text-main)', marginBottom: '16px' }}>⚠️ Absences en attente</h3>
+                          <div className="list-group" style={{ marginBottom: 0 }}>
+                              {absencesRH.filter(a => a.statut === 'EN_ATTENTE').map(abs => (
+                                  <div key={abs.id_absence} className="list-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px', padding: '16px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                          <div>
+                                              <strong style={{ display: 'block', fontSize: '15px', color: 'var(--text-main)', marginBottom: '4px' }}>{abs.nom_employe}</strong>
+                                              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Du {new Date(abs.date_debut).toLocaleDateString('fr-FR')} au {new Date(abs.date_fin).toLocaleDateString('fr-FR')}</span>
+                                          </div>
+                                          <span className="badge-discret" style={{ background: 'var(--bg-info)', color: 'var(--color-info)' }}>{abs.nature_absence.replace('_', ' ')}</span>
+                                      </div>
+                                      {abs.commentaire && <div style={{ fontSize: '13px', fontStyle: 'italic', color: 'var(--text-secondary)', padding: '8px', background: 'var(--bg-app)', borderRadius: '6px' }}>"{abs.commentaire}"</div>}
+                                      
+                                      <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                          {abs.fichier_cle_r2 && (
+                                              <button onClick={async () => {
+                                                  try {
+                                                      const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/justificatif`, { headers: getAuthHeaders() });
+                                                      const data = await handleFetchError(res);
+                                                      window.open(data.url, '_blank');
+                                                  } catch(e) { showToast("Justificatif indisponible", "error"); }
+                                              }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Justificatif</button>
+                                          )}
+                                          <button onClick={async () => {
+                                              const motif = prompt("Motif du refus (obligatoire) :");
+                                              if (motif) {
+                                                  try {
+                                                      const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) });
+                                                      await handleFetchError(res);
+                                                      showToast("Demande refusée", "success"); 
+                                                      chargerTout(); setRefreshTrigger(prev => prev+1);
+                                                  } catch(e) { showToast(e.message || "Erreur", "error"); }
+                                              }
+                                          }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Refuser</button>
+                                          <button onClick={async () => {
+                                              try {
+                                                  const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE', motif_refus: null }) });
+                                                  await handleFetchError(res);
+                                                  showToast("Absence validée", "success"); 
+                                                  chargerTout(); setRefreshTrigger(prev => prev+1);
+                                              } catch(e) { showToast(e.message || "Erreur", "error"); }
+                                          }} className="btn-action" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }}>Valider</button>
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  )}
+
                   {showAddEmploye && (
                       <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
                           <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
