@@ -2686,7 +2686,9 @@ function App() {
                               <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
                               <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
                                   <option value="">-- Choisir un collaborateur --</option>
-                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                  {(employesListe || [])
+                                      .filter(emp => role !== 'employe' || emp.id_employe === decodeToken(token)?.id_employe)
+                                      .map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                               </select>
                               <div style={{ position: 'relative', marginBottom: '12px' }}>
                                   <input type="text" className="input-fournisseur" placeholder="Prestation (ex: Coupe Homme)" value={formRdv.prestation} onChange={e => { setFormRdv({...formRdv, prestation: e.target.value}); setShowDropdownPresta(true); }} onFocus={() => setShowDropdownPresta(true)} onBlur={() => setTimeout(() => setShowDropdownPresta(false), 200)} style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }} />
@@ -2853,7 +2855,9 @@ function App() {
                                   <>
                                       <select className="input-fournisseur" value={editRdvForm.id_employe} onChange={e => setEditRdvForm({...editRdvForm, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
                                           <option value="">-- Choisir un collaborateur --</option>
-                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                          {(employesListe || [])
+                                              .filter(emp => role !== 'employe' || emp.id_employe === decodeToken(token)?.id_employe)
+                                              .map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                                       </select>
                                       <input type="text" className="input-fournisseur" placeholder="Prestation" value={editRdvForm.prestation} onChange={e => setEditRdvForm({...editRdvForm, prestation: e.target.value})} style={{marginBottom:'12px'}}/>
                                       <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
