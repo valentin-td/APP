@@ -1416,7 +1416,7 @@ app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
             const dFin = new Date(absence.date_fin).toLocaleDateString('fr-FR');
             const message = statut === 'VALIDE' 
                 ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${dDebut} au ${dFin} ont été validés.` 
-                : `Votre demande a été refusée. Motif : ${motif_refus}`;
+                : (motif_refus ? `Votre demande a été refusée. Motif : ${motif_refus}` : `Votre demande de congés a été refusée.`);
                 
             envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
         }
