@@ -420,9 +420,9 @@ function App() {
 
   const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
   const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null });
-  const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3 });
+  const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3, duree_estimee_minutes: 30 });
 
-  const [posStep, setPosStep] = useState('employee'); 
+  const [posStep, setPosStep] = useState('employee');
   const [posEmploye, setPosEmploye] = useState(null);
   const [posType, setPosType] = useState('PRESTATION'); 
   const [rechercheCaisse, setRechercheCaisse] = useState('');
@@ -477,7 +477,7 @@ function App() {
   const [filtresEmployes, setFiltresEmployes] = useState([]); 
   const [rdvSelectionne, setRdvSelectionne] = useState(null); 
   const [isEditingRdv, setIsEditingRdv] = useState(false);
-  const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '' });
+  const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '', duree_minutes: 30 });
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [showModalAbsence, setShowModalAbsence] = useState(false);
@@ -493,7 +493,7 @@ function App() {
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
-    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null, pin_salon: ''
+    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null, pin_salon: '', temps_nettoyage_minutes: 0
   });
 
   const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -1257,11 +1257,16 @@ function App() {
       } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
   };
 
-  const creerRdvManuel = async () => {
+  const creerRdvManuel = async (forcer = false) => {
       if(isOffline || !navigator.onLine) return showToast("Impossible de créer un RDV hors-ligne.", "error");
       try {
           const datetime = `${formRdv.date}T${formRdv.heure}:00`;
-          const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime}) });
+          const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime, forcer_ajout: forcer}) });
+          if(res.status === 409) {
+              const data = await res.json();
+              setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer l'ajout", action: () => { setConfirmDialog(null); creerRdvManuel(true); } });
+              return;
+          }
           if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); }
       } catch(e) { showToast("Erreur de création.", "error"); }
   }
@@ -1315,15 +1320,21 @@ function App() {
           date: formatDateInput(d),
           heure: d.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
           prestation: rdv.prestation,
-          id_employe: rdv.id_employe || ''
+          id_employe: rdv.id_employe || '',
+          duree_minutes: rdv.duree_minutes || 30
       });
   };
 
-  const sauvegarderModifRdv = async () => {
+  const sauvegarderModifRdv = async (forcer = false) => {
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       try {
           const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime }) });
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime, forcer_ajout: forcer }) });
+          if(res.status === 409) {
+              const data = await res.json();
+              setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer la modification", action: () => { setConfirmDialog(null); sauvegarderModifRdv(true); } });
+              return;
+          }
           if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); }
       } catch(e) { showToast("Erreur lors de la modification.", "error"); }
   };
@@ -2697,7 +2708,7 @@ function App() {
                                           {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
                                               const isTop = dashboardData?.top_3_prestations?.find(p => (p.nom || '').toLowerCase() === (presta.nom || '').toLowerCase());
                                               return (
-                                                  <div key={presta.id_article} onClick={() => { setFormRdv({...formRdv, prestation: presta.nom}); setShowDropdownPresta(false); }} className="hover-bg-app" style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}>
+                                                  <div key={presta.id_article} onClick={() => { setFormRdv({...formRdv, prestation: presta.nom, duree_minutes: presta.duree_estimee_minutes || 30}); setShowDropdownPresta(false); }} className="hover-bg-app" style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}>
                                                       <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
                                                           {isTop && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Top</span>}
                                                           <span style={{color: 'var(--text-main)', fontWeight: '500'}}>{presta.nom}</span>
@@ -2718,8 +2729,9 @@ function App() {
                               <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
                                   <input type="date" className="input-fournisseur" value={formRdv.date} onChange={e => setFormRdv({...formRdv, date: e.target.value})} />
                                   <input type="time" className="input-fournisseur" value={formRdv.heure} onChange={e => setFormRdv({...formRdv, heure: e.target.value})} />
+                                  <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{width:'110px'}} value={formRdv.duree_minutes} onChange={e => setFormRdv({...formRdv, duree_minutes: parseInt(e.target.value) || 30})} title="Durée de la prestation (minutes)" />
                               </div>
-                              <button onClick={creerRdvManuel} className="btn-action" style={{width:'100%'}}>Créer le rendez-vous</button>
+                              <button onClick={() => creerRdvManuel(false)} className="btn-action" style={{width:'100%'}}>Créer le rendez-vous</button>
                           </div>
                       </div>
                   )}
@@ -2863,10 +2875,11 @@ function App() {
                                       <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
                                           <input type="date" className="input-fournisseur" value={editRdvForm.date} onChange={e => setEditRdvForm({...editRdvForm, date: e.target.value})} />
                                           <input type="time" className="input-fournisseur" value={editRdvForm.heure} onChange={e => setEditRdvForm({...editRdvForm, heure: e.target.value})} />
+                                          <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{width:'110px'}} value={editRdvForm.duree_minutes} onChange={e => setEditRdvForm({...editRdvForm, duree_minutes: parseInt(e.target.value) || 30})} />
                                       </div>
                                       <div style={{display: 'flex', gap: '12px'}}>
                                         <button onClick={() => setIsEditingRdv(false)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer'}}>Annuler</button>
-                                        <button onClick={sauvegarderModifRdv} className="btn-action" style={{flex: 2}}>Enregistrer</button>
+                                        <button onClick={() => sauvegarderModifRdv(false)} className="btn-action" style={{flex: 2}}>Enregistrer</button>
                                       </div>
                                   </>
                               )}
@@ -2964,7 +2977,13 @@ function App() {
                           </div>
                       </div>
                       {!modeEditionProtocole && (
-                          <input type="text" className="input-fournisseur" placeholder="Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', width: '100%', boxSizing: 'border-box'}}/>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
+                              <input type="text" className="input-fournisseur" placeholder="Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{flex: 1, fontSize: '14px', minWidth: '150px'}}/>
+                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-app)', padding: '0 12px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', height: '42px', flexShrink: 0}}>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Temps nettoyage (min):</label>
+                                  <input type="number" min="0" className="input-fournisseur" style={{width: '50px', padding: '4px 8px', margin: 0, border: 'none', background: 'transparent', fontWeight: 'bold'}} value={configSalon.temps_nettoyage_minutes || 0} onChange={(e) => { const val = parseInt(e.target.value) || 0; setConfigSalon({...configSalon, temps_nettoyage_minutes: val}); fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...configSalon, temps_nettoyage_minutes: val}) }); }} title="Temps de battement ajouté automatiquement entre chaque RDV" />
+                              </div>
+                          </div>
                       )}
                   </div>
 
@@ -2976,7 +2995,8 @@ function App() {
                           <h3 style={{marginTop: 0}}>Nouvelle Prestation (Catalogue)</h3>
                           <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
                               <input type="text" className="input-fournisseur" placeholder="Nom de la prestation (ex: Coupe Homme)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
-                              <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
+                              <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{width: '110px'}} value={newArticle.duree_estimee_minutes} onChange={(e) => setNewArticle({...newArticle, duree_estimee_minutes: e.target.value, type_article: 'PRESTATION'})} />
+                              <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '90px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
                           </div>
                           <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation</button>
                       </div>
@@ -3053,7 +3073,10 @@ function App() {
                               </div>
 
                               <div style={{marginBottom: '24px'}}>
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Le Pas-à-Pas</h4>
+                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', marginBottom: '12px'}}>
+                                      <h4 style={{fontSize: '13px', margin: 0}}>Le Pas-à-Pas</h4>
+                                      <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(nouveauProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
+                                  </div>
                                   <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
                                       {(nouveauProtocole.etapes || []).map((etape, index) => (
                                           <div key={etape.id_etape} draggable onDragStart={(e) => e.dataTransfer.setData("dragIndex", index)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const dragIndex = Number(e.dataTransfer.getData("dragIndex")); const dropIndex = index; const nouvellesEtapes = [...(nouveauProtocole.etapes || [])]; const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1); nouvellesEtapes.splice(dropIndex, 0, draggedEtape); setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes }); }} style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center', cursor: 'grab'}} title="Maintenez cliqué pour déplacer">
@@ -3179,7 +3202,10 @@ function App() {
                                   {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
                               </div>
 
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Étapes de réalisation</h4>
+                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '12px'}}>
+                                  <h4 style={{fontSize: '13px', margin: 0}}>Étapes de réalisation</h4>
+                                  <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(modeEditionProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
+                              </div>
                               <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                                   {(modeEditionProtocole.etapes || []).map((etape, index) => (
                                       <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
