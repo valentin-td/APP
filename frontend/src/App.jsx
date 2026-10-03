@@ -3261,8 +3261,8 @@ function App() {
                                               }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Justificatif</button>
                                           )}
                                           <button onClick={async () => {
-                                              const motif = prompt("Motif du refus (obligatoire) :");
-                                              if (motif) {
+                                              const motif = prompt("Motif du refus (Optionnel) :");
+                                              if (motif !== null) { // null = l'utilisateur a cliqué sur "Annuler"
                                                   try {
                                                       const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) });
                                                       await handleFetchError(res);
