@@ -1561,6 +1561,7 @@ const PROMPT_SYSTEME_IA = `Tu es un assistant IA pour un salon de coiffure. Anal
 CAS 1 - STOCK : Si le texte parle de livraison, commande, achat, facture ou réassort de produits. -> Renvoie {"type": "STOCK", "donnees": {"nom_produit": "nom du produit", "quantite": entier, "reference": ""}}
 CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe, couleur...", "date_heure": "YYYY-MM-DDTHH:MM"}}
 CAS 4 - URGENCES / FACTURES : Si le texte est une facture à payer, une relance, ou une action requise (impôts, URSSAF, EDF...). -> Renvoie {"type": "ACTION", "donnees": {"titre": "Payer EDF", "description": "Facture numéro XYZ...", "date_echeance": "YYYY-MM-DD"}}
+CAS 5 - ABSENCES : Si un employé signale qu'il sera absent (arrêt maladie, demande de congé, RTT). -> Renvoie {"type": "ABSENCE", "donnees": {"nom_employe": "prénom ou nom", "type_demande": "ARRET_MALADIE ou CONGES", "date_debut": "YYYY-MM-DD", "date_fin": "YYYY-MM-DD", "commentaire": "raison courte de l'absence"}}
 CAS 3 - AUTRE : Pour tout le reste (pubs, spam, etc.) -> Renvoie {"type": "NONE"}`;
 
 async function analyserEmailAvecIA(sujet, texte) {
@@ -1616,6 +1617,19 @@ async function analyserEmailAvecIA(sujet, texte) {
                     prestation: analyse.donnees.prestation ? String(analyse.donnees.prestation).trim().substring(0, 100) : 'Prestation à définir',
                     date_heure_debut: analyse.donnees.date_heure || '',
                     id_employe: ''
+                }
+            }];
+        }
+
+        if (analyse.type === 'ABSENCE' && analyse.donnees && analyse.donnees.nom_employe) {
+            return [{
+                type_tache: 'ABSENCE',
+                donnees: {
+                    nom_employe: String(analyse.donnees.nom_employe).trim().substring(0, 100),
+                    type_demande: analyse.donnees.type_demande === 'ARRET_MALADIE' ? 'ARRET_MALADIE' : 'CONGES',
+                    date_debut: analyse.donnees.date_debut || '',
+                    date_fin: analyse.donnees.date_fin || analyse.donnees.date_debut || '',
+                    commentaire: analyse.donnees.commentaire ? String(analyse.donnees.commentaire).trim() : ''
                 }
             }];
         }
@@ -1684,6 +1698,28 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
 
             io.to(id_salon.toString()).emit('nouveauRDV');
         } 
+        else if (type_tache === 'ABSENCE') {
+            const empRes = await clientDB.query("SELECT id_employe FROM employes WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1", [`%${donnees.nom_employe}%`, id_salon]);
+            if (empRes.rowCount === 0) throw new Error(`Collaborateur introuvable : ${donnees.nom_employe}`);
+            const idEmploye = empRes.rows[0].id_employe;
+
+            const statutInitial = donnees.type_demande === 'ARRET_MALADIE' ? 'VALIDE' : 'EN_ATTENTE';
+            const nature = donnees.type_demande === 'ARRET_MALADIE' ? 'MALADIE_ORDINAIRE' : 'CP';
+
+            await clientDB.query(
+                `INSERT INTO absences_employes (id_salon, id_employe, type_demande, nature_absence, date_debut, moment_debut, date_fin, moment_fin, commentaire, statut)
+                 VALUES ($1, $2, $3, $4, $5, 'MATIN', $6, 'APRES_MIDI', $7, $8)`,
+                [id_salon, idEmploye, donnees.type_demande, nature, donnees.date_debut, donnees.date_fin, donnees.commentaire, statutInitial]
+            );
+
+            if (donnees.type_demande === 'ARRET_MALADIE') {
+                await clientDB.query(
+                    "INSERT INTO taches_actions (id_salon, titre, description, source) VALUES ($1, $2, $3, 'IA')",
+                    [id_salon, `URGENCE : Arrêt maladie de ${donnees.nom_employe}`, `${donnees.nom_employe} a déclaré un arrêt du ${donnees.date_debut} au ${donnees.date_fin} par email. L'agenda a été bloqué automatiquement.`]
+                );
+            }
+            io.to(id_salon.toString()).emit('nouveauRDV');
+        }
         else if (type_tache === 'ACTION') {
             let echeance = donnees.date_echeance && donnees.date_echeance !== '' ? donnees.date_echeance : null;
             await clientDB.query(
