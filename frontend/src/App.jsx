@@ -111,6 +111,7 @@ function App() {
   const [employeDashboardData, setEmployeDashboardData] = useState(null);
   const [stocksData, setStocksData] = useState([]);
   const [rhData, setRhData] = useState([]);
+  const [absencesRH, setAbsencesRH] = useState([]);
   const [historiqueData, setHistoriqueData] = useState([]);
   const [expandedYear, setExpandedYear] = useState(new Date().getFullYear().toString());
   const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
@@ -657,6 +658,7 @@ function App() {
     fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
     fetchAndCache('/api/stocks', setStocksData, 'stocksData');
     fetchAndCache('/api/rh', setRhData, 'rhData');
+    fetchAndCache('/api/rh/absences', setAbsencesRH, 'absencesRH');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
 
@@ -1973,9 +1975,58 @@ function App() {
                               </button>
                           </div>
                       </div>
+              </div>
+
+              {/* ZONE DÉFILANTE */}
+              <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+              
+              {/* PANNEAU DE CONTRÔLE : DEMANDES DE CONGÉS EN ATTENTE */}
+              {absencesRH && absencesRH.filter(a => a.statut === 'EN_ATTENTE').length > 0 && (
+                  <div className="carte scan-carte" style={{ marginBottom: '24px', borderColor: 'var(--color-info)', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.15)' }}>
+                      <h3 style={{ marginTop: 0, color: 'var(--text-main)', marginBottom: '16px' }}>⚠️ Absences en attente</h3>
+                      <div className="list-group" style={{ marginBottom: 0 }}>
+                          {absencesRH.filter(a => a.statut === 'EN_ATTENTE').map(abs => (
+                              <div key={abs.id_absence} className="list-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px', padding: '16px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                      <div>
+                                          <strong style={{ display: 'block', fontSize: '15px', color: 'var(--text-main)', marginBottom: '4px' }}>{abs.nom_employe}</strong>
+                                          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Du {new Date(abs.date_debut).toLocaleDateString('fr-FR')} au {new Date(abs.date_fin).toLocaleDateString('fr-FR')}</span>
+                                      </div>
+                                      <span className="badge-discret" style={{ background: 'var(--bg-info)', color: 'var(--color-info)' }}>{abs.nature_absence.replace('_', ' ')}</span>
+                                  </div>
+                                  {abs.commentaire && <div style={{ fontSize: '13px', fontStyle: 'italic', color: 'var(--text-secondary)', padding: '8px', background: 'var(--bg-app)', borderRadius: '6px' }}>"{abs.commentaire}"</div>}
+                                  
+                                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                      {abs.fichier_cle_r2 && (
+                                          <button onClick={async () => {
+                                              try {
+                                                  const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/justificatif`, { headers: getAuthHeaders() });
+                                                  const data = await handleFetchError(res);
+                                                  window.open(data.url, '_blank');
+                                              } catch(e) { showToast("Justificatif indisponible", "error"); }
+                                          }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Justificatif</button>
+                                      )}
+                                      <button onClick={() => {
+                                          const motif = prompt("Motif du refus (obligatoire) :");
+                                          if (motif) {
+                                              fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) })
+                                              .then(() => { showToast("Demande refusée", "success"); chargerTout(); setRefreshTrigger(prev => prev+1); })
+                                              .catch(() => showToast("Erreur", "error"));
+                                          }
+                                      }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Refuser</button>
+                                      <button onClick={() => {
+                                          fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE' }) })
+                                          .then(() => { showToast("Absence validée", "success"); chargerTout(); setRefreshTrigger(prev => prev+1); })
+                                          .catch(() => showToast("Erreur", "error"));
+                                      }} className="btn-action" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }}>Valider</button>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
                   </div>
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+              )}
+
+              {showAddEmploye && (? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   {!dashboardData ? (
                       <div className="skeleton-loading" style={{height: '200px', borderRadius: 'var(--radius-card)'}}></div>
                   ) : (
