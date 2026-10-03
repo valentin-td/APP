@@ -761,16 +761,17 @@ function App() {
 
       verifierTachesIAEnBase();
       const onFocus = () => verifierTachesIAEnBase();
-      window.addEventListener('focus', onFocus);
-      window.addEventListener('visibilitychange', () => {
+      const onVisibilityChange = () => {
           if (document.visibilityState === 'visible') verifierTachesIAEnBase();
-      });
+      };
+      window.addEventListener('focus', onFocus);
+      window.addEventListener('visibilitychange', onVisibilityChange);
 
       const intervalId = setInterval(verifierTachesIAEnBase, 15000);
 
       return () => {
           window.removeEventListener('focus', onFocus);
-          window.removeEventListener('visibilitychange', () => {});
+          window.removeEventListener('visibilitychange', onVisibilityChange);
           clearInterval(intervalId);
           clearInterval(watchdogId);
           if (eventSource) eventSource.close();
