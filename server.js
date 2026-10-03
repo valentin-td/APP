@@ -1440,7 +1440,7 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
         if (statutInitial === 'VALIDE') {
             const rdvs = await pool.query(
                 `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
-                 FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4
+                 FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut::timestamp) >= $3::date AND DATE(date_heure_debut::timestamp) <= $4::date
                  ORDER BY date_heure_debut ASC`,
                 [id_salon, id_employe, date_debut, date_fin]
             );
@@ -1515,7 +1515,9 @@ app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
             if (absenceResInfo.rowCount > 0) {
                 const absInfo = absenceResInfo.rows[0];
                 const rdvs = await pool.query(
-                    `SELECT id_rdv FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4`,
+                    `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
+                     FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut::timestamp) >= $3::date AND DATE(date_heure_debut::timestamp) <= $4::date
+                     ORDER BY date_heure_debut ASC`,
                     [req.user.id_salon, absInfo.id_employe, absInfo.date_debut, absInfo.date_fin]
                 );
                 conflits = rdvs.rows;
