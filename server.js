@@ -1443,6 +1443,21 @@ app.get('/api/rh/absences/:id/justificatif', verifierToken, async (req, res) => 
     } catch (e) { res.status(500).json({ erreur: "Erreur génération lien sécurisé." }); }
 });
 
+// 4. Récupérer toutes les absences (pour le tableau de bord RH du gérant)
+app.get('/api/rh/absences', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    try {
+        const result = await pool.query(`
+            SELECT a.*, e.nom as nom_employe 
+            FROM absences_employes a 
+            JOIN employes e ON a.id_employe = e.id_employe 
+            WHERE a.id_salon = $1 
+            ORDER BY CASE WHEN a.statut = 'EN_ATTENTE' THEN 0 ELSE 1 END, a.date_creation DESC
+        `, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture absences." }); }
+});
+
 app.get('/api/dashboard/salon', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     try {
