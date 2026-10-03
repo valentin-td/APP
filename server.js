@@ -581,7 +581,7 @@ app.post('/api/rdv', verifierToken, async (req, res) => {
         if (id_employe) {
             const dateRDV = date_heure_debut.split('T')[0];
             const absence = await pool.query(`SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`, [req.user.id_salon, id_employe, dateRDV]);
-            if (absence.rowCount > 0) return res.status(400).json({ erreur: `Impossible : L'employé est en ${absence.rows[0].type_demande.replace('_', ' ')} à cette date.` });
+            if (absence.rowCount > 0) return res.status(400).json({ erreur: "Impossible d'ajouter ce rdv car le collaborateur n'est pas disponible sur cette date." });
         }
 
         const dureeReelle = parseInt(duree_minutes) || 30;
@@ -617,6 +617,12 @@ app.put('/api/rdv/:id', verifierToken, async (req, res) => {
     const { id_employe, prestation, date_heure_debut, duree_minutes, forcer_ajout } = req.body;
     try {
         const dureeReelle = parseInt(duree_minutes) || 30;
+
+        if (id_employe) {
+            const dateRDV = date_heure_debut.split('T')[0];
+            const absence = await pool.query(`SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`, [req.user.id_salon, id_employe, dateRDV]);
+            if (absence.rowCount > 0) return res.status(400).json({ erreur: "Impossible de modifier ce rdv car le collaborateur n'est pas disponible sur cette date." });
+        }
 
         if (id_employe && !forcer_ajout) {
             const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
