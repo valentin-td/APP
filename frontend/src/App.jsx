@@ -1267,8 +1267,12 @@ function App() {
               setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer l'ajout", action: () => { setConfirmDialog(null); creerRdvManuel(true); } });
               return;
           }
-          if(res.ok) { setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); }
-      } catch(e) { showToast("Erreur de création.", "error"); }
+          if(res.ok) { 
+              setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); 
+          } else {
+              const err = await res.json(); throw new Error(err.erreur || "Erreur de création.");
+          }
+      } catch(e) { showToast(e.message || "Erreur de création.", "error"); }
   }
 
   const soumettreAbsence = async () => {
@@ -1335,8 +1339,12 @@ function App() {
               setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer la modification", action: () => { setConfirmDialog(null); sauvegarderModifRdv(true); } });
               return;
           }
-          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); }
-      } catch(e) { showToast("Erreur lors de la modification.", "error"); }
+          if(res.ok) { 
+              setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); 
+          } else {
+              const err = await res.json(); throw new Error(err.erreur || "Erreur lors de la modification.");
+          }
+      } catch(e) { showToast(e.message || "Erreur lors de la modification.", "error"); }
   };
 
   const demanderSuppressionRdv = () => {
