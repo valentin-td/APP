@@ -339,6 +339,8 @@ function App() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [annulationDialog, setAnnulationDialog] = useState(null);
   const [cancellationRobot, setCancellationRobot] = useState(null);
+  const [selectedCancelRdvs, setSelectedCancelRdvs] = useState([]);
+  const [cancelMessageTemplate, setCancelMessageTemplate] = useState('');
 
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
@@ -1280,7 +1282,10 @@ function App() {
           if (data.conflits && data.conflits.length > 0) {
               const empId = formAbsence.id_employe || decodeToken(token)?.id_employe;
               const nomEmp = (employesListe || []).find(e => e.id_employe === Number(empId))?.nom || 'ce collaborateur';
-              setCancellationRobot({ rdvs: data.conflits, id_employe: empId, nom_employe: nomEmp.split(' ')[0] });
+              const prenomEmp = nomEmp.split(' ')[0];
+              setCancellationRobot({ rdvs: data.conflits, id_employe: empId, nom_employe: prenomEmp });
+              setSelectedCancelRdvs(data.conflits.map(r => r.id_rdv)); // On coche tout par défaut
+              setCancelMessageTemplate(`Bonjour [Prénom], en raison d'une absence exceptionnelle, votre RDV du [Date] avec ${prenomEmp} ne pourra pas être assuré. Cliquez ici pour reprogrammer : [Lien]. L'équipe du Salon.`);
           } else {
               chargerTout(); setRefreshTrigger(prev => prev + 1);
           }
@@ -3356,7 +3361,10 @@ function App() {
                                                   showToast("Absence validée", "success"); 
                                                   
                                                   if (data.conflits && data.conflits.length > 0) {
-                                                      setCancellationRobot({ rdvs: data.conflits, id_employe: abs.id_employe, nom_employe: abs.nom_employe.split(' ')[0] });
+                                                      const prenomEmp = abs.nom_employe.split(' ')[0];
+                                                      setCancellationRobot({ rdvs: data.conflits, id_employe: abs.id_employe, nom_employe: prenomEmp });
+                                                      setSelectedCancelRdvs(data.conflits.map(r => r.id_rdv));
+                                                      setCancelMessageTemplate(`Bonjour [Prénom], en raison d'une absence exceptionnelle, votre RDV du [Date] avec ${prenomEmp} ne pourra pas être assuré. Cliquez ici pour reprogrammer : [Lien]. L'équipe du Salon.`);
                                                   } else {
                                                       chargerTout(); setRefreshTrigger(prev => prev+1);
                                                   }
@@ -3884,31 +3892,79 @@ function App() {
 
       {cancellationRobot && (
           <div className="modal-overlay" style={{ zIndex: 10000 }}>
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>⚠️ Conflit d'Agenda</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>
-                      Attention, <strong>{cancellationRobot.nom_employe}</strong> a <strong>{cancellationRobot.rdvs.length} RDV</strong> prévus pendant cette absence. Voulez-vous annuler ces rendez-vous et prévenir les clients ?
+              <div className="modal-content" style={{textAlign: 'left', maxWidth: '500px'}}>
+                  <div style={{color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  </div>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px', textAlign: 'center'}}>Détection de RDV pendant l'absence</h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5', textAlign: 'center'}}>
+                      <strong>{cancellationRobot.nom_employe}</strong> a <strong>{cancellationRobot.rdvs.length} RDV</strong> sur cette période. Décochez ceux que vous allez confier à un autre coiffeur, et annulez le reste.
                   </p>
-                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+
+                  <div style={{marginBottom: '16px'}}>
+                      <label style={{fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px', display: 'block'}}>Message envoyé</label>
+                      <textarea 
+                          value={cancelMessageTemplate} 
+                          onChange={(e) => setCancelMessageTemplate(e.target.value)}
+                          style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: '13px', minHeight: '80px', resize: 'vertical'}}
+                      />
+                      <span style={{fontSize: '10px', color: 'var(--text-muted)'}}>Les balises [Prénom], [Date] et [Lien] s'adapteront à chaque client.</span>
+                  </div>
+
+                  <div style={{maxHeight: '200px', overflowY: 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '8px', marginBottom: '24px'}}>
+                      {cancellationRobot.rdvs.map(rdv => {
+                          const hasPhone = rdv.telephone_client && rdv.telephone_client.trim().length >= 9;
+                          return (
+                              <label key={rdv.id_rdv} style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '10px', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', opacity: selectedCancelRdvs.includes(rdv.id_rdv) ? 1 : 0.6}}>
+                                  <input 
+                                      type="checkbox" 
+                                      checked={selectedCancelRdvs.includes(rdv.id_rdv)} 
+                                      onChange={() => {
+                                          if (selectedCancelRdvs.includes(rdv.id_rdv)) {
+                                              setSelectedCancelRdvs(selectedCancelRdvs.filter(id => id !== rdv.id_rdv));
+                                          } else {
+                                              setSelectedCancelRdvs([...selectedCancelRdvs, rdv.id_rdv]);
+                                          }
+                                      }}
+                                      style={{width: '18px', height: '18px', accentColor: 'var(--btn-primary)'}}
+                                  />
+                                  <div style={{flex: 1}}>
+                                      <div style={{fontWeight: 'bold', fontSize: '14px', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between'}}>
+                                          <span>{rdv.nom_client || 'Client inconnu'}</span>
+                                          <span style={{fontSize: '12px', fontWeight: 'normal'}}>{new Date(rdv.date_heure_debut).toLocaleString('fr-FR', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
+                                      </div>
+                                      <div style={{fontSize: '12px', color: hasPhone ? 'var(--text-secondary)' : 'var(--color-danger)', fontWeight: hasPhone ? 'normal' : 'bold', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px'}}>
+                                          {hasPhone ? `📞 ${rdv.telephone_client} - ${rdv.prestation}` : `⚠️ Aucun numéro - Appel manuel requis`}
+                                      </div>
+                                  </div>
+                              </label>
+                          )
+                      })}
+                  </div>
+
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => { setCancellationRobot(null); chargerTout(); setRefreshTrigger(prev => prev + 1); }} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
+                          Ignorer
+                      </button>
                       <button onClick={async () => {
                           try {
-                              const rdvIds = cancellationRobot.rdvs.map(r => r.id_rdv);
+                              if (selectedCancelRdvs.length === 0) {
+                                  showToast("Aucun rendez-vous sélectionné", "info");
+                                  setCancellationRobot(null);
+                                  chargerTout(); setRefreshTrigger(prev => prev + 1);
+                                  return;
+                              }
                               const res = await fetch('https://api-salon-backend.onrender.com/api/rdv/mass-cancel', {
                                   method: 'POST', headers: getAuthHeaders(true),
-                                  body: JSON.stringify({ rdv_ids: rdvIds, id_employe: cancellationRobot.id_employe })
+                                  body: JSON.stringify({ rdv_ids: selectedCancelRdvs, id_employe: cancellationRobot.id_employe, message_personnalise: cancelMessageTemplate })
                               });
                               const data = await handleFetchError(res);
                               showToast(data.message, "success");
                               setCancellationRobot(null);
                               chargerTout(); setRefreshTrigger(prev => prev + 1);
                           } catch (e) { showToast(e.message || "Erreur d'annulation", "error"); }
-                      }} style={{width: '100%', background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '14px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px'}}>
-                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-                          Annuler et envoyer SMS auto
-                      </button>
-                      <button onClick={() => { setCancellationRobot(null); chargerTout(); setRefreshTrigger(prev => prev + 1); }} style={{width: '100%', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '14px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
-                          Gérer manuellement plus tard
+                      }} style={{flex: 2, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
+                          Envoyer ({selectedCancelRdvs.length})
                       </button>
                   </div>
               </div>
