@@ -470,6 +470,7 @@ function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [showModalAbsence, setShowModalAbsence] = useState(false);
+  const [isSubmittingAbsence, setIsSubmittingAbsence] = useState(false);
   const [ongletAbsence, setOngletAbsence] = useState('CONGES');
   const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
   const [formAbsence, setFormAbsence] = useState({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
@@ -1256,6 +1257,9 @@ function App() {
   const soumettreAbsence = async () => {
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       if(!formAbsence.date_debut || !formAbsence.date_fin) return showToast("Veuillez sélectionner les dates.", "error");
+      if(isSubmittingAbsence) return; // Empêche les clics multiples
+      
+      setIsSubmittingAbsence(true);
       try {
           const payload = { ...formAbsence, type_demande: ongletAbsence };
           const res = await fetch('https://api-salon-backend.onrender.com/api/rh/absences', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
@@ -1265,7 +1269,11 @@ function App() {
           const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
           setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
           chargerTout(); setRefreshTrigger(prev => prev + 1);
-      } catch (e) { showToast(e.message || "Erreur de soumission", "error"); }
+      } catch (e) { 
+          showToast(e.message || "Erreur de soumission", "error"); 
+      } finally {
+          setIsSubmittingAbsence(false);
+      }
   };
   const handleUploadJustificatifAbsence = (e) => {
       const file = e.target.files[0];
@@ -2006,19 +2014,25 @@ function App() {
                                               } catch(e) { showToast("Justificatif indisponible", "error"); }
                                           }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Justificatif</button>
                                       )}
-                                      <button onClick={() => {
-                                          const motif = prompt("Motif du refus (obligatoire) :");
-                                          if (motif) {
-                                              fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) })
-                                              .then(() => { showToast("Demande refusée", "success"); chargerTout(); setRefreshTrigger(prev => prev+1); })
-                                              .catch(() => showToast("Erreur", "error"));
-                                          }
-                                      }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Refuser</button>
-                                      <button onClick={() => {
-                                          fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE' }) })
-                                          .then(() => { showToast("Absence validée", "success"); chargerTout(); setRefreshTrigger(prev => prev+1); })
-                                          .catch(() => showToast("Erreur", "error"));
-                                      }} className="btn-action" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }}>Valider</button>
+                                      <button onClick={async () => {
+                                              const motif = prompt("Motif du refus (obligatoire) :");
+                                              if (motif) {
+                                                  try {
+                                                      const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) });
+                                                      await handleFetchError(res);
+                                                      showToast("Demande refusée", "success"); 
+                                                      chargerTout(); setRefreshTrigger(prev => prev+1);
+                                                  } catch(e) { showToast(e.message || "Erreur", "error"); }
+                                              }
+                                          }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Refuser</button>
+                                          <button onClick={async () => {
+                                              try {
+                                                  const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE', motif_refus: null }) });
+                                                  await handleFetchError(res);
+                                                  showToast("Absence validée", "success"); 
+                                                  chargerTout(); setRefreshTrigger(prev => prev+1);
+                                              } catch(e) { showToast(e.message || "Erreur", "error"); }
+                                          }} className="btn-action" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }}>Valider</button>
                                   </div>
                               </div>
                           ))}
@@ -2764,8 +2778,8 @@ function App() {
 
                               <textarea className="input-fournisseur" placeholder="Un commentaire (Optionnel) ?" rows="2" value={formAbsence.commentaire} onChange={e => setFormAbsence({...formAbsence, commentaire: e.target.value})} style={{ marginBottom: '24px' }} />
 
-                              <button onClick={soumettreAbsence} className="btn-action" style={{ width: '100%', background: ongletAbsence === 'ARRET_MALADIE' ? 'var(--color-danger)' : 'var(--btn-primary)' }}>
-                                  {ongletAbsence === 'ARRET_MALADIE' ? "Déclarer l'Arrêt Maladie" : "Envoyer la demande"}
+                              <button onClick={soumettreAbsence} disabled={isSubmittingAbsence} className="btn-action" style={{ width: '100%', background: ongletAbsence === 'ARRET_MALADIE' ? 'var(--color-danger)' : 'var(--btn-primary)' }}>
+                                  {isSubmittingAbsence ? "Envoi en cours..." : (ongletAbsence === 'ARRET_MALADIE' ? "Déclarer l'Arrêt Maladie" : "Envoyer la demande")}
                               </button>
                           </div>
                       </div>
