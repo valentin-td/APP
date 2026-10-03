@@ -338,6 +338,7 @@ function App() {
   const [toast, setToast] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [annulationDialog, setAnnulationDialog] = useState(null);
+  const [cancellationRobot, setCancellationRobot] = useState(null);
 
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
@@ -1275,9 +1276,17 @@ function App() {
           const data = await handleFetchError(res);
           showToast(data.message, "success");
           setShowModalAbsence(false);
+
+          if (data.conflits && data.conflits.length > 0) {
+              const empId = formAbsence.id_employe || decodeToken(token)?.id_employe;
+              const nomEmp = (employesListe || []).find(e => e.id_employe === Number(empId))?.nom || 'ce collaborateur';
+              setCancellationRobot({ rdvs: data.conflits, id_employe: empId, nom_employe: nomEmp.split(' ')[0] });
+          } else {
+              chargerTout(); setRefreshTrigger(prev => prev + 1);
+          }
+
           const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
           setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
-          chargerTout(); setRefreshTrigger(prev => prev + 1);
       } catch (e) { 
           showToast(e.message || "Erreur de soumission", "error"); 
       } finally {
@@ -3343,9 +3352,14 @@ function App() {
                                           <button onClick={async () => {
                                               try {
                                                   const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE', motif_refus: null }) });
-                                                  await handleFetchError(res);
+                                                  const data = await handleFetchError(res);
                                                   showToast("Absence validée", "success"); 
-                                                  chargerTout(); setRefreshTrigger(prev => prev+1);
+                                                  
+                                                  if (data.conflits && data.conflits.length > 0) {
+                                                      setCancellationRobot({ rdvs: data.conflits, id_employe: abs.id_employe, nom_employe: abs.nom_employe.split(' ')[0] });
+                                                  } else {
+                                                      chargerTout(); setRefreshTrigger(prev => prev+1);
+                                                  }
                                               } catch(e) { showToast(e.message || "Erreur", "error"); }
                                           }} className="btn-action" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }}>Valider</button>
                                       </div>
@@ -3868,8 +3882,38 @@ function App() {
           </div>
       )}
 
-      {annulationDialog && (
-          <div className="modal-overlay">
+      {cancellationRobot && (
+          <div className="modal-overlay" style={{ zIndex: 10000 }}>
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
+                  <div style={{color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>⚠️ Conflit d'Agenda</h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>
+                      Attention, <strong>{cancellationRobot.nom_employe}</strong> a <strong>{cancellationRobot.rdvs.length} RDV</strong> prévus pendant cette absence. Voulez-vous annuler ces rendez-vous et prévenir les clients ?
+                  </p>
+                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                      <button onClick={async () => {
+                          try {
+                              const rdvIds = cancellationRobot.rdvs.map(r => r.id_rdv);
+                              const res = await fetch('https://api-salon-backend.onrender.com/api/rdv/mass-cancel', {
+                                  method: 'POST', headers: getAuthHeaders(true),
+                                  body: JSON.stringify({ rdv_ids: rdvIds, id_employe: cancellationRobot.id_employe })
+                              });
+                              const data = await handleFetchError(res);
+                              showToast(data.message, "success");
+                              setCancellationRobot(null);
+                              chargerTout(); setRefreshTrigger(prev => prev + 1);
+                          } catch (e) { showToast(e.message || "Erreur d'annulation", "error"); }
+                      }} style={{width: '100%', background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '14px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px'}}>
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                          Annuler et envoyer SMS auto
+                      </button>
+                      <button onClick={() => { setCancellationRobot(null); chargerTout(); setRefreshTrigger(prev => prev + 1); }} style={{width: '100%', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '14px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
+                          Gérer manuellement plus tard
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
                   <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
                   <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Annuler ce paiement</h2>
