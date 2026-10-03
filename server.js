@@ -1407,13 +1407,15 @@ app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
     try {
         const absRes = await pool.query(
             `UPDATE absences_employes SET statut = $1, motif_refus = $2 WHERE id_absence = $3 AND id_salon = $4 RETURNING id_employe, date_debut, date_fin, type_demande`,
-            [statut, motif_refus, req.params.id, req.user.id_salon]
+            [statut, motif_refus || null, req.params.id, req.user.id_salon]
         );
         
         if (absRes.rowCount > 0) {
             const absence = absRes.rows[0];
+            const dDebut = new Date(absence.date_debut).toLocaleDateString('fr-FR');
+            const dFin = new Date(absence.date_fin).toLocaleDateString('fr-FR');
             const message = statut === 'VALIDE' 
-                ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${absence.date_debut.toLocaleDateString()} au ${absence.date_fin.toLocaleDateString()} ont été validés.` 
+                ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${dDebut} au ${dFin} ont été validés.` 
                 : `Votre demande a été refusée. Motif : ${motif_refus}`;
                 
             envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
