@@ -3890,13 +3890,28 @@ function App() {
           </div>
       )}
 
+      {annulationDialog && (
+          <div className="modal-overlay">
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
+                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Annuler ce paiement</h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>Cette action génère un ticket d'écriture de compensation (montant négatif) lié au ticket d'origine, conformément à la réglementation NF525. Le motif est obligatoire.</p>
+                  <textarea value={annulationDialog.motif} onChange={(e) => setAnnulationDialog({ ...annulationDialog, motif: e.target.value })} placeholder="Motif de l'annulation (ex : erreur de saisie, geste commercial...)" rows={3} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical'}} autoFocus />
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => setAnnulationDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Retour</button>
+                      <button onClick={confirmerAnnulationTicket} disabled={!annulationDialog.motif.trim()} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: annulationDialog.motif.trim() ? 'pointer' : 'not-allowed', opacity: annulationDialog.motif.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Confirmer l'annulation</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {cancellationRobot && (
           <div className="modal-overlay" style={{ zIndex: 10000 }}>
-              <div className="modal-content" style={{textAlign: 'left', maxWidth: '500px'}}>
+              <div className="modal-content" style={{textAlign: 'left', maxWidth: '500px', width: '90%'}}>
                   <div style={{color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
                       <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                   </div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px', textAlign: 'center'}}>Détection de RDV pendant l'absence</h2>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px', textAlign: 'center'}}>Détection de RDV</h2>
                   <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5', textAlign: 'center'}}>
                       <strong>{cancellationRobot.nom_employe}</strong> a <strong>{cancellationRobot.rdvs.length} RDV</strong> sur cette période. Décochez ceux que vous allez confier à un autre coiffeur, et annulez le reste.
                   </p>
@@ -3931,7 +3946,7 @@ function App() {
                                   <div style={{flex: 1}}>
                                       <div style={{fontWeight: 'bold', fontSize: '14px', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between'}}>
                                           <span>{rdv.nom_client || 'Client inconnu'}</span>
-                                          <span style={{fontSize: '12px', fontWeight: 'normal'}}>{new Date(rdv.date_heure_debut).toLocaleString('fr-FR', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
+                                          <span style={{fontSize: '12px', fontWeight: 'normal'}}>{new Date(rdv.date_heure_debut.replace('Z', '')).toLocaleString('fr-FR', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
                                       </div>
                                       <div style={{fontSize: '12px', color: hasPhone ? 'var(--text-secondary)' : 'var(--color-danger)', fontWeight: hasPhone ? 'normal' : 'bold', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px'}}>
                                           {hasPhone ? `📞 ${rdv.telephone_client} - ${rdv.prestation}` : `⚠️ Aucun numéro - Appel manuel requis`}
@@ -3966,18 +3981,6 @@ function App() {
                       }} style={{flex: 2, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
                           Envoyer ({selectedCancelRdvs.length})
                       </button>
-                  </div>
-              </div>
-          </div>
-      )}
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Annuler ce paiement</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>Cette action génère un ticket d'écriture de compensation (montant négatif) lié au ticket d'origine, conformément à la réglementation NF525. Le motif est obligatoire.</p>
-                  <textarea value={annulationDialog.motif} onChange={(e) => setAnnulationDialog({ ...annulationDialog, motif: e.target.value })} placeholder="Motif de l'annulation (ex : erreur de saisie, geste commercial...)" rows={3} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical'}} autoFocus />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setAnnulationDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Retour</button>
-                      <button onClick={confirmerAnnulationTicket} disabled={!annulationDialog.motif.trim()} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: annulationDialog.motif.trim() ? 'pointer' : 'not-allowed', opacity: annulationDialog.motif.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Confirmer l'annulation</button>
                   </div>
               </div>
           </div>
