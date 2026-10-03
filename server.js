@@ -207,6 +207,8 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
 
+    CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+
     CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS absences_employes (
         id_absence SERIAL PRIMARY KEY,
@@ -2014,12 +2016,14 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 app.get('/api/export-pdf', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     try {
-        // --- CORRECTION : Définition des dates du mois en cours ---
+        // --- CORRECTION : Définition des dates du mois en cours (Sécurisé par fuseau horaire) ---
         const today = new Date();
         const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        const dateDebutStr = firstDayOfMonth.toISOString().split('T')[0];
-        const dateFinStr = lastDayOfMonth.toISOString().split('T')[0];
+        
+        const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const dateDebutStr = formatYMD(firstDayOfMonth);
+        const dateFinStr = formatYMD(lastDayOfMonth);
 
         const configResult = await pool.query('SELECT email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : null;
@@ -2625,11 +2629,13 @@ async function executerEnvoiComptable() {
             if (shouldSend && salon.email_reception_factures && salon.mot_de_passe_app_email) {
                 const id_salon = salon.id_salon;
                 
-                // Exporter le mois PRÉCÉDENT
+                // Exporter le mois PRÉCÉDENT (Sécurisé par fuseau horaire)
                 const firstDayPrevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
                 const lastDayPrevMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-                const dateDebutStr = firstDayPrevMonth.toISOString().split('T')[0];
-                const dateFinStr = lastDayPrevMonth.toISOString().split('T')[0];
+                
+                const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                const dateDebutStr = formatYMD(firstDayPrevMonth);
+                const dateFinStr = formatYMD(lastDayPrevMonth);
 
                 const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
                 const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
