@@ -615,17 +615,17 @@ app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
 });
 
-// --- NOUVELLE ROUTE : ROBOT D'ANNULATION DE MASSE ---
+// --- ROUTE : ROBOT D'ANNULATION DE MASSE SÉLECTIVE ---
 app.post('/api/rdv/mass-cancel', verifierToken, async (req, res) => {
-    const { rdv_ids, id_employe } = req.body;
+    const { rdv_ids, id_employe, message_personnalise } = req.body;
     const id_salon = req.user.id_salon;
     if (!rdv_ids || rdv_ids.length === 0) return res.json({ message: "Aucun RDV à annuler." });
 
     try {
         const salonConfig = await pool.query('SELECT nom_salon, brevo_api_key, lien_google_maps FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const config = salonConfig.rows[0];
-        const empRes = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [id_employe]);
-        const nomEmploye = empRes.rowCount > 0 ? empRes.rows[0].nom.split(' ')[0] : 'votre coiffeur';
+
+        let countEnvoyes = 0;
 
         for (let id_rdv of rdv_ids) {
             const rdvRes = await pool.query('SELECT nom_client, telephone_client, date_heure_debut FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [id_rdv, id_salon]);
@@ -633,27 +633,31 @@ app.post('/api/rdv/mass-cancel', verifierToken, async (req, res) => {
                 const rdv = rdvRes.rows[0];
                 await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1', [id_rdv]);
                 
-                if (config.brevo_api_key && rdv.telephone_client) {
-                    const dateRdv = new Date(rdv.date_heure_debut).toLocaleDateString('fr-FR');
-                    const lien = config.lien_google_maps || 'notre site internet';
+                if (config.brevo_api_key && rdv.telephone_client && rdv.telephone_client.trim().length >= 9) {
+                    const dateRdv = new Date(rdv.date_heure_debut).toLocaleString('fr-FR', {weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit'});
                     const prenom = rdv.nom_client ? rdv.nom_client.split(' ')[0] : 'Client';
-                    const texteSms = `Bonjour ${prenom}, suite à une absence exceptionnelle, votre RDV du ${dateRdv} avec ${nomEmploye} ne pourra pas être assuré. Cliquez ici pour reprogrammer : ${lien}. L'équipe du Salon.`;
+                    const lien = config.lien_google_maps || 'notre site internet';
+                    
+                    // Remplacement des balises dynamiques
+                    let texteSms = message_personnalise || `Bonjour [Prénom], votre RDV du [Date] est annulé. Reprogrammez ici : [Lien]`;
+                    texteSms = texteSms.replace(/\[Prénom\]/gi, prenom).replace(/\[Date\]/gi, dateRdv).replace(/\[Lien\]/gi, lien);
                     
                     try {
-                        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                        fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
                             method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
-                            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: 'LeSalon', recipient: rdv.telephone_client, content: texteSms })
-                        });
+                            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.nom_salon || 'LeSalon').substring(0, 11), recipient: rdv.telephone_client, content: texteSms })
+                        }).catch(()=>{}); 
+                        countEnvoyes++;
                     } catch (e) { console.error("Erreur SMS mass-cancel:", e); }
                 }
             }
         }
         
-        envoyerNotificationPush(id_salon, { type: 'employe', id_employe }, { title: "Mise à jour Agenda", body: `Tes ${rdv_ids.length} RDV ont été annulés automatiquement par le système.`, url: '/?tab=agenda' });
+        envoyerNotificationPush(id_salon, { type: 'employe', id_employe }, { title: "Mise à jour Agenda", body: `Tes ${rdv_ids.length} RDV ont été annulés depuis le planning.`, url: '/?tab=agenda' });
         io.to(id_salon.toString()).emit('nouveauRDV');
-        res.json({ message: `${rdv_ids.length} rendez-vous annulés et SMS envoyés.` });
+        res.json({ message: `${rdv_ids.length} rendez-vous annulés (${countEnvoyes} SMS envoyés).` });
     } catch (e) {
-        res.status(500).json({ erreur: "Erreur lors de l'annulation de masse." });
+        res.status(500).json({ erreur: "Erreur lors de l'annulation." });
     }
 });
 app.get('/api/planning', verifierToken, async (req, res) => {
@@ -1398,7 +1402,6 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
     const id_employe = req.user.role === 'employe' ? req.user.id_employe : req.body.id_employe;
 
     try {
-        // --- Vérification Anti-Doublon / Chevauchement ---
         const conflit = await pool.query(
             `SELECT 1 FROM absences_employes 
              WHERE id_salon = $1 AND id_employe = $2 AND statut != 'REFUSE' 
@@ -1409,22 +1412,18 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
         if (conflit.rowCount > 0) {
             return res.status(400).json({ erreur: "Une absence ou demande est déjà enregistrée sur ces dates pour ce collaborateur." });
         }
-        // -------------------------------------------------
 
         let fileKey = null;
 
-        // S'il y a un fichier (ex: justificatif médical), on l'envoie sur Cloudflare R2
         if (fichier_base64 && nom_fichier) {
             const extension = nom_fichier.split('.').pop();
             fileKey = `salons/${id_salon}/employes/${id_employe}/absences/${Date.now()}.${extension}`;
             const buffer = Buffer.from(fichier_base64.replace(/^data:.*,/, ''), 'base64');
-
             await s3Client.send(new PutObjectCommand({
                 Bucket: process.env.R2_BUCKET_NAME, Key: fileKey, Body: buffer, ContentType: type_mime,
             }));
         }
 
-        // Si c'est un arrêt maladie, il est imposé (VALIDE direct). Si c'est un congé, il est EN_ATTENTE.
         const statutInitial = type_demande === 'ARRET_MALADIE' ? 'VALIDE' : 'EN_ATTENTE';
 
         const result = await pool.query(
@@ -1433,15 +1432,16 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
             [id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fileKey, statutInitial]
         );
 
-        // Récupérer le nom de l'employé pour les notifications
         const emp = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [id_employe]);
         const nomEmploye = emp.rows[0].nom;
 
-        // --- DÉTECTION DES CONFLITS D'AGENDA (ROBOT D'ANNULATION) ---
+        // --- DÉTECTION DÉTAILLÉE DES CONFLITS D'AGENDA ---
         let conflits = [];
         if (statutInitial === 'VALIDE') {
             const rdvs = await pool.query(
-                `SELECT id_rdv FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4`,
+                `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
+                 FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4
+                 ORDER BY date_heure_debut ASC`,
                 [id_salon, id_employe, date_debut, date_fin]
             );
             conflits = rdvs.rows;
@@ -1453,15 +1453,54 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
                 [id_salon, `URGENCE : Arrêt maladie de ${nomEmploye}`, `${nomEmploye} a déposé un arrêt maladie du ${date_debut} au ${date_fin}. Vérifiez l'agenda pour déplacer ses rendez-vous.`]
             );
             envoyerNotificationPush(id_salon, 'gerant', { title: "Arrêt Maladie", body: `${nomEmploye} est en arrêt maladie jusqu'au ${date_fin}.`, url: '/?tab=actions' });
-            res.json({ message: "Arrêt maladie enregistré. Le gérant a été notifié.", conflits });
-        
+            res.json({ message: "Arrêt maladie enregistré.", conflits });
         } else {
             envoyerNotificationPush(id_salon, 'gerant', { title: "Demande de congés", body: `${nomEmploye} a posé une demande du ${date_debut} au ${date_fin}.`, url: '/?tab=equipe' });
-            res.json({ message: "Demande de congés envoyée au gérant pour validation.", conflits });
+            res.json({ message: "Demande envoyée pour validation.", conflits });
         }
     } catch (e) {
         res.status(500).json({ erreur: "Erreur lors de l'enregistrement de l'absence." });
     }
+});
+
+// 2. Le gérant Valide ou Refuse un congé
+app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    
+    const { statut, motif_refus } = req.body;
+    try {
+        let conflits = [];
+        if (statut === 'VALIDE') {
+            const absenceResInfo = await pool.query('SELECT id_employe, date_debut, date_fin FROM absences_employes WHERE id_absence = $1', [req.params.id]);
+            if (absenceResInfo.rowCount > 0) {
+                const absInfo = absenceResInfo.rows[0];
+                const rdvs = await pool.query(
+                    `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
+                     FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4
+                     ORDER BY date_heure_debut ASC`,
+                    [req.user.id_salon, absInfo.id_employe, absInfo.date_debut, absInfo.date_fin]
+                );
+                conflits = rdvs.rows;
+            }
+        }
+
+        const absRes = await pool.query(
+            `UPDATE absences_employes SET statut = $1, motif_refus = $2 WHERE id_absence = $3 AND id_salon = $4 RETURNING id_employe, date_debut, date_fin, type_demande`,
+            [statut, motif_refus || null, req.params.id, req.user.id_salon]
+        );
+        
+        if (absRes.rowCount > 0) {
+            const absence = absRes.rows[0];
+            const dDebut = new Date(absence.date_debut).toLocaleDateString('fr-FR');
+            const dFin = new Date(absence.date_fin).toLocaleDateString('fr-FR');
+            const message = statut === 'VALIDE' 
+                ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${dDebut} au ${dFin} ont été validés.` 
+                : (motif_refus ? `Votre demande a été refusée. Motif : ${motif_refus}` : `Votre demande de congés a été refusée.`);
+                
+            envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
+        }
+        res.json({ message: `Demande passée au statut : ${statut}`, conflits });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la décision." }); }
 });
 
 // 2. Le gérant Valide ou Refuse un congé
