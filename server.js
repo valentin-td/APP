@@ -611,6 +611,47 @@ app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
 });
 
+// --- NOUVELLE ROUTE : ROBOT D'ANNULATION DE MASSE ---
+app.post('/api/rdv/mass-cancel', verifierToken, async (req, res) => {
+    const { rdv_ids, id_employe } = req.body;
+    const id_salon = req.user.id_salon;
+    if (!rdv_ids || rdv_ids.length === 0) return res.json({ message: "Aucun RDV à annuler." });
+
+    try {
+        const salonConfig = await pool.query('SELECT nom_salon, brevo_api_key, lien_google_maps FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = salonConfig.rows[0];
+        const empRes = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [id_employe]);
+        const nomEmploye = empRes.rowCount > 0 ? empRes.rows[0].nom.split(' ')[0] : 'votre coiffeur';
+
+        for (let id_rdv of rdv_ids) {
+            const rdvRes = await pool.query('SELECT nom_client, telephone_client, date_heure_debut FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [id_rdv, id_salon]);
+            if (rdvRes.rowCount > 0) {
+                const rdv = rdvRes.rows[0];
+                await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1', [id_rdv]);
+                
+                if (config.brevo_api_key && rdv.telephone_client) {
+                    const dateRdv = new Date(rdv.date_heure_debut).toLocaleDateString('fr-FR');
+                    const lien = config.lien_google_maps || 'notre site internet';
+                    const prenom = rdv.nom_client ? rdv.nom_client.split(' ')[0] : 'Client';
+                    const texteSms = `Bonjour ${prenom}, suite à une absence exceptionnelle, votre RDV du ${dateRdv} avec ${nomEmploye} ne pourra pas être assuré. Cliquez ici pour reprogrammer : ${lien}. L'équipe du Salon.`;
+                    
+                    try {
+                        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                            method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+                            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: 'LeSalon', recipient: rdv.telephone_client, content: texteSms })
+                        });
+                    } catch (e) { console.error("Erreur SMS mass-cancel:", e); }
+                }
+            }
+        }
+        
+        envoyerNotificationPush(id_salon, { type: 'employe', id_employe }, { title: "Mise à jour Agenda", body: `Tes ${rdv_ids.length} RDV ont été annulés automatiquement par le système.`, url: '/?tab=agenda' });
+        io.to(id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: `${rdv_ids.length} rendez-vous annulés et SMS envoyés.` });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lors de l'annulation de masse." });
+    }
+});
 app.get('/api/planning', verifierToken, async (req, res) => {
     const startDate = req.query.startDate; 
     const endDate = req.query.endDate;
@@ -1392,20 +1433,27 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
         const emp = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [id_employe]);
         const nomEmploye = emp.rows[0].nom;
 
+        // --- DÉTECTION DES CONFLITS D'AGENDA (ROBOT D'ANNULATION) ---
+        let conflits = [];
+        if (statutInitial === 'VALIDE') {
+            const rdvs = await pool.query(
+                `SELECT id_rdv FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4`,
+                [id_salon, id_employe, date_debut, date_fin]
+            );
+            conflits = rdvs.rows;
+        }
+
         if (type_demande === 'ARRET_MALADIE') {
-            // Action 1: On bloque l'agenda en créant une tâche "Urgente" pour le gérant
             await pool.query(
                 "INSERT INTO taches_actions (id_salon, titre, description, source) VALUES ($1, $2, $3, 'IA')",
                 [id_salon, `URGENCE : Arrêt maladie de ${nomEmploye}`, `${nomEmploye} a déposé un arrêt maladie du ${date_debut} au ${date_fin}. Vérifiez l'agenda pour déplacer ses rendez-vous.`]
             );
-            // Action 2: Notification Push instantanée
             envoyerNotificationPush(id_salon, 'gerant', { title: "Arrêt Maladie", body: `${nomEmploye} est en arrêt maladie jusqu'au ${date_fin}.`, url: '/?tab=actions' });
-            res.json({ message: "Arrêt maladie enregistré. Le gérant a été notifié." });
+            res.json({ message: "Arrêt maladie enregistré. Le gérant a été notifié.", conflits });
         
         } else {
-            // C'est une demande de congé : Notification simple au gérant
             envoyerNotificationPush(id_salon, 'gerant', { title: "Demande de congés", body: `${nomEmploye} a posé une demande du ${date_debut} au ${date_fin}.`, url: '/?tab=equipe' });
-            res.json({ message: "Demande de congés envoyée au gérant pour validation." });
+            res.json({ message: "Demande de congés envoyée au gérant pour validation.", conflits });
         }
     } catch (e) {
         res.status(500).json({ erreur: "Erreur lors de l'enregistrement de l'absence." });
@@ -1418,6 +1466,19 @@ app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
     
     const { statut, motif_refus } = req.body; // statut = 'VALIDE' ou 'REFUSE'
     try {
+        let conflits = [];
+        if (statut === 'VALIDE') {
+            const absenceResInfo = await pool.query('SELECT id_employe, date_debut, date_fin FROM absences_employes WHERE id_absence = $1', [req.params.id]);
+            if (absenceResInfo.rowCount > 0) {
+                const absInfo = absenceResInfo.rows[0];
+                const rdvs = await pool.query(
+                    `SELECT id_rdv FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4`,
+                    [req.user.id_salon, absInfo.id_employe, absInfo.date_debut, absInfo.date_fin]
+                );
+                conflits = rdvs.rows;
+            }
+        }
+
         const absRes = await pool.query(
             `UPDATE absences_employes SET statut = $1, motif_refus = $2 WHERE id_absence = $3 AND id_salon = $4 RETURNING id_employe, date_debut, date_fin, type_demande`,
             [statut, motif_refus || null, req.params.id, req.user.id_salon]
@@ -1433,7 +1494,7 @@ app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
                 
             envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
         }
-        res.json({ message: `Demande passée au statut : ${statut}` });
+        res.json({ message: `Demande passée au statut : ${statut}`, conflits });
     } catch (e) { res.status(500).json({ erreur: "Erreur lors de la décision." }); }
 });
 
