@@ -4,7 +4,7 @@ require('dotenv').config();
 console.log("Étape 2 : Chargement des modules...");
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const cors = require('cors');
+const cors = require('cors');x
 const { Pool } = require('pg'); 
 const PDFDocument = require('pdfkit');
 const nodemailer = require('nodemailer');
@@ -1440,7 +1440,9 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
         if (statutInitial === 'VALIDE') {
             const rdvs = await pool.query(
                 `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
-                 FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut::timestamp) >= $3::date AND DATE(date_heure_debut::timestamp) <= $4::date
+                 FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 
+                 AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') >= $3 
+                 AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') <= $4
                  ORDER BY date_heure_debut ASC`,
                 [id_salon, id_employe, date_debut, date_fin]
             );
@@ -1463,6 +1465,7 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
     }
 });
 
+
 // 2. Le gérant Valide ou Refuse un congé
 app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
@@ -1471,54 +1474,16 @@ app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
     try {
         let conflits = [];
         if (statut === 'VALIDE') {
-            const absenceResInfo = await pool.query('SELECT id_employe, date_debut, date_fin FROM absences_employes WHERE id_absence = $1', [req.params.id]);
+            const absenceResInfo = await pool.query("SELECT id_employe, TO_CHAR(date_debut, 'YYYY-MM-DD') as date_debut_str, TO_CHAR(date_fin, 'YYYY-MM-DD') as date_fin_str FROM absences_employes WHERE id_absence = $1", [req.params.id]);
             if (absenceResInfo.rowCount > 0) {
                 const absInfo = absenceResInfo.rows[0];
                 const rdvs = await pool.query(
                     `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
-                     FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut) >= $3 AND DATE(date_heure_debut) <= $4
+                     FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 
+                     AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') >= $3 
+                     AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') <= $4
                      ORDER BY date_heure_debut ASC`,
-                    [req.user.id_salon, absInfo.id_employe, absInfo.date_debut, absInfo.date_fin]
-                );
-                conflits = rdvs.rows;
-            }
-        }
-
-        const absRes = await pool.query(
-            `UPDATE absences_employes SET statut = $1, motif_refus = $2 WHERE id_absence = $3 AND id_salon = $4 RETURNING id_employe, date_debut, date_fin, type_demande`,
-            [statut, motif_refus || null, req.params.id, req.user.id_salon]
-        );
-        
-        if (absRes.rowCount > 0) {
-            const absence = absRes.rows[0];
-            const dDebut = new Date(absence.date_debut).toLocaleDateString('fr-FR');
-            const dFin = new Date(absence.date_fin).toLocaleDateString('fr-FR');
-            const message = statut === 'VALIDE' 
-                ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${dDebut} au ${dFin} ont été validés.` 
-                : (motif_refus ? `Votre demande a été refusée. Motif : ${motif_refus}` : `Votre demande de congés a été refusée.`);
-                
-            envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
-        }
-        res.json({ message: `Demande passée au statut : ${statut}`, conflits });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la décision." }); }
-});
-
-// 2. Le gérant Valide ou Refuse un congé
-app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
-    
-    const { statut, motif_refus } = req.body; // statut = 'VALIDE' ou 'REFUSE'
-    try {
-        let conflits = [];
-        if (statut === 'VALIDE') {
-            const absenceResInfo = await pool.query('SELECT id_employe, date_debut, date_fin FROM absences_employes WHERE id_absence = $1', [req.params.id]);
-            if (absenceResInfo.rowCount > 0) {
-                const absInfo = absenceResInfo.rows[0];
-                const rdvs = await pool.query(
-                    `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
-                     FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 AND DATE(date_heure_debut::timestamp) >= $3::date AND DATE(date_heure_debut::timestamp) <= $4::date
-                     ORDER BY date_heure_debut ASC`,
-                    [req.user.id_salon, absInfo.id_employe, absInfo.date_debut, absInfo.date_fin]
+                    [req.user.id_salon, absInfo.id_employe, absInfo.date_debut_str, absInfo.date_fin_str]
                 );
                 conflits = rdvs.rows;
             }
