@@ -1353,6 +1353,19 @@ app.post('/api/rh/absences', verifierToken, async (req, res) => {
     const id_employe = req.user.role === 'employe' ? req.user.id_employe : req.body.id_employe;
 
     try {
+        // --- Vérification Anti-Doublon / Chevauchement ---
+        const conflit = await pool.query(
+            `SELECT 1 FROM absences_employes 
+             WHERE id_salon = $1 AND id_employe = $2 AND statut != 'REFUSE' 
+             AND date_debut <= $4 AND date_fin >= $3`,
+            [id_salon, id_employe, date_debut, date_fin]
+        );
+        
+        if (conflit.rowCount > 0) {
+            return res.status(400).json({ erreur: "Une absence ou demande est déjà enregistrée sur ces dates pour ce collaborateur." });
+        }
+        // -------------------------------------------------
+
         let fileKey = null;
 
         // S'il y a un fichier (ex: justificatif médical), on l'envoie sur Cloudflare R2
@@ -1702,6 +1715,16 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             const empRes = await clientDB.query("SELECT id_employe FROM employes WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1", [`%${donnees.nom_employe}%`, id_salon]);
             if (empRes.rowCount === 0) throw new Error(`Collaborateur introuvable : ${donnees.nom_employe}`);
             const idEmploye = empRes.rows[0].id_employe;
+
+            // --- Vérification Anti-Doublon / Chevauchement pour l'IA ---
+            const conflit = await clientDB.query(
+                `SELECT 1 FROM absences_employes 
+                 WHERE id_salon = $1 AND id_employe = $2 AND statut != 'REFUSE' 
+                 AND date_debut <= $4 AND date_fin >= $3`,
+                [id_salon, idEmploye, donnees.date_debut, donnees.date_fin]
+            );
+            if (conflit.rowCount > 0) throw new Error("Cet employé a déjà une absence enregistrée sur cette période.");
+            // ------------------------------------------------------------
 
             const statutInitial = donnees.type_demande === 'ARRET_MALADIE' ? 'VALIDE' : 'EN_ATTENTE';
             const nature = donnees.type_demande === 'ARRET_MALADIE' ? 'MALADIE_ORDINAIRE' : 'CP';
