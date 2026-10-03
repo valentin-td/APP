@@ -471,6 +471,7 @@ function App() {
   const [showModalRdv, setShowModalRdv] = useState(false);
   const [showModalAbsence, setShowModalAbsence] = useState(false);
   const [isSubmittingAbsence, setIsSubmittingAbsence] = useState(false);
+  const [expandedAbsenceDate, setExpandedAbsenceDate] = useState(null);
   const [ongletAbsence, setOngletAbsence] = useState('CONGES');
   const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
   const [formAbsence, setFormAbsence] = useState({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
@@ -2538,7 +2539,34 @@ function App() {
 
                                       return (
                                           <div key={indexJour} className="day-column" style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}>
-                                              {absencesDuJour.map(abs => {
+                                              {/* ESPACE GÉRANT / SALON : L'Accordéon discret collé en haut */}
+                                              {role !== 'employe' && absencesDuJour.length > 0 && (
+                                                  <div style={{ position: 'sticky', top: '4px', left: '4px', right: '4px', zIndex: 20, margin: '4px' }}>
+                                                      <div onClick={() => setExpandedAbsenceDate(expandedAbsenceDate === dateStringJour ? null : dateStringJour)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: expandedAbsenceDate === dateStringJour ? '6px 6px 0 0' : '6px', padding: '6px 8px', fontSize: '11px', fontWeight: 'bold', color: 'var(--text-main)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)', transition: 'all 0.2s' }}>
+                                                          <span style={{display: 'flex', alignItems: 'center', gap: '4px'}}><span style={{color: 'var(--color-danger)'}}>⚠️</span> {absencesDuJour.length} Absence{absencesDuJour.length > 1 ? 's' : ''}</span>
+                                                          <span style={{color: 'var(--text-secondary)'}}>{expandedAbsenceDate === dateStringJour ? '▲' : '▼'}</span>
+                                                      </div>
+                                                      {expandedAbsenceDate === dateStringJour && (
+                                                          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderTop: 'none', borderRadius: '0 0 6px 6px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '6px', boxShadow: 'var(--shadow-sm)', maxHeight: '200px', overflowY: 'auto' }}>
+                                                              {absencesDuJour.map(abs => {
+                                                                  const isMaladie = abs.type_demande === 'ARRET_MALADIE';
+                                                                  const isAttente = abs.statut === 'EN_ATTENTE';
+                                                                  const bgStyle = isMaladie ? 'var(--bg-danger)' : (isAttente ? 'var(--bg-hover)' : 'var(--bg-info)');
+                                                                  const colorStyle = isMaladie ? 'var(--color-danger)' : (isAttente ? 'var(--text-secondary)' : 'var(--color-info)');
+                                                                  return (
+                                                                      <div key={`abs-mini-${abs.id_absence}`} style={{ fontSize: '11px', padding: '6px', background: bgStyle, color: colorStyle, borderRadius: '4px', display: 'flex', flexDirection: 'column' }}>
+                                                                          <strong style={{color: 'var(--text-main)'}}>{abs.nom_employe}</strong>
+                                                                          <span>{isMaladie ? 'Arrêt Maladie' : (isAttente ? 'Congé (Attente)' : 'Congé Validé')}</span>
+                                                                      </div>
+                                                                  );
+                                                              })}
+                                                          </div>
+                                                      )}
+                                                  </div>
+                                              )}
+
+                                              {/* ESPACE EMPLOYÉ : Le bloc d'origine en overlay */}
+                                              {role === 'employe' && absencesDuJour.map(abs => {
                                                   const ECHELLE_HEURE = 80;
                                                   let startH = heureDebutAgenda;
                                                   let endH = heureFinAgenda;
