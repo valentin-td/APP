@@ -1707,6 +1707,8 @@ function App() {
                               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
                           ) : modalIA.type_tache === 'RDV' ? (
                               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          ) : modalIA.type_tache === 'ABSENCE' ? (
+                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 2v4M8 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9 14l2 2 4-4"/></svg>
                           ) : (
                               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                           )}
@@ -1714,10 +1716,10 @@ function App() {
                       <div style={{flex: 1, minWidth: 0}}>
                           <span className="badge-discret" style={{background: 'var(--bg-app)', color: 'var(--text-secondary)', marginBottom: '6px'}}>Détection automatique</span>
                           <h2 style={{margin: '2px 0 2px 0', color: 'var(--text-main)', fontSize: '17px'}}>
-                              {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : "Nouvelle action détectée"}
+                              {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : modalIA.type_tache === 'ABSENCE' ? "Absence détectée" : "Nouvelle action détectée"}
                           </h2>
                           <p style={{fontSize: '13px', color: 'var(--text-secondary)', margin: 0}}>
-                              {modalIA.type_tache === 'STOCK' ? "Extrait d'une facture reçue par e-mail" : modalIA.type_tache === 'RDV' ? "Extrait d'un e-mail de réservation" : "Extrait d'un e-mail entrant"}
+                              {modalIA.type_tache === 'STOCK' ? "Extrait d'une facture reçue par e-mail" : modalIA.type_tache === 'RDV' ? "Extrait d'un e-mail de réservation" : modalIA.type_tache === 'ABSENCE' ? "Un collaborateur a signalé une absence" : "Extrait d'un e-mail entrant"}
                           </p>
                       </div>
                   </div>
@@ -1773,6 +1775,37 @@ function App() {
                           </>
                       )}
 
+                      {modalIA.type_tache === 'ABSENCE' && (
+                          <>
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Employé concerné</label>
+                                      <input className="input-fournisseur" value={modalIA.donnees?.nom_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_employe: e.target.value}})} />
+                                  </div>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Type</label>
+                                      <select className="input-fournisseur" value={modalIA.donnees?.type_demande || 'CONGES'} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, type_demande: e.target.value}})}>
+                                          <option value="CONGES">Congés (À valider)</option>
+                                          <option value="ARRET_MALADIE">Arrêt Maladie (Imposé)</option>
+                                      </select>
+                                  </div>
+                              </div>
+                              
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Du</label>
+                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_debut: e.target.value}})} />
+                                  </div>
+                                  <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Au</label>
+                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_fin || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_fin: e.target.value}})} />
+                                  </div>
+                              </div>
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Commentaire extrait</label>
+                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.commentaire || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, commentaire: e.target.value}})} />
+                          </>
+                      )}
+
                       {modalIA.type_tache === 'ACTION' && (
                           <>
                               <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Action requise détectée</label>
@@ -1793,7 +1826,7 @@ function App() {
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => ignorerTacheIA(modalIA)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Ignorer</button>
                       <button onClick={() => validerTacheIA(modalIA)} className="btn-action" style={{flex: 2}}>
-                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : modalIA.type_tache === 'RDV' ? "Ajouter à l'Agenda" : "Ajouter au Centre d'Action"}
+                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : modalIA.type_tache === 'RDV' ? "Ajouter à l'Agenda" : modalIA.type_tache === 'ABSENCE' ? "Enregistrer l'absence" : "Ajouter au Centre d'Action"}
                       </button>
                   </div>
               </div>
