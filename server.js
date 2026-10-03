@@ -1787,7 +1787,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             ORDER BY t.date_creation ASC
         `, paramsVentes);
 
-        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'${filtreEmploye}`, paramsVentes);
+        const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
         // Clients reçus, commission et produits vendus (bilan individuel employé, ou salon entier pour le gérant)
