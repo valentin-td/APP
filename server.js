@@ -522,6 +522,8 @@ legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, node
 app.post('/api/creer-checkout', async (req, res) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; 
+    const { plan_choisi, cycle_choisi } = req.body || {};
+    
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token invalide." });
@@ -537,9 +539,25 @@ app.post('/api/creer-checkout', async (req, res) => {
                 customerId = customer.id;
                 await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
             }
+
+            // --- MAPPING DES PRIX STRIPE DEPUIS RENDER ---
+            const planKey = `${plan_choisi || 'PREMIUM'}_${cycle_choisi === 'year' ? 'AN' : 'MOIS'}`;
+            const stripePrices = {
+                'ESSENTIEL_MOIS': process.env.PRICE_ESSENTIEL_MOIS,
+                'ESSENTIEL_AN': process.env.PRICE_ESSENTIEL_AN,
+                'PRO_MOIS': process.env.PRICE_PRO_MOIS,
+                'PRO_AN': process.env.PRICE_PRO_AN,
+                'PREMIUM_MOIS': process.env.PRICE_PREMIUM_MOIS,
+                'PREMIUM_AN': process.env.PRICE_PREMIUM_AN
+            };
+            // Si on ne trouve pas la clé, on sécurise sur le Premium Mensuel par défaut
+            const priceId = stripePrices[planKey] || process.env.PRICE_PREMIUM_MOIS || 'price_1UG3bh10YWspHc2C8J2bmXL0';
+            
             const session = await stripe.checkout.sessions.create({
               customer: customerId, payment_method_types: process.env.STRIPE_SEPA === 'oui' ? ['card', 'sepa_debit'] : ['card'],
-              line_items: [{ price: 'price_1UG3bh10YWspHc2C8J2bmXL0', quantity: 1 }], mode: 'subscription',
+              line_items: [{ price: priceId, quantity: 1 }], mode: 'subscription',
+              // On glisse le plan choisi dans les valises pour le webhook au retour !
+              metadata: { id_salon: user.id_salon.toString(), plan_choisi: plan_choisi || 'PREMIUM', frequence: cycle_choisi === 'year' ? 'ANNUEL' : 'MENSUEL' },
               success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
             });
             res.json({ url: session.url });
@@ -579,10 +597,28 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
     catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
     
     if (event.type === 'checkout.session.completed') {
-        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', ['actif', event.data.object.subscription, event.data.object.customer]);
+        const session = event.data.object;
+        const idSalon = session.metadata?.id_salon;
+        const planChoisi = session.metadata?.plan_choisi || 'PREMIUM';
+        const frequence = session.metadata?.frequence || 'MENSUEL';
+        
+        // 1. On active le statut de paiement
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', ['actif', session.subscription, session.customer]);
+        
+        // 2. On met à jour les privilèges du salon (ESSENTIEL/PRO/PREMIUM)
+        if (idSalon) {
+            await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [planChoisi, frequence, idSalon]);
+        }
     }
     if (event.type === 'customer.subscription.deleted') {
-         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', ['inactif', event.data.object.id]);
+        const session = event.data.object;
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', ['inactif', session.id]);
+        
+        // On rétrograde le salon pour éviter qu'il garde l'accès Premium s'il ne paye plus
+        const userQuery = await pool.query('SELECT id_salon FROM utilisateurs WHERE _subscription_id = $1', [session.id]);
+        if (userQuery.rowCount > 0) {
+            await pool.query("UPDATE configuration_salon SET plan_actuel = 'ESSENTIEL' WHERE id_salon = $1", [userQuery.rows[0].id_salon]);
+        }
     }
     res.json({received: true});
 });
