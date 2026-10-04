@@ -1428,7 +1428,57 @@ app.put('/api/catalogue/:id/nom', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur lors du renommage." }); }
 });
 
-app.get('/api/stocks', verifierToken, async (req, res) => { try { const stockResult = await pool.query(`SELECT id_article, nom, stock_actuel, seuil_alerte, type_article FROM catalogue WHERE id_salon = $1 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') ORDER BY nom ASC`, [req.user.id_salon]); res.json(stockResult.rows); } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }});
+app.get('/api/stocks', verifierToken, async (req, res) => {
+    try {
+        const stockResult = await pool.query(`
+            WITH ConsommationDirecte AS (
+                SELECT lt.id_article, SUM(lt.quantite) as qte
+                FROM lignes_ticket lt
+                JOIN tickets t ON t.id_ticket = lt.id_ticket
+                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
+                  AND t.date_creation >= NOW() - INTERVAL '30 days'
+                GROUP BY lt.id_article
+            ),
+            ConsommationRecettes AS (
+                SELECT ra.id_article, SUM(ra.quantite_necessaire * lt.quantite) as qte
+                FROM lignes_ticket lt
+                JOIN tickets t ON t.id_ticket = lt.id_ticket
+                JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(lt.nom_article_snapshot)
+                JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
+                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
+                  AND t.date_creation >= NOW() - INTERVAL '30 days'
+                GROUP BY ra.id_article
+            ),
+            ConsommationTotale AS (
+                SELECT id_article, SUM(qte) as total_30j FROM (
+                    SELECT * FROM ConsommationDirecte UNION ALL SELECT * FROM ConsommationRecettes
+                ) x GROUP BY id_article
+            )
+            SELECT c.id_article, c.nom, c.stock_actuel, c.seuil_alerte, c.type_article,
+                   COALESCE(ct.total_30j, 0) as consommation_30j
+            FROM catalogue c
+            LEFT JOIN ConsommationTotale ct ON ct.id_article = c.id_article
+            WHERE c.id_salon = $1 AND c.type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE')
+            ORDER BY c.nom ASC
+        `, [req.user.id_salon]);
+
+        const stocksAvecTendance = stockResult.rows.map(p => {
+            const vitesseJour = parseFloat(p.consommation_30j) / 30;
+            const stockActuel = parseFloat(p.stock_actuel);
+            let joursRestants = null;
+            let dateRuptureProjetee = null;
+            if (vitesseJour > 0) {
+                joursRestants = Math.floor(stockActuel / vitesseJour);
+                const d = new Date();
+                d.setDate(d.getDate() + joursRestants);
+                dateRuptureProjetee = d.toISOString().slice(0, 10);
+            }
+            return { ...p, vitesse_jour: Math.round(vitesseJour * 100) / 100, jours_restants: joursRestants, date_rupture_prevue: dateRuptureProjetee };
+        });
+
+        res.json(stocksAvecTendance);
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }
+});
 
 app.put('/api/stocks/:id', verifierToken, async (req, res) => {
     const nouveauStock = parseInt(req.body.nouveau_stock);
