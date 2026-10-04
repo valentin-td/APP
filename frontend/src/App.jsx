@@ -1389,19 +1389,29 @@ function App() {
       } catch(e) { showToast("Erreur lors de la suppression.", "error"); }
   };
 
+  const [zDialogOuvert, setZDialogOuvert] = useState(false);
+  const [zEmployeSelect, setZEmployeSelect] = useState('');
+
   const demanderZDeCaisse = () => {
-      setConfirmDialog({ titre: "Clôture Journalière (Z)", message: "Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées de manière irréversible selon la loi NF525.", btnTexte: "Générer le Z", action: executerZDeCaisse });
+      if (role === 'gerant') {
+          setConfirmDialog({ titre: "Clôture Journalière (Z)", message: "Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées de manière irréversible selon la loi NF525.", btnTexte: "Générer le Z", action: () => executerZDeCaisse('Gérant') });
+      } else {
+          setZDialogOuvert(true);
+      }
   };
-  const executerZDeCaisse = async () => {
-      if(isOffline || !navigator.onLine) { setConfirmDialog(null); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
+
+  const executerZDeCaisse = async (employeNom) => {
+      if(isOffline || !navigator.onLine) { setConfirmDialog(null); setZDialogOuvert(false); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
       setConfirmDialog(null);
+      setZDialogOuvert(false);
       const enAttente = await localforage.getItem('offline_tickets') || [];
       if (enAttente.length > 0) { await syncOfflineTickets(); const reste = await localforage.getItem('offline_tickets') || []; if (reste.length > 0) return showToast(`${reste.length} ticket(s) hors-ligne à synchroniser avant la clôture.`, "error"); }
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders() });
+          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ferme_par: employeNom }) });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
           setClotureFaiteAujourdhui(true); // le bandeau de rappel disparaît immédiatement
+          setZEmployeSelect('');
       } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
   };
 
@@ -3940,6 +3950,28 @@ function App() {
       </div>
       
       {/* --- MODALES GLOBALES --- */}
+      {zDialogOuvert && (
+          <div className="modal-overlay" style={{ zIndex: 100000 }}>
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px', paddingBottom: '30px'}}>
+                  <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  </div>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Clôture Journalière (Z)</h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>Sélectionnez la personne responsable de la fermeture de la caisse ce soir.</p>
+                  
+                  <select className="input-fournisseur" value={zEmployeSelect} onChange={e => setZEmployeSelect(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}}>
+                      <option value="">-- Sélectionnez votre nom --</option>
+                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
+                  </select>
+
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => { setZDialogOuvert(false); setZEmployeSelect(''); }} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
+                      <button onClick={() => executerZDeCaisse(zEmployeSelect)} disabled={!zEmployeSelect} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: zEmployeSelect ? 'pointer' : 'not-allowed', opacity: zEmployeSelect ? 1 : 0.5, transition: 'all 0.15s'}}>Générer le Z</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {confirmDialog && (
           <div className="modal-overlay">
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
