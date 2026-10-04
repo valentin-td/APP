@@ -2190,6 +2190,7 @@ function App() {
                   onEnablePush={activerNotificationsPush}
                   photoUrl={(employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe)?.photo_url}
                   onUploadPhoto={modifierMaPhoto}
+                  employesListe={employesListe}
                 />
               )}
               
