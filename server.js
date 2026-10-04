@@ -664,6 +664,92 @@ app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
 });
 
+// =========================================================================
+// --- EXPORT ICAL (SYNCHRONISATION PLANITY / EXTERNE) ---
+// =========================================================================
+app.get('/api/ical/:id_salon/:id_employe.ics', async (req, res) => {
+    const { id_salon, id_employe } = req.params;
+    try {
+        const empRes = await pool.query('SELECT nom FROM employes WHERE id_salon = $1 AND id_employe = $2', [id_salon, id_employe]);
+        if (empRes.rowCount === 0) return res.status(404).send("Employé introuvable");
+
+        const nomEmploye = empRes.rows[0].nom;
+
+        // RDVs futurs et passés récents
+        const rdvs = await pool.query(
+            `SELECT id_rdv, date_heure_debut, duree_minutes 
+             FROM rendez_vous 
+             WHERE id_salon = $1 AND id_employe = $2 AND date_heure_debut >= NOW() - INTERVAL '30 days'`,
+            [id_salon, id_employe]
+        );
+
+        // Absences (Congés, Maladie)
+        const absences = await pool.query(
+            `SELECT id_absence, date_debut, date_fin 
+             FROM absences_employes 
+             WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND date_fin >= CURRENT_DATE - INTERVAL '30 days'`,
+            [id_salon, id_employe]
+        );
+
+        const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+
+        // Fonction de formatage au format iCal (YYYYMMDDThhmmssZ)
+        const formatICSDate = (date) => date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        
+        // Pour les absences (Jours entiers), le format est YYYYMMDD
+        const formatICSAllDay = (dateStr, addDays = 0) => {
+            const d = new Date(dateStr);
+            d.setDate(d.getDate() + addDays);
+            return d.toISOString().split('T')[0].replace(/-/g, '');
+        };
+
+        let icsContent = "BEGIN:VCALENDAR\r\n";
+        icsContent += "VERSION:2.0\r\n";
+        icsContent += `PRODID:-//STACK//Agenda ${nomEmploye}//FR\r\n`;
+        icsContent += "CALSCALE:GREGORIAN\r\n";
+        icsContent += "METHOD:PUBLISH\r\n";
+        icsContent += `X-WR-CALNAME:STACK - ${nomEmploye}\r\n`;
+        icsContent += "X-WR-TIMEZONE:Europe/Paris\r\n";
+
+        // Ajout des Créneaux RDV
+        for (let rdv of rdvs.rows) {
+            const start = new Date(rdv.date_heure_debut);
+            const end = new Date(start.getTime() + ((rdv.duree_minutes + tempsNettoyage) * 60000));
+            
+            icsContent += "BEGIN:VEVENT\r\n";
+            icsContent += `UID:rdv-${rdv.id_rdv}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `DTSTART:${formatICSDate(start)}\r\n`;
+            icsContent += `DTEND:${formatICSDate(end)}\r\n`;
+            icsContent += "SUMMARY:Indisponible (STACK)\r\n";
+            icsContent += "STATUS:CONFIRMED\r\n";
+            icsContent += "END:VEVENT\r\n";
+        }
+
+        // Ajout des Absences
+        for (let abs of absences.rows) {
+            icsContent += "BEGIN:VEVENT\r\n";
+            icsContent += `UID:abs-${abs.id_absence}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `DTSTART;VALUE=DATE:${formatICSAllDay(abs.date_debut, 0)}\r\n`;
+            icsContent += `DTEND;VALUE=DATE:${formatICSAllDay(abs.date_fin, 1)}\r\n`; // Fin exclusive en iCal (+1 jour)
+            icsContent += "SUMMARY:Absence (STACK)\r\n";
+            icsContent += "TRANSP:OPAQUE\r\n";
+            icsContent += "END:VEVENT\r\n";
+        }
+
+        icsContent += "END:VCALENDAR\r\n";
+
+        res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="agenda-${id_employe}.ics"`);
+        res.send(icsContent);
+
+    } catch (err) {
+        res.status(500).send("Erreur génération iCal");
+    }
+});
+
 // --- ROUTE : ROBOT D'ANNULATION DE MASSE SÉLECTIVE ---
 app.post('/api/rdv/mass-cancel', verifierToken, async (req, res) => {
     const { rdv_ids, id_employe, message_personnalise } = req.body;
