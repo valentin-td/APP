@@ -306,7 +306,7 @@ case 'tpe': return (<>
                                   </div>
                                   <button onClick={(e) => { 
                                       navigator.clipboard.writeText(icalUrl); 
-                                      const old = e.target.innerText; e.target.innerText = 'Copié ✅'; 
+                                      const old = e.target.innerText; e.target.innerText = 'Copié'; 
                                       setTimeout(() => { e.target.innerText = old; }, 2000); 
                                   }} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>
                                       Copier le lien
