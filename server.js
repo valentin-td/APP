@@ -1693,7 +1693,7 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 // =========================================================================
 const PROMPT_SYSTEME_IA = `Tu es un assistant IA pour un salon de coiffure. Analyse cet email et extrais les donnees en JSON strict.
 CAS 1 - STOCK : Si le texte parle de livraison, commande, achat, facture ou réassort de produits. -> Renvoie {"type": "STOCK", "donnees": {"nom_produit": "nom du produit", "quantite": entier, "reference": ""}}
-CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe, couleur...", "date_heure": "YYYY-MM-DDTHH:MM"}}
+CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe, couleur...", "date_heure": "YYYY-MM-DDTHH:MM", "duree_minutes": 30}} (Cherche une durée en minutes ou déduis-la d'une heure de fin. Sinon mets null)
 CAS 4 - URGENCES / FACTURES : Si le texte est une facture à payer, une relance, ou une action requise (impôts, URSSAF, EDF...). -> Renvoie {"type": "ACTION", "donnees": {"titre": "Payer EDF", "description": "Facture numéro XYZ...", "date_echeance": "YYYY-MM-DD"}}
 CAS 5 - ABSENCES : Si un employé signale qu'il sera absent (arrêt maladie, demande de congé, RTT). -> Renvoie {"type": "ABSENCE", "donnees": {"nom_employe": "prénom ou nom", "type_demande": "ARRET_MALADIE ou CONGES", "date_debut": "YYYY-MM-DD", "date_fin": "YYYY-MM-DD", "commentaire": "raison courte de l'absence"}}
 CAS 3 - AUTRE : Pour tout le reste (pubs, spam, etc.) -> Renvoie {"type": "NONE"}`;
@@ -1750,6 +1750,7 @@ async function analyserEmailAvecIA(sujet, texte) {
                     telephone: analyse.donnees.telephone ? String(analyse.donnees.telephone).replace(/[^\d+]/g, '').substring(0, 20) : '',
                     prestation: analyse.donnees.prestation ? String(analyse.donnees.prestation).trim().substring(0, 100) : 'Prestation à définir',
                     date_heure_debut: analyse.donnees.date_heure || '',
+                    duree_minutes: analyse.donnees.duree_minutes ? parseInt(analyse.donnees.duree_minutes) : null,
                     id_employe: ''
                 }
             }];
@@ -1817,10 +1818,11 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             
             const rawEmployeId = parseInt(donnees.id_employe);
             const idEmploye = isNaN(rawEmployeId) ? null : rawEmployeId;
+            const dureeFinale = parseInt(donnees.duree_minutes) || 30;
             
             await clientDB.query(
-                `INSERT INTO rendez_vous (id_salon, nom_client, telephone_client, prestation, date_heure_debut, id_employe, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, 30)`, 
-                [id_salon, donnees.nom_client, donnees.telephone, donnees.prestation, datetime, idEmploye]
+                `INSERT INTO rendez_vous (id_salon, nom_client, telephone_client, prestation, date_heure_debut, id_employe, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
+                [id_salon, donnees.nom_client, donnees.telephone, donnees.prestation, datetime, idEmploye, dureeFinale]
             );
             
             if (donnees.telephone && donnees.telephone.trim() !== '') {
