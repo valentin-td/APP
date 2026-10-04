@@ -210,6 +210,7 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS date_cloture DATE;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ferme_par VARCHAR(100) DEFAULT 'Non spécifié';
 
     CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 
@@ -1179,6 +1180,7 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
+    const { ferme_par } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
@@ -1222,8 +1224,8 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             .digest('hex');
 
         await clientDB.query(
-            'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent) VALUES ($1, $2, $3, $4, $5, $6)',
-            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent]
+            'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant']
         );
 
         await enregistrerJET(id_salon, 'CLOTURE_Z', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
@@ -2108,6 +2110,9 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
+        const clotureRes = await pool.query(`SELECT ferme_par FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
+        const cloturePar = clotureRes.rowCount > 0 ? clotureRes.rows[0].ferme_par : 'Non spécifié';
+
         // Clients reçus, commission et produits vendus (bilan individuel employé, ou salon entier pour le gérant)
         const filtreEmployeCommissions = estEmploye ? ' AND c.id_employe = $3' : '';
         const paramsStats = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
@@ -2171,10 +2176,11 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             doc.moveDown(0.5);
         };
 
-        // --- SECTION : RÉCAPITULATIF FINANCIER ---
+   
         // --- SECTION : RÉCAPITULATIF FINANCIER ---
         drawSectionHeader(estEmploye ? 'Mon Récapitulatif' : 'Récapitulatif Global');
         drawTableRow('', 'Total Encaissé', `${caTotal.toFixed(2)} €`, false, true);
+        if (!estEmploye) drawTableRow('', 'Clôturé par', cloturePar, false, true);
         drawTableRow('', estEmploye ? 'Clients servis' : 'Clients reçus', `${nbClients}`, false, true);
         drawTableRow('', 'Produits vendus', `${nbProduitsVendus}`, false, true);
         if (estEmploye) drawTableRow('', 'Ma commission du jour', `${commissionTotale.toFixed(2)} €`, false, true);
@@ -2922,17 +2928,75 @@ async function executerEnvoiComptable() {
     }
 }
 
+async function executerClotureFantome() {
+    const clientDB = await pool.connect();
+    try {
+        const salons = await clientDB.query("SELECT id_salon FROM configuration_salon");
+        for (let s of salons.rows) {
+            const id_salon = s.id_salon;
+            
+            // On cherche tous les jours (avant aujourd'hui) ayant des tickets mais aucune clôture correspondante
+            const joursNonClotures = await clientDB.query(`
+                SELECT DISTINCT DATE(t.date_creation) as jour
+                FROM tickets t
+                WHERE t.id_salon = $1 
+                  AND DATE(t.date_creation) < CURRENT_DATE
+                  AND NOT EXISTS (
+                      SELECT 1 FROM clotures_caisse c
+                      WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
+                  )
+                ORDER BY jour ASC
+            `, [id_salon]);
+
+            for (let j of joursNonClotures.rows) {
+                const dateACloturerStr = new Date(j.jour).toISOString().split('T')[0];
+                
+                try {
+                    await clientDB.query('BEGIN');
+                    const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+                    const totalJour = caResult.rows[0].total;
+
+                    const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) <= $2`, [id_salon, dateACloturerStr]);
+                    const grandTotalPerpetuel = grandTotalResult.rows[0].total;
+
+                    const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
+                    const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
+                    const dateISO = new Date(j.jour); 
+                    dateISO.setHours(23, 59, 59); // On scelle le robot à 23:59:59 de la veille
+                    
+                    const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
+
+                    await clientDB.query(
+                        'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                        [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, 'Fermeture Automatique (Robot)']
+                    );
+
+                    await enregistrerJET(id_salon, 'CLOTURE_Z_AUTOMATIQUE', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
+                    await clientDB.query('COMMIT');
+                    console.log(`[ROBOT] Clôture fantôme réussie pour le salon ${id_salon} (Date: ${dateACloturerStr})`);
+                } catch (e) {
+                    await clientDB.query('ROLLBACK');
+                    console.error(`[ROBOT] Erreur clôture fantôme salon ${id_salon}:`, e);
+                }
+            }
+        }
+    } catch (err) { console.error("Erreur Globale Robot Clôture:", err); } 
+    finally { clientDB.release(); }
+}
+
 // Planification automatique
-cron.schedule('0 8 * * *', () => { executerEnvoiComptable(); }); // Envoi automatique au comptable à 8h00
-cron.schedule('0 9 * * *', () => { executerRobotMarketingEtPredictif(); }); // IA / Marketing à 9h00
-cron.schedule('*/10 9-19 * * *', () => { executerRobotAvisSatisfaction(); }); // Enquêtes de satisfaction, toutes les 10 min entre 9h et 20h
-cron.schedule('0 4 * * *', () => { executerRobotAvisSatisfaction(); }); // + un passage unique dans le creux de nuit (20h-9h)
+cron.schedule('0 3 * * *', () => { executerClotureFantome(); }); // Le filet de sécurité à 3h00 du matin !
+cron.schedule('0 8 * * *', () => { executerEnvoiComptable(); }); 
+cron.schedule('0 9 * * *', () => { executerRobotMarketingEtPredictif(); }); 
+cron.schedule('*/10 9-19 * * *', () => { executerRobotAvisSatisfaction(); }); 
+cron.schedule('0 4 * * *', () => { executerRobotAvisSatisfaction(); }); 
 
 app.get('/api/admin/forcer-robot', async (req, res) => { 
     executerRobotComptable(); 
+    executerClotureFantome();
     executerRobotMarketingEtPredictif();
     executerEnvoiComptable();
-    res.json({ message: "Robots IA (Compta, Prédictif & Envoi Bilan) lancés avec succès." }); 
+    res.json({ message: "Tous les robots (Compta, Fantôme, Prédictif & Envoi Bilan) sont lancés avec succès." }); 
 });
 
 // =========================================================================
