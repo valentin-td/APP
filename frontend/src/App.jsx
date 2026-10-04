@@ -3180,7 +3180,7 @@ function App() {
                                       </div>
                                   </div>
                                   <div style={{display: 'flex', gap: '8px'}}>
-                                      <button onClick={() => { setNouveauProtocole(modeEditionProtocole); setModeEditionProtocole('NEW'); }} style={{background: 'var(--btn-primary)', border: 'none', color: 'white', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                      <button onClick={() => { setNouveauProtocole(modeEditionProtocole); setModeEditionProtocole('NEW'); }} style={{background: 'var(--btn-primary)', border: 'none', color: 'var(--btn-text)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
                                           Modifier la fiche
                                       </button>
                                       <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
