@@ -1774,17 +1774,19 @@ function App() {
           }
       `}</style>
 
-      {isOffline && (
-        <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', zIndex: 10000, width: '100%', boxSizing: 'border-box' }}>
-            ⚠️ Connexion perdue. Mode hors-ligne activé. Les encaissements sont sauvegardés localement.
-        </div>
-      )}
+      <div style={{ position: 'sticky', top: 0, zIndex: 100000, width: '100%' }}>
+          {isOffline && (
+            <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', width: '100%', boxSizing: 'border-box' }}>
+                ⚠️ Connexion perdue. Mode hors-ligne activé.
+            </div>
+          )}
 
-      {pendingOfflineCount > 0 && (
-        <div style={{ background: '#991b1b', color: 'white', textAlign: 'center', padding: '12px 16px', fontSize: '13px', fontWeight: 'bold', zIndex: 9999, width: '100%', boxSizing: 'border-box', boxShadow: '0 4px 12px rgba(153, 27, 27, 0.4)' }}>
-            ⚠️ {pendingOfflineCount} ticket(s) en attente de réseau. Ne fermez pas cette page et ne videz pas l'historique.
-        </div>
-      )}
+          {pendingOfflineCount > 0 && (
+            <div style={{ background: '#991b1b', color: 'white', textAlign: 'center', padding: '12px 16px', fontSize: '13px', fontWeight: 'bold', width: '100%', boxSizing: 'border-box', boxShadow: '0 4px 12px rgba(153, 27, 27, 0.4)' }}>
+                ⚠️ {pendingOfflineCount} ticket(s) en attente de réseau. Ne fermez pas cette page et ne videz pas l'historique.
+            </div>
+          )}
+      </div>
 
       {modalIA && (
           <div className="modal-overlay">
