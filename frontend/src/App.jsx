@@ -1062,6 +1062,16 @@ function App() {
   };
 
   const getStockStatus = (q) => { const num = parseFloat(q); if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; };
+
+  const getTendanceStock = (produit) => {
+      if (produit.jours_restants === null || produit.jours_restants === undefined) return null;
+      const jours = produit.jours_restants;
+      let couleur = 'var(--color-success)';
+      if (jours <= 3) couleur = 'var(--color-danger)';
+      else if (jours <= 10) couleur = 'var(--color-info)';
+      const texte = jours <= 0 ? "Rupture imminente" : `~${jours} j restant(s)`;
+      return { texte, couleur, date: produit.date_rupture_prevue };
+  };
   
   const dessinerCourbe = (d) => { 
       if (!d || !Array.isArray(d) || d.length === 0) return null;
