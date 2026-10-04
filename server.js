@@ -1435,7 +1435,7 @@ app.get('/api/stocks', verifierToken, async (req, res) => {
                 SELECT lt.id_article, SUM(lt.quantite) as qte
                 FROM lignes_ticket lt
                 JOIN tickets t ON t.id_ticket = lt.id_ticket
-                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
+                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE
                   AND t.date_creation >= NOW() - INTERVAL '30 days'
                 GROUP BY lt.id_article
             ),
@@ -1445,7 +1445,7 @@ app.get('/api/stocks', verifierToken, async (req, res) => {
                 JOIN tickets t ON t.id_ticket = lt.id_ticket
                 JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(lt.nom_article_snapshot)
                 JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
-                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
+                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE
                   AND t.date_creation >= NOW() - INTERVAL '30 days'
                 GROUP BY ra.id_article
             ),
