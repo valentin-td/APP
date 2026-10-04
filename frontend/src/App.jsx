@@ -3944,7 +3944,7 @@ function App() {
                   <input type="number" min="0" value={modifStockDialog.valeur} onChange={(e) => setModifStockDialog({ ...modifStockDialog, valeur: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '16px', textAlign: 'center'}} autoFocus />
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => setModifStockDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmerModifStock} style={{flex: 1, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Enregistrer</button>
+                      <button onClick={confirmerModifStock} style={{flex: 1, background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Enregistrer</button>
                   </div>
               </div>
           </div>
@@ -3957,7 +3957,7 @@ function App() {
                   <input type="text" value={modifNomDialog.nom} onChange={(e) => setModifNomDialog({ ...modifNomDialog, nom: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '14px'}} autoFocus />
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => setModifNomDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmerModifNom} disabled={!modifNomDialog.nom.trim()} style={{flex: 1, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: modifNomDialog.nom.trim() ? 'pointer' : 'not-allowed', opacity: modifNomDialog.nom.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Enregistrer</button>
+                      <button onClick={confirmerModifNom} disabled={!modifNomDialog.nom.trim()} style={{flex: 1, background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: modifNomDialog.nom.trim() ? 'pointer' : 'not-allowed', opacity: modifNomDialog.nom.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Enregistrer</button>
                   </div>
               </div>
           </div>
