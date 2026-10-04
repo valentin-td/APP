@@ -160,7 +160,7 @@ pool.query(`
     ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';
     ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS delai_livraison_jours INT DEFAULT 3;
     ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
-    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
     ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
     CREATE TABLE IF NOT EXISTS recettes_articles (id_recette SERIAL PRIMARY KEY, id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE, id_article INT, quantite_necessaire NUMERIC(10,2) DEFAULT 1);
@@ -2373,13 +2373,13 @@ app.get('/api/protocoles', verifierToken, async (req, res) => {
 });
 
 app.post('/api/protocoles', verifierToken, async (req, res) => {
-    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients } = req.body;
+    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
         const protoRes = await clientDB.query(
-            `INSERT INTO protocoles (id_salon, nom_prestation, etapes, medias, tags, delai_livraison_jours) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_protocole`,
-            [req.user.id_salon, nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3]
+            `INSERT INTO protocoles (id_salon, nom_prestation, etapes, medias, tags, delai_livraison_jours, temps_nettoyage_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_protocole`,
+            [req.user.id_salon, nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, temps_nettoyage_minutes || 0]
         );
         const idProto = protoRes.rows[0].id_protocole;
 
@@ -2400,17 +2400,16 @@ app.post('/api/protocoles', verifierToken, async (req, res) => {
 });
 
 app.put('/api/protocoles/:id', verifierToken, async (req, res) => {
-    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients } = req.body;
+    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
         
         // 1. Mise à jour de la fiche
         await clientDB.query(
-            `UPDATE protocoles SET nom_prestation = $1, etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5 WHERE id_protocole = $6 AND id_salon = $7`,
-            [nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, req.params.id, req.user.id_salon]
+            `UPDATE protocoles SET nom_prestation = $1, etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8 WHERE id_protocole = $6 AND id_salon = $7`,
+            [nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, req.params.id, req.user.id_salon, temps_nettoyage_minutes || 0]
         );
-
         // 2. Remplacement des ingrédients de la recette
         await clientDB.query(`DELETE FROM recettes_articles WHERE id_protocole = $1`, [req.params.id]);
         if (ingredients && ingredients.length > 0) {
