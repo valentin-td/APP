@@ -3094,6 +3094,20 @@ app.get('/api/admin/forcer-robot', async (req, res) => {
     res.json({ message: "Tous les robots (Compta, Fantôme, Prédictif & Envoi Bilan) sont lancés avec succès." }); 
 });
 
+// --- CHEAT CODE : VOYAGE DANS LE TEMPS (TESTS UNIQUEMENT) ---
+app.get('/api/admin/time-travel/:id_salon', async (req, res) => {
+    try {
+        // On recule la date de fin d'essai à il y a 5 jours
+        await pool.query(
+            "UPDATE configuration_salon SET date_fin_essai = NOW() - INTERVAL '5 days' WHERE id_salon = $1", 
+            [req.params.id_salon]
+        );
+        res.json({ message: `⏳ Voyage dans le temps réussi ! L'essai du salon #${req.params.id_salon} est maintenant expiré.` });
+    } catch (e) { 
+        res.status(500).json({ erreur: e.message }); 
+    }
+});
+
 // =========================================================================
 // --- GOD MODE (SUPER-ADMIN) ---
 // =========================================================================
