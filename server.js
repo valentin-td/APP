@@ -1737,9 +1737,9 @@ app.get('/api/dashboard/salon', verifierToken, async (req, res) => {
     try {
         const r = await pool.query(`
             SELECT
-                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_actuel,
-                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_precedent
-            FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND id_client IS NOT NULL
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_actuel,
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_precedent
+            FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE
         `, [id_salon]);
         const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
         const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
@@ -1755,9 +1755,9 @@ app.get('/api/dashboard/employe', verifierToken, async (req, res) => {
     try {
         const r = await pool.query(`
             SELECT
-                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_actuel,
-                COUNT(DISTINCT CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN id_client END) as nb_precedent
-            FROM tickets WHERE id_salon = $1 AND id_employe = $2 AND statut != 'ANNULE' AND id_client IS NOT NULL
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_actuel,
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_precedent
+            FROM tickets WHERE id_salon = $1 AND id_employe = $2 AND statut != 'ANNULE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE
         `, [id_salon, id_employe]);
         const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
         const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
