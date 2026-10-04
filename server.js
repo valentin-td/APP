@@ -212,6 +212,12 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ferme_par VARCHAR(100) DEFAULT 'Non spécifié';
 
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS frequence_paiement VARCHAR(20) DEFAULT 'MENSUEL';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS date_fin_essai TIMESTAMP;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS sms_envoyes_mois INT DEFAULT 0;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS mois_en_cours VARCHAR(7);
+
     CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 
     CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
@@ -308,9 +314,19 @@ const verifierToken = (req, res, next) => {
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token expiré ou invalide." });
         try {
+            const conf = await pool.query('SELECT plan_actuel, date_fin_essai FROM configuration_salon WHERE id_salon = $1', [user.id_salon]);
+            if (conf.rowCount > 0) {
+                user.plan_actuel = conf.rows[0].plan_actuel;
+                user.date_fin_essai = conf.rows[0].date_fin_essai;
+            }
+
             if (user.role === 'gerant') {
+                const isTrialing = user.plan_actuel === 'PREMIUM_TRIAL';
                 const result = await pool.query('SELECT statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
-                if (result.rowCount === 0 || result.rows[0].statut_abonnement !== 'actif') { 
+                const statutSub = result.rowCount > 0 ? result.rows[0].statut_abonnement : 'inactif';
+                
+                // On bloque l'accès UNIQUEMENT s'il n'a pas payé ET qu'il n'est plus en essai
+                if (statutSub !== 'actif' && !isTrialing) { 
                     return res.status(402).json({ erreur: "Paiement requis.", require_payment: true }); 
                 }
             }
@@ -319,6 +335,46 @@ const verifierToken = (req, res, next) => {
         } catch (e) { return res.status(500).json({ erreur: "Erreur vérification." }); }
     });
 };
+
+const verifierPlan = (plansAutorises) => {
+    return (req, res, next) => {
+        const plan = req.user.plan_actuel;
+        if (plan === 'PREMIUM_TRIAL' || plansAutorises.includes(plan)) {
+            return next();
+        }
+        return res.status(403).json({ erreur: "Accès refusé. Cette fonctionnalité nécessite un forfait supérieur.", require_upsell: true });
+    };
+};
+
+async function envoyerSMS_Intelligent(id_salon, apiKey, senderName, telephone, contenu) {
+    try {
+        const conf = await pool.query("SELECT plan_actuel, sms_envoyes_mois, mois_en_cours FROM configuration_salon WHERE id_salon = $1", [id_salon]);
+        if (conf.rowCount === 0) return false;
+        
+        const { plan_actuel, sms_envoyes_mois, mois_en_cours } = conf.rows[0];
+        const moisActuel = new Date().toISOString().slice(0, 7);
+        let compteur = mois_en_cours === moisActuel ? sms_envoyes_mois : 0;
+        
+        if (plan_actuel === 'ESSENTIEL' && compteur >= 100) {
+            console.log(`[SMS] Limite atteinte (100) pour le salon ${id_salon}`);
+            return false;
+        }
+
+        const res = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST', headers: { 'accept': 'application/json', 'api-key': apiKey, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (senderName || 'LeSalon').substring(0, 11), recipient: telephone, content: contenu })
+        });
+
+        if (res.ok) {
+            await pool.query("UPDATE configuration_salon SET sms_envoyes_mois = $1, mois_en_cours = $2 WHERE id_salon = $3", [compteur + 1, moisActuel, id_salon]);
+            return true;
+        }
+        return false;
+    } catch (e) {
+        console.error("Erreur Envoi SMS:", e);
+        return false;
+    }
+}
 
 async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
     try {
@@ -371,7 +427,10 @@ app.post('/api/register', async (req, res) => {
         const checkEmail = await clientDB.query('SELECT email FROM utilisateurs WHERE email = $1', [email]);
         if (checkEmail.rowCount > 0) throw new Error('Cet e-mail est déjà utilisé.');
         const hash = await bcrypt.hash(mot_de_passe, 10);
-        const salonResult = await clientDB.query('INSERT INTO configuration_salon (nom_salon) VALUES ($1) RETURNING id_salon', [nom_salon || 'Nouveau Salon']);
+        const salonResult = await clientDB.query(
+            "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
+            [nom_salon || 'Nouveau Salon']
+        );
         const idNouveauSalon = salonResult.rows[0].id_salon;
         let customerId = null;
         try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
