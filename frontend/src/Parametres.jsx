@@ -24,6 +24,7 @@ const ICONS = {
   moon: ico(<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>),
   file: ico(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 13"/></>),
   shield: ico(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></>),
+  link: ico(<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></>),
   logout: ico(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>),
   back: ico(<><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>),
   chevron: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
@@ -36,6 +37,7 @@ const TITRES = {
   horaires: "Horaires de l'agenda",
   alertes: 'Alertes urgences (gérant)',
   google: 'Google My Business',
+  sync_planity: 'Synchronisation Planity',
   mail: 'Boîte mail du salon',
   export_compta: 'Exportations comptable',
   tpe: 'TPE physique (Stripe Terminal)',
@@ -46,7 +48,7 @@ const TITRES = {
 
 export default function Parametres({
   configSalon, setConfigSalon, onSave, onBack, onLogout,
-  salonId, isDarkMode, onToggleTheme, onEnablePush, role, photoUrl, onUploadPhoto
+  salonId, isDarkMode, onToggleTheme, onEnablePush, role, photoUrl, onUploadPhoto, employesListe
 }) {
   const [section, setSection] = useState(null);   // null = liste principale
 
@@ -71,6 +73,7 @@ export default function Parametres({
     ] },
     { titre: 'Intégrations', lignes: [
       { id: 'google', icone: ICONS.star, label: 'Google My Business', valeur: statut(configSalon.google_api_key) },
+      { id: 'sync_planity', icone: ICONS.link, label: 'Synchronisation Planity (iCal)', valeur: '' },
       { id: 'mail', icone: ICONS.mail, label: 'Boîte mail du salon', valeur: statut(configSalon.email_factures) },
       { id: 'export_compta', icone: ICONS.send, label: 'Exportations comptable', valeur: statut(configSalon.email_comptable) },
       { id: 'tpe', icone: ICONS.card, label: 'TPE physique', valeur: statut(configSalon.stripe_reader_id) },
@@ -256,6 +259,64 @@ case 'tpe': return (<>
                     <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
                   </div>
         {carteSauvegarde}
+      </>);
+
+      case 'sync_planity': return (<>
+          <div className="carte scan-carte" style={{textAlign: 'left'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px'}}>
+                  <div style={{width: '48px', height: '48px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)'}}>{ICONS.link}</div>
+                  <div>
+                      <h3 style={{margin: '0 0 4px 0', fontSize: '16px', color: 'var(--text-main)'}}>Liens iCal (Webcal)</h3>
+                      <p style={{margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>Connectez vos collaborateurs à Planity ou Treatwell.</p>
+                  </div>
+              </div>
+
+              <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 16px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>1. Comment ça marche ? (Tutoriel)</h4>
+              <div style={{display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px'}}>
+                  <div className="tuto-step">
+                      <span className="tuto-step-number">1</span>
+                      <span className="tuto-step-text"><b>Copiez le lien personnel</b> de votre collaborateur dans la liste ci-dessous.</span>
+                  </div>
+                  <div className="tuto-step">
+                      <span className="tuto-step-number">2</span>
+                      <span className="tuto-step-text">Ouvrez <b>Planity PRO</b>, naviguez dans <i>Réglages &gt; Gestion des agendas &gt; Importer un agenda externe</i>.</span>
+                  </div>
+                  <div className="tuto-step">
+                      <span className="tuto-step-number">3</span>
+                      <span className="tuto-step-text"><b>Collez le lien.</b> L'agenda de STACK bloquera automatiquement les créneaux indisponibles sur Planity.</span>
+                  </div>
+              </div>
+
+              <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 16px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>2. Vos liens de synchronisation</h4>
+              {(!employesListe || employesListe.length === 0) ? (
+                  <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun employé n'est enregistré dans l'équipe.</p>
+              ) : (
+                  <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                      {employesListe.map(emp => {
+                          const icalUrl = `https://api-salon-backend.onrender.com/api/ical/${salonId}/${emp.id_employe}.ics`;
+                          return (
+                              <div key={emp.id_employe} className="employe-link-row">
+                                  <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                      {emp.photo_url ? (
+                                          <img src={emp.photo_url} alt="" style={{width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--border-color)'}} />
+                                      ) : (
+                                          <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'var(--btn-primary)', color: 'var(--btn-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold'}}>{emp.nom.substring(0, 2).toUpperCase()}</div>
+                                      )}
+                                      <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)'}}>{emp.nom}</span>
+                                  </div>
+                                  <button onClick={(e) => { 
+                                      navigator.clipboard.writeText(icalUrl); 
+                                      const old = e.target.innerText; e.target.innerText = 'Copié ✅'; 
+                                      setTimeout(() => { e.target.innerText = old; }, 2000); 
+                                  }} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.15s'}}>
+                                      Copier le lien
+                                  </button>
+                              </div>
+                          );
+                      })}
+                  </div>
+              )}
+          </div>
       </>);
       
       case 'cgu': return (
