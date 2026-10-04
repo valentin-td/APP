@@ -348,6 +348,21 @@ function App() {
   const [newPassword, setNewPassword] = useState('');
 
   const [toast, setToast] = useState(null);
+
+  // Intercepte les retours de Stripe pour afficher un message
+  useEffect(() => {
+      const paiementStatus = urlParams.get('paiement');
+      if (paiementStatus === 'succes') {
+          setToast({ message: "Paiement réussi ! Votre abonnement est activé.", type: 'success' });
+          setTimeout(() => setToast(null), 4000);
+          window.history.replaceState({}, document.title, "/"); // Nettoie l'URL
+      } else if (paiementStatus === 'annule') {
+          setToast({ message: "Paiement annulé.", type: 'error' });
+          setTimeout(() => setToast(null), 4000);
+          window.history.replaceState({}, document.title, "/");
+      }
+  }, []);
+
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [annulationDialog, setAnnulationDialog] = useState(null);
   const [cancellationRobot, setCancellationRobot] = useState(null);
@@ -2009,7 +2024,7 @@ function App() {
                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span>
                      </div>
                  )}
-                 {decodeToken(token)?.id_salon === 38 && (
+                 {role === 'gerant' && decodeToken(token)?.id_salon === 38 && (
                      <div className={`nav-item ${activeTab === 'superadmin' ? 'active' : ''}`} onClick={() => setActiveTab('superadmin')}>
                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#aa3bff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span style={{color: '#aa3bff', fontWeight: 'bold'}}>God Mode</span>
                      </div>
