@@ -3344,9 +3344,10 @@ function App() {
                                     })
                                     .map((produit) => {
                                     const status = getStockStatus(produit.stock_actuel);
+                                    const tendance = getTendanceStock(produit);
                                     return (
                                       <div className="stock-item" key={produit.id_article} style={{position: 'relative'}}>
-                                        <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span></div></div>
+                                        <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>{tendance && <span className="badge-discret" style={{ backgroundColor: 'var(--bg-info)', color: tendance.couleur }} title={tendance.date ? `Rupture estimée le ${new Date(tendance.date).toLocaleDateString()}` : ''}>{tendance.texte}</span>}</div></div>
                                         <div className="stock-quantite-container" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
                                             <span className="stock-quantite">{produit.stock_actuel}</span>
                                             <button onClick={(e) => { e.stopPropagation(); setStockMenuOuvert(stockMenuOuvert === produit.id_article ? null : produit.id_article); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1}}>⋮</button>
