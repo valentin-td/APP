@@ -795,9 +795,18 @@ function App() {
 
   useEffect(() => {
       if (!modalIA && tachesIA && (tachesIA || []).length > 0) {
-          setModalIA((tachesIA || [])[0]);
+          let premiereTache = { ...tachesIA[0] };
+          
+          // L'IA n'a pas trouvé de durée ? On cherche dans notre catalogue (Auto-Match) !
+          if (premiereTache.type_tache === 'RDV' && !premiereTache.donnees.duree_minutes) {
+              const nomPrestaIA = nettoyerTexteRecherche(premiereTache.donnees.prestation || '');
+              const prestaMatch = (catalogueListe || []).find(p => p.type_article === 'PRESTATION' && nettoyerTexteRecherche(p.nom).includes(nomPrestaIA));
+              premiereTache.donnees.duree_minutes = prestaMatch && prestaMatch.duree_estimee_minutes ? prestaMatch.duree_estimee_minutes : 30;
+          }
+          
+          setModalIA(premiereTache);
       }
-  }, [tachesIA, modalIA]);
+  }, [tachesIA, modalIA, catalogueListe]);
 
   const validerTacheIA = async (tache) => {
       try {
@@ -1802,11 +1811,15 @@ function App() {
                               <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.prestation || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, prestation: e.target.value}})} />
 
                               <div style={{display: 'flex', gap: '12px'}}>
-                                  <div style={{flex: 1}}>
+                                  <div style={{flex: 2}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Date et Heure</label>
                                       <input type="datetime-local" className="input-fournisseur" value={modalIA.donnees?.date_heure_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_heure_debut: e.target.value}})} />
                                   </div>
                                   <div style={{flex: 1}}>
+                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Durée (min)</label>
+                                      <input type="number" className="input-fournisseur" value={modalIA.donnees?.duree_minutes || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, duree_minutes: parseInt(e.target.value)}})} />
+                                  </div>
+                                  <div style={{flex: 2}}>
                                       <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Coiffeur</label>
                                       <select className="input-fournisseur" value={modalIA.donnees?.id_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, id_employe: e.target.value}})}>
                                           <option value="">-- Choisir --</option>
