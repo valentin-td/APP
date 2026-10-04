@@ -143,7 +143,7 @@ function App() {
   const [modifEmployeDialog, setModifEmployeDialog] = useState(null);
   
   const [protocolesListe, setProtocolesListe] = useState([]);
-  const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
+  const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false });
   const [ingredientTemp, setIngredientTemp] = useState({ id_article: '', quantite_necessaire: '' });
   const [etapeTemp, setEtapeTemp] = useState({ texte: '', timer_min: '' });
   const [protocoleVisible, setProtocoleVisible] = useState(null); 
@@ -1033,9 +1033,9 @@ function App() {
               ? `https://api-salon-backend.onrender.com/api/protocoles/${nouveauProtocole.id_protocole}` 
               : 'https://api-salon-backend.onrender.com/api/protocoles';
 
-          const res = await fetch(url, { method: method, headers: getAuthHeaders(true), body: JSON.stringify(nouveauProtocole) });
+          const res = await fetch(url, { method: method, headers: getAuthHeaders(true), body: JSON.stringify({...nouveauProtocole, temps_nettoyage_minutes: nouveauProtocole.a_temps_nettoyage ? nouveauProtocole.temps_nettoyage_minutes : 0}) });
           await handleFetchError(res);
-          setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] });
+          setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false });
           setModeEditionProtocole(null);
           chargerTout(); 
           showToast(nouveauProtocole.id_protocole ? "Fiche modifiée !" : "Fiche créée !", "success");
@@ -2978,20 +2978,14 @@ function App() {
                               <ThemeToggle />
                               <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
                               {!modeEditionProtocole && (
-                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [] }); setModeEditionProtocole('NEW'); }} className="btn-action" style={{ whiteSpace: 'nowrap', flexShrink: 0, padding: isMobile ? '8px 12px' : '12px 18px', fontSize: isMobile ? '12px' : '14px' }}>
+                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false }); setModeEditionProtocole('NEW'); }} className="btn-action" style={{ whiteSpace: 'nowrap', flexShrink: 0, padding: isMobile ? '8px 12px' : '12px 18px', fontSize: isMobile ? '12px' : '14px' }}>
                                       {isMobile ? 'Créer' : 'Créer une Fiche'}
                                   </button>
                               )}
                           </div>
                       </div>
                       {!modeEditionProtocole && (
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
-                              <input type="text" className="input-fournisseur" placeholder="Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{flex: 1, fontSize: '14px', minWidth: '150px'}}/>
-                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-app)', padding: '0 12px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', height: '42px', flexShrink: 0}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Temps nettoyage (min):</label>
-                                  <input type="number" min="0" className="input-fournisseur" style={{width: '50px', padding: '4px 8px', margin: 0, border: 'none', background: 'transparent', fontWeight: 'bold'}} value={configSalon.temps_nettoyage_minutes || 0} onChange={(e) => { const val = parseInt(e.target.value) || 0; setConfigSalon({...configSalon, temps_nettoyage_minutes: val}); fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...configSalon, temps_nettoyage_minutes: val}) }); }} title="Temps de battement ajouté automatiquement entre chaque RDV" />
-                              </div>
-                          </div>
+                          <input type="text" className="input-fournisseur" placeholder="Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', width: '100%', boxSizing: 'border-box'}}/>
                       )}
                   </div>
 
@@ -3063,6 +3057,19 @@ function App() {
                                           <button key={tag} onClick={() => toggleTag(tag)} style={{background: (nouveauProtocole.tags || []).includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: (nouveauProtocole.tags || []).includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
                                       ))}
                                   </div>
+                              </div>
+
+                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px dashed var(--border-color)'}}>
+                                  <label style={{display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer'}}>
+                                      <input type="checkbox" checked={nouveauProtocole.a_temps_nettoyage} onChange={e => setNouveauProtocole({...nouveauProtocole, a_temps_nettoyage: e.target.checked, temps_nettoyage_minutes: e.target.checked ? (nouveauProtocole.temps_nettoyage_minutes || 5) : 0})} style={{width: '18px', height: '18px', accentColor: 'var(--btn-primary)'}} />
+                                      <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>Temps de nettoyage automatique à l'agenda</span>
+                                  </label>
+                                  {nouveauProtocole.a_temps_nettoyage && (
+                                      <div style={{marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                          <input type="number" min="0" className="input-fournisseur" style={{width: '80px', padding: '8px'}} value={nouveauProtocole.temps_nettoyage_minutes} onChange={e => setNouveauProtocole({...nouveauProtocole, temps_nettoyage_minutes: parseInt(e.target.value) || 0})} />
+                                          <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>minutes bloquées après chaque prestation</span>
+                                      </div>
+                                  )}
                               </div>
 
                               <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
@@ -3180,7 +3187,7 @@ function App() {
                                       </div>
                                   </div>
                                   <div style={{display: 'flex', gap: '8px'}}>
-                                      <button onClick={() => { setNouveauProtocole(modeEditionProtocole); setModeEditionProtocole('NEW'); }} style={{background: 'var(--btn-primary)', border: 'none', color: 'var(--btn-text)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                      <button onClick={() => { setNouveauProtocole({...modeEditionProtocole, a_temps_nettoyage: (modeEditionProtocole.temps_nettoyage_minutes > 0), temps_nettoyage_minutes: modeEditionProtocole.temps_nettoyage_minutes || 5}); setModeEditionProtocole('NEW'); }} style={{background: 'var(--btn-primary)', border: 'none', color: 'var(--btn-text)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
                                           Modifier la fiche
                                       </button>
                                       <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
@@ -3212,7 +3219,11 @@ function App() {
 
                               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '12px'}}>
                                   <h4 style={{fontSize: '13px', margin: 0}}>Étapes de réalisation</h4>
-                                  <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(modeEditionProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
+                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                      <span style={{fontSize: '10px', color: 'var(--text-muted)'}}>Auto-calcul depuis la recette du protocole</span>
+                                      {modeEditionProtocole.temps_nettoyage_minutes > 0 && <span style={{fontSize: '10px', color: 'var(--color-info)', background: 'var(--bg-info)', padding: '2px 6px', borderRadius: '12px'}}>+{modeEditionProtocole.temps_nettoyage_minutes} min nettoyage</span>}
+                                      <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(modeEditionProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
+                                  </div>
                               </div>
                               <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                                   {(modeEditionProtocole.etapes || []).map((etape, index) => (
