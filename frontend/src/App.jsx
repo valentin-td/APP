@@ -5,6 +5,7 @@ import './App.css';
 import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
 import PopupLegal from './PopupLegal'; 
+import PricingModal from './PricingModal';
 
 // Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
 function urlBase64ToUint8Array(base64String) { 
@@ -504,8 +505,40 @@ function App() {
   const [configSalon, setConfigSalon] = useState({
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
-    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null, pin_salon: '', temps_nettoyage_minutes: 0
+    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null, pin_salon: '', temps_nettoyage_minutes: 0,
+    plan_actuel: 'PREMIUM_TRIAL', date_fin_essai: null
   });
+
+  const [showPricingModal, setShowPricingModal] = useState(false);
+
+  // --- LOGIQUE REVERSE TRIAL ---
+  const isTrialing = configSalon.plan_actuel === 'PREMIUM_TRIAL';
+  const dateFinEssai = configSalon.date_fin_essai ? new Date(configSalon.date_fin_essai) : null;
+  const joursRestantsEssai = dateFinEssai ? Math.ceil((dateFinEssai.getTime() - new Date().getTime()) / (1000 * 3600 * 24)) : 999;
+  
+  const isSoftLock = isTrialing && joursRestantsEssai <= 0 && joursRestantsEssai >= -7;
+  const isHardLock = isTrialing && joursRestantsEssai < -7;
+
+  useEffect(() => {
+      if ((isSoftLock || isHardLock) && userRole === 'gerant' && activeTab !== 'caisse') {
+          setShowPricingModal(true);
+      }
+  }, [isSoftLock, isHardLock, userRole, token, activeTab]);
+
+  const aLeNiveau = (niveauRequis) => {
+      const plan = configSalon.plan_actuel || 'PREMIUM_TRIAL';
+      if (plan === 'PREMIUM_TRIAL' || plan === 'PREMIUM') return true;
+      if (niveauRequis === 'PRO' && (plan === 'PRO' || plan === 'PREMIUM')) return true;
+      return false;
+  };
+
+  const handleTabClick = (tabName) => {
+      if (userRole !== 'gerant') { setActiveTab(tabName); return; }
+      if (tabName === 'rh' && !aLeNiveau('PREMIUM')) return setShowPricingModal(true);
+      if (tabName === 'admin' && !aLeNiveau('PREMIUM')) return setShowPricingModal(true);
+      if (tabName === 'protocoles' && !aLeNiveau('PRO')) return setShowPricingModal(true);
+      setActiveTab(tabName);
+  };
 
   const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1746,8 +1779,14 @@ function App() {
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
 
-      {(afficherRappelCloture || afficherRappelStock) && (
+      {(afficherRappelCloture || afficherRappelStock || (isTrialing && joursRestantsEssai <= 5 && joursRestantsEssai > 0)) && (
           <div className="rappels-fixes-container">
+              {isTrialing && joursRestantsEssai <= 5 && joursRestantsEssai > 0 && (
+                  <div className="rappel-stock-banner" style={{borderColor: '#f59e0b', borderLeftColor: '#f59e0b'}}>
+                      <span>⚠️ Votre mois d'essai gratuit se termine dans {joursRestantsEssai} jour(s). Pensez à choisir votre forfait.</span>
+                      <button onClick={() => setShowPricingModal(true)} style={{background: '#f59e0b'}}>Choisir</button>
+                  </div>
+              )}
               {afficherRappelCloture && (
                   <div className="rappel-cloture-banner">
                       <span>N'oublie pas d'effectuer la Clôture Journalière</span>
@@ -1948,7 +1987,10 @@ function App() {
                  )}
                  {(role === 'gerant' || role === 'salon') && (
                      <>
-                        <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => setActiveTab('protocoles')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span></div>
+                        <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => handleTabClick('protocoles')} style={{ position: 'relative' }}>
+                            {!aLeNiveau('PRO') && role === 'gerant' && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
+                            <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span>
+                        </div>
                         <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative' }}>
                             {(tachesIA || []).some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
                             <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
@@ -1956,10 +1998,16 @@ function App() {
                      </>
                  )}
                  {role === 'gerant' && (
-                     <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => setActiveTab('rh')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span></div>
+                     <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => handleTabClick('rh')} style={{ position: 'relative' }}>
+                         {!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
+                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span>
+                     </div>
                  )}
                  {(role === 'gerant' || role === 'salon' || role === 'employe') && (
-                     <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span></div>
+                     <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => handleTabClick('admin')} style={{ position: 'relative' }}>
+                         {!aLeNiveau('PREMIUM') && role === 'gerant' && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
+                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span>
+                     </div>
                  )}
                  {decodeToken(token)?.id_salon === 38 && (
                      <div className={`nav-item ${activeTab === 'superadmin' ? 'active' : ''}`} onClick={() => setActiveTab('superadmin')}>
@@ -2001,8 +2049,8 @@ function App() {
                   <h3 style={{margin: '0 0 16px 0', fontSize: '18px', textAlign: 'center'}}>Outils & Gestion</h3>
                   <div className="outils-grid">
                       {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => {setActiveTab('protocoles'); setIsOutilsMenuOpen(false);}}>
-                              <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><span className="outil-btn-label">Académie</span>
+                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('protocoles'); }}>
+                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PRO') && role === 'gerant' && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><span className="outil-btn-label">Académie</span>
                           </button>
                       )}
                       {(role === 'gerant' || role === 'salon') && (
@@ -2011,13 +2059,13 @@ function App() {
                           </button>
                       )}
                       {role === 'gerant' && (
-                          <button className="outil-btn" onClick={() => {setActiveTab('rh'); setIsOutilsMenuOpen(false);}}>
-                              <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><span className="outil-btn-label">Équipe</span>
+                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('rh'); }}>
+                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><span className="outil-btn-label">Équipe</span>
                           </button>
                       )}
                       {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => {setActiveTab('admin'); setIsOutilsMenuOpen(false);}}>
-                              <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><span className="outil-btn-label">Compta</span>
+                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('admin'); }}>
+                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PREMIUM') && role === 'gerant' && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><span className="outil-btn-label">Compta</span>
                           </button>
                       )}
                       {decodeToken(token)?.id_salon === 38 && role === 'gerant' && (
@@ -4111,8 +4159,27 @@ function App() {
           </div>
       )}
 
-      {toast && (
-        <div className="toast-container">
+      {showPricingModal && (
+          <PricingModal 
+              onClose={() => setShowPricingModal(false)}
+              isSoftLock={isSoftLock}
+              isHardLock={isHardLock}
+              joursRestants={joursRestantsEssai}
+              token={token}
+              onSubscribe={async (plan, cycle) => {
+                  try {
+                      // Nous utiliserons la même route Stripe, on ajoute juste le plan dans le body !
+                      const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', { 
+                          method: 'POST', 
+                          headers: getAuthHeaders(true), 
+                          body: JSON.stringify({ plan_choisi: plan, cycle_choisi: cycle }) 
+                      });
+                      const data = await res.json();
+                      if (data.url) window.location.href = data.url;
+                  } catch (e) { showToast("Erreur de connexion avec Stripe.", "error"); }
+              }}
+          />
+      )}
           <div className={`toast ${toast.type}`}>
             {toast.type === 'success' ? ( <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-success)'}}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> ) : ( <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)'}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> )}
             {toast.message}
