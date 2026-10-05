@@ -191,7 +191,7 @@ const groupesBas = [
                   </div>
                   {role === 'gerant' && (
                       <div className="carte scan-carte">
-                          <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 8px 0'}}>🔑 Accès "Salon" (poste partagé)</h4>
+                          <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 8px 0'}}>Accès "Salon" (poste partagé)</h4>
                           <span style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '12px'}}>Ce code PIN permet de se connecter au poste d'accueil du salon (Caisse, Stock, Agenda, Académie, Messagerie, Clôture).</span>
                           <input type="text" inputMode="numeric" maxLength="10" className="input-fournisseur" placeholder="Code PIN du salon" value={configSalon.pin_salon || ''} onChange={e => setConfigSalon({...configSalon, pin_salon: e.target.value.replace(/\D/g, '')})} />
                       </div>
