@@ -223,6 +223,7 @@ pool.query(`
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_prestations VARCHAR(20) DEFAULT '706000';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_produits VARCHAR(20) DEFAULT '707000';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_tva VARCHAR(20) DEFAULT '445710';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pennylane_api_key VARCHAR(255);
 
     CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 
@@ -668,15 +669,15 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva } = req.body; 
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key } = req.body; 
     try { 
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
         if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
         const updateQuery = pin_salon !== undefined
-            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pin_salon = $23 WHERE id_salon = $16`
-            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22 WHERE id_salon = $16`; 
+            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23 WHERE id_salon = $16`
+            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23 WHERE id_salon = $16`; 
         const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
-        if (pin_salon !== undefined) params.push(pin_salon || null);
+        if (pin_salon !== undefined) { params.push(pin_salon || null); params.push(pennylane_api_key || null); } else { params.push(pennylane_api_key || null); }
         await pool.query(updateQuery, params);
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
@@ -1368,6 +1369,50 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         );
 
         await enregistrerJET(id_salon, 'CLOTURE_Z', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
+
+        // --- PHASE 4 : WEBHOOK / POUSSÉE API TEMPS RÉEL (Ex: Pennylane) ---
+        try {
+            const configRes = await clientDB.query('SELECT pennylane_api_key FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+            const apiKey = configRes.rows[0]?.pennylane_api_key;
+            
+            if (apiKey && apiKey.trim() !== '') {
+                // On récupère les écritures FEC de la journée qu'on vient de clôturer
+                const dateCloture = dateACloturerStr;
+                const ecrituresRes = await clientDB.query(`
+                    SELECT t.numero_ticket_caisse, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, c.type_article 
+                    FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article 
+                    WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+                `, [id_salon, dateCloture]);
+
+                if (ecrituresRes.rowCount > 0) {
+                    // Construction du Payload d'Écritures Comptables (Format générique Pennylane / Comptabilité API)
+                    const payloadPennylane = {
+                        journal_code: "VT",
+                        date: dateCloture,
+                        label: `Z de Caisse du ${dateCloture}`,
+                        entries: ecrituresRes.rows.map(row => ({
+                            reference: row.numero_ticket_caisse,
+                            montant_ttc: parseFloat(row.total_ttc),
+                            methode: row.methode_paiement,
+                            lignes: [{ type: row.type_article || 'PRESTATION', ht: Number((row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100)).toFixed(2)), tva: Number((row.total_ligne_ttc - (row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100))).toFixed(2)) }]
+                        }))
+                    };
+
+                    // Poussée vers l'API externe en tâche de fond (on n'attend pas la réponse pour ne pas bloquer le frontend)
+                    fetch('https://app.pennylane.com/api/v1/customer_invoices', { // Endpoint générique modulable
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        body: JSON.stringify(payloadPennylane)
+                    }).then(r => {
+                        if (r.ok) console.log(`[API COMPTA] Z du ${dateCloture} (Salon ${id_salon}) poussé avec succès.`);
+                        else console.error(`[API COMPTA] Erreur API externe :`, r.status);
+                    }).catch(err => console.error(`[API COMPTA] Échec réseau :`, err.message));
+                }
+            }
+        } catch (apiErr) {
+            console.error("Erreur préparation Webhook Compta:", apiErr);
+        }
+        // ------------------------------------------------------------------
 
         await clientDB.query('COMMIT');
         res.json({ message: `Caisse clôturée avec succès pour le ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')}. Total : ${totalJour} €`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
