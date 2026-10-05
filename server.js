@@ -1375,7 +1375,11 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
 app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
     try {
         const r = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [req.user.id_salon]);
-        res.json({ cloture_faite: r.rowCount > 0 });
+        const auto = await pool.query("SELECT TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_auto FROM clotures_caisse WHERE id_salon = $1 AND ferme_par = 'Fermeture Automatique (Robot)' ORDER BY id_cloture DESC LIMIT 1", [req.user.id_salon]);
+        res.json({ 
+            cloture_faite: r.rowCount > 0,
+            derniere_cloture_auto: auto.rowCount > 0 ? auto.rows[0].date_auto : null
+        });
     } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
 });
 
