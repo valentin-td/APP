@@ -2354,7 +2354,7 @@ function App() {
                                                               {new Date(avis.date_creation).toLocaleDateString('fr-FR')} {avis.nom_employe ? `• Par ${avis.nom_employe}` : ''}
                                                           </span>
                                                           {!isPositif && avis.telephone && (
-                                                              <button onClick={() => { setSauvetageClient({ telephone: avis.telephone, prenom: avis.prenom }); setSmsSauvetage(`Bonjour ${avis.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre dernière expérience. Voici -20% sur votre prochaine visite pour nous faire pardonner. À très vite !`); }} style={{fontSize: '11px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer'}}>🚑 Sauver</button>
+                                                              <button onClick={() => { setSauvetageClient({ telephone: avis.telephone, prenom: avis.prenom }); setSmsSauvetage(`Bonjour ${avis.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre dernière expérience. Voici -20% sur votre prochaine visite pour nous faire pardonner. À très vite !`); }} style={{fontSize: '11px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer'}}>Sauver</button>
                                                           )}
                                                       </div>
                                                   </div>
