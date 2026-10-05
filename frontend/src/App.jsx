@@ -562,9 +562,25 @@ function App() {
   const getAuthHeaders = (isJson = false) => { const headers = { 'Authorization': `Bearer ${token}` }; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
   
   const handleFetchError = async (res) => { 
-      if (res.status === 401 || res.status === 403) { seDeconnecter(); throw new Error("Session expirée"); } 
-      if (res.status === 402) { setIsAbonnementInactif(true); throw new Error("Abonnement inactif"); } 
-      const data = await res.json(); 
+      // On lit le corps de la réponse en premier pour voir s'il y a des détails
+      const data = await res.json().catch(() => ({})); 
+
+      // Si c'est un problème de forfait (Upsell), on ne déconnecte SURTOUT PAS
+      if (res.status === 403 && data.require_upsell) {
+          throw new Error("Forfait insuffisant");
+      }
+
+      // Si c'est un vrai problème d'authentification, là on déconnecte
+      if (res.status === 401 || (res.status === 403 && !data.require_upsell)) { 
+          seDeconnecter(); 
+          throw new Error("Session expirée"); 
+      } 
+      
+      if (res.status === 402) { 
+          setIsAbonnementInactif(true); 
+          throw new Error("Abonnement inactif"); 
+      } 
+      
       if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); 
       return data; 
   };
