@@ -549,19 +549,19 @@ function App() {
   };
 
   const handleTabClick = (tabName) => {
-      if (userRole !== 'gerant') { setActiveTab(tabName); return; }
-      
-      // On vérifie les droits. Si c'est bloqué, on ouvre la modale ET on s'arrête là sans changer d'onglet
+      // On vérifie les droits pour TOUS les rôles (gérant, salon, employé)
       if (tabName === 'admin' && !aLeNiveau('PREMIUM')) {
+          if (userRole !== 'gerant') return showToast("Le gérant doit débloquer l'accès Premium.", "error");
           setShowPricingModal(true);
           return;
       }
       if (tabName === 'protocoles' && !aLeNiveau('PRO')) {
+          if (userRole !== 'gerant') return showToast("Le gérant doit débloquer l'accès Pro.", "error");
           setShowPricingModal(true);
           return;
       }
       
-      // Si tout va bien, on change d'onglet et on s'assure que la modale est fermée
+      // Si tout va bien, on change d'onglet
       setShowPricingModal(false);
       setActiveTab(tabName);
   };
@@ -2036,7 +2036,7 @@ function App() {
                  {(role === 'gerant' || role === 'salon') && (
                      <>
                         <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => handleTabClick('protocoles')} style={{ position: 'relative' }}>
-                            {!aLeNiveau('PRO') && role === 'gerant' && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
+                            {!aLeNiveau('PRO') && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
                             <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span>
                         </div>
                         <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative' }}>
@@ -2052,7 +2052,7 @@ function App() {
                  )}
                  {(role === 'gerant' || role === 'salon' || role === 'employe') && (
                      <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => handleTabClick('admin')} style={{ position: 'relative' }}>
-                         {!aLeNiveau('PREMIUM') && role === 'gerant' && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
+                         {!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span>
                      </div>
                  )}
@@ -2097,7 +2097,7 @@ function App() {
                   <div className="outils-grid">
                       {(role === 'gerant' || role === 'salon') && (
                           <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('protocoles'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PRO') && role === 'gerant' && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><span className="outil-btn-label">Académie</span>
+                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PRO') && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><span className="outil-btn-label">Académie</span>
                           </button>
                       )}
                       {(role === 'gerant' || role === 'salon') && (
@@ -2112,7 +2112,7 @@ function App() {
                       )}
                       {(role === 'gerant' || role === 'salon') && (
                           <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('admin'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PREMIUM') && role === 'gerant' && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><span className="outil-btn-label">Compta</span>
+                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><span className="outil-btn-label">Compta</span>
                           </button>
                       )}
                       {decodeToken(token)?.id_salon === 38 && role === 'gerant' && (
