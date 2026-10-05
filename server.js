@@ -529,7 +529,9 @@ app.post('/api/creer-checkout', async (req, res) => {
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token invalide." });
         try {
-            // ON AJOUTE _subscription_id ET statut_abonnement DANS LA RECHERCHE
+            // Sécurité anti-crash : on s'assure que la colonne existe
+            try { await pool.query('ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS _subscription_id VARCHAR(255)'); } catch(e) {}
+
             const result = await pool.query('SELECT email, _customer_id, _subscription_id, statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
             if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
             
@@ -546,44 +548,55 @@ app.post('/api/creer-checkout', async (req, res) => {
                 await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
             }
 
-            const planKey = `${plan_choisi || 'PREMIUM'}_${cycle_choisi === 'year' ? 'AN' : 'MOIS'}`;
-            const stripePrices = {
-                'ESSENTIEL_MOIS': process.env.PRICE_ESSENTIEL_MOIS,
-                'ESSENTIEL_AN': process.env.PRICE_ESSENTIEL_AN,
-                'PRO_MOIS': process.env.PRICE_PRO_MOIS,
-                'PRO_AN': process.env.PRICE_PRO_AN,
-                'PREMIUM_MOIS': process.env.PRICE_PREMIUM_MOIS,
-                'PREMIUM_AN': process.env.PRICE_PREMIUM_AN
-            };
-            const priceId = stripePrices[planKey] || process.env.PRICE_PREMIUM_MOIS || 'price_1UG3bh10YWspHc2C8J2bmXL0';
-            
-            // =========================================================
-            // MAGIE STRIPE : UPGRADE SANS PAYER CE MOIS-CI (PRORATION: NONE)
-            // =========================================================
+            // Définition dynamique des prix pour éviter le crash (plus besoin des clés env pour ça)
+            let amount = 9900;
+            if (plan_choisi === 'ESSENTIEL') amount = cycle_choisi === 'year' ? 39000 : 3900;
+            if (plan_choisi === 'PRO') amount = cycle_choisi === 'year' ? 69000 : 6900;
+            if (plan_choisi === 'PREMIUM') amount = cycle_choisi === 'year' ? 99000 : 9900;
+
             if (statutSub === 'actif' && subId) {
+                // Upgrade pour les anciens clients : on utilise les prix existants s'ils l'ont déjà
+                const planKey = `${plan_choisi || 'PREMIUM'}_${cycle_choisi === 'year' ? 'AN' : 'MOIS'}`;
+                const stripePrices = {
+                    'ESSENTIEL_MOIS': process.env.PRICE_ESSENTIEL_MOIS,
+                    'ESSENTIEL_AN': process.env.PRICE_ESSENTIEL_AN,
+                    'PRO_MOIS': process.env.PRICE_PRO_MOIS,
+                    'PRO_AN': process.env.PRICE_PRO_AN,
+                    'PREMIUM_MOIS': process.env.PRICE_PREMIUM_MOIS,
+                    'PREMIUM_AN': process.env.PRICE_PREMIUM_AN
+                };
+                const priceId = stripePrices[planKey];
+                
+                if (!priceId) return res.status(400).json({ erreur: "L'upgrade nécessite que les ID de prix (price_xxx) soient configurés sur Render." });
+
                 const subscription = await stripe.subscriptions.retrieve(subId);
                 await stripe.subscriptions.update(subId, {
-                    items: [{
-                        id: subscription.items.data[0].id,
-                        price: priceId,
-                    }],
-                    proration_behavior: 'none', // <-- C'EST ICI ! Stripe facturera le nouveau prix au mois prochain.
+                    items: [{ id: subscription.items.data[0].id, price: priceId }],
+                    proration_behavior: 'none',
                     metadata: { id_salon: user.id_salon.toString(), plan_choisi: plan_choisi || 'PREMIUM', frequence: cycle_choisi === 'year' ? 'ANNUEL' : 'MENSUEL' }
                 });
 
-                // On met à jour directement sa base de données
                 await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [plan_choisi || 'PREMIUM', cycle_choisi === 'year' ? 'ANNUEL' : 'MENSUEL', user.id_salon]);
-
-                return res.json({ success: true, message: `Évolution validée ! Vous passez au forfait ${plan_choisi}. Le tarif s'appliquera sur votre prochaine facture.` });
+                return res.json({ success: true, message: `Évolution validée vers ${plan_choisi}.` });
             }
-            // =========================================================
 
-            // SINON C'EST UN NOUVEL ABONNEMENT (On va vers la page de paiement)
+            // NOUVEL ABONNEMENT (Création de session avec prix dynamique)
             const session = await stripe.checkout.sessions.create({
-              customer: customerId, payment_method_types: process.env.STRIPE_SEPA === 'oui' ? ['card', 'sepa_debit'] : ['card'],
-              line_items: [{ price: priceId, quantity: 1 }], mode: 'subscription',
+              customer: customerId, 
+              payment_method_types: process.env.STRIPE_SEPA === 'oui' ? ['card', 'sepa_debit'] : ['card'],
+              line_items: [{ 
+                  price_data: {
+                      currency: 'eur',
+                      product_data: { name: `STACK ${plan_choisi || 'PREMIUM'}` },
+                      unit_amount: amount,
+                      recurring: { interval: cycle_choisi === 'year' ? 'year' : 'month' }
+                  },
+                  quantity: 1 
+              }], 
+              mode: 'subscription',
               metadata: { id_salon: user.id_salon.toString(), plan_choisi: plan_choisi || 'PREMIUM', frequence: cycle_choisi === 'year' ? 'ANNUEL' : 'MENSUEL' },
-              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
+              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', 
+              cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
             });
             res.json({ url: session.url });
         } catch (e) { res.status(500).json({ erreur: "Erreur Stripe : " + e.message }); }
