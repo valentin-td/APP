@@ -4203,7 +4203,18 @@ function App() {
                           body: JSON.stringify({ plan_choisi: plan, cycle_choisi: cycle }) 
                       });
                       const data = await res.json();
-                      if (data.url) window.location.href = data.url;
+                      
+                      if (data.url) {
+                          // Nouveau client -> redirection vers le paiement Stripe
+                          window.location.href = data.url;
+                      } else if (data.success) {
+                          // Client existant -> Mise à jour instantanée sans payer aujourd'hui
+                          setShowPricingModal(false);
+                          showToast(data.message, "success");
+                          chargerTout(); // Rafraîchit les droits et fait disparaître les cadenas !
+                      } else {
+                          showToast(data.erreur || "Erreur avec l'abonnement.", "error");
+                      }
                   } catch (e) { showToast("Erreur de connexion avec Stripe.", "error"); }
               }}
           />
