@@ -542,7 +542,12 @@ app.post('/api/creer-checkout', async (req, res) => {
             const statutSub = result.rows[0].statut_abonnement;
 
             if (!customerId) {
-                const customer = await stripe.customers.create({ email: result.rows[0].email });
+                // Sécurité : on vérifie que l'email est valide pour Stripe, sinon on met un email de secours
+                let emailStripe = result.rows[0].email;
+                if (!emailStripe || !emailStripe.includes('@')) {
+                    emailStripe = `salon${user.id_salon}@stack-app.fr`;
+                }
+                const customer = await stripe.customers.create({ email: emailStripe });
                 customerId = customer.id;
                 await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
             }
