@@ -140,6 +140,18 @@ function App() {
   const [superAdminSalons, setSuperAdminSalons] = useState([]);
   const [tachesListe, setTachesListe] = useState([]);
   const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
+  const [sauvetageClient, setSauvetageClient] = useState(null);
+  const [smsSauvetage, setSmsSauvetage] = useState('');
+  const [rhSortBy, setRhSortBy] = useState('ca');
+  const [rhAvisExpanded, setRhAvisExpanded] = useState({});
+  
+  const envoyerSmsSauvetage = async () => {
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/sms/send', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ telephone: sauvetageClient.telephone, message: smsSauvetage }) });
+          if (res.ok) { showToast("SMS de sauvetage envoyé !", "success"); setSauvetageClient(null); } 
+          else { const data = await res.json(); showToast(data.erreur || "Erreur", "error"); }
+      } catch(e) { showToast("Erreur réseau", "error"); }
+  };
   
   const [showAddClient, setShowAddClient] = useState(false);
   const [showAddEmploye, setShowAddEmploye] = useState(false);
@@ -2631,7 +2643,8 @@ function App() {
                                                   <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
                                                       <span className="list-row-label">{tache.titre}</span>
                                                       {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'var(--btn-text)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600'}}>DÉTECTÉ</span>}
-                                                  </div>
+                                                      {tache.source === 'AVIS_CLIENT' && <button onClick={() => { setSauvetageClient(tache.donnees); setSmsSauvetage(`Bonjour ${tache.donnees?.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -20% sur votre prochaine coupe pour nous faire pardonner. À très vite !`); }} style={{fontSize: '10px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer', marginLeft: '8px'}}>🚑 Sauver ce client</button>}
+                                                      </div>
                                                   {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
                                                   {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
                                               </div>
