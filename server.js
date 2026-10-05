@@ -3178,6 +3178,47 @@ app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, 
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
 });
 
+app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, async (req, res) => {
+    const id = req.params.id;
+    if (parseInt(id) === 38) return res.status(403).json({ erreur: "Impossible de supprimer le salon fondateur." });
+    
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        
+        // Ordre de suppression calculé pour éviter les conflits de clés étrangères
+        await clientDB.query('DELETE FROM jet_logs WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM commissions WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM lignes_ticket WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM tickets WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM clotures_caisse WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM rendez_vous WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM absences_employes WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM recettes_articles WHERE id_protocole IN (SELECT id_protocole FROM protocoles WHERE id_salon = $1)', [id]);
+        await clientDB.query('DELETE FROM protocoles WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM catalogue WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM employes WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM clients WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM avis_demandes WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM taches_actions WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM ia_taches_attente WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM factures_fournisseurs WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM push_subscriptions WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM sms_opt_out WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM messages WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM utilisateurs WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM configuration_salon WHERE id_salon = $1', [id]);
+
+        await clientDB.query('COMMIT');
+        res.json({ message: `Le salon #${id} et toutes ses données ont été supprimés.` });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: "Erreur lors de la destruction du salon : " + e.message });
+    } finally {
+        clientDB.release();
+    }
+});
+
 
 // Sentry v10 : On utilise la nouvelle fonction dédiée
 if (process.env.SENTRY_DSN) {
