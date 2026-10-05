@@ -532,7 +532,8 @@ function App() {
   const joursRestantsEssai = dateFinEssai ? Math.ceil((dateFinEssai.getTime() - new Date().getTime()) / (1000 * 3600 * 24)) : 999;
   
   const isSoftLock = isTrialing && joursRestantsEssai <= 0 && joursRestantsEssai >= -7;
-  const isHardLock = isTrialing && joursRestantsEssai < -7;
+  // On déclenche le "Hard Lock" si l'essai est terminé OU si l'abonnement est impayé
+  const isHardLock = (isTrialing && joursRestantsEssai < -7) || isAbonnementInactif;
 
   useEffect(() => {
       if ((isSoftLock || isHardLock) && userRole === 'gerant' && activeTab !== 'caisse') {
@@ -925,7 +926,7 @@ function App() {
       if (response.ok) { 
           localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); 
           const decoded = decodeToken(data.token); setUserRole(decoded.role || 'gerant');
-          setIsAbonnementInactif(false); // Le backend décidera s'il faut bloquer ou non
+          setIsAbonnementInactif(false); // Le backend gère désormais le blocage
           if(decoded.role === 'employe') { setActiveTab('agenda'); } else { setActiveTab('accueil'); }
       } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Mode hors-ligne ou erreur de connexion."); }
@@ -1627,21 +1628,6 @@ function App() {
     );
   }
 
-  if (isAbonnementInactif && userRole === 'gerant') {
-     return (
-        <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
-        <ThemeToggle isFixed={true} />
-        <div className="carte" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
-          <div className="logo-container"><img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" /></div>
-          <h2 style={{color: 'var(--text-main)', margin: '0 0 8px 0'}}>Abonnement Requis</h2>
-          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>Pour accéder à votre tableau de bord, gérer votre catalogue et activer les automatisations, vous devez activer votre abonnement mensuel.</p>
-          <h1 style={{color: 'var(--text-main)', marginBottom: '24px'}}>49.00 <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>€ / mois</span></h1>
-          <button className="btn-action" onClick={lancerPaiementStripe} style={{ width: '100%' }}>Payer de manière sécurisée avec Stripe</button>
-          <button onClick={seDeconnecter} style={{background: 'none', border: 'none', color: 'var(--text-secondary)', marginTop: '24px', cursor: 'pointer', fontSize: '13px', textDecoration: 'underline'}}>Me déconnecter</button>
-        </div>
-      </div>
-     );
-  }
 
   const role = userRole;
   const heureDebutAgenda = Math.max(0, Math.min(23, parseInt(configSalon.heure_ouverture) || 8));
