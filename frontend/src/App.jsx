@@ -4229,7 +4229,8 @@ function App() {
                       const data = await res.json().catch(() => ({}));
                       
                       if (!res.ok) {
-                          showToast(data.erreur || "Erreur serveur lors de la connexion à Stripe.", "error");
+                          // On remplace le toast caché par une alerte native bloquante
+                          alert(`🚨 STRIPE A BLOQUÉ :\n\n${data.erreur || "Erreur serveur"}`);
                           return;
                       }
                       
@@ -4241,7 +4242,7 @@ function App() {
                           chargerTout();
                       }
                   } catch (e) { 
-                      showToast("Impossible de joindre le serveur.", "error"); 
+                      alert("🚨 Erreur critique : Impossible de joindre le serveur."); 
                   }
               }}
           />
