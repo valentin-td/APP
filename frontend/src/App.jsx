@@ -1336,6 +1336,32 @@ function App() {
 
   const declencherExport = async () => { if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
 
+  const declencherExportFEC = async () => { 
+      if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); 
+      showToast("Génération du FEC (Partie Double) en cours..."); 
+      try { 
+          const today = new Date(); 
+          const firstDay = new Date(today.getFullYear(), today.getMonth(), 1); 
+          const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0); 
+          const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; 
+          
+          const response = await fetch(`https://api-salon-backend.onrender.com/api/export-fec?date_debut=${formatYMD(firstDay)}&date_fin=${formatYMD(lastDay)}`, { headers: getAuthHeaders() }); 
+          if (response.status === 402) { setIsAbonnementInactif(true); return; } 
+          if (!response.ok) { const errData = await response.json().catch(() => ({})); throw new Error(errData.erreur || "Erreur Serveur"); } 
+          
+          const blob = await response.blob(); 
+          const url = window.URL.createObjectURL(blob); 
+          const a = document.createElement('a'); 
+          a.href = url; 
+          a.download = `FEC_${formatYMD(firstDay).replace(/-/g, '')}_${formatYMD(lastDay).replace(/-/g, '')}.txt`; 
+          document.body.appendChild(a); 
+          a.click(); 
+          a.remove(); 
+          window.URL.revokeObjectURL(url); 
+          showToast("Fichier FEC téléchargé avec succès !", "success"); 
+      } catch (error) { showToast(error.message, "error"); }
+  };
+
   const telechargerBilanJour = async (date_brute) => {
       if(isOffline || !navigator.onLine) return showToast("Téléchargement impossible hors-ligne.", "error");
       showToast("Génération du PDF en cours...");
@@ -3788,8 +3814,9 @@ function App() {
                      <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
                   </div>
               
-                  <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter</button></div>
-                  <div className="section-titre">Historique des bilans comptables</div>
+                  <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter PDF</button></div>
+                  <div className="carte export-carte" style={{marginTop: '16px'}}><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Fichier FEC (Comptable)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Export .txt normalisé (Partie double)</span></div><button className="btn-export" onClick={declencherExportFEC} style={{background: 'var(--text-main)', color: 'var(--bg-app)', border: 'none'}}>Télécharger FEC</button></div>
+                  <div className="section-titre" style={{marginTop: '32px'}}>Historique des bilans comptables</div>
                   
                   {(historiqueData || []).length === 0 ? (
                       <div className="empty-state">
