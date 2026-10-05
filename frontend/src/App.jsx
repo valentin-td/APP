@@ -711,7 +711,7 @@ function App() {
     if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData');
     if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData');
 
-    fetch('https://api-salon-backend.onrender.com/api/settings', { headers: getAuthHeaders() })
+    fetch(`https://api-salon-backend.onrender.com/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
         .then(handleFetchError)
         .then(async (d) => {
             const config = { 
