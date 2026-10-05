@@ -40,6 +40,7 @@ const TITRES = {
   sync_planity: 'Synchronisation Planity',
   mail: 'Boîte mail du salon',
   export_compta: 'Exportations comptable',
+  config_compta: 'Configuration Comptable (FEC)',
   tpe: 'TPE physique (Stripe Terminal)',
   cgu: 'Conditions générales',
   confidentialite: 'Politique de confidentialité',
@@ -71,11 +72,12 @@ export default function Parametres({
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
       { id: 'alertes', icone: ICONS.bell, label: 'Alertes urgences', valeur: statut(configSalon.alertes_sms_actives, 'Activées', 'Désactivées') },
     ] },
-    { titre: 'Intégrations', lignes: [
+    { titre: 'Intégrations & Comptabilité', lignes: [
       { id: 'google', icone: ICONS.star, label: 'Google My Business', valeur: statut(configSalon.google_api_key) },
       { id: 'sync_planity', icone: ICONS.link, label: 'Synchronisation Planity (iCal)', valeur: '' },
       { id: 'mail', icone: ICONS.mail, label: 'Boîte mail du salon', valeur: statut(configSalon.email_factures) },
-      { id: 'export_compta', icone: ICONS.send, label: 'Exportations comptable', valeur: statut(configSalon.email_comptable) },
+      { id: 'export_compta', icone: ICONS.send, label: 'Envoi Bilan Comptable', valeur: statut(configSalon.email_comptable) },
+      { id: 'config_compta', icone: ICONS.file, label: 'Configuration Comptable (FEC)' },
       { id: 'tpe', icone: ICONS.card, label: 'TPE physique', valeur: statut(configSalon.stripe_reader_id) },
     ] },
   ] : role === 'salon' ? [
@@ -250,6 +252,27 @@ const groupesBas = [
                         <input type="number" min="1" max="31" className="input-fournisseur" placeholder="Ex: 1 (le 1er du mois)" value={configSalon.jour_envoi_bilan || 1} onChange={(e) => setConfigSalon({...configSalon, jour_envoi_bilan: e.target.value})} />
                         <p style={{fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Si le mois est plus court (ex: février), l'envoi se fera le dernier jour du mois.</p>
                     </div>
+                  </div>
+        {carteSauvegarde}
+      </>);
+      case 'config_compta': return (<>
+                  <div className="carte scan-carte">
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Personnalisez vos codes comptables (Plan Comptable Général) pour l'export FEC.</span>
+                    
+                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Compte Banque</label>
+                    <input type="text" className="input-fournisseur" value={configSalon.compte_banque || '512000'} onChange={(e) => setConfigSalon({...configSalon, compte_banque: e.target.value})} style={{marginBottom: '12px'}}/>
+                    
+                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Compte Caisse (Espèces)</label>
+                    <input type="text" className="input-fournisseur" value={configSalon.compte_caisse || '530000'} onChange={(e) => setConfigSalon({...configSalon, compte_caisse: e.target.value})} style={{marginBottom: '12px'}}/>
+                    
+                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Ventes Prestations</label>
+                    <input type="text" className="input-fournisseur" value={configSalon.compte_prestations || '706000'} onChange={(e) => setConfigSalon({...configSalon, compte_prestations: e.target.value})} style={{marginBottom: '12px'}}/>
+                    
+                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Ventes Produits</label>
+                    <input type="text" className="input-fournisseur" value={configSalon.compte_produits || '707000'} onChange={(e) => setConfigSalon({...configSalon, compte_produits: e.target.value})} style={{marginBottom: '12px'}}/>
+                    
+                    <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>TVA Collectée</label>
+                    <input type="text" className="input-fournisseur" value={configSalon.compte_tva || '445710'} onChange={(e) => setConfigSalon({...configSalon, compte_tva: e.target.value})} />
                   </div>
         {carteSauvegarde}
       </>);
