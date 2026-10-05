@@ -906,7 +906,7 @@ function App() {
     try {
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput }) });
       const data = await response.json();
-      if (response.ok) { localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); setIsAbonnementInactif(true); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
+      if (response.ok) { localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); setIsAbonnementInactif(false); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Erreur de connexion au serveur."); }
   };
 
@@ -925,7 +925,8 @@ function App() {
       if (response.ok) { 
           localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); 
           const decoded = decodeToken(data.token); setUserRole(decoded.role || 'gerant');
-          if(decoded.role === 'employe') { setActiveTab('agenda'); } else if (decoded.role === 'salon') { setActiveTab('accueil'); } else { setActiveTab('accueil'); if(data.statut_abonnement !== 'actif') setIsAbonnementInactif(true); }
+          setIsAbonnementInactif(false); // Le backend décidera s'il faut bloquer ou non
+          if(decoded.role === 'employe') { setActiveTab('agenda'); } else { setActiveTab('accueil'); }
       } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Mode hors-ligne ou erreur de connexion."); }
   };
