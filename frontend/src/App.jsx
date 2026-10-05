@@ -1514,6 +1514,14 @@ function App() {
   // --- Rappel de clôture journalière (bandeau) ---
   const [clotureFaiteAujourdhui, setClotureFaiteAujourdhui] = useState(true);
   const [heureActuelle, setHeureActuelle] = useState(new Date());
+  const [clotureAutoInfo, setClotureAutoInfo] = useState(null);
+  const [alertesFermees, setAlertesFermees] = useState(() => { try { return JSON.parse(localStorage.getItem('alertesFermees')) || {}; } catch(e) { return {}; } });
+
+  const fermerAlerte = (cle) => {
+      const next = { ...alertesFermees, [cle]: true };
+      setAlertesFermees(next);
+      localStorage.setItem('alertesFermees', JSON.stringify(next));
+  };
 
   const verifierStatutCloture = async () => {
       if (decodeToken(token)?.role !== 'gerant') return;
@@ -1521,6 +1529,7 @@ function App() {
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture/statut', { headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           setClotureFaiteAujourdhui(!!data.cloture_faite);
+          if (data.derniere_cloture_auto) setClotureAutoInfo(data.derniere_cloture_auto);
       } catch (e) { /* échec silencieux : on retentera au prochain intervalle */ }
   };
 
@@ -1833,28 +1842,48 @@ function App() {
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
 
-      {(afficherRappelCloture || afficherRappelStock || (isTrialing && joursRestantsEssai <= 5 && joursRestantsEssai > 0)) && (
-          <div className="rappels-fixes-container">
-              {isTrialing && joursRestantsEssai <= 5 && joursRestantsEssai > 0 && (
-                  <div className="rappel-stock-banner" style={{borderColor: '#f59e0b', borderLeftColor: '#f59e0b'}}>
-                      <span>⚠️ Votre mois d'essai gratuit se termine dans {joursRestantsEssai} jour(s). Pensez à choisir votre forfait.</span>
-                      <button onClick={() => setShowPricingModal(true)} style={{background: '#f59e0b'}}>Choisir</button>
-                  </div>
-              )}
-              {afficherRappelCloture && (
-                  <div className="rappel-cloture-banner">
-                      <span>N'oublie pas d'effectuer la Clôture Journalière</span>
-                      <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
-                  </div>
-              )}
-              {afficherRappelStock && (
-                  <div className="rappel-stock-banner">
-                      <span>Nous vous conseillons de vérifier les stocks manuellement</span>
-                      <button onClick={validerVerifStock}>Fait</button>
-                  </div>
-              )}
-          </div>
-      )}
+      {(() => {
+          const jourKey = new Date().toLocaleDateString('fr-FR');
+          const showTrial = isTrialing && joursRestantsEssai <= 5 && joursRestantsEssai > 0 && !alertesFermees[`trial_${jourKey}`];
+          const showCloture = afficherRappelCloture && !alertesFermees[`cloture_${jourKey}`];
+          const showStock = afficherRappelStock && !alertesFermees[`stock_${jourKey}`];
+          const showAuto = clotureAutoInfo && !alertesFermees[`cloture_auto_${clotureAutoInfo}`];
+
+          if (!showTrial && !showCloture && !showStock && !showAuto) return null;
+
+          return (
+              <div className="rappels-fixes-container">
+                  {showTrial && (
+                      <div className="rappel-stock-banner" style={{borderColor: '#f59e0b', borderLeftColor: '#f59e0b', position: 'relative', paddingRight: '30px'}}>
+                          <span>⚠️ Votre mois d'essai gratuit se termine dans {joursRestantsEssai} jour(s). Pensez à choisir votre forfait.</span>
+                          <button onClick={() => setShowPricingModal(true)} style={{background: '#f59e0b'}}>Choisir</button>
+                          <button onClick={() => fermerAlerte(`trial_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#f59e0b', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                      </div>
+                  )}
+                  {showCloture && (
+                      <div className="rappel-cloture-banner" style={{position: 'relative', paddingRight: '30px'}}>
+                          <span>N'oublie pas d'effectuer la Clôture Journalière</span>
+                          <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
+                          <button onClick={() => fermerAlerte(`cloture_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                      </div>
+                  )}
+                  {showStock && (
+                      <div className="rappel-stock-banner" style={{position: 'relative', paddingRight: '30px'}}>
+                          <span>Nous vous conseillons de vérifier les stocks manuellement</span>
+                          <button onClick={validerVerifStock}>Fait</button>
+                          <button onClick={() => fermerAlerte(`stock_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                      </div>
+                  )}
+                  {showAuto && (
+                      <div className="rappel-stock-banner" style={{borderColor: 'var(--color-info)', borderLeftColor: 'var(--color-info)', position: 'relative', paddingRight: '30px'}}>
+                          <span>ℹ️ La caisse du {new Date(clotureAutoInfo).toLocaleDateString('fr-FR')} a été clôturée automatiquement.</span>
+                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{background: 'var(--color-info)'}}>OK</button>
+                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--color-info)', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                      </div>
+                  )}
+              </div>
+          );
+      })()}
 
       <style>{`
           .rdv-card-accordeon {
