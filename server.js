@@ -528,19 +528,23 @@ app.post('/api/creer-checkout', async (req, res) => {
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
         if (err) return res.status(403).json({ erreur: "Token invalide." });
         try {
-            const result = await pool.query('SELECT email, _customer_id FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
+            // ON AJOUTE _subscription_id ET statut_abonnement DANS LA RECHERCHE
+            const result = await pool.query('SELECT email, _customer_id, _subscription_id, statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
             if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
-            // Le contrat doit être accepté AVANT le paiement / la création du mandat
+            
             const docsEnAttente = await legal.documentsEnAttente(pool, user.id_salon);
             if (docsEnAttente.length > 0) return res.status(403).json({ erreur: "Vous devez d'abord accepter les conditions contractuelles.", require_legal: true });
+            
             let customerId = result.rows[0]._customer_id;
+            const subId = result.rows[0]._subscription_id;
+            const statutSub = result.rows[0].statut_abonnement;
+
             if (!customerId) {
                 const customer = await stripe.customers.create({ email: result.rows[0].email });
                 customerId = customer.id;
                 await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
             }
 
-            // --- MAPPING DES PRIX STRIPE DEPUIS RENDER ---
             const planKey = `${plan_choisi || 'PREMIUM'}_${cycle_choisi === 'year' ? 'AN' : 'MOIS'}`;
             const stripePrices = {
                 'ESSENTIEL_MOIS': process.env.PRICE_ESSENTIEL_MOIS,
@@ -550,13 +554,33 @@ app.post('/api/creer-checkout', async (req, res) => {
                 'PREMIUM_MOIS': process.env.PRICE_PREMIUM_MOIS,
                 'PREMIUM_AN': process.env.PRICE_PREMIUM_AN
             };
-            // Si on ne trouve pas la clé, on sécurise sur le Premium Mensuel par défaut
             const priceId = stripePrices[planKey] || process.env.PRICE_PREMIUM_MOIS || 'price_1UG3bh10YWspHc2C8J2bmXL0';
             
+            // =========================================================
+            // MAGIE STRIPE : UPGRADE SANS PAYER CE MOIS-CI (PRORATION: NONE)
+            // =========================================================
+            if (statutSub === 'actif' && subId) {
+                const subscription = await stripe.subscriptions.retrieve(subId);
+                await stripe.subscriptions.update(subId, {
+                    items: [{
+                        id: subscription.items.data[0].id,
+                        price: priceId,
+                    }],
+                    proration_behavior: 'none', // <-- C'EST ICI ! Stripe facturera le nouveau prix au mois prochain.
+                    metadata: { id_salon: user.id_salon.toString(), plan_choisi: plan_choisi || 'PREMIUM', frequence: cycle_choisi === 'year' ? 'ANNUEL' : 'MENSUEL' }
+                });
+
+                // On met à jour directement sa base de données
+                await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [plan_choisi || 'PREMIUM', cycle_choisi === 'year' ? 'ANNUEL' : 'MENSUEL', user.id_salon]);
+
+                return res.json({ success: true, message: `Évolution validée ! Vous passez au forfait ${plan_choisi}. Le tarif s'appliquera sur votre prochaine facture.` });
+            }
+            // =========================================================
+
+            // SINON C'EST UN NOUVEL ABONNEMENT (On va vers la page de paiement)
             const session = await stripe.checkout.sessions.create({
               customer: customerId, payment_method_types: process.env.STRIPE_SEPA === 'oui' ? ['card', 'sepa_debit'] : ['card'],
               line_items: [{ price: priceId, quantity: 1 }], mode: 'subscription',
-              // On glisse le plan choisi dans les valises pour le webhook au retour !
               metadata: { id_salon: user.id_salon.toString(), plan_choisi: plan_choisi || 'PREMIUM', frequence: cycle_choisi === 'year' ? 'ANNUEL' : 'MENSUEL' },
               success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
             });
