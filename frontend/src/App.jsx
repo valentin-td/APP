@@ -2322,32 +2322,46 @@ function App() {
                                   ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
                               </div>
 
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Enquêtes de satisfaction</h3>
-                                  {avisStats && parseInt(avisStats.nb_envoyes) > 0 ? (
-                                      <>
-                                          <div style={{display: 'flex', gap: '24px', marginBottom: '14px'}}>
-                                              <div>
-                                                  <span style={{fontSize: '24px', fontWeight: '700', color: 'var(--text-main)'}}>{avisStats.nb_envoyes}</span>
-                                                  <p style={{margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>SMS envoyés</p>
-                                              </div>
-                                              <div>
-                                                  <span style={{fontSize: '24px', fontWeight: '700', color: 'var(--text-main)'}}>{avisStats.nb_repondus}</span>
-                                                  <p style={{margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>Réponses ({avisStats.nb_envoyes > 0 ? Math.round((avisStats.nb_repondus / avisStats.nb_envoyes) * 100) : 0}%)</p>
-                                              </div>
-                                              {avisStats.note_moyenne && (
-                                                  <div>
-                                                      <span style={{fontSize: '24px', fontWeight: '700', color: 'var(--text-main)'}}>{avisStats.note_moyenne} ★</span>
-                                                      <p style={{margin: 0, fontSize: '12px', color: 'var(--text-secondary)'}}>Note moyenne</p>
+                              <div className="carte" style={{flex: 1, minWidth: '300px', display: 'flex', flexDirection: 'column', maxHeight: '400px'}}>
+                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0}}>
+                                      <h3 style={{marginTop: 0, marginBottom: 0, color: 'var(--text-main)'}}>Mur des Verbatims</h3>
+                                      {dashboardData.marketing?.nps !== null && dashboardData.marketing?.nps !== undefined && (
+                                          <div style={{background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px'}} title="Net Promoter Score (-100 à +100)">
+                                              NPS : <span style={{color: dashboardData.marketing.nps > 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>{dashboardData.marketing.nps > 0 ? '+' : ''}{dashboardData.marketing.nps}</span>
+                                          </div>
+                                      )}
+                                  </div>
+                                  
+                                  <div style={{overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px'}}>
+                                      {(dashboardData.marketing?.verbatims || []).length === 0 ? (
+                                          <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun avis client reçu récemment.</p>
+                                      ) : (
+                                          dashboardData.marketing.verbatims.map(avis => {
+                                              const isPositif = avis.note >= 4;
+                                              return (
+                                                  <div key={avis.id_demande} style={{background: isPositif ? 'var(--bg-card)' : 'var(--bg-danger)', border: `1px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`, borderLeftWidth: '4px', borderRadius: '8px', padding: '12px', position: 'relative'}}>
+                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                                                          <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                              <strong style={{color: isPositif ? 'var(--text-main)' : 'var(--color-danger)', fontSize: '14px'}}>{avis.prenom || 'Client'}</strong>
+                                                              <span style={{color: '#f59e0b', fontSize: '13px'}}>{'★'.repeat(avis.note)}{'☆'.repeat(5 - avis.note)}</span>
+                                                          </div>
+                                                          {isPositif && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Fidélisé</span>}
+                                                      </div>
+                                                      {avis.commentaire && <p style={{margin: '0 0 8px 0', fontSize: '13px', fontStyle: 'italic', color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)'}}>"{avis.commentaire}"</p>}
+                                                      
+                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px'}}>
+                                                          <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>
+                                                              {new Date(avis.date_creation).toLocaleDateString('fr-FR')} {avis.nom_employe ? `• Par ${avis.nom_employe}` : ''}
+                                                          </span>
+                                                          {!isPositif && avis.telephone && (
+                                                              <button onClick={() => { setSauvetageClient({ telephone: avis.telephone, prenom: avis.prenom }); setSmsSauvetage(`Bonjour ${avis.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre dernière expérience. Voici -20% sur votre prochaine visite pour nous faire pardonner. À très vite !`); }} style={{fontSize: '11px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer'}}>🚑 Sauver</button>
+                                                          )}
+                                                      </div>
                                                   </div>
-                                              )}
-                                          </div>
-                                          <div style={{display: 'flex', gap: '8px', fontSize: '12px'}}>
-                                              <span style={{color: 'var(--color-success)'}}>👍 {avisStats.nb_positifs} positifs</span>
-                                              <span style={{color: 'var(--color-danger)'}}>👎 {avisStats.nb_negatifs} à améliorer</span>
-                                          </div>
-                                      </>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucune enquête envoyée pour le moment.</p>}
+                                              )
+                                          })
+                                      )}
+                                  </div>
                               </div>
 
                               <div className="carte" style={{flex: 1, minWidth: '300px'}}>
@@ -2644,7 +2658,7 @@ function App() {
                                                       <span className="list-row-label">{tache.titre}</span>
                                                       {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'var(--btn-text)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600'}}>DÉTECTÉ</span>}
                                                       {tache.source === 'AVIS_CLIENT' && <button onClick={() => { setSauvetageClient(tache.donnees); setSmsSauvetage(`Bonjour ${tache.donnees?.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -20% sur votre prochaine coupe pour nous faire pardonner. À très vite !`); }} style={{fontSize: '10px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer', marginLeft: '8px'}}>🚑 Sauver ce client</button>}
-                                                      </div>
+                                                  </div>
                                                   {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
                                                   {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
                                               </div>
@@ -3580,6 +3594,10 @@ function App() {
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
                           <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
                           <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                              <select className="input-fournisseur" style={{marginBottom: 0, width: 'auto', padding: '8px', fontSize: '12px'}} value={rhSortBy} onChange={e => setRhSortBy(e.target.value)}>
+                                  <option value="ca">Tri : CA généré</option>
+                                  <option value="note">Tri : Palmarès (Note client)</option>
+                              </select>
                               <ThemeToggle />
                               <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
                           </div>
@@ -3681,13 +3699,20 @@ function App() {
                       <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
                   ) : (
                     <div className="rh-grid">
-                      {rhData.map(employe => (
+                      {[...rhData].sort((a, b) => rhSortBy === 'note' ? (b.note_moyenne || 0) - (a.note_moyenne || 0) : b.performances_actuelles.ca_genere - a.performances_actuelles.ca_genere).map(employe => (
                         <div className="rh-carte" key={employe.id_employe} style={{position: 'relative'}}>
                           <div className="rh-header-profil">
                             <div className="rh-avatar">
                               {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
                             </div>
                             <div className="rh-identite" style={{flex: 1}}><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
+                            
+                            {employe.note_moyenne && (
+                                <div style={{background: '#fef3c7', color: '#d97706', padding: '6px 10px', borderRadius: '16px', fontWeight: 'bold', fontSize: '14px', border: '1px solid #fde68a'}}>
+                                    ⭐ {employe.note_moyenne} <span style={{fontSize: '10px', fontWeight: 'normal'}}>({employe.nb_avis})</span>
+                                </div>
+                            )}
+
                             <button onClick={(e) => { e.stopPropagation(); setEmployeMenuOuvert(employeMenuOuvert === employe.id_employe ? null : employe.id_employe); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1, alignSelf: 'flex-start'}}>⋮</button>
                             {employeMenuOuvert === employe.id_employe && (
                                 <>
@@ -3705,10 +3730,30 @@ function App() {
                             <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
                           </div>
                           <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
-                          <div style={{marginTop: '8px'}}>
-                            <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.05em', marginBottom: '8px', display: 'block'}}>Évolution (6 mois)</span>
-                            {dessinerChronogramme(employe.historique_primes)}
-                          </div>
+                          
+                          {employe.derniers_avis && employe.derniers_avis.length > 0 && (
+                              <div style={{marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '12px'}}>
+                                  <button onClick={() => setRhAvisExpanded({...rhAvisExpanded, [employe.id_employe]: !rhAvisExpanded[employe.id_employe]})} style={{background: 'none', border: 'none', width: '100%', textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 'bold'}}>
+                                      {rhAvisExpanded[employe.id_employe] ? 'Masquer les avis ▲' : 'Voir ses derniers avis ▼'}
+                                  </button>
+                                  {rhAvisExpanded[employe.id_employe] && (
+                                      <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px'}}>
+                                          {employe.derniers_avis.map((avis, i) => {
+                                              const isPositif = avis.note >= 4;
+                                              return (
+                                                  <div key={i} style={{background: isPositif ? 'var(--bg-app)' : 'var(--bg-danger)', borderLeft: `3px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`, padding: '8px 12px', borderRadius: '4px', fontSize: '12px', textAlign: 'left'}}>
+                                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '4px'}}>
+                                                          <strong style={{color: isPositif ? 'var(--text-main)' : 'var(--color-danger)'}}>{avis.prenom}</strong>
+                                                          <span style={{color: '#f59e0b'}}>{'★'.repeat(avis.note)}</span>
+                                                      </div>
+                                                      <span style={{color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)', fontStyle: 'italic'}}>"{avis.commentaire}"</span>
+                                                  </div>
+                                              )
+                                          })}
+                                      </div>
+                                  )}
+                              </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -4281,6 +4326,20 @@ function App() {
                       }} style={{flex: 2, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
                           Envoyer ({selectedCancelRdvs.length})
                       </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {sauvetageClient && (
+          <div className="modal-overlay" style={{ zIndex: 100000 }}>
+              <div className="modal-content" style={{maxWidth: '400px'}}>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '18px'}}>🚑 Sauver ce client</h2>
+                  <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px'}}>Envoyez un SMS d'excuse avec une offre pour le faire revenir.</p>
+                  <textarea className="input-fournisseur" rows={4} value={smsSauvetage} onChange={e => setSmsSauvetage(e.target.value)} style={{width: '100%', boxSizing: 'border-box', marginBottom: '16px', fontSize: '13px', resize: 'vertical'}} />
+                  <div style={{display: 'flex', gap: '12px'}}>
+                      <button onClick={() => setSauvetageClient(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Annuler</button>
+                      <button onClick={envoyerSmsSauvetage} className="btn-action" style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none'}}>Envoyer le SMS</button>
                   </div>
               </div>
           </div>
