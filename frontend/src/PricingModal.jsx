@@ -90,7 +90,7 @@ export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRes
                 {isSoftLock && (
                     <div style={{ padding: '16px', textAlign: 'center', borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)', borderRadius: '0 0 24px 24px' }}>
                         <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', cursor: 'pointer', textDecoration: 'underline' }}>
-                            Rappelez-le moi plus tard (il vous reste {7 + joursRestants} jour(s) de tolérance)
+                            Rappelez-le moi plus tard (il vous reste {7 + joursRestants} jour(s) avant échéance)
                         </button>
                     </div>
                 )}
