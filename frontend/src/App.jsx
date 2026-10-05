@@ -1854,31 +1854,31 @@ function App() {
           return (
               <div className="rappels-fixes-container">
                   {showTrial && (
-                      <div className="rappel-stock-banner" style={{borderColor: '#f59e0b', borderLeftColor: '#f59e0b', position: 'relative', paddingRight: '30px'}}>
+                      <div className="rappel-stock-banner" style={{borderColor: '#f59e0b', borderLeftColor: '#f59e0b', position: 'relative', paddingRight: '40px'}}>
                           <span>⚠️ Votre mois d'essai gratuit se termine dans {joursRestantsEssai} jour(s). Pensez à choisir votre forfait.</span>
                           <button onClick={() => setShowPricingModal(true)} style={{background: '#f59e0b'}}>Choisir</button>
-                          <button onClick={() => fermerAlerte(`trial_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#f59e0b', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                          <button onClick={() => fermerAlerte(`trial_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
                       </div>
                   )}
                   {showCloture && (
-                      <div className="rappel-cloture-banner" style={{position: 'relative', paddingRight: '30px'}}>
+                      <div className="rappel-cloture-banner" style={{position: 'relative', paddingRight: '40px'}}>
                           <span>N'oublie pas d'effectuer la Clôture Journalière</span>
                           <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
-                          <button onClick={() => fermerAlerte(`cloture_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                          <button onClick={() => fermerAlerte(`cloture_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
                       </div>
                   )}
                   {showStock && (
-                      <div className="rappel-stock-banner" style={{position: 'relative', paddingRight: '30px'}}>
+                      <div className="rappel-stock-banner" style={{position: 'relative', paddingRight: '40px'}}>
                           <span>Nous vous conseillons de vérifier les stocks manuellement</span>
                           <button onClick={validerVerifStock}>Fait</button>
-                          <button onClick={() => fermerAlerte(`stock_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                          <button onClick={() => fermerAlerte(`stock_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
                       </div>
                   )}
                   {showAuto && (
-                      <div className="rappel-stock-banner" style={{borderColor: 'var(--color-info)', borderLeftColor: 'var(--color-info)', position: 'relative', paddingRight: '30px'}}>
+                      <div className="rappel-stock-banner" style={{borderColor: 'var(--color-info)', borderLeftColor: 'var(--color-info)', position: 'relative', paddingRight: '40px'}}>
                           <span>ℹ️ La caisse du {new Date(clotureAutoInfo).toLocaleDateString('fr-FR')} a été clôturée automatiquement.</span>
                           <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{background: 'var(--color-info)'}}>OK</button>
-                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--color-info)', cursor: 'pointer', fontSize: '16px'}}>✕</button>
+                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
                       </div>
                   )}
               </div>
