@@ -272,7 +272,11 @@ const groupesBas = [
                     <input type="text" className="input-fournisseur" value={configSalon.compte_produits || '707000'} onChange={(e) => setConfigSalon({...configSalon, compte_produits: e.target.value})} style={{marginBottom: '12px'}}/>
                     
                     <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>TVA Collectée</label>
-                    <input type="text" className="input-fournisseur" value={configSalon.compte_tva || '445710'} onChange={(e) => setConfigSalon({...configSalon, compte_tva: e.target.value})} />
+                    <input type="text" className="input-fournisseur" value={configSalon.compte_tva || '445710'} onChange={(e) => setConfigSalon({...configSalon, compte_tva: e.target.value})} style={{marginBottom: '24px'}}/>
+
+                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>API Temps Réel (Pennylane, Tiime...)</h4>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px', display: 'block'}}>Collez ici votre clé d'API. À chaque "Z de Caisse", l'écriture comptable sera poussée automatiquement au logiciel de votre expert-comptable.</span>
+                    <input type="text" className="input-fournisseur" placeholder="Clé API (ex: sk_live_...)" value={configSalon.pennylane_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, pennylane_api_key: e.target.value})} />
                   </div>
         {carteSauvegarde}
       </>);
