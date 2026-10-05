@@ -1032,18 +1032,17 @@ app.post('/api/avis/:token/note', limiteurAvisPublic, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
 });
 
-aawait pool.query(
-            `INSERT INTO taches_actions (id_salon, titre, description, source, donnees) VALUES ($1, $2, $3, 'AVIS_CLIENT', $4)`,
-            [d.id_salon, `Avis client insatisfait (${d.note}★) à recontacter`, `${d.prenom || 'Un client'} (${d.telephone}) a laissé une note de ${d.note}/5 : "${req.body.commentaire || '(aucun commentaire)'}"`, JSON.stringify({ telephone: d.telephone, prenom: d.prenom })]
-        );aire', limiteurAvisPublic, async (req, res) => {
+app.post('/api/avis/:token/commentaire', limiteurAvisPublic, async (req, res) => {
     try {
         const r = await pool.query(`UPDATE avis_demandes SET commentaire = $1, statut = 'REPONDU' WHERE token = $2 AND note <= 3 AND statut != 'REPONDU' RETURNING id_salon, telephone, prenom, note`, [req.body.commentaire || '', req.params.token]);
         if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà traité." });
         const d = r.rows[0];
+        
         await pool.query(
             `INSERT INTO taches_actions (id_salon, titre, description, source, donnees) VALUES ($1, $2, $3, 'AVIS_CLIENT', $4)`,
             [d.id_salon, `Avis client insatisfait (${d.note}★) à recontacter`, `${d.prenom || 'Un client'} (${d.telephone}) a laissé une note de ${d.note}/5 : "${req.body.commentaire || '(aucun commentaire)'}"`, JSON.stringify({ telephone: d.telephone, prenom: d.prenom })]
         );
+        
         envoyerNotificationPush(d.id_salon, 'gerant', { title: "Avis client à traiter", body: `Note de ${d.note}/5 reçue, un commentaire vous attend dans Actions.`, url: '/?tab=actions' });
         res.json({ message: "Merci pour votre retour." });
     } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
