@@ -552,7 +552,7 @@ function App() {
       if (userRole !== 'gerant') { setActiveTab(tabName); return; }
       
       // On vérifie les droits. Si c'est bloqué, on ouvre la modale ET on s'arrête là sans changer d'onglet
-      if ((tabName === 'rh' || tabName === 'admin') && !aLeNiveau('PREMIUM')) {
+      if (tabName === 'admin' && !aLeNiveau('PREMIUM')) {
           setShowPricingModal(true);
           return;
       }
