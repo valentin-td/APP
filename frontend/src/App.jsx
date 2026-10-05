@@ -536,10 +536,10 @@ function App() {
   const isHardLock = (isTrialing && joursRestantsEssai < -7) || isAbonnementInactif;
 
   useEffect(() => {
-      if ((isSoftLock || isHardLock) && userRole === 'gerant' && activeTab !== 'caisse') {
+      if ((isSoftLock || isHardLock) && userRole === 'gerant' && activeTab !== 'caisse' && !showPricingModal) {
           setShowPricingModal(true);
       }
-  }, [isSoftLock, isHardLock, userRole, token, activeTab]);
+  }, [isSoftLock, isHardLock, userRole, activeTab]); // Retire 'token' et ajoute la sécurité anti-boucle
 
   const aLeNiveau = (niveauRequis) => {
       const plan = configSalon.plan_actuel || 'PREMIUM_TRIAL';
@@ -550,9 +550,19 @@ function App() {
 
   const handleTabClick = (tabName) => {
       if (userRole !== 'gerant') { setActiveTab(tabName); return; }
-      if (tabName === 'rh' && !aLeNiveau('PREMIUM')) return setShowPricingModal(true);
-      if (tabName === 'admin' && !aLeNiveau('PREMIUM')) return setShowPricingModal(true);
-      if (tabName === 'protocoles' && !aLeNiveau('PRO')) return setShowPricingModal(true);
+      
+      // On vérifie les droits. Si c'est bloqué, on ouvre la modale ET on s'arrête là sans changer d'onglet
+      if ((tabName === 'rh' || tabName === 'admin') && !aLeNiveau('PREMIUM')) {
+          setShowPricingModal(true);
+          return;
+      }
+      if (tabName === 'protocoles' && !aLeNiveau('PRO')) {
+          setShowPricingModal(true);
+          return;
+      }
+      
+      // Si tout va bien, on change d'onglet et on s'assure que la modale est fermée
+      setShowPricingModal(false);
       setActiveTab(tabName);
   };
 
