@@ -1800,6 +1800,13 @@ function App() {
   const iconOutils = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>;
 
   const onglMobilesParRole = (r) => {
+      const iconComptaLock = !aLeNiveau('PREMIUM') ? (
+          <div style={{position:'relative'}}>
+              <span style={{position:'absolute', top:'-4px', right:'-4px', color:'var(--text-muted)', background:'var(--bg-app)', borderRadius:'50%', padding:'1px', display:'flex'}}><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>
+              {iconCompta}
+          </div>
+      ) : iconCompta;
+
       if (r === 'gerant') return [
           { key: 'accueil', label: 'Bord', icon: iconBord },
           { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
@@ -1817,12 +1824,11 @@ function App() {
       return [
           { key: 'accueil', label: 'Bord', icon: iconBord },
           { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
-          { key: 'admin', label: 'Compta', icon: iconCompta },
+          { key: 'admin', label: 'Compta', icon: iconComptaLock },
           { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
           { key: 'outils', label: 'Outils', icon: iconOutils },
       ];
   };
-
   return (
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
@@ -2082,7 +2088,7 @@ function App() {
                   })()}
                   items={onglMobilesParRole(role).map(it => {
                       if (it.key === 'outils') return { ...it, badge: aDesMessagesNonLus && !isOutilsMenuOpen, onSelect: () => setIsOutilsMenuOpen(true) };
-                      return { ...it, onSelect: () => { setActiveTab(it.key); setIsOutilsMenuOpen(false); } };
+                      return { ...it, onSelect: () => { handleTabClick(it.key); setIsOutilsMenuOpen(false); } };
                   })}
               />
           )}
