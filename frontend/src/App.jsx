@@ -4225,7 +4225,13 @@ function App() {
                           headers: getAuthHeaders(true), 
                           body: JSON.stringify({ plan_choisi: plan, cycle_choisi: cycle }) 
                       });
-                      const data = await res.json();
+                      
+                      const data = await res.json().catch(() => ({}));
+                      
+                      if (!res.ok) {
+                          showToast(data.erreur || "Erreur serveur lors de la connexion à Stripe.", "error");
+                          return;
+                      }
                       
                       if (data.url) {
                           window.location.href = data.url;
@@ -4233,10 +4239,10 @@ function App() {
                           setShowPricingModal(false);
                           showToast(data.message, "success");
                           chargerTout();
-                      } else {
-                          alert(data.erreur || "Erreur avec l'abonnement.");
                       }
-                  } catch (e) { alert("Erreur de connexion avec Stripe."); }
+                  } catch (e) { 
+                      showToast("Impossible de joindre le serveur.", "error"); 
+                  }
               }}
           />
       )}
