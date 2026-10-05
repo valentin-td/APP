@@ -29,7 +29,7 @@ export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRes
                     
                     {/* ESSENTIEL */}
                     <div style={{ flex: '1 1 250px', background: 'var(--bg-app)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column' }}>
-                        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>🥉 Essentiel</h3>
+                        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>Essentiel</h3>
                         <p style={{ margin: '0 0 24px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>Pour les indépendants qui se lancent.</p>
                         <div style={{ fontSize: '32px', fontWeight: '900', color: 'var(--text-main)', marginBottom: '24px' }}>
                             {isAnnuel ? '32.50' : '39.00'} <span style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text-secondary)' }}>€ /mois</span>
@@ -49,7 +49,7 @@ export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRes
                     {/* PRO */}
                     <div style={{ flex: '1 1 250px', background: 'var(--bg-card)', padding: '24px', borderRadius: '16px', border: '2px solid var(--btn-primary)', display: 'flex', flexDirection: 'column', position: 'relative', boxShadow: 'var(--shadow-md)', transform: 'scale(1.02)' }}>
                         <div style={{ position: 'absolute', top: '-12px', left: '50%', transform: 'translateX(-50%)', background: 'var(--btn-primary)', color: 'var(--bg-card)', fontSize: '11px', fontWeight: 'bold', padding: '4px 12px', borderRadius: '12px', letterSpacing: '0.05em' }}>LE PLUS POPULAIRE</div>
-                        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>🥈 Pro</h3>
+                        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>Pro</h3>
                         <p style={{ margin: '0 0 24px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>Pour fidéliser et développer le salon.</p>
                         <div style={{ fontSize: '32px', fontWeight: '900', color: 'var(--text-main)', marginBottom: '24px' }}>
                             {isAnnuel ? '57.50' : '69.00'} <span style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text-secondary)' }}>€ /mois</span>
@@ -68,7 +68,7 @@ export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRes
 
                     {/* PREMIUM */}
                     <div style={{ flex: '1 1 250px', background: 'var(--bg-app)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column' }}>
-                        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>🥇 Premium</h3>
+                        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>Premium</h3>
                         <p style={{ margin: '0 0 24px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>L'automatisation totale.</p>
                         <div style={{ fontSize: '32px', fontWeight: '900', color: 'var(--text-main)', marginBottom: '24px' }}>
                             {isAnnuel ? '82.50' : '99.00'} <span style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text-secondary)' }}>€ /mois</span>
