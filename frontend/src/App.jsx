@@ -2028,7 +2028,6 @@ function App() {
                  )}
                  {role === 'gerant' && (
                      <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => handleTabClick('rh')} style={{ position: 'relative' }}>
-                         {!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'6px', right:'6px', fontSize:'10px'}}>🔒</span>}
                          <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span>
                      </div>
                  )}
@@ -2089,7 +2088,7 @@ function App() {
                       )}
                       {role === 'gerant' && (
                           <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('rh'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'-6px', right:'-6px', fontSize:'14px'}}>🔒</span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><span className="outil-btn-label">Équipe</span>
+                              <div className="outil-btn-icon" style={{position:'relative'}}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><span className="outil-btn-label">Équipe</span>
                           </button>
                       )}
                       {(role === 'gerant' || role === 'salon') && (
