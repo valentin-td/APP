@@ -4228,17 +4228,15 @@ function App() {
                       const data = await res.json();
                       
                       if (data.url) {
-                          // Nouveau client -> redirection vers le paiement Stripe
                           window.location.href = data.url;
                       } else if (data.success) {
-                          // Client existant -> Mise à jour instantanée sans payer aujourd'hui
                           setShowPricingModal(false);
                           showToast(data.message, "success");
-                          chargerTout(); // Rafraîchit les droits et fait disparaître les cadenas !
+                          chargerTout();
                       } else {
-                          showToast(data.erreur || "Erreur avec l'abonnement.", "error");
+                          alert(data.erreur || "Erreur avec l'abonnement.");
                       }
-                  } catch (e) { showToast("Erreur de connexion avec Stripe.", "error"); }
+                  } catch (e) { alert("Erreur de connexion avec Stripe."); }
               }}
           />
       )}
