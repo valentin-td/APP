@@ -1028,6 +1028,25 @@ function App() {
       } catch (e) { showToast("Erreur lors de la modification", "error"); }
   };
 
+  const supprimerSalonAdmin = async (id_salon, nom_salon) => {
+      setConfirmDialog({
+          titre: "DANGER : Destruction du Salon",
+          message: `Êtes-vous sûr de vouloir SUPPRIMER DÉFINITIVEMENT le salon "${nom_salon}" (ID: ${id_salon}) ? Absolument TOUT sera effacé de la base de données sans aucun retour en arrière possible.`,
+          btnTexte: "Oui, tout détruire",
+          action: async () => {
+              setConfirmDialog(null);
+              try {
+                  const res = await fetch(`https://api-salon-backend.onrender.com/api/superadmin/salons/${id_salon}`, {
+                      method: 'DELETE', headers: getAuthHeaders()
+                  });
+                  const data = await handleFetchError(res);
+                  showToast(data.message, "success");
+                  chargerTout();
+              } catch (e) { showToast(e.message || "Erreur de suppression", "error"); }
+          }
+      });
+  };
+
   const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); setShowAddClient(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
   const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
@@ -4015,7 +4034,12 @@ function App() {
                               </div>
                               <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
                                   <span className="badge-discret" style={{ background: salon.statut_abonnement === 'actif' ? 'var(--bg-success)' : 'var(--bg-danger)', color: salon.statut_abonnement === 'actif' ? 'var(--color-success)' : 'var(--color-danger)' }}>{salon.statut_abonnement === 'actif' ? 'Abonné (Actif)' : 'Inactif / Impayé'}</span>
-                                  {salon.id_salon !== 38 && ( <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>{salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}</button> )}
+                                  {salon.id_salon !== 38 && ( 
+                                      <div style={{display: 'flex', gap: '8px'}}>
+                                          <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>{salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}</button>
+                                          <button onClick={() => supprimerSalonAdmin(salon.id_salon, salon.nom_salon)} style={{background: 'var(--bg-danger)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}} title="Détruire ce salon">Supprimer</button>
+                                      </div>
+                                  )}
                               </div>
                           </div>
                       ))}
