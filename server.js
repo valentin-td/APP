@@ -2984,12 +2984,19 @@ app.put('/api/protocoles/:id', verifierToken, verifierPlan(['PRO', 'PREMIUM']), 
     try {
         await clientDB.query('BEGIN');
         
-        // 1. Mise à jour de la fiche
-        await clientDB.query(
-            `UPDATE protocoles SET nom_prestation = $1, etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8 WHERE id_protocole = $6 AND id_salon = $7`,
+        // 1. Mise à jour de la fiche (AVEC VÉRIFICATION DES DROITS)
+        const updateRes = await clientDB.query(
+            `UPDATE protocoles SET nom_prestation = $1, etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8 WHERE id_protocole = $6 AND id_salon = $7 RETURNING id_protocole`,
             [nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, req.params.id, req.user.id_salon, temps_nettoyage_minutes || 0]
         );
-        // 2. Remplacement des ingrédients de la recette
+
+        // 🚨 SÉCURITÉ (IDOR) : Si l'update ne touche aucune ligne, le protocole n'existe pas ou appartient à un autre salon.
+        if (updateRes.rowCount === 0) {
+            await clientDB.query('ROLLBACK');
+            return res.status(404).json({ erreur: "Protocole introuvable ou accès refusé." });
+        }
+
+        // 2. Remplacement des ingrédients de la recette (Sécurisé car la propriété est confirmée au-dessus)
         await clientDB.query(`DELETE FROM recettes_articles WHERE id_protocole = $1`, [req.params.id]);
         if (ingredients && ingredients.length > 0) {
             for (let ing of ingredients) {
