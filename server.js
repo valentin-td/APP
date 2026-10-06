@@ -450,7 +450,7 @@ app.post('/api/register', async (req, res) => {
         await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, '0000', TRUE)", [nom_gerant || 'Patron', idNouveauSalon]);
 
         await clientDB.query('COMMIT');
-        const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant', email }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: "Inscription réussie", token });
     } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
 });
@@ -462,8 +462,8 @@ app.post('/api/login', async (req, res) => {
         if (result.rowCount > 0) {
             const { id_salon, mot_de_passe_hash, statut_abonnement } = result.rows[0];
             const match = await bcrypt.compare(mot_de_passe, mot_de_passe_hash);
-            if (match) {
-                const token = jwt.sign({ id_salon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+             if (match) {
+                const token = jwt.sign({ id_salon, role: 'gerant', email }, process.env.JWT_SECRET, { expiresIn: '24h' });
                 await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { email, role: 'gerant' });
                 res.json({ message: "Connexion réussie", token, statut_abonnement });
             } else {
@@ -3446,11 +3446,16 @@ app.get('/api/admin/time-travel/:id_salon', async (req, res) => {
 // =========================================================================
 // --- GOD MODE (SUPER-ADMIN) ---
 // =========================================================================
-const verifierSuperAdmin = (req, res, next) => {
-    if (req.user.id_salon !== 38) {
-        return res.status(403).json({ erreur: "Accès refusé. God mode uniquement." });
+const verifierSuperAdmin = async (req, res, next) => {
+    try {
+        const userRes = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [req.user.id_salon]);
+        if (userRes.rowCount === 0 || userRes.rows[0].email !== '2@gmail.com') {
+            return res.status(403).json({ erreur: "Accès refusé. God mode uniquement." });
+        }
+        next();
+    } catch (e) {
+        return res.status(500).json({ erreur: "Erreur de vérification des droits admin." });
     }
-    next();
 };
 
 app.get('/api/superadmin/stats', verifierToken, verifierSuperAdmin, async (req, res) => {
@@ -3491,7 +3496,7 @@ app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, 
 
 app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, async (req, res) => {
     const id = req.params.id;
-    if (parseInt(id) === 38) return res.status(403).json({ erreur: "Impossible de supprimer le salon fondateur." });
+    if (parseInt(id) === req.user.id_salon) return res.status(403).json({ erreur: "Impossible de supprimer votre propre salon fondateur." });
     
     const clientDB = await pool.connect();
     try {
