@@ -2331,6 +2331,24 @@ function App() {
                                           </div>
                                       )}
                                   </div>
+
+                                  {/* --- RETOUR DES STATISTIQUES GLOBALES DE CAMPAGNE --- */}
+                                  {avisStats && parseInt(avisStats.nb_envoyes) > 0 && (
+                                      <div style={{display: 'flex', gap: '12px', background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '16px', flexShrink: 0, border: '1px solid var(--border-color)'}}>
+                                          <div style={{flex: 1, textAlign: 'center', borderRight: '1px solid var(--border-color)'}}>
+                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)'}}>{avisStats.nb_envoyes}</span>
+                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>SMS Envoyés</span>
+                                          </div>
+                                          <div style={{flex: 1, textAlign: 'center', borderRight: '1px solid var(--border-color)'}}>
+                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)'}}>{avisStats.nb_repondus} <span style={{fontSize: '10px', fontWeight: 'normal', color: 'var(--text-secondary)'}}>({Math.round((avisStats.nb_repondus / avisStats.nb_envoyes) * 100)}%)</span></span>
+                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>Réponses</span>
+                                          </div>
+                                          <div style={{flex: 1, textAlign: 'center'}}>
+                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: '#f59e0b'}}>{avisStats.note_moyenne || '-'} ★</span>
+                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>Moyenne</span>
+                                          </div>
+                                      </div>
+                                  )}
                                   
                                   <div style={{overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px'}}>
                                       {(dashboardData.marketing?.verbatims || []).length === 0 ? (
