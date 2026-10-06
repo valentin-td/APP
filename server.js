@@ -1073,44 +1073,44 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
     const clientDB = await pool.connect();
 
     try {
-        let reader = null;
-        let paymentIntentId = null;
+            let reader = null;
+            let paymentIntentId = null;
+            let intentStatus = null; // Remonté pour être accessible dans le bloc catch
 
-        if (methode === 'CARTE' && montant > 0) {
-            const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-            const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
+            if (methode === 'CARTE' && montant > 0) {
+                const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+                const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
 
-            if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
+                if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
 
-            const paymentIntent = await stripe.paymentIntents.create({
-              amount: Math.round(montant * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
-            });
-            paymentIntentId = paymentIntent.id;
-            reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
+                const paymentIntent = await stripe.paymentIntents.create({
+                  amount: Math.round(montant * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
+                });
+                paymentIntentId = paymentIntent.id;
+                intentStatus = paymentIntent.status;
+                reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
 
-            if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
-                try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
+                if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
+                    try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
+                }
+
+                let attempts = 0;
+                
+                while (intentStatus === 'requires_payment_method' && attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+                    intentStatus = checkIntent.status;
+                    attempts++;
+                }
+
+                if (intentStatus !== 'requires_capture') {
+                    try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
+                    try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
+                    throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
+                }
             }
 
-            let intentStatus = paymentIntent.status;
-            let attempts = 0;
-            
-            while (intentStatus === 'requires_payment_method' && attempts < 30) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-                intentStatus = checkIntent.status;
-                attempts++;
-            }
-
-            if (intentStatus === 'requires_capture') {
-                await stripe.paymentIntents.capture(paymentIntentId);
-            } else {
-                try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
-                throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
-            }
-        }
-
-        await clientDB.query('BEGIN'); 
+            await clientDB.query('BEGIN');
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
         const numeroTicket = `TKT-${methode.substring(0,2)}-` + Date.now();
@@ -1188,16 +1188,32 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             }
         }
 
-        await clientDB.query('COMMIT');
-        
-        let messageFinal = (methode === 'CARTE' && montant > 0) ? `En attente du TPE... (Ticket #${idNouveauTicket})` : `Paiement en ${methode} validé (Ticket #${idNouveauTicket})`;
-        io.to(id_salon.toString()).emit('paiementValide', { message: messageFinal });
-        
-        res.json({ message: messageFinal, reader, id_ticket: idNouveauTicket });
-    } catch (error) {
-        await clientDB.query('ROLLBACK');
-        console.error("Erreur Encaisser:", error); res.status(500).json({ erreur: "Erreur lors de l'encaissement. " + error.message });
-    } finally { clientDB.release(); }
+        // 🚨 SÉCURITÉ : On ne capture l'argent QUE si tout le reste en BDD s'est bien passé
+            if (methode === 'CARTE' && montant > 0 && intentStatus === 'requires_capture') {
+                await stripe.paymentIntents.capture(paymentIntentId);
+            }
+
+            await clientDB.query('COMMIT');
+            
+            let messageFinal = (methode === 'CARTE' && montant > 0) ? `En attente du TPE... (Ticket #${idNouveauTicket})` : `Paiement en ${methode} validé (Ticket #${idNouveauTicket})`;
+            io.to(id_salon.toString()).emit('paiementValide', { message: messageFinal });
+            
+            res.json({ message: messageFinal, reader, id_ticket: idNouveauTicket });
+        } catch (error) {
+            await clientDB.query('ROLLBACK');
+            
+            // 🚨 SÉCURITÉ : Si la BDD a planté, on annule l'empreinte bancaire pour éviter un double débit
+            if (paymentIntentId && intentStatus === 'requires_capture') {
+                try { 
+                    await stripe.paymentIntents.cancel(paymentIntentId); 
+                    console.log(`[STRIPE] Paiement ${paymentIntentId} annulé suite à un crash BDD.`);
+                } catch(e) { 
+                    console.error("[STRIPE] Erreur annulation:", e); 
+                }
+            }
+
+            console.error("Erreur Encaisser:", error); res.status(500).json({ erreur: "Erreur lors de l'encaissement. " + error.message });
+        } finally { clientDB.release(); }
 });
 
 app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
