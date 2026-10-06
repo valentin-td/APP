@@ -56,14 +56,14 @@ body.dark-mode {
   --btn-text: #0b0b0d;
 }
 
-body, .carte, .input-fournisseur, .navbar-sidebar, .modal-content, .toast, .week-calendar, .week-header-row, .time-column, .day-column, .btn-action, .theme-toggle-btn, .list-group, .list-row {
+html, body, .carte, .input-fournisseur, .navbar-sidebar, .modal-content, .toast, .week-calendar, .week-header-row, .time-column, .day-column, .btn-action, .theme-toggle-btn, .list-group, .list-row {
   transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }
 
 /* ==========================================================================
    2. DESIGN GLOBAL & TYPOGRAPHIE
    ========================================================================== */
-body {
+html, body {
   margin: 0;
   background-color: var(--bg-app);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
