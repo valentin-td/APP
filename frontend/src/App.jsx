@@ -106,7 +106,8 @@ function App() {
   const [emailInput, setEmailInput] = useState('');
   const [motDePasseInput, setMotDePasseInput] = useState('');
   const [nomSalonInput, setNomSalonInput] = useState('');
-  const [idSalonInput, setIdSalonInput] = useState(''); 
+  const [nomGerantInput, setNomGerantInput] = useState('');
+  const [idSalonInput, setIdSalonInput] = useState('');
   const [nomEmployeInput, setNomEmployeInput] = useState('');
   const [pinEmployeInput, setPinEmployeInput] = useState('');
   const [pinSalonInput, setPinSalonInput] = useState('');
@@ -945,7 +946,7 @@ function App() {
 
   const sInscrire = async () => {
     try {
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput }) });
+      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomGerantInput }) });
       const data = await response.json();
       if (response.ok) { localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); setIsAbonnementInactif(false); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Erreur de connexion au serveur."); }
@@ -1680,6 +1681,7 @@ function App() {
                 {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500' }}>{erreurLogin}</div>)}
                 {loginType === 'gerant' ? (
                    <>
+                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Votre prénom (Le Gérant)" style={{marginBottom: '12px'}} value={nomGerantInput} onChange={(e) => setNomGerantInput(e.target.value)} />)}
                       {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
                       <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
                       <input type="password" className="input-fournisseur" placeholder="Mot de passe" value={motDePasseInput} onChange={(e) => setMotDePasseInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (isLoginMode ? seConnecter() : sInscrire())} />
