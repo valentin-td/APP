@@ -186,6 +186,7 @@ pool.query(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
     ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS est_gerant BOOLEAN DEFAULT FALSE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS telephone_gerant VARCHAR(20);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS alertes_sms_actives BOOLEAN DEFAULT FALSE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email_comptable VARCHAR(255);
@@ -429,7 +430,7 @@ const verifierClotureZ = async (req, res, next) => {
 };
 
 app.post('/api/register', async (req, res) => {
-    const { email, mot_de_passe, nom_salon } = req.body;
+    const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
@@ -444,6 +445,10 @@ app.post('/api/register', async (req, res) => {
         let customerId = null;
         try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
         await clientDB.query('INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']); 
+        
+        // Création automatique de la fiche employé pour le gérant
+        await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, '0000', TRUE)", [nom_gerant || 'Patron', idNouveauSalon]);
+
         await clientDB.query('COMMIT');
         const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant' }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: "Inscription réussie", token });
