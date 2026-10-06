@@ -1615,7 +1615,15 @@ function App() {
       return '#f59e0b'; 
   };
 
-  const nbTachesUrgentes = (tachesListe || []).filter(t => (t.proprietaire || 'gerant') === (userRole === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : userRole) && t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2)).length;
+  const nbTachesUrgentes = (tachesListe || []).filter(t => {
+      const prop = t.proprietaire || 'gerant';
+      const isUrgent = t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2);
+      if (!isUrgent) return false;
+      
+      if (userRole === 'gerant') return true; // Le gérant est alerté de toutes les urgences
+      if (userRole === 'employe') return prop === `emp_${decodeToken(token)?.id_employe}` || prop === 'salon';
+      return prop === userRole || prop === 'salon';
+  }).length;
 
   let clientCaisseObj = null;
   let isEligibleFidelite = false;
@@ -2604,20 +2612,36 @@ function App() {
                   {/* ZONE DÉFILANTE */}
                   <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
                   <div className="carte scan-carte">
+                      {role === 'gerant' && (
+                          <select className="input-fournisseur" style={{marginBottom: '12px'}} value={nouvelleTache.proprietaire || 'gerant'} onChange={e => setNouvelleTache({...nouvelleTache, proprietaire: e.target.value})}>
+                              <option value="gerant">Assigner à : Moi (Gérant)</option>
+                              <option value="salon">Assigner à : Tout le salon (Commun)</option>
+                              {(employesListe || []).map(emp => (
+                                  <option key={emp.id_employe} value={`emp_${emp.id_employe}`}>Assigner à : {emp.nom} {emp.est_gerant ? '(Mon profil employé)' : ''}</option>
+                              ))}
+                          </select>
+                      )}
                       <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
                           <input type="text" className="input-fournisseur" placeholder="Titre (ex: Payer l'URSSAF)" style={{flex: 2}} value={nouvelleTache.titre} onChange={e => setNouvelleTache({...nouvelleTache, titre: e.target.value})} />
                           <input type="date" className="input-fournisseur" style={{flex: 1}} value={nouvelleTache.date_echeance} onChange={e => setNouvelleTache({...nouvelleTache, date_echeance: e.target.value})} />
                       </div>
                       <input type="text" className="input-fournisseur" placeholder="Détails (Optionnel)" style={{marginBottom: '16px'}} value={nouvelleTache.description} onChange={e => setNouvelleTache({...nouvelleTache, description: e.target.value})} />
                       <button className="btn-action" style={{width: '100%'}} disabled={!nouvelleTache.titre} onClick={async () => {
-                          const proprietaireActuel = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role;
-                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...nouvelleTache, proprietaire: proprietaireActuel}) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:''}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
+                          const proprietaireActuel = role === 'gerant' ? (nouvelleTache.proprietaire || 'gerant') : (role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role);
+                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...nouvelleTache, proprietaire: proprietaireActuel}) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:'', proprietaire: 'gerant'}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
                       }}>Ajouter une tâche</button>
                   </div>
 
                   {(() => {
                       const proprietaireActuel = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role;
-                      const mesTaches = (tachesListe || []).filter(t => (t.proprietaire || 'gerant') === proprietaireActuel);
+                      
+                      const mesTaches = (tachesListe || []).filter(t => {
+                          const prop = t.proprietaire || 'gerant';
+                          if (role === 'gerant') return true; // Le gérant voit TOUTES les tâches
+                          if (role === 'employe') return prop === proprietaireActuel || prop === 'salon';
+                          return prop === proprietaireActuel || prop === 'salon';
+                      });
+                      
                       const tachesAFaire = mesTaches.filter(t => t.statut === 'A_FAIRE');
                       const tachesFaites = mesTaches.filter(t => t.statut === 'FAIT');
 
@@ -2636,6 +2660,13 @@ function App() {
                                                       <span className="list-row-label">{tache.titre}</span>
                                                       {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'var(--btn-text)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600'}}>DÉTECTÉ</span>}
                                                       {tache.source === 'AVIS_CLIENT' && <button onClick={() => { setSauvetageClient(tache.donnees); setSmsSauvetage(`Bonjour ${tache.donnees?.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -20% sur votre prochaine coupe pour nous faire pardonner. À très vite !`); }} style={{fontSize: '10px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer', marginLeft: '8px'}}>Sauver ce client</button>}
+                                                      
+                                                      {/* BADGE POUR LE GÉRANT : Indique à qui appartient la tâche */}
+                                                      {role === 'gerant' && tache.proprietaire && tache.proprietaire !== 'gerant' && (
+                                                          <span style={{fontSize: '10px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600', border: '1px solid #bfdbfe'}}>
+                                                              {tache.proprietaire === 'salon' ? 'SALON ENTIER' : ((employesListe || []).find(e => `emp_${e.id_employe}` === tache.proprietaire)?.nom || 'EMPLOYÉ')}
+                                                          </span>
+                                                      )}
                                                   </div>
                                                   {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
                                                   {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
@@ -2659,7 +2690,14 @@ function App() {
                                               <div className="list-group" style={{opacity: 0.65}}>
                                                   {tachesFaites.map(tache => (
                                                       <div key={tache.id_tache} className="list-row" style={{minHeight: '36px', padding: '8px 16px'}}>
-                                                          <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>{tache.titre}</span>
+                                                          <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>
+                                                              {tache.titre}
+                                                              {role === 'gerant' && tache.proprietaire && tache.proprietaire !== 'gerant' && (
+                                                                  <span style={{fontSize: '9px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 4px', borderRadius: '4px', fontWeight: '600', border: '1px solid #bfdbfe', marginLeft: '8px'}}>
+                                                                      {tache.proprietaire === 'salon' ? 'SALON' : ((employesListe || []).find(e => `emp_${e.id_employe}` === tache.proprietaire)?.nom || 'EMP')}
+                                                                  </span>
+                                                              )}
+                                                          </span>
                                                           <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
                                                           <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px', marginLeft: '4px'}}>
                                                               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
