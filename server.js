@@ -446,8 +446,9 @@ app.post('/api/register', async (req, res) => {
         try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
         await clientDB.query('INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']); 
         
-        // Création automatique de la fiche employé pour le gérant
-        await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, '0000', TRUE)", [nom_gerant || 'Patron', idNouveauSalon]);
+        // Création automatique de la fiche employé pour le gérant avec un PIN chiffré par défaut
+        const defaultPinHash = await bcrypt.hash('0000', 10);
+        await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)", [nom_gerant || 'Patron', idNouveauSalon, defaultPinHash]);
 
         await clientDB.query('COMMIT');
         const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant', email }, process.env.JWT_SECRET, { expiresIn: '24h' });
@@ -455,7 +456,15 @@ app.post('/api/register', async (req, res) => {
     } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
 });
 
-app.post('/api/login', async (req, res) => {
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Bloque après 5 échecs par IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erreur: "Trop de tentatives de connexion. Compte temporairement bloqué pendant 15 minutes." }
+});
+
+app.post('/api/login', loginLimiter, async (req, res) => {
     const { email, mot_de_passe } = req.body;
     try {
         const result = await pool.query('SELECT id_salon, mot_de_passe_hash, statut_abonnement FROM utilisateurs WHERE email = $1 LIMIT 1', [email]);
@@ -474,13 +483,21 @@ app.post('/api/login', async (req, res) => {
     } catch (error) { res.status(500).json({ erreur: "Erreur serveur." }); }
 });
 
-app.post('/api/employes/login-pin', async (req, res) => {
+app.post('/api/employes/login-pin', loginLimiter, async (req, res) => {
     const { id_salon, nom_employe, code_pin } = req.body;
     try {
         const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
         if (result.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable." });
         const emp = result.rows[0];
-        if (emp.code_pin !== code_pin) {
+        
+        let pinMatch = false;
+        if (emp.code_pin && emp.code_pin.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(code_pin, emp.code_pin);
+        } else {
+            pinMatch = (emp.code_pin === code_pin); // Fallback pour vos anciens PINs en clair
+        }
+
+        if (!pinMatch) {
             await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { nom_employe, raison: 'pin_incorrect' });
             return res.status(401).json({ erreur: "Code PIN invalide." });
         }
@@ -490,13 +507,21 @@ app.post('/api/employes/login-pin', async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
 });
 
-app.post('/api/salon/login-pin', async (req, res) => {
+app.post('/api/salon/login-pin', loginLimiter, async (req, res) => {
     const { id_salon, pin } = req.body;
     try {
         const result = await pool.query('SELECT id_salon, pin_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         if (result.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
         const salon = result.rows[0];
-        if (!salon.pin_salon || salon.pin_salon !== pin) {
+        
+        let pinMatch = false;
+        if (salon.pin_salon && salon.pin_salon.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(pin, salon.pin_salon);
+        } else {
+            pinMatch = (salon.pin_salon === pin); // Fallback pour les anciens PINs
+        }
+
+        if (!salon.pin_salon || !pinMatch) {
             await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { raison: 'pin_salon_incorrect' });
             return res.status(401).json({ erreur: "Code PIN invalide." });
         }
@@ -680,11 +705,17 @@ app.post('/api/settings', verifierToken, async (req, res) => {
     try { 
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
         if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
+        
+        let finalPinSalon = pin_salon;
+        if (pin_salon && !pin_salon.startsWith('$2')) {
+            finalPinSalon = await bcrypt.hash(pin_salon, 10);
+        }
+
         const updateQuery = pin_salon !== undefined
             ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23 WHERE id_salon = $16`
             : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23 WHERE id_salon = $16`; 
         const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
-        if (pin_salon !== undefined) { params.push(pin_salon || null); params.push(pennylane_api_key || null); } else { params.push(pennylane_api_key || null); }
+        if (pin_salon !== undefined) { params.push(finalPinSalon || null); params.push(pennylane_api_key || null); } else { params.push(pennylane_api_key || null); }
         await pool.query(updateQuery, params);
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
@@ -1820,8 +1851,22 @@ app.get('/api/employes', verifierToken, async (req, res) => { try { const result
 app.post('/api/employes', verifierToken, async (req, res) => { 
     const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url } = req.body; 
     try { 
-        await pool.query('INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7)', [nom, role || 'Employé', taux_commission_prestation || 0, taux_commission_produit || 0, code_pin || '0000', photo_url || null, req.user.id_salon]); 
+        const hashPin = await bcrypt.hash(code_pin || '0000', 10);
+        await pool.query('INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7)', [nom, role || 'Employé', taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, photo_url || null, req.user.id_salon]); 
         res.status(201).json({message: "Employé ajouté"}); 
+    } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
+});
+app.put('/api/employes/:id', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier un employé." });
+    const { nom, code_pin, taux_commission_prestation, taux_commission_produit } = req.body;
+    try {
+        if (code_pin && code_pin.trim() !== '') {
+            const hashPin = await bcrypt.hash(code_pin, 10);
+            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3, code_pin = $4 WHERE id_employe = $5 AND id_salon = $6', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, req.params.id, req.user.id_salon]);
+        } else {
+            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3 WHERE id_employe = $4 AND id_salon = $5', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, req.params.id, req.user.id_salon]);
+        }
+        res.json({message: "Employé modifié"});
     } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
 });
 app.delete('/api/employes/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }});
