@@ -3086,158 +3086,161 @@ async function executerRobotMarketingEtPredictif() {
         const salons = await pool.query("SELECT * FROM configuration_salon");
         
         for (let salon of salons.rows) {
-            const hasBrevo = salon.brevo_api_key && salon.brevo_api_key.trim() !== '';
-            const delaiFixe = salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0 ? salon.fidelite_delai_sms : 60;
+            try {
+                const hasBrevo = salon.brevo_api_key && salon.brevo_api_key.trim() !== '';
+                const delaiFixe = salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0 ? salon.fidelite_delai_sms : 60;
 
-            // --- 1. GESTION DES SMS (S'exécute uniquement si Brevo est configuré) ---
-            if (hasBrevo) {
-                const queryClients = `
-                    WITH Visites AS (
-                        SELECT id_client, DATE(date_creation) as date_visite
-                        FROM tickets
-                        WHERE id_salon = $1 AND statut != 'ANNULE' AND est_compense = FALSE
-                        GROUP BY id_client, DATE(date_creation)
-                    ),
-                    Ecarts AS (
-                        SELECT id_client,
-                               date_visite - LAG(date_visite) OVER (PARTITION BY id_client ORDER BY date_visite) as jours_ecart
-                        FROM Visites
-                    ),
-                    Moyennes AS (
-                        SELECT id_client, AVG(jours_ecart) as moyenne_jours, COUNT(jours_ecart) as nb_ecarts
-                        FROM Ecarts
-                        WHERE jours_ecart IS NOT NULL
-                        GROUP BY id_client
-                    )
-                    SELECT c.*,
-                           COALESCE(m.moyenne_jours, 0) as moyenne_jours,
-                           COALESCE(m.nb_ecarts, 0) as nb_ecarts
-                    FROM clients c
-                    LEFT JOIN Moyennes m ON c.id_client = m.id_client
-                    LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
-                    WHERE c.id_salon = $1
-                      AND r.id_rdv IS NULL
-                      AND c.telephone IS NOT NULL
-                      AND c.derniere_visite IS NOT NULL
-                `;
-                const clientsResult = await pool.query(queryClients, [salon.id_salon]);
-                const now = new Date();
+                // --- 1. GESTION DES SMS (S'exécute uniquement si Brevo est configuré) ---
+                if (hasBrevo) {
+                    const queryClients = `
+                        WITH Visites AS (
+                            SELECT id_client, DATE(date_creation) as date_visite
+                            FROM tickets
+                            WHERE id_salon = $1 AND statut != 'ANNULE' AND est_compense = FALSE
+                            GROUP BY id_client, DATE(date_creation)
+                        ),
+                        Ecarts AS (
+                            SELECT id_client,
+                                   date_visite - LAG(date_visite) OVER (PARTITION BY id_client ORDER BY date_visite) as jours_ecart
+                            FROM Visites
+                        ),
+                        Moyennes AS (
+                            SELECT id_client, AVG(jours_ecart) as moyenne_jours, COUNT(jours_ecart) as nb_ecarts
+                            FROM Ecarts
+                            WHERE jours_ecart IS NOT NULL
+                            GROUP BY id_client
+                        )
+                        SELECT c.*,
+                               COALESCE(m.moyenne_jours, 0) as moyenne_jours,
+                               COALESCE(m.nb_ecarts, 0) as nb_ecarts
+                        FROM clients c
+                        LEFT JOIN Moyennes m ON c.id_client = m.id_client
+                        LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
+                        WHERE c.id_salon = $1
+                          AND r.id_rdv IS NULL
+                          AND c.telephone IS NOT NULL
+                          AND c.derniere_visite IS NOT NULL
+                    `;
+                    const clientsResult = await pool.query(queryClients, [salon.id_salon]);
+                    const now = new Date();
 
-                for (let client of clientsResult.rows) {
-                    const derniereVisite = new Date(client.derniere_visite);
-                    const joursDepuisVisite = (now - derniereVisite) / (1000 * 60 * 60 * 24);
+                    for (let client of clientsResult.rows) {
+                        const derniereVisite = new Date(client.derniere_visite);
+                        const joursDepuisVisite = (now - derniereVisite) / (1000 * 60 * 60 * 24);
 
-                    let seuilRelance = (client.nb_ecarts > 0 && client.moyenne_jours > 0) ? parseFloat(client.moyenne_jours) * 1.2 : delaiFixe;
+                        let seuilRelance = (client.nb_ecarts > 0 && client.moyenne_jours > 0) ? parseFloat(client.moyenne_jours) * 1.2 : delaiFixe;
 
-                    if (joursDepuisVisite >= seuilRelance && joursDepuisVisite < (seuilRelance + 1)) {
-                        let message = "";
-                        if (salon.fidelite_type === 'TAMPONS') {
-                            const restants = salon.fidelite_tampons_seuil - (client.tampons_fidelite || 0);
-                            message = `Hey ${client.prenom || client.nom} ! Cela fait un moment qu'on ne t'a pas vu chez ${salon.sms_sender_name}. Plus que ${restants} passage(s) avant ta récompense ! Prends vite rendez-vous : ${salon.lien_google_maps}`;
-                        } else if (salon.fidelite_type === 'POINTS') {
-                            message = `Bonjour ${client.prenom || client.nom}, votre fidélité paie ! Vous avez ${client.points_fidelite || 0} points. Venez en profiter chez ${salon.sms_sender_name}. RDV: ${salon.lien_google_maps}`;
-                        } else {
-                            message = `Bonjour ${client.prenom || client.nom}, ça fait longtemps ! Pensez à prendre soin de vous chez ${salon.sms_sender_name}. Prenez rendez-vous ici : ${salon.lien_google_maps}`;
+                        if (joursDepuisVisite >= seuilRelance && joursDepuisVisite < (seuilRelance + 1)) {
+                            let message = "";
+                            if (salon.fidelite_type === 'TAMPONS') {
+                                const restants = salon.fidelite_tampons_seuil - (client.tampons_fidelite || 0);
+                                message = `Hey ${client.prenom || client.nom} ! Cela fait un moment qu'on ne t'a pas vu chez ${salon.sms_sender_name}. Plus que ${restants} passage(s) avant ta récompense ! Prends vite rendez-vous : ${salon.lien_google_maps}`;
+                            } else if (salon.fidelite_type === 'POINTS') {
+                                message = `Bonjour ${client.prenom || client.nom}, votre fidélité paie ! Vous avez ${client.points_fidelite || 0} points. Venez en profiter chez ${salon.sms_sender_name}. RDV: ${salon.lien_google_maps}`;
+                            } else {
+                                message = `Bonjour ${client.prenom || client.nom}, ça fait longtemps ! Pensez à prendre soin de vous chez ${salon.sms_sender_name}. Prenez rendez-vous ici : ${salon.lien_google_maps}`;
+                            }
+                            if (message !== "") await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, message);
                         }
-                        if (message !== "") await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, message);
+                    }
+
+                                    const anniversaires = await pool.query(`
+                        SELECT * FROM clients 
+                        WHERE id_salon = $1 
+                        AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
+                        AND EXTRACT(DAY FROM date_naissance) = EXTRACT(DAY FROM NOW())
+                    `, [salon.id_salon]);
+
+                    for (let client of anniversaires.rows) {
+                        if (client.telephone) {
+                            await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`);
+                        }
                     }
                 }
-
-                                const anniversaires = await pool.query(`
-                    SELECT * FROM clients 
-                    WHERE id_salon = $1 
-                    AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
-                    AND EXTRACT(DAY FROM date_naissance) = EXTRACT(DAY FROM NOW())
+                // =================================================================
+                // --- 2. MOTEUR PRÉDICTIF D'INVENTAIRE GLOBAL (SMART AGGREGATION) ---
+                // =================================================================
+                
+                // Cette requête SQL intelligente calcule la somme totale requise par produit 
+                // pour TOUS les RDV des 14 prochains jours, et ne sort que les articles en déficit.
+                const rupturesPredictives = await pool.query(`
+                    SELECT 
+                        c.id_article,
+                        c.nom,
+                        c.stock_actuel,
+                        c.delai_livraison_jours,
+                        SUM(ra.quantite_necessaire) as total_besoin,
+                        MIN(r.date_heure_debut) as date_premier_besoin
+                    FROM rendez_vous r
+                    JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(r.prestation)
+                    JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
+                    JOIN catalogue c ON c.id_article = ra.id_article
+                    WHERE r.id_salon = $1 
+                      AND r.date_heure_debut BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+                    GROUP BY c.id_article, c.nom, c.stock_actuel, c.delai_livraison_jours
+                    HAVING c.stock_actuel < SUM(ra.quantite_necessaire)
                 `, [salon.id_salon]);
 
-                for (let client of anniversaires.rows) {
-                    if (client.telephone) {
-                        await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`);
-                    }
-                }
-            }
-            // =================================================================
-            // --- 2. MOTEUR PRÉDICTIF D'INVENTAIRE GLOBAL (SMART AGGREGATION) ---
-            // =================================================================
-            
-            // Cette requête SQL intelligente calcule la somme totale requise par produit 
-            // pour TOUS les RDV des 14 prochains jours, et ne sort que les articles en déficit.
-            const rupturesPredictives = await pool.query(`
-                SELECT 
-                    c.id_article,
-                    c.nom,
-                    c.stock_actuel,
-                    c.delai_livraison_jours,
-                    SUM(ra.quantite_necessaire) as total_besoin,
-                    MIN(r.date_heure_debut) as date_premier_besoin
-                FROM rendez_vous r
-                JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(r.prestation)
-                JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
-                JOIN catalogue c ON c.id_article = ra.id_article
-                WHERE r.id_salon = $1 
-                  AND r.date_heure_debut BETWEEN NOW() AND NOW() + INTERVAL '14 days'
-                GROUP BY c.id_article, c.nom, c.stock_actuel, c.delai_livraison_jours
-                HAVING c.stock_actuel < SUM(ra.quantite_necessaire)
-            `, [salon.id_salon]);
+                console.log(`[ROBOT-STOCK] Salon #${salon.id_salon} : ${rupturesPredictives.rowCount} produit(s) en rupture prédictive globale.`);
 
-            console.log(`[ROBOT-STOCK] Salon #${salon.id_salon} : ${rupturesPredictives.rowCount} produit(s) en rupture prédictive globale.`);
+                for (let rupture of rupturesPredictives.rows) {
+                    const stockActuel = parseFloat(rupture.stock_actuel);
+                    const besoinTotal = parseFloat(rupture.total_besoin);
+                    const quantiteACommander = besoinTotal - stockActuel;
+                    
+                    // Calcul du délai : Date du PREMIER rdv impacté - Délai livraison - 1 jour marge
+                    const dateAlerte = new Date(rupture.date_premier_besoin);
+                    dateAlerte.setDate(dateAlerte.getDate() - (rupture.delai_livraison_jours || 3) - 1);
 
-            for (let rupture of rupturesPredictives.rows) {
-                const stockActuel = parseFloat(rupture.stock_actuel);
-                const besoinTotal = parseFloat(rupture.total_besoin);
-                const quantiteACommander = besoinTotal - stockActuel;
-                
-                // Calcul du délai : Date du PREMIER rdv impacté - Délai livraison - 1 jour marge
-                const dateAlerte = new Date(rupture.date_premier_besoin);
-                dateAlerte.setDate(dateAlerte.getDate() - (rupture.delai_livraison_jours || 3) - 1);
+                    // Formatage exact demandé
+                    const titreAlerte = `Commander ${quantiteACommander}x ${rupture.nom}`;
+                    const descAlerte = `Rupture prédictive : Il faut un total de ${besoinTotal} unité(s) pour assurer l'ensemble des RDV des 14 prochains jours, mais vous n'avez que ${stockActuel} en stock. Échéance calculée avec le délai fournisseur (${rupture.delai_livraison_jours || 3}j) + 1j de marge.`;
 
-                // Formatage exact demandé
-                const titreAlerte = `Commander ${quantiteACommander}x ${rupture.nom}`;
-                const descAlerte = `Rupture prédictive : Il faut un total de ${besoinTotal} unité(s) pour assurer l'ensemble des RDV des 14 prochains jours, mais vous n'avez que ${stockActuel} en stock. Échéance calculée avec le délai fournisseur (${rupture.delai_livraison_jours || 3}j) + 1j de marge.`;
-
-                // On évite d'inonder le gérant si la tâche existe déjà pour CE produit en mode A_FAIRE
-                const exist = await pool.query(`SELECT 1 FROM taches_actions WHERE id_salon = $1 AND titre = $2 AND statut = 'A_FAIRE'`, [salon.id_salon, titreAlerte]);
-                
-                if (exist.rowCount === 0) {
-                    await pool.query(
-                        `INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')`, 
-                        [salon.id_salon, titreAlerte, descAlerte, dateAlerte]
-                    );
-                    console.log(`[ROBOT-STOCK] ✅ Alerte insérée : "${titreAlerte}" (échéance ${dateAlerte.toISOString().slice(0,10)})`);
-                }
-            }
-
-            // --- 3. Alertes Tâches Urgentes (Centre d'Action) ---
-            const tachesUrgentes = await pool.query(`SELECT titre, date_echeance FROM taches_actions WHERE id_salon = $1 AND statut = 'A_FAIRE' AND date_echeance <= NOW() + INTERVAL '2 days'`, [salon.id_salon]);
-            if (tachesUrgentes.rowCount > 0) {
-                
-                envoyerNotificationPush(salon.id_salon, 'gerant', {
-                    title: " Actions Urgentes",
-                    body: `Vous avez ${tachesUrgentes.rowCount} tâche(s) arrivant à échéance (ex: ${tachesUrgentes.rows[0].titre}).`,
-                    url: '/?tab=actions'
-                });
-                if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-                    const gerant = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [salon.id_salon]);
-                    if (gerant.rowCount > 0) {
-                        let texteEmail = `Bonjour,\n\nVous avez ${tachesUrgentes.rowCount} tâche(s) urgente(s) nécessitant votre attention :\n\n`;
-                        tachesUrgentes.rows.forEach(t => texteEmail += `🔴 ${t.titre} (Échéance: ${new Date(t.date_echeance).toLocaleDateString()})\n`);
-                        texteEmail += `\nConnectez-vous à STACK pour les traiter.`;
-                        try {
-                            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
-                            await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures, Stocks...)`, text: texteEmail });
-                        } catch(e) {}
+                    // On évite d'inonder le gérant si la tâche existe déjà pour CE produit en mode A_FAIRE
+                    const exist = await pool.query(`SELECT 1 FROM taches_actions WHERE id_salon = $1 AND titre = $2 AND statut = 'A_FAIRE'`, [salon.id_salon, titreAlerte]);
+                    
+                    if (exist.rowCount === 0) {
+                        await pool.query(
+                            `INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')`, 
+                            [salon.id_salon, titreAlerte, descAlerte, dateAlerte]
+                        );
+                        console.log(`[ROBOT-STOCK] ✅ Alerte insérée : "${titreAlerte}" (échéance ${dateAlerte.toISOString().slice(0,10)})`);
                     }
                 }
 
-                if (salon.alertes_sms_actives && salon.telephone_gerant && salon.telephone_gerant.trim() !== '' && hasBrevo) {
-                    const smsTexte = `⚠️ STACK : Vous avez ${tachesUrgentes.rowCount} action(s) urgente(s) en attente (ex: ${tachesUrgentes.rows[0].titre}). Connectez-vous pour les traiter !`;
-                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name || 'STACK', salon.telephone_gerant, smsTexte);
+                // --- 3. Alertes Tâches Urgentes (Centre d'Action) ---
+                const tachesUrgentes = await pool.query(`SELECT titre, date_echeance FROM taches_actions WHERE id_salon = $1 AND statut = 'A_FAIRE' AND date_echeance <= NOW() + INTERVAL '2 days'`, [salon.id_salon]);
+                if (tachesUrgentes.rowCount > 0) {
+                    
+                    envoyerNotificationPush(salon.id_salon, 'gerant', {
+                        title: " Actions Urgentes",
+                        body: `Vous avez ${tachesUrgentes.rowCount} tâche(s) arrivant à échéance (ex: ${tachesUrgentes.rows[0].titre}).`,
+                        url: '/?tab=actions'
+                    });
+                    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+                        const gerant = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [salon.id_salon]);
+                        if (gerant.rowCount > 0) {
+                            let texteEmail = `Bonjour,\n\nVous avez ${tachesUrgentes.rowCount} tâche(s) urgente(s) nécessitant votre attention :\n\n`;
+                            tachesUrgentes.rows.forEach(t => texteEmail += `🔴 ${t.titre} (Échéance: ${new Date(t.date_echeance).toLocaleDateString()})\n`);
+                            texteEmail += `\nConnectez-vous à STACK pour les traiter.`;
+                            try {
+                                let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+                                await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures, Stocks...)`, text: texteEmail });
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (salon.alertes_sms_actives && salon.telephone_gerant && salon.telephone_gerant.trim() !== '' && hasBrevo) {
+                        const smsTexte = `⚠️ STACK : Vous avez ${tachesUrgentes.rowCount} action(s) urgente(s) en attente (ex: ${tachesUrgentes.rows[0].titre}). Connectez-vous pour les traiter !`;
+                        await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name || 'STACK', salon.telephone_gerant, smsTexte);
+                    }
                 }
+            } catch (salonErr) {
+                console.error(`[ROBOT-MARKETING] Erreur isolée pour le salon ${salon.id_salon}:`, salonErr);
             }
-            
         } 
     } catch (err) {
-        console.error("Erreur Robot Marketing/Prédictif:", err);
+        console.error("Erreur globale Robot Marketing/Prédictif:", err);
     }
 }
 
