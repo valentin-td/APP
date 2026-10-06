@@ -3700,40 +3700,71 @@ function App() {
                   ) : (
                     <div className="rh-grid">
                       {[...rhData].sort((a, b) => rhSortBy === 'note' ? (b.note_moyenne || 0) - (a.note_moyenne || 0) : b.performances_actuelles.ca_genere - a.performances_actuelles.ca_genere).map(employe => (
-                        <div className="rh-carte" key={employe.id_employe} style={{position: 'relative'}}>
-                          <div className="rh-header-profil">
-                            <div className="rh-avatar">
-                              {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
-                            </div>
-                            <div className="rh-identite" style={{flex: 1}}><h3>{employe.nom}</h3><span className="rh-role-badge">{employe.role}</span></div>
-                            
-                            {employe.note_moyenne && (
-                                <div style={{background: '#fef3c7', color: '#d97706', padding: '6px 10px', borderRadius: '16px', fontWeight: 'bold', fontSize: '14px', border: '1px solid #fde68a'}}>
-                                    ⭐ {employe.note_moyenne} <span style={{fontSize: '10px', fontWeight: 'normal'}}>({employe.nb_avis})</span>
-                                </div>
-                            )}
-
-                            <button onClick={(e) => { e.stopPropagation(); setEmployeMenuOuvert(employeMenuOuvert === employe.id_employe ? null : employe.id_employe); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1, alignSelf: 'flex-start'}}>⋮</button>
-                            {employeMenuOuvert === employe.id_employe && (
-                                <>
-                                    <div onClick={() => setEmployeMenuOuvert(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
-                                    <div className="chat-msg-menu" style={{top: '40px', right: '0', bottom: 'auto', zIndex: 999, width: '170px'}}>
-                                        <button onClick={() => { setModifEmployeDialog({ id_employe: employe.id_employe, nom: employe.nom, code_pin: '', taux_commission_prestation: employe.taux_commission_prestation ?? '', taux_commission_produit: employe.taux_commission_produit ?? '' }); setEmployeMenuOuvert(null); }}>Modifier</button>
-                                        <button onClick={() => { setEmployeMenuOuvert(null); setConfirmDialog({ titre: "Supprimer l'employé", message: `Voulez-vous vraiment supprimer "${employe.nom}" ? Cette action est irréversible.`, btnTexte: "Supprimer", action: () => supprimerEmploye(employe.id_employe) }); }} style={{color: 'var(--color-danger)'}}>Supprimer</button>
-                                    </div>
-                                </>
-                            )}
-                          </div>
-                          <div className="rh-stats-row">
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.clients_coiffes}</span><span className="label">Clients</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur">{employe.performances_actuelles.produits_vendus}</span><span className="label">Produits</span></div>
-                            <div className="rh-stat-bloc"><span className="valeur" style={{color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(1)}%</span><span className="label">CA Généré</span></div>
-                          </div>
-                          <div className="rh-prime-box"><span className="label">Prime estimée</span><span className="montant">{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span></div>
+                        <div className="rh-carte" key={employe.id_employe} style={{position: 'relative', padding: '0', overflow: 'hidden', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'var(--bg-card)', boxShadow: 'var(--shadow-sm)'}}>
                           
+                          {/* 1. EN-TÊTE : PROFIL & NOTE (Nouveau Design) */}
+                          <div style={{display: 'flex', alignItems: 'flex-start', padding: '20px', borderBottom: '1px solid var(--border-color)'}}>
+                              <div className="rh-avatar" style={{width: '48px', height: '48px', marginRight: '16px'}}>
+                                {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
+                              </div>
+                              
+                              <div style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '6px'}}>
+                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                      <h3 style={{margin: 0, fontSize: '16px', color: 'var(--text-main)'}}>{employe.nom}</h3>
+                                      <span style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>{employe.role}</span>
+                                  </div>
+                                  
+                                  {employe.note_moyenne ? (
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                          <span style={{color: '#f59e0b', fontSize: '14px', letterSpacing: '1px'}}>{'★'.repeat(Math.round(employe.note_moyenne))}{'☆'.repeat(5 - Math.round(employe.note_moyenne))}</span>
+                                          <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>{employe.note_moyenne}</span>
+                                          <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>({employe.nb_avis} avis)</span>
+                                      </div>
+                                  ) : (
+                                      <span style={{fontSize: '12px', color: 'var(--text-muted)'}}>Aucun avis client</span>
+                                  )}
+                              </div>
+
+                              <button onClick={(e) => { e.stopPropagation(); setEmployeMenuOuvert(employeMenuOuvert === employe.id_employe ? null : employe.id_employe); }} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px 8px', fontSize: '14px', fontWeight: 'bold', transition: 'all 0.15s'}}>⋮</button>
+                              
+                              {employeMenuOuvert === employe.id_employe && (
+                                  <>
+                                      <div onClick={() => setEmployeMenuOuvert(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
+                                      <div className="chat-msg-menu" style={{top: '50px', right: '20px', bottom: 'auto', zIndex: 999, width: '170px'}}>
+                                          <button onClick={() => { setModifEmployeDialog({ id_employe: employe.id_employe, nom: employe.nom, code_pin: '', taux_commission_prestation: employe.taux_commission_prestation ?? '', taux_commission_produit: employe.taux_commission_produit ?? '' }); setEmployeMenuOuvert(null); }}>Modifier</button>
+                                          <button onClick={() => { setEmployeMenuOuvert(null); setConfirmDialog({ titre: "Supprimer l'employé", message: `Voulez-vous vraiment supprimer "${employe.nom}" ? Cette action est irréversible.`, btnTexte: "Supprimer", action: () => supprimerEmploye(employe.id_employe) }); }} style={{color: 'var(--color-danger)'}}>Supprimer</button>
+                                      </div>
+                                  </>
+                              )}
+                          </div>
+
+                          {/* 2. CORPS : STATISTIQUES & PRIMES */}
+                          <div style={{padding: '20px'}}>
+                              <div style={{background: 'var(--bg-app)', borderRadius: '8px', padding: '16px', display: 'flex', justifyContent: 'space-between', marginBottom: '16px', border: '1px solid var(--border-color)'}}>
+                                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, borderRight: '1px solid var(--border-color)'}}>
+                                      <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>{employe.performances_actuelles.clients_coiffes}</span>
+                                      <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px'}}>Clients</span>
+                                  </div>
+                                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, borderRight: '1px solid var(--border-color)'}}>
+                                      <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>{employe.performances_actuelles.produits_vendus}</span>
+                                      <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px'}}>Produits</span>
+                                  </div>
+                                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1}}>
+                                      <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(0)}%</span>
+                                      <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px'}}>CA Global</span>
+                                  </div>
+                              </div>
+
+                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-hover)', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.2)'}}>
+                                  <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--text-main)'}}>Prime estimée</span>
+                                  <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--color-success)'}}>{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span>
+                              </div>
+                          </div>
+                          
+                          {/* 3. TIROIR DES AVIS (Inchangé sur le design des commentaires) */}
                           {employe.derniers_avis && employe.derniers_avis.length > 0 && (
-                              <div style={{marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '12px'}}>
-                                  <button onClick={() => setRhAvisExpanded({...rhAvisExpanded, [employe.id_employe]: !rhAvisExpanded[employe.id_employe]})} style={{background: 'none', border: 'none', width: '100%', textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 'bold'}}>
+                              <div style={{background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', padding: '12px 20px'}}>
+                                  <button onClick={() => setRhAvisExpanded({...rhAvisExpanded, [employe.id_employe]: !rhAvisExpanded[employe.id_employe]})} style={{background: 'none', border: 'none', width: '100%', textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 'bold', padding: '4px 0'}}>
                                       {rhAvisExpanded[employe.id_employe] ? 'Masquer les avis ▲' : 'Voir ses derniers avis ▼'}
                                   </button>
                                   {rhAvisExpanded[employe.id_employe] && (
@@ -3741,12 +3772,12 @@ function App() {
                                           {employe.derniers_avis.map((avis, i) => {
                                               const isPositif = avis.note >= 4;
                                               return (
-                                                  <div key={i} style={{background: isPositif ? 'var(--bg-app)' : 'var(--bg-danger)', borderLeft: `3px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`, padding: '8px 12px', borderRadius: '4px', fontSize: '12px', textAlign: 'left'}}>
-                                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '4px'}}>
+                                                  <div key={i} style={{background: isPositif ? 'var(--bg-card)' : 'var(--bg-danger)', borderLeft: `3px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`, padding: '10px 12px', borderRadius: '4px', fontSize: '12px', textAlign: 'left', boxShadow: 'var(--shadow-sm)'}}>
+                                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '6px'}}>
                                                           <strong style={{color: isPositif ? 'var(--text-main)' : 'var(--color-danger)'}}>{avis.prenom}</strong>
-                                                          <span style={{color: '#f59e0b'}}>{'★'.repeat(avis.note)}</span>
+                                                          <span style={{color: '#f59e0b', fontSize: '13px', letterSpacing: '1px'}}>{'★'.repeat(avis.note)}{'☆'.repeat(5 - avis.note)}</span>
                                                       </div>
-                                                      <span style={{color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)', fontStyle: 'italic'}}>"{avis.commentaire}"</span>
+                                                      <span style={{color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)', fontStyle: 'italic', lineHeight: '1.4', display: 'block'}}>"{avis.commentaire}"</span>
                                                   </div>
                                               )
                                           })}
