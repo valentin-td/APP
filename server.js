@@ -316,7 +316,42 @@ pool.query(`
         await pool.query(`UPDATE clotures_caisse SET date_cloture = DATE(date_creation) WHERE date_cloture IS NULL;`);
         await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_DATE;`);
         await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture); END IF; END $$;`);
-    } catch (e) { }
+        
+        // 🚨 SÉCURITÉ NF525 : Triggers stricts anti-altération et anti-suppression
+        await pool.query(`
+            CREATE OR REPLACE FUNCTION nf525_prevent_alteration() RETURNS TRIGGER AS $$
+            BEGIN
+                IF current_setting('myapp.bypass_nf525', true) = 'true' THEN
+                    IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+                END IF;
+
+                IF TG_OP = 'DELETE' THEN
+                    RAISE EXCEPTION 'Action bloquée (NF525) : Suppression interdite sur la table %', TG_TABLE_NAME;
+                END IF;
+                
+                IF TG_OP = 'UPDATE' THEN
+                    IF TG_TABLE_NAME = 'tickets' THEN
+                        IF OLD.total_ttc IS DISTINCT FROM NEW.total_ttc OR OLD.numero_ticket_caisse IS DISTINCT FROM NEW.numero_ticket_caisse OR OLD.date_creation IS DISTINCT FROM NEW.date_creation OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Altération des montants, dates ou signatures interdite sur les tickets.';
+                        END IF;
+                    ELSIF TG_TABLE_NAME IN ('clotures_caisse', 'jet_logs') THEN
+                        RAISE EXCEPTION 'Action bloquée (NF525) : Modification interdite sur la table %', TG_TABLE_NAME;
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            DROP TRIGGER IF EXISTS trigger_nf525_tickets ON tickets;
+            CREATE TRIGGER trigger_nf525_tickets BEFORE DELETE OR UPDATE ON tickets FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            DROP TRIGGER IF EXISTS trigger_nf525_clotures ON clotures_caisse;
+            CREATE TRIGGER trigger_nf525_clotures BEFORE DELETE OR UPDATE ON clotures_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            DROP TRIGGER IF EXISTS trigger_nf525_jet ON jet_logs;
+            CREATE TRIGGER trigger_nf525_jet BEFORE DELETE OR UPDATE ON jet_logs FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+        `);
+    } catch (e) { console.error("Erreur Triggers NF525:", e); }
 }).catch((e) => console.error("Erreur Init DB:", e));
 
 async function envoyerNotificationPush(id_salon, cible, payload) {
@@ -1644,6 +1679,73 @@ app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
         await pool.query('UPDATE configuration_salon SET derniere_verif_stock = CURRENT_DATE WHERE id_salon = $1', [req.user.id_salon]);
         res.json({ message: "Vérification des stocks enregistrée." });
     } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'enregistrement." }); }
+});
+
+// =========================================================================
+// --- AUDIT DE CONFORMITÉ NF525 (Vérification Cryptographique) ---
+// =========================================================================
+app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    const id_salon = req.user.id_salon;
+    
+    try {
+        let erreurs = [];
+        let alertes = [];
+        
+        // 1. Audit des TICKETS
+        const tickets = await pool.query('SELECT id_ticket, numero_ticket_caisse, total_ttc, hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC', [id_salon]);
+        let prevHashTicket = 'GENESIS_BLOCK';
+        
+        for (let t of tickets.rows) {
+            if (!t.hash_ticket) {
+                alertes.push(`Ticket #${t.id_ticket} non scellé (possible ticket hors-ligne en attente).`);
+                continue;
+            }
+            const computed = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${t.total_ttc}-${prevHashTicket}`).digest('hex');
+            if (computed !== t.hash_ticket) {
+                erreurs.push(`Rupture cryptographique sur le ticket #${t.id_ticket} (${t.numero_ticket_caisse}).`);
+                break;
+            }
+            prevHashTicket = t.hash_ticket;
+        }
+
+        // 2. Audit des CLÔTURES (Z)
+        const clotures = await pool.query('SELECT id_cloture, signature_hash, hash_precedent, date_cloture FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture ASC', [id_salon]);
+        let prevHashZ = 'GENESIS_Z';
+        for (let c of clotures.rows) {
+            if (c.hash_precedent !== prevHashZ) {
+                erreurs.push(`Rupture de chaînage sur la clôture Z du ${new Date(c.date_cloture).toLocaleDateString('fr-FR')}.`);
+                break;
+            }
+            prevHashZ = c.signature_hash;
+        }
+
+        // 3. Audit du Journal des Événements Techniques (JET)
+        const jetLogs = await pool.query('SELECT id_jet, hash_jet, hash_precedent, action FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet ASC', [id_salon]);
+        let prevHashJet = 'GENESIS_JET';
+        for (let j of jetLogs.rows) {
+            if (j.hash_precedent !== prevHashJet) {
+                erreurs.push(`Rupture de chaînage sur le Journal Technique (Action #${j.id_jet} - ${j.action}).`);
+                break;
+            }
+            prevHashJet = j.hash_jet;
+        }
+
+        // Traçabilité de l'audit lui-même
+        await enregistrerJET(id_salon, 'AUDIT_NF525_EXECUTE', { tickets: tickets.rowCount, clotures: clotures.rowCount, jet: jetLogs.rowCount, conforme: erreurs.length === 0 });
+
+        res.json({ 
+            conforme: erreurs.length === 0, 
+            erreurs,
+            alertes,
+            total_tickets_verifies: tickets.rowCount,
+            total_z_verifies: clotures.rowCount,
+            total_jet_verifies: jetLogs.rowCount
+        });
+    } catch (e) {
+        console.error("Erreur Audit:", e);
+        res.status(500).json({ erreur: "Erreur lors de l'audit NF525." });
+    }
 });
 
 app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
@@ -3749,6 +3851,9 @@ app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, asyn
     try {
         await clientDB.query('BEGIN');
         
+        // 🚨 SÉCURITÉ : On autorise exceptionnellement la destruction NF525 pour le superadmin
+        await clientDB.query("SET LOCAL myapp.bypass_nf525 = 'true'");
+
         // Ordre de suppression calculé pour éviter les conflits de clés étrangères
         await clientDB.query('DELETE FROM jet_logs WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM commissions WHERE id_salon = $1', [id]);
