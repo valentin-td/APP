@@ -793,14 +793,6 @@ function App() {
       }
   };
 
-  const startStr = formatDateInput(new Date(planningStartTs)); 
-  const endStr = formatDateInput(new Date(planningEndTs));
-  fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData', 'object');
-          
-  if (decodeToken(token)?.role === 'employe') {
-      fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe', 'array');
-  }
-
   // Extraction des dates en nombres primitifs purs pour garantir la stabilité absolue du useEffect
   const planningStartTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[0].getTime() : 0;
   const planningEndTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[joursSemaine.length - 1].getTime() : 0;
@@ -809,10 +801,10 @@ function App() {
       if (token && !isAbonnementInactif && planningStartTs > 0) {
           const startStr = formatDateInput(new Date(planningStartTs)); 
           const endStr = formatDateInput(new Date(planningEndTs));
-          fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData');
+          fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData', 'object');
           
           if (decodeToken(token)?.role === 'employe') {
-              fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
+              fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe', 'array');
           }
       }
   // On n'utilise QUE des valeurs numériques et strings. Fini le windowWidth qui fluctue avec les barres de défilement !
@@ -964,11 +956,17 @@ function App() {
     try {
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomGerantInput }) });
       const data = await response.json();
-      if (response.ok) { localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); setIsAbonnementInactif(false); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
+      if (response.ok) { 
+          localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); 
+          const decoded = decodeToken(data.ui_token);
+          setUserRole(decoded?.role || 'gerant');
+          setIsAbonnementInactif(false); 
+      } else { setErreurLogin(data.erreur); }
     } catch (e) { 
-        console.error("Détails du crash de connexion :", e);
+        console.error("Détails du crash d'inscription :", e);
         setErreurLogin(`Erreur technique : ${e.message}`); 
     }
+  };
 
   const seConnecter = async () => {
     try {
@@ -998,9 +996,10 @@ function App() {
           const data = await res.json();
           setMsgSucces(data.message); setErreurLogin(null);
       } catch (e) { 
-        console.error("Détails du crash de connexion :", e);
+        console.error("Détails du crash de mot de passe oublié :", e);
         setErreurLogin(`Erreur technique : ${e.message}`); 
-    }
+      }
+  };
 
   const seDeconnecter = () => { 
       fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(() => {});
