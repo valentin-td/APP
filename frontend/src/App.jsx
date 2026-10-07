@@ -4601,10 +4601,9 @@ function App() {
 
       {toast && (
         <div className={`toast-notification ${toast.type}`}>
-            {toast.message}
+          {toast.message}
         </div>
       )}
-    </div>
     </>
   );
 }
