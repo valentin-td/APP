@@ -3763,7 +3763,145 @@ async function executerClotureFantome() {
     finally { clientDB.release(); }
 }
 
+// =========================================================================
+// --- ROBOT ANALYTICS (CRON JOB) - RAPPORT HEBDO GÉRANT ---
+// =========================================================================
+async function executerRapportHebdoGerant() {
+    const clientDB = await pool.connect();
+    try {
+        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return;
+        const transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+
+        const salons = await clientDB.query("SELECT id_salon, nom_salon FROM configuration_salon");
+        
+        for (let s of salons.rows) {
+            try {
+                const id_salon = s.id_salon;
+                // 1. Récupération de l'email du gérant
+                const gerantRes = await clientDB.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [id_salon]);
+                if (gerantRes.rowCount === 0 || !gerantRes.rows[0].email) continue;
+                const emailGerant = gerantRes.rows[0].email;
+
+                // 2. Requête d'agrégation intelligente (Semaine en cours vs Semaine -1, Mois vs Mois -1)
+                const statsQuery = `
+                    WITH Hebdo AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca, COUNT(id_ticket) as tickets FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= CURRENT_DATE - INTERVAL '7 days' AND date_creation < CURRENT_DATE
+                    ),
+                    HebdoPrec AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca, COUNT(id_ticket) as tickets FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= CURRENT_DATE - INTERVAL '14 days' AND date_creation < CURRENT_DATE - INTERVAL '7 days'
+                    ),
+                    Mensuel AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= date_trunc('month', CURRENT_DATE)
+                    ),
+                    MensuelPrec AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE)
+                    )
+                    SELECT 
+                        (SELECT ca FROM Hebdo) as ca_hebdo, (SELECT tickets FROM Hebdo) as tickets_hebdo,
+                        (SELECT ca FROM HebdoPrec) as ca_hebdo_prec,
+                        (SELECT ca FROM Mensuel) as ca_mensuel,
+                        (SELECT ca FROM MensuelPrec) as ca_mensuel_prec
+                `;
+                const stats = await clientDB.query(statsQuery, [id_salon]);
+                if(stats.rowCount === 0) continue;
+                const d = stats.rows[0];
+
+                if (parseFloat(d.ca_hebdo) === 0 && parseFloat(d.ca_hebdo_prec) === 0) continue; // Pas d'activité = pas d'email
+
+                // 3. Calculs des variations (Période sur Période)
+                const caHebdo = parseFloat(d.ca_hebdo).toFixed(2);
+                const caHebdoPrec = parseFloat(d.ca_hebdo_prec).toFixed(2);
+                const evoHebdoRaw = caHebdoPrec > 0 ? ((caHebdo - caHebdoPrec) / caHebdoPrec * 100) : (caHebdo > 0 ? 100 : 0);
+                const evoHebdo = Math.abs(evoHebdoRaw).toFixed(1);
+                const signeHebdo = evoHebdoRaw >= 0 ? '+' : '-';
+                const colorHebdo = evoHebdoRaw >= 0 ? '#166534' : '#99251b';
+                const bgHebdo = evoHebdoRaw >= 0 ? '#e7f6ec' : '#fbeae8';
+
+                const caMensuel = parseFloat(d.ca_mensuel).toFixed(2);
+                const caMensuelPrec = parseFloat(d.ca_mensuel_prec).toFixed(2);
+                const evoMensuelRaw = caMensuelPrec > 0 ? ((caMensuel - caMensuelPrec) / caMensuelPrec * 100) : (caMensuel > 0 ? 100 : 0);
+                const evoMensuel = Math.abs(evoMensuelRaw).toFixed(1);
+                const signeMensuel = evoMensuelRaw >= 0 ? '+' : '-';
+                const colorMensuel = evoMensuelRaw >= 0 ? '#166534' : '#99251b';
+                const bgMensuel = evoMensuelRaw >= 0 ? '#e7f6ec' : '#fbeae8';
+
+                const panierMoyen = d.tickets_hebdo > 0 ? (caHebdo / d.tickets_hebdo).toFixed(2) : '0.00';
+
+                // 4. Classement Hebdo (Top 3)
+                const topPrestas = await clientDB.query(`
+                    SELECT c.nom, SUM(lt.total_ligne_ttc) as total FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND t.date_creation >= CURRENT_DATE - INTERVAL '7 days' AND c.type_article = 'PRESTATION' GROUP BY c.nom ORDER BY total DESC LIMIT 3
+                `, [id_salon]);
+
+                let topPrestasHTML = '';
+                if (topPrestas.rowCount > 0) {
+                    topPrestasHTML = `<div style="background: #ffffff; padding: 15px; border-radius: 12px; border: 1px solid #ececee; margin-bottom: 20px;">
+                        <h3 style="margin-top: 0; color: #14141a; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">🏆 Top Prestations (7 Jours)</h3>
+                        <ul style="padding-left: 20px; margin: 0; color: #14141a; font-size: 14px;">`;
+                    topPrestas.rows.forEach(p => { topPrestasHTML += `<li style="margin-bottom: 6px;"><strong>${p.nom}</strong> : ${parseFloat(p.total).toFixed(2)} €</li>`; });
+                    topPrestasHTML += `</ul></div>`;
+                }
+
+                // 5. Structure de l'e-mail avec le design system STACK
+                const htmlBody = `
+                <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; background: #ffffff; border: 1px solid #ececee; border-radius: 16px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h2 style="color: #14141a; margin: 0; font-size: 22px;">Bilan Hebdomadaire</h2>
+                        <p style="color: #77777f; margin: 4px 0 0 0; font-size: 14px;">Performances de <strong>${s.nom_salon}</strong></p>
+                    </div>
+                    
+                    <div style="background: #fbfbfc; padding: 20px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #ececee;">
+                        <h3 style="margin-top: 0; color: #77777f; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">7 Derniers Jours</h3>
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span style="font-size: 32px; font-weight: 800; color: #14141a; letter-spacing: -0.02em;">${caHebdo} €</span>
+                            <span style="font-size: 14px; font-weight: 700; color: ${colorHebdo}; background: ${bgHebdo}; padding: 4px 10px; border-radius: 12px;">${signeHebdo}${evoHebdo}%</span>
+                        </div>
+                        <p style="color: #77777f; font-size: 13px; margin: 8px 0 0 0;">vs ${caHebdoPrec} € la semaine précédente</p>
+                    </div>
+
+                    <div style="background: #fbfbfc; padding: 20px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #ececee;">
+                        <h3 style="margin-top: 0; color: #77777f; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Mois en cours</h3>
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span style="font-size: 24px; font-weight: 700; color: #14141a; letter-spacing: -0.02em;">${caMensuel} €</span>
+                            <span style="font-size: 13px; font-weight: 700; color: ${colorMensuel}; background: ${bgMensuel}; padding: 4px 8px; border-radius: 12px;">${signeMensuel}${evoMensuel}%</span>
+                        </div>
+                        <p style="color: #77777f; font-size: 13px; margin: 8px 0 0 0;">vs ${caMensuelPrec} € le mois dernier</p>
+                    </div>
+                    
+                    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 24px;">
+                        <tr>
+                            <td width="48%" style="background: #fbfbfc; padding: 16px; border-radius: 12px; border: 1px solid #ececee; text-align: center;">
+                                <span style="font-size: 11px; color: #77777f; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Clients (7j)</span>
+                                <p style="font-size: 22px; font-weight: 800; color: #14141a; margin: 8px 0 0 0;">${d.tickets_hebdo}</p>
+                            </td>
+                            <td width="4%"></td>
+                            <td width="48%" style="background: #fbfbfc; padding: 16px; border-radius: 12px; border: 1px solid #ececee; text-align: center;">
+                                <span style="font-size: 11px; color: #77777f; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Panier Moyen (7j)</span>
+                                <p style="font-size: 22px; font-weight: 800; color: #14141a; margin: 8px 0 0 0;">${panierMoyen} €</p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    ${topPrestasHTML}
+
+                    <hr style="border: none; border-top: 1px dashed #ececee; margin: 24px 0;" />
+                    <p style="font-size: 12px; color: #a9a9b0; text-align: center; margin: 0;">STACK Analytics<br/>Le tableau de bord vient à vous.</p>
+                </div>`;
+
+                await transporter.sendMail({
+                    from: `"STACK Analytics" <${process.env.SMTP_USER}>`,
+                    to: emailGerant,
+                    subject: `📊 Bilan STACK : ${caHebdo}€ cette semaine (${signeHebdo}${evoHebdo}%)`,
+                    html: htmlBody
+                });
+
+            } catch (eSalon) { console.error(`Erreur Rapport Hebdo Salon ${s.id_salon}:`, eSalon); }
+        }
+    } catch (err) { console.error("Erreur globale Rapport Hebdo:", err); }
+    finally { clientDB.release(); }
+}
+
 // Planification automatique
+cron.schedule('0 8 * * 1', () => { executerRapportHebdoGerant(); }); // Tous les lundis à 08h00
 cron.schedule('0 3 * * *', () => { executerClotureFantome(); }); // Le filet de sécurité à 3h00 du matin !
 cron.schedule('0 8 * * *', () => { executerEnvoiComptable(); }); 
 cron.schedule('0 9 * * *', () => { executerRobotMarketingEtPredictif(); }); 
@@ -3775,7 +3913,8 @@ app.get('/api/admin/forcer-robot', async (req, res) => {
     executerClotureFantome();
     executerRobotMarketingEtPredictif();
     executerEnvoiComptable();
-    res.json({ message: "Tous les robots (Compta, Fantôme, Prédictif & Envoi Bilan) sont lancés avec succès." }); 
+    executerRapportHebdoGerant();
+    res.json({ message: "Tous les robots (Compta, Fantôme, Prédictif, Envoi Bilan & Rapport Hebdo) sont lancés avec succès." }); 
 });
 
 // --- CHEAT CODE : VOYAGE DANS LE TEMPS (TESTS UNIQUEMENT) ---
