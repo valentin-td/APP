@@ -22,6 +22,17 @@ function urlBase64ToUint8Array(base64String) {
 // Fonction sortie du composant pour être accessible partout sans erreur d'initialisation
 const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
 
+// Intercepteur global pour inclure automatiquement le Cookie httpOnly sur toutes les requêtes
+const originalFetch = window.fetch;
+window.fetch = async (...args) => {
+    let [resource, config] = args;
+    if (typeof resource === 'string' && resource.includes('api-salon-backend.onrender.com')) {
+        config = config || {};
+        config.credentials = 'include';
+    }
+    return originalFetch(resource, config);
+};
+
 import AvisPublic from './AvisPublic.jsx';
 
 function App() {
@@ -29,7 +40,7 @@ function App() {
       return <AvisPublic token={window.location.pathname.split('/avis/')[1]} />;
   }
 
-  const [token, setToken] = useState(localStorage.getItem('token') || null);
+  const [token, setToken] = useState(localStorage.getItem('ui_token') || null);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
@@ -812,9 +823,10 @@ function App() {
                   transports: ['websocket'],
                   reconnectionAttempts: Infinity,
                   timeout: 5000,
+                  withCredentials: true
               });
               newSocket.on('connect', () => {
-                  newSocket.emit('rejoindreSalon', user.id_salon, token);
+                  newSocket.emit('rejoindreSalon', user.id_salon);
               });
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
@@ -855,8 +867,8 @@ function App() {
       
       const ouvrirConnexionSSE = () => {
           if (eventSource) eventSource.close();
-          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}?token=${encodeURIComponent(token)}`;
-          eventSource = new EventSource(url);
+          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}`;
+          eventSource = new EventSource(url, { withCredentials: true });
           dernierSignal = Date.now();
           
           eventSource.addEventListener('connected', () => {
@@ -948,7 +960,7 @@ function App() {
     try {
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomGerantInput }) });
       const data = await response.json();
-      if (response.ok) { localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); setIsAbonnementInactif(false); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
+      if (response.ok) { localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); setIsAbonnementInactif(false); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Erreur de connexion au serveur."); }
   };
 
@@ -965,9 +977,9 @@ function App() {
       const data = await response.json();
       
       if (response.ok) { 
-          localStorage.setItem('token', data.token); setToken(data.token); setErreurLogin(null); 
-          const decoded = decodeToken(data.token); setUserRole(decoded.role || 'gerant');
-          setIsAbonnementInactif(false); // Le backend gère désormais le blocage
+          localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); 
+          const decoded = decodeToken(data.ui_token); setUserRole(decoded.role || 'gerant');
+          setIsAbonnementInactif(false);
           if(decoded.role === 'employe') { setActiveTab('agenda'); } else { setActiveTab('accueil'); }
       } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Mode hors-ligne ou erreur de connexion."); }
@@ -981,7 +993,10 @@ function App() {
       } catch (e) { setErreurLogin("Erreur d'envoi."); }
   }
 
-  const seDeconnecter = () => { localStorage.removeItem('token'); setToken(null); setIsAbonnementInactif(false); setUserRole('gerant'); if(socket) socket.disconnect(); };
+  const seDeconnecter = () => { 
+      fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(() => {});
+      localStorage.removeItem('ui_token'); setToken(null); setIsAbonnementInactif(false); setUserRole('gerant'); if(socket) socket.disconnect(); 
+  };
 
   const lancerPaiementStripe = async () => {
       try {
