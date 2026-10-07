@@ -803,6 +803,51 @@ function App() {
   // On n'utilise QUE des valeurs numériques et strings. Fini le windowWidth qui fluctue avec les barres de défilement !
   }, [planningStartTs, planningEndTs, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
+  const chargerTout = () => {
+    const role = decodeToken(token)?.role;
+
+    fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
+    fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
+    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
+    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
+
+    if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData');
+    if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData');
+
+    fetch(`https://api-salon-backend.onrender.com/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
+        .then(handleFetchError)
+        .then(async (d) => {
+            const config = { 
+                google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
+                fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
+                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null, pin_salon: d?.pin_salon || '', temps_nettoyage_minutes: d?.temps_nettoyage_minutes || 0,
+                plan_actuel: d?.plan_actuel || 'PREMIUM_TRIAL', date_fin_essai: d?.date_fin_essai || null, pennylane_api_key: d?.pennylane_api_key || ''
+            };
+            setConfigSalon(config);
+            await localforage.setItem('configSalon', config);
+        }).catch(async () => {
+            const cachedConf = await localforage.getItem('configSalon');
+            if(cachedConf) setConfigSalon(cachedConf);
+        });
+
+    if (role === 'employe') return;
+
+    setDashboardData(null); 
+    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData');
+    fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats');
+    fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
+    fetchAndCache('/api/stocks', setStocksData, 'stocksData');
+    fetchAndCache('/api/rh', setRhData, 'rhData');
+    fetchAndCache('/api/rh/absences', setAbsencesRH, 'absencesRH');
+    fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
+    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
+
+    if (decodeToken(token)?.id_salon === 38) {
+        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
+        fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
+    }
+  };
+
   useEffect(() => {
       if (token && !isAbonnementInactif) { 
           const user = decodeToken(token); setUserRole(user?.role || 'gerant');
