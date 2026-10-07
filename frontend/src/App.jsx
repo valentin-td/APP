@@ -22,6 +22,15 @@ function urlBase64ToUint8Array(base64String) {
 // Fonction sortie du composant pour être accessible partout sans erreur d'initialisation
 const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
 
+const isPinWeak = (pin) => {
+    if (!pin) return false;
+    const strPin = String(pin);
+    const repeating = /^(\d)\1+$/.test(strPin);
+    const sequentialUp = '0123456789'.includes(strPin);
+    const sequentialDown = '9876543210'.includes(strPin);
+    return repeating || sequentialUp || sequentialDown;
+};
+
 // Intercepteur global pour inclure automatiquement le Cookie httpOnly sur toutes les requêtes
 const originalFetch = window.fetch;
 window.fetch = async (...args) => {
@@ -1089,9 +1098,9 @@ function App() {
 
   const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); setShowAddClient(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
-  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!newEmploye.code_pin) return showToast("Le code PIN est obligatoire.", "error"); if(isPinWeak(newEmploye.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
-  const sauvegarderModifEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); try { const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${modifEmployeDialog.id_employe}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifEmployeDialog.nom, code_pin: modifEmployeDialog.code_pin, taux_commission_prestation: modifEmployeDialog.taux_commission_prestation, taux_commission_produit: modifEmployeDialog.taux_commission_produit }) }); await handleFetchError(res); chargerTout(); showToast("Employé mis à jour.", "success"); setModifEmployeDialog(null); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const sauvegarderModifEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(modifEmployeDialog.code_pin && isPinWeak(modifEmployeDialog.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${modifEmployeDialog.id_employe}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifEmployeDialog.nom, code_pin: modifEmployeDialog.code_pin, taux_commission_prestation: modifEmployeDialog.taux_commission_prestation, taux_commission_produit: modifEmployeDialog.taux_commission_produit }) }); await handleFetchError(res); chargerTout(); showToast("Employé mis à jour.", "success"); setModifEmployeDialog(null); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   
   const ajouterArticle = async () => { 
       if(isOffline) return showToast("Désactivé hors-ligne", "error"); 
@@ -1439,7 +1448,8 @@ function App() {
 
   const sauvegarderParametres = async () => {
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
-      showToast("Sauvegarde en cours..."); 
+      if(configSalon.pin_salon && isPinWeak(configSalon.pin_salon)) return showToast("Le code PIN du salon est trop simple (évitez 0000, 1234...).", "error");
+      showToast("Sauvegarde en cours...");
       try { 
           const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); 
           const data = await handleFetchError(response); 
