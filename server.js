@@ -59,7 +59,14 @@ const groq = new OpenAI({
 const http = require('http');
 const { Server } = require('socket.io');
 
-const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET || 'stack_secret_de_secours_absolu', 'salt', 32);
+// 🚨 SÉCURITÉ : Vérification stricte des variables d'environnement cryptographiques
+if (!process.env.ENCRYPTION_SECRET && !process.env.JWT_SECRET) {
+    console.error("🚨 ERREUR CRITIQUE FATALE : Les variables d'environnement ENCRYPTION_SECRET ou JWT_SECRET sont manquantes.");
+    console.error("Le serveur refuse de démarrer car le chiffrement serait compromis.");
+    process.exit(1); // Force l'arrêt immédiat de l'application
+}
+
+const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET, 'salt', 32);
 const ALGORITHM = 'aes-256-cbc';
 
 function chiffrer(text) {
