@@ -403,6 +403,7 @@ function App() {
   const [cancellationRobot, setCancellationRobot] = useState(null);
   const [selectedCancelRdvs, setSelectedCancelRdvs] = useState([]);
   const [cancelMessageTemplate, setCancelMessageTemplate] = useState('');
+  const [auditNf525, setAuditNf525] = useState(null);
 
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
@@ -1385,10 +1386,20 @@ function App() {
 
   const declencherExport = async () => { if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
 
+  const lancerAuditNF525 = async () => {
+      if(isOffline || !navigator.onLine) return showToast("Audit impossible hors-ligne.", "error");
+      showToast("Audit cryptographique en cours...", "info");
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/admin/verifier-nf525', { headers: getAuthHeaders(), credentials: 'include' });
+          const data = await handleFetchError(res);
+          setAuditNf525(data);
+      } catch (e) { showToast(e.message || "Erreur lors de l'audit.", "error"); }
+  };
+
   const declencherExportFEC = async () => { 
       if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); 
       showToast("Génération du FEC (Partie Double) en cours..."); 
-      try { 
+      try {
           const today = new Date(); 
           const firstDay = new Date(today.getFullYear(), today.getMonth(), 1); 
           const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0); 
@@ -3956,6 +3967,7 @@ function App() {
               
                   <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter PDF</button></div>
                   <div className="carte export-carte" style={{marginTop: '16px'}}><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Fichier FEC (Comptable)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Export .txt normalisé (Partie double)</span></div><button className="btn-export" onClick={declencherExportFEC} style={{background: 'var(--text-main)', color: 'var(--bg-app)', border: 'none'}}>Télécharger FEC</button></div>
+                  <div className="carte export-carte" style={{marginTop: '16px'}}><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Audit de Conformité (NF525)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Vérification des chaînes cryptographiques</span></div><button className="btn-export" onClick={lancerAuditNF525} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>Lancer l'audit</button></div>
                   <div className="section-titre" style={{marginTop: '32px'}}>Historique des bilans comptables</div>
                   
                   {(historiqueData || []).length === 0 ? (
@@ -4496,6 +4508,46 @@ function App() {
                           Envoyer ({selectedCancelRdvs.length})
                       </button>
                   </div>
+              </div>
+          </div>
+      )}
+
+      {auditNf525 && (
+          <div className="modal-overlay" style={{ zIndex: 100000 }}>
+              <div className="modal-content" style={{textAlign: 'center', maxWidth: '450px'}}>
+                  <div style={{color: auditNf525.conforme ? 'var(--color-success)' : 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                      {auditNf525.conforme 
+                          ? <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                          : <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      }
+                  </div>
+                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>
+                      {auditNf525.conforme ? "Base de données intègre" : "Altération détectée"}
+                  </h2>
+                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>
+                      {auditNf525.conforme 
+                          ? "Le chaînage cryptographique est parfaitement valide. Aucune donnée financière n'a été altérée." 
+                          : "Le système a détecté une rupture dans la chaîne cryptographique !"}
+                  </p>
+                  <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '13px'}}>
+                      <div style={{marginBottom: '8px'}}><strong>Tickets vérifiés :</strong> {auditNf525.total_tickets_verifies}</div>
+                      <div style={{marginBottom: '8px'}}><strong>Clôtures (Z) vérifiées :</strong> {auditNf525.total_z_verifies}</div>
+                      <div><strong>Journaux Techniques (JET) :</strong> {auditNf525.total_jet_verifies}</div>
+                  </div>
+                  
+                  {auditNf525.erreurs && auditNf525.erreurs.length > 0 && (
+                      <div style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '12px', maxHeight: '100px', overflowY: 'auto'}}>
+                          {auditNf525.erreurs.map((err, i) => <div key={i}>• {err}</div>)}
+                      </div>
+                  )}
+                  
+                  {auditNf525.alertes && auditNf525.alertes.length > 0 && (
+                      <div style={{background: 'var(--bg-info)', color: 'var(--color-info)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '12px', maxHeight: '100px', overflowY: 'auto'}}>
+                          {auditNf525.alertes.map((al, i) => <div key={i}>• {al}</div>)}
+                      </div>
+                  )}
+
+                  <button onClick={() => setAuditNf525(null)} className="btn-action" style={{width: '100%'}}>Fermer</button>
               </div>
           </div>
       )}
