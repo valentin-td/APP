@@ -3767,22 +3767,35 @@ async function executerClotureFantome() {
 // --- ROBOT ANALYTICS (CRON JOB) - RAPPORT HEBDO GÉRANT ---
 // =========================================================================
 async function executerRapportHebdoGerant() {
+    console.log("\n🚀 [ROBOT-HEBDO] Démarrage du robot...");
     const clientDB = await pool.connect();
     try {
-        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return;
+        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+            console.log("❌ [ROBOT-HEBDO] ARRÊT : Variables SMTP_USER ou SMTP_PASS introuvables.");
+            return;
+        }
+        console.log(`📧 [ROBOT-HEBDO] Connexion SMTP configurée avec : ${process.env.SMTP_USER}`);
+        
         const transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
 
         const salons = await clientDB.query("SELECT id_salon, nom_salon FROM configuration_salon");
+        console.log(`🔍 [ROBOT-HEBDO] ${salons.rowCount} salon(s) trouvé(s) en base.`);
         
         for (let s of salons.rows) {
             try {
                 const id_salon = s.id_salon;
+                console.log(`\n➡️ Analyse du salon #${id_salon} (${s.nom_salon})...`);
+
                 // 1. Récupération de l'email du gérant
                 const gerantRes = await clientDB.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [id_salon]);
-                if (gerantRes.rowCount === 0 || !gerantRes.rows[0].email) continue;
+                if (gerantRes.rowCount === 0 || !gerantRes.rows[0].email) {
+                    console.log(`⚠️ [ROBOT-HEBDO] Ignoré : Aucun compte 'gerant' avec un email trouvé pour ce salon.`);
+                    continue;
+                }
                 const emailGerant = gerantRes.rows[0].email;
+                console.log(`👤 [ROBOT-HEBDO] Gérant ciblé : ${emailGerant}`);
 
-                // 2. Requête d'agrégation intelligente (Semaine en cours vs Semaine -1, Mois vs Mois -1)
+                // 2. Requête d'agrégation intelligente
                 const statsQuery = `
                     WITH Hebdo AS (
                         SELECT COALESCE(SUM(total_ttc), 0) as ca, COUNT(id_ticket) as tickets FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= CURRENT_DATE - INTERVAL '7 days' AND date_creation < CURRENT_DATE
@@ -3806,7 +3819,12 @@ async function executerRapportHebdoGerant() {
                 if(stats.rowCount === 0) continue;
                 const d = stats.rows[0];
 
-                if (parseFloat(d.ca_hebdo) === 0 && parseFloat(d.ca_hebdo_prec) === 0) continue; // Pas d'activité = pas d'email
+                console.log(`💰 [ROBOT-HEBDO] CA 7j : ${d.ca_hebdo}€ | CA Prec : ${d.ca_hebdo_prec}€ | Tickets : ${d.tickets_hebdo}`);
+
+                if (parseFloat(d.ca_hebdo) === 0 && parseFloat(d.ca_hebdo_prec) === 0) {
+                    console.log(`🛑 [ROBOT-HEBDO] Annulation : Pas d'activité détectée sur les 14 derniers jours.`);
+                    continue; 
+                }
 
                 // 3. Calculs des variations (Période sur Période)
                 const caHebdo = parseFloat(d.ca_hebdo).toFixed(2);
@@ -3841,7 +3859,7 @@ async function executerRapportHebdoGerant() {
                     topPrestasHTML += `</ul></div>`;
                 }
 
-                // 5. Structure de l'e-mail avec le design system STACK
+                // 5. Structure de l'e-mail
                 const htmlBody = `
                 <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; background: #ffffff; border: 1px solid #ececee; border-radius: 16px;">
                     <div style="text-align: center; margin-bottom: 24px;">
@@ -3887,16 +3905,19 @@ async function executerRapportHebdoGerant() {
                     <p style="font-size: 12px; color: #a9a9b0; text-align: center; margin: 0;">STACK Analytics<br/>Le tableau de bord vient à vous.</p>
                 </div>`;
 
+                console.log(`📨 [ROBOT-HEBDO] Envoi de l'email en cours vers : ${emailGerant}...`);
                 await transporter.sendMail({
                     from: `"STACK Analytics" <${process.env.SMTP_USER}>`,
                     to: emailGerant,
                     subject: `📊 Bilan STACK : ${caHebdo}€ cette semaine (${signeHebdo}${evoHebdo}%)`,
                     html: htmlBody
                 });
+                console.log(`✅ [ROBOT-HEBDO] Email envoyé avec succès !`);
 
-            } catch (eSalon) { console.error(`Erreur Rapport Hebdo Salon ${s.id_salon}:`, eSalon); }
+            } catch (eSalon) { console.error(`❌ [ROBOT-HEBDO] Erreur Salon ${s.id_salon}:`, eSalon); }
         }
-    } catch (err) { console.error("Erreur globale Rapport Hebdo:", err); }
+        console.log("🏁 [ROBOT-HEBDO] Fin de l'exécution.\n");
+    } catch (err) { console.error("❌ [ROBOT-HEBDO] Erreur globale:", err); }
     finally { clientDB.release(); }
 }
 
