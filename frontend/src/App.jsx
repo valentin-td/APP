@@ -1001,7 +1001,7 @@ function App() {
       }
   };
 
-  const seDeconnecter = () => { 
+  const seDeconnecter = () => {
       fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(e => console.log(e));
       localStorage.removeItem('ui_token'); setToken(null); setIsAbonnementInactif(false); setUserRole('gerant'); if(socket) socket.disconnect(); 
   };
