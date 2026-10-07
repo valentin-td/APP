@@ -476,27 +476,6 @@ function App() {
           showToast("Erreur lors de l'activation des notifications.", "error");
       }
   };
-
-  // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
-  const contactsTries = useMemo(() => {
-      const roleUtilisateur = decodeToken(token)?.role;
-      const myIdActuel = decodeToken(token)?.id_employe;
-      let base;
-      if (roleUtilisateur === 'gerant') {
-          base = (employesListe || []).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }));
-      } else if (roleUtilisateur === 'salon') {
-          base = [
-              { key: 'gerant', nom: 'Gérant', photo_url: null },
-              ...(employesListe || []).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
-          ];
-      } else {
-          base = [
-              { key: 'gerant', nom: 'Gérant', photo_url: null },
-              ...(employesListe || []).filter(e => e.id_employe !== myIdActuel).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
-          ];
-      }
-      return base.sort((a, b) => (dernierMessageParConv[b.key] || 0) - (dernierMessageParConv[a.key] || 0));
-  }, [employesListe, token, dernierMessageParConv]);
   
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '', gains: [] });
@@ -1035,7 +1014,7 @@ function App() {
       } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
   };
 
-  const annulerTicket = (id_ticket) => {
+  
   const annulerTicket = async (id_ticket) => {
       if(isOffline) return showToast("Annulation impossible hors-ligne.", "error");
       try {
@@ -4259,7 +4238,6 @@ function App() {
                 </div>
               )}
             </div>
-          </div>
       </div>
       {/* --- MENU OUTILS (BOTTOM SHEET MOBILE) DÉPLACÉ ICI POUR RÉSOUDRE LE FLOU SAFARI --- */}
       {isMobile && (
