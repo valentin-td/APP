@@ -595,9 +595,9 @@ function App() {
   const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); }
-  const getAuthHeaders = (isJson = false) => { const headers = { 'Authorization': `Bearer ${token}` }; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
+  const getAuthHeaders = (isJson = false) => { const headers = {}; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
   
-  const handleFetchError = async (res) => { 
+  const handleFetchError = async (res) => {
       // On lit le corps de la réponse en premier pour voir s'il y a des détails
       const data = await res.json().catch(() => ({})); 
 
@@ -740,6 +740,7 @@ function App() {
           const cacheBuster = url.includes('?') ? `&_=${Date.now()}` : `?_=${Date.now()}`;
           const res = await fetch(`https://api-salon-backend.onrender.com${url}${cacheBuster}`, { 
               headers: getAuthHeaders(),
+              credentials: 'include',
               cache: 'no-store'
           });
           const data = await handleFetchError(res);
