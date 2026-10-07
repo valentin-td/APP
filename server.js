@@ -390,7 +390,7 @@ async function envoyerNotificationPush(id_salon, cible, payload) {
     }
 }
 
-const verifierToken = (req, res, next) => {
+function verifierToken(req, res, next) {
     const cookieHeader = req.headers.cookie;
     let token = null;
     if (cookieHeader) {
