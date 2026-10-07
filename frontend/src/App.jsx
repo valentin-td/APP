@@ -4577,12 +4577,14 @@ function App() {
           />
       )}
 
-      {toast && (
+            {toast && (
         <div className={`toast-notification ${toast.type}`}>
           {toast.message}
         </div>
       )}
+    </div>
     </>
   );
+}
 
 export default App;
