@@ -4604,7 +4604,6 @@ function App() {
             {toast.message}
         </div>
       )}
-    </div>
     </>
   );
 }
