@@ -301,6 +301,20 @@ function App() {
 
   const aDesMessagesNonLus = Object.keys(nonLusParConv).length > 0;
 
+    // Dernier message de chaque conversation (sert à trier les contacts)
+  const dernierMessageParConv = useMemo(() => {
+      const roleUtilisateur = decodeToken(token)?.role;
+      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
+      const map = {};
+      (Array.isArray(messagesListe) ? messagesListe : []).forEach(m => {
+          const cle = getCleConversation(m, roleUtilisateur, myId);
+          if (cle === null || cle === undefined) return;
+          const id = Number(m.id_message) || 0;
+          if (id > (map[cle] || 0)) map[cle] = id;
+      });
+      return map;
+  }, [messagesListe, token]);
+
   // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
   const contactsTries = useMemo(() => {
       const roleUtilisateur = decodeToken(token)?.role;
