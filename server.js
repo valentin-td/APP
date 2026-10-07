@@ -2181,7 +2181,15 @@ app.post('/api/rh/absences', verifierToken, verifierPlan(['PREMIUM']), async (re
         let fileKey = null;
 
         if (fichier_base64 && nom_fichier) {
-            const extension = nom_fichier.split('.').pop();
+            // 🚨 SÉCURITÉ : Liste blanche stricte pour bloquer les Malwares et XSS stockés
+            const allowedMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+            const extension = nom_fichier.split('.').pop().toLowerCase();
+            const allowedExts = ['pdf', 'jpg', 'jpeg', 'png'];
+
+            if (!type_mime || !allowedMimes.includes(type_mime) || !allowedExts.includes(extension)) {
+                return res.status(400).json({ erreur: "Format de fichier non autorisé. Seuls les PDF, JPG et PNG sont acceptés." });
+            }
+
             fileKey = `salons/${id_salon}/employes/${id_employe}/absences/${Date.now()}.${extension}`;
             const buffer = Buffer.from(fichier_base64.replace(/^data:.*,/, ''), 'base64');
             await s3Client.send(new PutObjectCommand({
