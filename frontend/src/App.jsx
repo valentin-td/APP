@@ -262,9 +262,14 @@ function App() {
       
       const clesActives = new Set(['salon']);
       if (roleUtilisateur === 'employe') clesActives.add('gerant');
-      (employesListe || []).forEach(emp => clesActives.add(String(emp.id_employe)));
+      
+      // Sécurité anti-crash
+      const safeEmployes = Array.isArray(employesListe) ? employesListe : [];
+      const safeMessages = Array.isArray(messagesListe) ? messagesListe : [];
 
-      (messagesListe || []).forEach(m => {
+      safeEmployes.forEach(emp => clesActives.add(String(emp.id_employe)));
+
+      safeMessages.forEach(m => {
           if (m.id_expediteur === myId) return;
           const cleBrute = getCleConversation(m, roleUtilisateur, myId);
           if (cleBrute === null || cleBrute === undefined) return;
@@ -272,7 +277,6 @@ function App() {
           const cle = String(cleBrute);
           if (!clesActives.has(cle)) return;
 
-          // Si on est actuellement SUR cette conversation, on ne déclenche JAMAIS la pastille rouge
           if (activeTab === 'messagerie' && String(chatActif) === cle) return;
 
           if (Number(m.id_message) > Number(dernierLuParConv[cle] || 0)) {
@@ -284,19 +288,27 @@ function App() {
 
   const aDesMessagesNonLus = Object.keys(nonLusParConv).length > 0;
 
-  // Calcule, pour chaque conversation, la date du dernier message (pour le tri par récence)
-  const dernierMessageParConv = useMemo(() => {
+  // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
+  const contactsTries = useMemo(() => {
       const roleUtilisateur = decodeToken(token)?.role;
-      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
-      const map = {};
-      (messagesListe || []).forEach(m => {
-          const cle = getCleConversation(m, roleUtilisateur, myId);
-          if (cle === null || cle === undefined) return;
-          const t = new Date(m.date_creation).getTime();
-          if (!map[cle] || t > map[cle]) map[cle] = t;
-      });
-      return map;
-  }, [messagesListe, token]);
+      const myIdActuel = decodeToken(token)?.id_employe;
+      const safeEmployes = Array.isArray(employesListe) ? employesListe : []; // Sécurité anti-crash
+      let base;
+      if (roleUtilisateur === 'gerant') {
+          base = safeEmployes.map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }));
+      } else if (roleUtilisateur === 'salon') {
+          base = [
+              { key: 'gerant', nom: 'Gérant', photo_url: null },
+              ...safeEmployes.map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
+          ];
+      } else {
+          base = [
+              { key: 'gerant', nom: 'Gérant', photo_url: null },
+              ...safeEmployes.filter(e => e.id_employe !== myIdActuel).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
+          ];
+      }
+      return base.sort((a, b) => (dernierMessageParConv[b.key] || 0) - (dernierMessageParConv[a.key] || 0));
+  }, [employesListe, token, dernierMessageParConv]);
 
   // Marque la conversation actuellement ouverte comme lue sans déclencher de boucle infinie
   const marquerConversationCommeLue = () => {
@@ -745,7 +757,12 @@ function App() {
       return () => clearInterval(t);
   }, [token]);
 
-  const fetchAndCache = async (url, setter, cacheKey) => {
+  const fetchAndCache = async (url, setter, cacheKey, expectedType = 'array') => {
+      const sanitizeData = (d) => {
+          if (expectedType === 'array') return Array.isArray(d) ? d : [];
+          return d || null; 
+      };
+
       try {
           const cacheBuster = url.includes('?') ? `&_=${Date.now()}` : `?_=${Date.now()}`;
           const res = await fetch(`https://api-salon-backend.onrender.com${url}${cacheBuster}`, { 
@@ -754,59 +771,22 @@ function App() {
               cache: 'no-store'
           });
           const data = await handleFetchError(res);
-          setter(data || []);
-          await localforage.setItem(cacheKey, data || []);
+          const cleanData = sanitizeData(data);
+          setter(cleanData);
+          await localforage.setItem(cacheKey, cleanData);
       } catch (e) {
           const cachedData = await localforage.getItem(cacheKey);
-          if (cachedData) setter(cachedData || []);
+          setter(sanitizeData(cachedData));
       }
   };
 
-  const chargerTout = () => {
-    const role = decodeToken(token)?.role;
-
-    // Ces données sont nécessaires à TOUS les rôles (la messagerie en a besoin pour employé comme pour gérant/salon)
-    fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
-    fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
-    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData'); // filtré côté serveur selon le rôle
-    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
-
-    if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData');
-    if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData');
-
-    fetch(`https://api-salon-backend.onrender.com/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
-        .then(handleFetchError)
-        .then(async (d) => {
-            const config = { 
-                google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
-                fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
-                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null, pin_salon: d?.pin_salon || '', temps_nettoyage_minutes: d?.temps_nettoyage_minutes || 0,
-                plan_actuel: d?.plan_actuel || 'PREMIUM_TRIAL', date_fin_essai: d?.date_fin_essai || null, pennylane_api_key: d?.pennylane_api_key || ''
-            };
-            setConfigSalon(config);
-            await localforage.setItem('configSalon', config);
-        }).catch(async () => {
-            const cachedConf = await localforage.getItem('configSalon');
-            if(cachedConf) setConfigSalon(cachedConf);
-        });
-
-    if (role === 'employe') return; // à partir d'ici : uniquement les données de gestion réservées au gérant
-
-    setDashboardData(null); 
-    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData');
-    fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats');
-    fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
-    fetchAndCache('/api/stocks', setStocksData, 'stocksData');
-    fetchAndCache('/api/rh', setRhData, 'rhData');
-    fetchAndCache('/api/rh/absences', setAbsencesRH, 'absencesRH');
-    fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
-
-    if (decodeToken(token)?.email === '2@gmail.com') {
-        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
-        fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
-    }
-  };
+  const startStr = formatDateInput(new Date(planningStartTs)); 
+  const endStr = formatDateInput(new Date(planningEndTs));
+  fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData', 'object');
+          
+  if (decodeToken(token)?.role === 'employe') {
+      fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe', 'array');
+  }
 
   // Extraction des dates en nombres primitifs purs pour garantir la stabilité absolue du useEffect
   const planningStartTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[0].getTime() : 0;
