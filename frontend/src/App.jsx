@@ -952,8 +952,10 @@ function App() {
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomGerantInput }) });
       const data = await response.json();
       if (response.ok) { localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); setIsAbonnementInactif(false); setUserRole('gerant'); } else { setErreurLogin(data.erreur); }
-    } catch (e) { setErreurLogin("Erreur de connexion au serveur."); }
-  };
+    } catch (e) { 
+        console.error("Détails du crash de connexion :", e);
+        setErreurLogin(`Erreur technique : ${e.message}`); 
+    }
 
   const seConnecter = async () => {
     try {
@@ -981,8 +983,10 @@ function App() {
           const res = await fetch('https://api-salon-backend.onrender.com/api/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput }) });
           const data = await res.json();
           setMsgSucces(data.message); setErreurLogin(null);
-      } catch (e) { setErreurLogin("Erreur d'envoi."); }
-  }
+      } catch (e) { 
+        console.error("Détails du crash de connexion :", e);
+        setErreurLogin(`Erreur technique : ${e.message}`); 
+    }
 
   const seDeconnecter = () => { 
       fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(() => {});
