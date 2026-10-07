@@ -93,6 +93,15 @@ function dechiffrer(text) {
     } catch (e) { return text; }
 }
 
+function isPinWeak(pin) {
+    if (!pin) return false;
+    const strPin = String(pin);
+    const repeating = /^(\d)\1+$/.test(strPin);          // Ex: 0000, 1111, 22222...
+    const sequentialUp = '0123456789'.includes(strPin);  // Ex: 1234, 4567, 0123...
+    const sequentialDown = '9876543210'.includes(strPin);// Ex: 4321, 9876, 3210...
+    return repeating || sequentialUp || sequentialDown;
+}
+
 console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
 
@@ -755,6 +764,7 @@ app.post('/api/settings', verifierToken, async (req, res) => {
     try { 
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
         if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
+        if (pin_salon && isPinWeak(pin_salon)) return res.status(400).json({ erreur: "Le code PIN du salon est trop simple (évitez 0000, 1234...)." });
         
         let finalPinSalon = pin_salon;
         if (pin_salon && !pin_salon.startsWith('$2')) {
@@ -1986,9 +1996,12 @@ app.get('/api/employes', verifierToken, async (req, res) => { try { const result
 app.post('/api/employes', verifierToken, async (req, res) => { 
     const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url } = req.body; 
     try { 
-        const hashPin = await bcrypt.hash(code_pin || '0000', 10);
+        if (!code_pin) return res.status(400).json({ erreur: "Le code PIN est obligatoire." });
+        if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
+        
+        const hashPin = await bcrypt.hash(code_pin, 10);
         await pool.query('INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7)', [nom, role || 'Employé', taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, photo_url || null, req.user.id_salon]); 
-        res.status(201).json({message: "Employé ajouté"}); 
+        res.status(201).json({message: "Employé ajouté"});
     } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
 });
 app.put('/api/employes/:id', verifierToken, async (req, res) => {
@@ -1996,6 +2009,7 @@ app.put('/api/employes/:id', verifierToken, async (req, res) => {
     const { nom, code_pin, taux_commission_prestation, taux_commission_produit } = req.body;
     try {
         if (code_pin && code_pin.trim() !== '') {
+            if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
             const hashPin = await bcrypt.hash(code_pin, 10);
             await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3, code_pin = $4 WHERE id_employe = $5 AND id_salon = $6', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, req.params.id, req.user.id_salon]);
         } else {
