@@ -443,7 +443,15 @@ const verifierClotureZ = async (req, res, next) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur vérification clôture." }); }
 };
 
-app.post('/api/register', async (req, res) => {
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limite stricte pour toutes les routes d'authentification
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erreur: "Trop de tentatives. Veuillez patienter 15 minutes avant de réessayer." }
+});
+
+app.post('/api/register', authLimiter, async (req, res) => {
     const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
     const clientDB = await pool.connect();
     try {
@@ -470,15 +478,7 @@ app.post('/api/register', async (req, res) => {
     } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
 });
 
-const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Bloque après 5 échecs par IP
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { erreur: "Trop de tentatives de connexion. Compte temporairement bloqué pendant 15 minutes." }
-});
-
-app.post('/api/login', loginLimiter, async (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
     const { email, mot_de_passe } = req.body;
     try {
         const result = await pool.query('SELECT id_salon, mot_de_passe_hash, statut_abonnement FROM utilisateurs WHERE email = $1 LIMIT 1', [email]);
@@ -497,7 +497,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     } catch (error) { res.status(500).json({ erreur: "Erreur serveur." }); }
 });
 
-app.post('/api/employes/login-pin', loginLimiter, async (req, res) => {
+app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
     const { id_salon, nom_employe, code_pin } = req.body;
     try {
         const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
@@ -521,7 +521,7 @@ app.post('/api/employes/login-pin', loginLimiter, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
 });
 
-app.post('/api/salon/login-pin', loginLimiter, async (req, res) => {
+app.post('/api/salon/login-pin', authLimiter, async (req, res) => {
     const { id_salon, pin } = req.body;
     try {
         const result = await pool.query('SELECT id_salon, pin_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
@@ -545,7 +545,7 @@ app.post('/api/salon/login-pin', loginLimiter, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
 });
 
-app.post('/api/forgot-password', async (req, res) => {
+app.post('/api/forgot-password', authLimiter, async (req, res) => {
     const { email } = req.body;
     try {
         if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ erreur: "Serveur mail non configuré." });
@@ -559,7 +559,7 @@ app.post('/api/forgot-password', async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'envoi." }); }
 });
 
-app.post('/api/reset-password', async (req, res) => {
+app.post('/api/reset-password', authLimiter, async (req, res) => {
     const { token, nouveau_mot_de_passe } = req.body;
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
