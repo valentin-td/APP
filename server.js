@@ -95,10 +95,17 @@ function dechiffrer(text) {
 
 console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
-app.use(cors());
+
+// 🚨 SÉCURITÉ : Restriction stricte des origines pour empêcher les appels API depuis des sites tiers
+const corsOptions = {
+    origin: ['https://app-salon-caiss.onrender.com', 'http://localhost:5173', 'http://localhost:3000'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature']
+};
+app.use(cors(corsOptions));
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
+const io = new Server(server, { cors: corsOptions });
 
 io.on('connection', (socket) => {
     socket.on('rejoindreSalon', (id_salon, token) => {
