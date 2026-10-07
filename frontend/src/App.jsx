@@ -20,7 +20,20 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 // Fonction sortie du composant pour être accessible partout sans erreur d'initialisation
-const decodeToken = (t) => { try { return JSON.parse(atob(t.split('.')[1])); } catch(e) { return null; } };
+const decodeToken = (t) => { 
+    if (!t || !t.includes('.')) return null;
+    try { 
+        let base64Url = t.split('.')[1];
+        let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        // Remplissage automatique pour éviter le crash atob
+        const padding = '='.repeat((4 - base64.length % 4) % 4);
+        // Décodage compatible avec les accents (UTF-8)
+        const jsonPayload = decodeURIComponent(atob(base64 + padding).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+        return JSON.parse(jsonPayload); 
+    } catch(e) { 
+        return null; 
+    } 
+};
 
 const isPinWeak = (pin) => {
     if (!pin) return false;
@@ -971,9 +984,10 @@ function App() {
       
       if (response.ok) { 
           localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); 
-          const decoded = decodeToken(data.ui_token); setUserRole(decoded.role || 'gerant');
+          const decoded = decodeToken(data.ui_token); 
+          setUserRole(decoded?.role || 'gerant'); // 👈 Sécurité ici avec le "?"
           setIsAbonnementInactif(false);
-          if(decoded.role === 'employe') { setActiveTab('agenda'); } else { setActiveTab('accueil'); }
+          if(decoded?.role === 'employe') { setActiveTab('agenda'); } else { setActiveTab('accueil'); }
       } else { setErreurLogin(data.erreur); }
     } catch (e) { setErreurLogin("Mode hors-ligne ou erreur de connexion."); }
   };
