@@ -96,24 +96,43 @@ function dechiffrer(text) {
 console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
 
-// 🚨 SÉCURITÉ : Restriction stricte des origines pour empêcher les appels API depuis des sites tiers
+// 🚨 SÉCURITÉ : Restriction stricte des origines + Autorisation des Cookies (credentials)
 const corsOptions = {
     origin: ['https://app-salon-caiss.onrender.com', 'http://localhost:5173', 'http://localhost:3000'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature']
+    allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature'],
+    credentials: true
 };
 app.use(cors(corsOptions));
+
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
+    res.json({ message: "Déconnecté" });
+});
+
+// Générateur de token public (sans signature) exclusif à l'interface React
+function generateUIToken(payload) {
+    return Buffer.from(JSON.stringify({alg: "none"})).toString('base64url') + "." + 
+           Buffer.from(JSON.stringify(payload)).toString('base64url') + ".";
+}
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: corsOptions });
 
 io.on('connection', (socket) => {
-    socket.on('rejoindreSalon', (id_salon, token) => {
+    socket.on('rejoindreSalon', (id_salon) => {
+        const cookieHeader = socket.request.headers.cookie;
+        let token = null;
+        if (cookieHeader) {
+            const cookies = cookieHeader.split(';').map(c => c.trim());
+            const tokenCookie = cookies.find(c => c.startsWith('token='));
+            if (tokenCookie) token = tokenCookie.split('=')[1];
+        }
         try {
             const user = jwt.verify(token, process.env.JWT_SECRET);
-            if (String(user.id_salon) !== String(id_salon)) return; // salon non autorisé pour ce token
+            if (String(user.id_salon) !== String(id_salon)) return; 
             socket.join(id_salon.toString());
-        } catch (e) { /* token invalide ou absent : on ignore silencieusement la demande */ }
+        } catch (e) { /* ignoré silencieusement */ }
     });
 });
 
@@ -127,11 +146,8 @@ function envoyerEvenementSSE(id_salon, nomEvenement, data = {}) {
     for (const res of clients) res.write(payload);
 }
 
-app.get('/api/events/:id_salon', (req, res) => {
-    const { token } = req.query;
-    let user;
-    try { user = jwt.verify(token, process.env.JWT_SECRET); } catch (e) { return res.status(401).end(); }
-    if (String(user.id_salon) !== req.params.id_salon) return res.status(403).end();
+app.get('/api/events/:id_salon', verifierToken, (req, res) => {
+    if (String(req.user.id_salon) !== req.params.id_salon) return res.status(403).end();
     
     const room = req.params.id_salon;
     req.setTimeout(0); res.socket.setTimeout(0); res.socket.setNoDelay(true);
@@ -331,8 +347,20 @@ async function envoyerNotificationPush(id_salon, cible, payload) {
 }
 
 const verifierToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; 
+    const cookieHeader = req.headers.cookie;
+    let token = null;
+    if (cookieHeader) {
+        const cookies = cookieHeader.split(';').map(c => c.trim());
+        const tokenCookie = cookies.find(c => c.startsWith('token='));
+        if (tokenCookie) token = tokenCookie.split('=')[1];
+    }
+    
+    // Tolérance : on garde l'en-tête Authorization comme plan B temporaire
+    if (!token) {
+        const authHeader = req.headers['authorization'];
+        token = authHeader && authHeader.split(' ')[1]; 
+    }
+
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
     
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
@@ -473,8 +501,10 @@ app.post('/api/register', authLimiter, async (req, res) => {
         await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)", [nom_gerant || 'Patron', idNouveauSalon, defaultPinHash]);
 
         await clientDB.query('COMMIT');
-        const token = jwt.sign({ id_salon: idNouveauSalon, role: 'gerant', email }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        res.status(201).json({ message: "Inscription réussie", token });
+        const payload = { id_salon: idNouveauSalon, role: 'gerant', email };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 24 * 60 * 60 * 1000 });
+        res.status(201).json({ message: "Inscription réussie", ui_token: generateUIToken(payload) });
     } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
 });
 
@@ -486,9 +516,11 @@ app.post('/api/login', authLimiter, async (req, res) => {
             const { id_salon, mot_de_passe_hash, statut_abonnement } = result.rows[0];
             const match = await bcrypt.compare(mot_de_passe, mot_de_passe_hash);
              if (match) {
-                const token = jwt.sign({ id_salon, role: 'gerant', email }, process.env.JWT_SECRET, { expiresIn: '24h' });
+                const payload = { id_salon, role: 'gerant', email };
+                const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+                res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 24 * 60 * 60 * 1000 });
                 await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { email, role: 'gerant' });
-                res.json({ message: "Connexion réussie", token, statut_abonnement });
+                res.json({ message: "Connexion réussie", ui_token: generateUIToken(payload), statut_abonnement });
             } else {
                 await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { email, raison: 'mot_de_passe_incorrect' });
                 res.status(401).json({ erreur: "Mot de passe incorrect." });
@@ -515,9 +547,11 @@ app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
             await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { nom_employe, raison: 'pin_incorrect' });
             return res.status(401).json({ erreur: "Code PIN invalide." });
         }
-        const token = jwt.sign({ id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe }, process.env.JWT_SECRET, { expiresIn: '12h' });
+        const payload = { id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '12h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 12 * 60 * 60 * 1000 });
         await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { nom_employe: emp.nom, role: 'employe', id_employe: emp.id_employe });
-        res.json({ message: "Accès employé autorisé", token, employe: { id: emp.id_employe, nom: emp.nom } });
+        res.json({ message: "Accès employé autorisé", ui_token: generateUIToken(payload), employe: { id: emp.id_employe, nom: emp.nom } });
     } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
 });
 
@@ -539,9 +573,11 @@ app.post('/api/salon/login-pin', authLimiter, async (req, res) => {
             await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { raison: 'pin_salon_incorrect' });
             return res.status(401).json({ erreur: "Code PIN invalide." });
         }
-        const token = jwt.sign({ id_salon: salon.id_salon, role: 'salon' }, process.env.JWT_SECRET, { expiresIn: '18h' });
+        const payload = { id_salon: salon.id_salon, role: 'salon' };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '18h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 18 * 60 * 60 * 1000 });
         await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { role: 'salon' });
-        res.json({ message: "Accès salon autorisé", token });
+        res.json({ message: "Accès salon autorisé", ui_token: generateUIToken(payload) });
     } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
 });
 
