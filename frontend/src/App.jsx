@@ -1926,7 +1926,7 @@ function App() {
                   )}
                   {showAuto && (
                       <div className="rappel-stock-banner" style={{borderColor: 'var(--color-info)', borderLeftColor: 'var(--color-info)', position: 'relative', paddingRight: '40px'}}>
-                          <span>ℹ️ La caisse du {new Date(clotureAutoInfo).toLocaleDateString('fr-FR')} a été clôturée automatiquement.</span>
+                          <span>La caisse du {new Date(clotureAutoInfo).toLocaleDateString('fr-FR')} a été clôturée automatiquement.</span>
                           <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{background: 'var(--color-info)'}}>OK</button>
                           <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
                       </div>
