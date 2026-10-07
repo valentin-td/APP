@@ -1257,7 +1257,7 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
     const id_ticket = req.params.id;
     const id_salon = req.user.id_salon;
-    const { motif } = req.body;
+    const { motif, lignes_a_annuler } = req.body;
     if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Un motif d'annulation est obligatoire." });
 
     const clientDB = await pool.connect();
@@ -1265,10 +1265,10 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
         await clientDB.query('BEGIN');
 
         const ticketRes = await clientDB.query(
-            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION' AND est_compense = FALSE",
+            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION'",
             [id_ticket, id_salon]
         );
-        if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable ou déjà annulé.");
+        if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable.");
         const ticket = ticketRes.rows[0];
 
         const lignesOrigine = await clientDB.query(
@@ -1276,10 +1276,48 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
             [id_ticket]
         );
 
+        // Récupérer ce qui a déjà été annulé pour ce ticket
+        const lignesDejaAnnulees = await clientDB.query("SELECT id_article, SUM(ABS(quantite)) as qte_annulee FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_ticket_origine = $1) GROUP BY id_article", [id_ticket]);
+        let mapDejaAnnule = {};
+        lignesDejaAnnulees.rows.forEach(r => mapDejaAnnule[r.id_article] = parseFloat(r.qte_annulee));
+
+        let lignesToProcess = [];
+        if (lignes_a_annuler && lignes_a_annuler.length > 0) {
+            for (let reqLigne of lignes_a_annuler) {
+                let origLigne = lignesOrigine.rows.find(l => l.id_article == reqLigne.id_article);
+                if (origLigne) {
+                    let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                    let qte = Math.min(reqLigne.quantite, maxAnnulable);
+                    if (qte > 0) {
+                        lignesToProcess.push({
+                            ...origLigne,
+                            quantite: qte,
+                            total_ligne_ttc: qte * parseFloat(origLigne.prix_unitaire_ttc)
+                        });
+                    }
+                }
+            }
+        } else {
+            // Fallback: Annulation totale de ce qui reste
+            for (let origLigne of lignesOrigine.rows) {
+                let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                if (maxAnnulable > 0) {
+                    lignesToProcess.push({
+                        ...origLigne,
+                        quantite: maxAnnulable,
+                        total_ligne_ttc: maxAnnulable * parseFloat(origLigne.prix_unitaire_ttc)
+                    });
+                }
+            }
+        }
+
+        if (lignesToProcess.length === 0) throw new Error("Ce ticket a déjà été entièrement annulé.");
+
+        const montantCompensation = -lignesToProcess.reduce((sum, l) => sum + parseFloat(l.total_ligne_ttc), 0);
+
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
         const numeroCompensation = `TKT-AN-` + Date.now();
-        const montantCompensation = -parseFloat(ticket.total_ttc);
 
         const compensationResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
@@ -1291,9 +1329,14 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
         const newHash = crypto.createHash('sha256').update(`${idTicketCompensation}-${numeroCompensation}-${montantCompensation}-${previousHash}`).digest('hex');
         await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idTicketCompensation]);
 
-        await clientDB.query("UPDATE tickets SET est_compense = TRUE WHERE id_ticket = $1", [id_ticket]);
+        // Vérifier si le ticket est désormais entièrement compensé
+        const dejaCompenseRes = await clientDB.query("SELECT COALESCE(SUM(ABS(total_ttc)), 0) as deja_rembourse FROM tickets WHERE id_ticket_origine = $1 AND statut != 'ANNULE'", [id_ticket]);
+        const dejaRembourse = parseFloat(dejaCompenseRes.rows[0].deja_rembourse);
+        if (dejaRembourse >= parseFloat(ticket.total_ttc) - 0.01) {
+            await clientDB.query("UPDATE tickets SET est_compense = TRUE WHERE id_ticket = $1", [id_ticket]);
+        }
 
-        for (const ligne of lignesOrigine.rows) {
+        for (const ligne of lignesToProcess) {
             await clientDB.query(
                 `INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
@@ -1313,28 +1356,37 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
             }
         }
 
+        // Commissions : Proratisation basée sur le montant remboursé par rapport au ticket global
         const commissionsOrigine = await clientDB.query("SELECT * FROM commissions WHERE id_ticket = $1", [id_ticket]);
-        for (const c of commissionsOrigine.rows) {
-            await clientDB.query(
-                `INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
-                [c.id_employe, idTicketCompensation, -c.montant_vente, -c.montant_commission, c.type_vente, id_salon]
-            );
+        if (commissionsOrigine.rowCount > 0 && parseFloat(ticket.total_ttc) > 0) {
+            const ratio = Math.abs(montantCompensation) / parseFloat(ticket.total_ttc);
+            for (const c of commissionsOrigine.rows) {
+                const commissionAnnulee = -(parseFloat(c.montant_commission) * ratio).toFixed(2);
+                const venteAnnulee = -(parseFloat(c.montant_vente) * ratio).toFixed(2);
+                await clientDB.query(
+                    `INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [c.id_employe, idTicketCompensation, venteAnnulee, commissionAnnulee, c.type_vente, id_salon]
+                );
+            }
         }
 
         if (ticket.id_client && !ticket.recompense_utilisee) {
-            await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - 1) WHERE id_client = $2", [Math.floor(ticket.total_ttc), ticket.id_client]);
+            const pointsARetirer = Math.floor(Math.abs(montantCompensation));
+            const tamponsARetirer = Math.abs(montantCompensation) >= parseFloat(ticket.total_ttc) - 0.01 ? 1 : 0; // On retire 1 tampon uniquement si annulation totale
+            await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - $2) WHERE id_client = $3", [pointsARetirer, tamponsARetirer, ticket.id_client]);
         }
 
         await enregistrerJET(id_salon, 'ANNULATION_TICKET', {
             id_ticket_origine: parseInt(id_ticket),
             id_ticket_compensation: idTicketCompensation,
             montant: montantCompensation,
+            lignes_annulees: lignesToProcess.map(l => ({ id_article: l.id_article, quantite: l.quantite })),
             motif: motif.trim()
         }, clientDB);
 
         await clientDB.query('COMMIT');
-        res.json({ message: "Annulation enregistrée sous forme d'écriture de compensation. Stock et fidélité restaurés." });
+        res.json({ message: "Remboursement validé (écriture de compensation générée). Stock et fidélité mis à jour." });
     } catch (err) {
         await clientDB.query('ROLLBACK');
         res.status(500).json({ erreur: err.message });
@@ -1850,6 +1902,23 @@ app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
 // =========================================================================
 // --- ROUTES CRUD & STATS ---
 // =========================================================================
+app.get('/api/caisse/tickets/:id', verifierToken, async (req, res) => {
+    try {
+        const lignes = await pool.query("SELECT id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, nom_article_snapshot FROM lignes_ticket WHERE id_ticket = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        const lignesDejaAnnulees = await pool.query("SELECT id_article, SUM(ABS(quantite)) as qte_annulee FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_ticket_origine = $1) GROUP BY id_article", [req.params.id]);
+        
+        let mapAnnule = {};
+        lignesDejaAnnulees.rows.forEach(r => mapAnnule[r.id_article] = parseFloat(r.qte_annulee));
+        
+        const lignesDispos = lignes.rows.map(l => ({
+            ...l,
+            quantite_restante: l.quantite - (mapAnnule[l.id_article] || 0)
+        })).filter(l => l.quantite_restante > 0);
+
+        res.json({ lignes: lignesDispos });
+    } catch(e) { res.status(500).json({ erreur: "Erreur lors de la récupération du ticket." }); }
+});
+
 app.get('/api/clients', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM clients WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur clients."}); }});
 app.post('/api/clients', verifierToken, async (req, res) => { const { prenom, nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (prenom, nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [prenom || '', nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
 app.delete('/api/clients/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }});
