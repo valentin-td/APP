@@ -1008,22 +1008,30 @@ app.post('/api/rdv/mass-cancel', verifierToken, async (req, res) => {
                 await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1', [id_rdv]);
                 
                 if (config.brevo_api_key && rdv.telephone_client && rdv.telephone_client.trim().length >= 9) {
-                    const dateRdv = new Date(rdv.date_heure_debut).toLocaleString('fr-FR', {weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit'});
-                    const prenom = rdv.nom_client ? rdv.nom_client.split(' ')[0] : 'Client';
-                    const lien = config.lien_google_maps || 'notre site internet';
-                    
-                    // Remplacement des balises dynamiques
-                    let texteSms = message_personnalise || `Bonjour [Prénom], votre RDV du [Date] est annulé. Reprogrammez ici : [Lien]`;
-                    texteSms = texteSms.replace(/\[Prénom\]/gi, prenom).replace(/\[Date\]/gi, dateRdv).replace(/\[Lien\]/gi, lien);
-                    
-                    try {
-                        fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
-                            method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
-                            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.nom_salon || 'LeSalon').substring(0, 11), recipient: rdv.telephone_client, content: texteSms })
-                        }).catch(()=>{}); 
-                        countEnvoyes++;
-                    } catch (e) { console.error("Erreur SMS mass-cancel:", e); }
-                }
+                            // 🚨 SÉCURITÉ & RGPD : Vérification de l'opt-out avant tout envoi
+                            const optOutCheck = await pool.query(
+                                `SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = RIGHT(regexp_replace($2, '\\D', '', 'g'), 9)`, 
+                                [id_salon, rdv.telephone_client]
+                            );
+                            
+                            if (optOutCheck.rowCount === 0) {
+                                const dateRdv = new Date(rdv.date_heure_debut).toLocaleString('fr-FR', {weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit'});
+                                const prenom = rdv.nom_client ? rdv.nom_client.split(' ')[0] : 'Client';
+                                const lien = config.lien_google_maps || 'notre site internet';
+                                
+                                // Remplacement des balises dynamiques
+                                let texteSms = message_personnalise || `Bonjour [Prénom], votre RDV du [Date] est annulé. Reprogrammez ici : [Lien]`;
+                                texteSms = texteSms.replace(/\[Prénom\]/gi, prenom).replace(/\[Date\]/gi, dateRdv).replace(/\[Lien\]/gi, lien);
+                                
+                                try {
+                                    fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                                        method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+                                        body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.nom_salon || 'LeSalon').substring(0, 11), recipient: rdv.telephone_client, content: texteSms })
+                                    }).catch(()=>{}); 
+                                    countEnvoyes++;
+                                } catch (e) { console.error("Erreur SMS mass-cancel:", e); }
+                            }
+                        }
             }
         }
         
