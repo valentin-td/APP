@@ -1371,10 +1371,26 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
             }
         }
 
-        if (ticket.id_client && !ticket.recompense_utilisee) {
-            const pointsARetirer = Math.floor(Math.abs(montantCompensation));
-            const tamponsARetirer = Math.abs(montantCompensation) >= parseFloat(ticket.total_ttc) - 0.01 ? 1 : 0; // On retire 1 tampon uniquement si annulation totale
-            await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - $2) WHERE id_client = $3", [pointsARetirer, tamponsARetirer, ticket.id_client]);
+        if (ticket.id_client) {
+            const estAnnulationTotale = Math.abs(montantCompensation) >= parseFloat(ticket.total_ttc) - 0.01;
+            
+            if (!ticket.recompense_utilisee) {
+                // Le ticket avait généré des points/tampons, on les retire au prorata
+                const pointsARetirer = Math.floor(Math.abs(montantCompensation));
+                const tamponsARetirer = estAnnulationTotale ? 1 : 0;
+                await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - $2) WHERE id_client = $3", [pointsARetirer, tamponsARetirer, ticket.id_client]);
+            } else if (estAnnulationTotale) {
+                // Le ticket avait CONSOMMÉ une récompense, on la restitue au client (uniquement si annulation totale)
+                const configRes = await clientDB.query('SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+                if (configRes.rowCount > 0) {
+                    const config = configRes.rows[0];
+                    if (config.fidelite_type === 'POINTS') {
+                        await clientDB.query("UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2", [config.fidelite_points_seuil, ticket.id_client]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query("UPDATE clients SET tampons_fidelite = tampons_fidelite + $1 WHERE id_client = $2", [config.fidelite_tampons_seuil, ticket.id_client]);
+                    }
+                }
+            }
         }
 
         await enregistrerJET(id_salon, 'ANNULATION_TICKET', {
