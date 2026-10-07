@@ -811,8 +811,8 @@ function App() {
     fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
     fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
 
-    if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData');
-    if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData');
+    if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData', 'object');
+    if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData', 'object');
 
     fetch(`https://api-salon-backend.onrender.com/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
         .then(handleFetchError)
@@ -833,8 +833,8 @@ function App() {
     if (role === 'employe') return;
 
     setDashboardData(null); 
-    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData');
-    fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats');
+    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData', 'object');
+    fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats', 'object');
     fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
     fetchAndCache('/api/stocks', setStocksData, 'stocksData');
     fetchAndCache('/api/rh', setRhData, 'rhData');
@@ -843,7 +843,7 @@ function App() {
     fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
 
     if (decodeToken(token)?.id_salon === 38) {
-        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData');
+        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData', 'object');
         fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
     }
   };
