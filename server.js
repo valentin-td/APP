@@ -517,10 +517,15 @@ const verifierClotureZ = async (req, res, next) => {
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Limite stricte pour toutes les routes d'authentification
+    max: 5, // Limite stricte
     standardHeaders: true,
     legacyHeaders: false,
-    message: { erreur: "Trop de tentatives. Veuillez patienter 15 minutes avant de réessayer." }
+    keyGenerator: (req) => {
+        // Isole le compteur par IP, par type de connexion (route) et par cible (ID du salon ou email)
+        const cible = req.body.id_salon || req.body.email || 'global';
+        return `${req.ip}_${req.path}_${cible}`;
+    },
+    message: { erreur: "Trop de tentatives pour ce compte. Veuillez patienter 15 minutes avant de réessayer." }
 });
 
 app.post('/api/register', authLimiter, async (req, res) => {
