@@ -3780,7 +3780,8 @@ async function executerRapportHebdoGerant() {
         }
         console.log(`📧 [ROBOT-HEBDO] Connexion SMTP configurée avec : ${process.env.SMTP_USER}`);
         
-        const transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+        // Ajout de "family: 4" pour forcer l'IPv4 et éviter l'erreur ENETUNREACH sur Render
+        const transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }, family: 4 });
 
         const salons = await clientDB.query("SELECT id_salon, nom_salon FROM configuration_salon");
         console.log(`🔍 [ROBOT-HEBDO] ${salons.rowCount} salon(s) trouvé(s) en base.`);
