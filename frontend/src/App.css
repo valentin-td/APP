@@ -71,8 +71,8 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Bande sous la barre d'état iOS en mode clair (le texte blanc de black-translucent reste lisible) */
-body:not(.dark-mode)::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); background: #0b0b0d; z-index: 99999; pointer-events: none; }
+/* Dégradé sous la barre d'état iOS en mode clair (le texte blanc de black-translucent reste lisible) */
+body:not(.dark-mode)::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: calc(env(safe-area-inset-top) + 14px); background: linear-gradient(to bottom, rgba(11, 11, 13, 0.62) 0%, rgba(11, 11, 13, 0.35) 60%, rgba(11, 11, 13, 0) 100%); z-index: 99999; pointer-events: none; }
 
 /* Corrige le bug du double-clic (double-tap) sur Safari iPhone */
 button, a, input, select, textarea, .list-row, .outil-btn, .chat-contact, .nav-item, .rdv-card-accordeon, .stock-item, .presta-item, .chat-btn, .btn-action {
