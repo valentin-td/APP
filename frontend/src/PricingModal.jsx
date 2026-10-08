@@ -3,6 +3,19 @@ import React, { useState } from 'react';
 export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRestants, token, onSubscribe }) {
     const [isAnnuel, setIsAnnuel] = useState(false);
 
+    const IconCheck = () => (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+    );
+
+    const IconCross = () => (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--color-danger)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px', opacity: 0.7 }}>
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+    );
+
     return (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', boxSizing: 'border-box' }}>
             <div style={{ background: 'var(--bg-card)', borderRadius: '24px', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', border: '1px solid var(--border-color)', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', position: 'relative', display: 'flex', flexDirection: 'column' }}>
@@ -36,12 +49,12 @@ export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRes
                             {isAnnuel && <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '4px' }}>Facturé 390 € par an</div>}
                         </div>
                         <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', fontSize: '13px', color: 'var(--text-main)', display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
-                            <li>✅ Agenda & Caisse</li>
-                            <li>✅ Fiches Clients basiques</li>
-                            <li>✅ Jusqu'à 100 SMS / mois</li>
-                            <li style={{ opacity: 0.5 }}>❌ Programme Fidélité</li>
-                            <li style={{ opacity: 0.5 }}>❌ RH & Absences</li>
-                            <li style={{ opacity: 0.5 }}>❌ Intelligence Artificielle</li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Agenda & Caisse</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Fiches Clients basiques</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Jusqu'à 100 SMS / mois</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', opacity: 0.5, color: 'var(--text-secondary)' }}><IconCross /> <span>Programme Fidélité</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', opacity: 0.5, color: 'var(--text-secondary)' }}><IconCross /> <span>RH & Absences</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', opacity: 0.5, color: 'var(--text-secondary)' }}><IconCross /> <span>Intelligence Artificielle</span></li>
                         </ul>
                         <button onClick={() => onSubscribe('ESSENTIEL', isAnnuel ? 'year' : 'month')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer' }}>Choisir Essentiel</button>
                     </div>
@@ -56,12 +69,12 @@ export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRes
                             {isAnnuel && <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '4px' }}>Facturé 690 € par an</div>}
                         </div>
                         <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', fontSize: '13px', color: 'var(--text-main)', display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
-                            <li>✅ <b>Tout le forfait Essentiel</b></li>
-                            <li>✅ Fiches Clients avancées</li>
-                            <li>✅ Rappels RDV & SMS illimités</li>
-                            <li>✅ L'Académie (Protocoles)</li>
-                            <li>✅ Programme de Fidélité</li>
-                            <li style={{ opacity: 0.5 }}>❌ RH & Absences</li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span><b>Tout le forfait Essentiel</b></span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Fiches Clients avancées</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Rappels RDV & SMS illimités</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>L'Académie (Protocoles)</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Programme de Fidélité</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', opacity: 0.5, color: 'var(--text-secondary)' }}><IconCross /> <span>RH & Absences</span></li>
                         </ul>
                         <button onClick={() => onSubscribe('PRO', isAnnuel ? 'year' : 'month')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary)', color: 'var(--btn-text)', fontWeight: 'bold', cursor: 'pointer' }}>Choisir Pro</button>
                     </div>
@@ -75,11 +88,11 @@ export default function PricingModal({ onClose, isSoftLock, isHardLock, joursRes
                             {isAnnuel && <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '4px' }}>Facturé 990 € par an</div>}
                         </div>
                         <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', fontSize: '13px', color: 'var(--text-main)', display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
-                            <li>✅ <b>Tout le forfait Pro</b></li>
-                            <li>✅ Gestion RH & Congés</li>
-                            <li>✅ Intelligence Artificielle (Mails)</li>
-                            <li>✅ Export Comptable Auto</li>
-                            <li>✅ Centre d'actions prioritaire</li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span><b>Tout le forfait Pro</b></span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Gestion RH & Congés</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Intelligence Artificielle (Mails)</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Export Comptable Auto</span></li>
+                            <li style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}><IconCheck /> <span>Centre d'actions prioritaire</span></li>
                         </ul>
                         <button onClick={() => onSubscribe('PREMIUM', isAnnuel ? 'year' : 'month')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer' }}>Choisir Premium</button>
                     </div>
