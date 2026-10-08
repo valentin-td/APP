@@ -3797,7 +3797,7 @@ async function executerRapportHebdoGerant() {
                     continue;
                 }
                 // FORCAGE TEMPORAIRE POUR LE TEST
-                const emailGerant = 'sambavalentin04@gmail.com'; // Remplacez par votre adresse e-mail
+                const emailGerant = 'samba.valentin04@gmail.com'; // Remplacez par votre adresse e-mail
                 console.log(`👤 [ROBOT-HEBDO] Gérant ciblé (TEST FORCE) : ${emailGerant}`);
 
                 // 2. Requête d'agrégation intelligente
