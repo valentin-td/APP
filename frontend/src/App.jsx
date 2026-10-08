@@ -103,13 +103,13 @@ function App() {
       }
 
       if (isDarkMode) {
-          document.body.classList.add('dark-mode');
+          document.body.classList.add('dark-mode'); document.documentElement.classList.add('dark-mode');
           document.documentElement.style.backgroundColor = '#0b0b0d'; // Force le fond racine
           document.body.style.backgroundColor = '#0b0b0d'; // Fix: Force le fond iOS
           metaThemeColor.setAttribute('content', '#0b0b0d'); // Colore la barre iOS/Android
           localStorage.setItem('theme', 'dark');
       } else {
-          document.body.classList.remove('dark-mode');
+          document.body.classList.remove('dark-mode'); document.documentElement.classList.remove('dark-mode');
           document.documentElement.style.backgroundColor = '#f6f6f7';
           document.body.style.backgroundColor = '#f6f6f7'; // Fix: Force le fond iOS
           metaThemeColor.setAttribute('content', '#f6f6f7');
