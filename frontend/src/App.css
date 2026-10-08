@@ -359,6 +359,40 @@ body.dark-mode .theme-toggle-btn {
     background-size: 100% 80px; 
 }
 .day-column:last-child { border-right: none; }
+
+/* ==========================================================================
+   REFONTE ESTHÉTIQUE DU CALENDRIER (CSS uniquement, aucune logique modifiée)
+   Les hauteurs (80px par heure) ne changent pas : le placement des RDV reste exact.
+   ========================================================================== */
+.week-calendar { border-radius: 22px; box-shadow: 0 1px 2px rgba(20, 20, 26, 0.04), 0 10px 30px rgba(20, 20, 26, 0.06); }
+.week-header-row { background: var(--bg-card) !important; border-bottom: 1px solid var(--border-color); }
+.time-spacer { border-right: none !important; }
+.day-header { padding: 14px 0 12px; border-right: none; }
+.day-name { font-size: 10.5px; letter-spacing: 0.09em; font-weight: 600; }
+.day-number { min-width: 34px; height: 34px; line-height: 34px; padding: 0; margin-top: 6px; border-radius: 50%; text-align: center; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+.day-header.today .day-name { color: var(--text-main); }
+.day-header.today .day-number { background: var(--text-main); color: var(--bg-card); border-radius: 50%; padding: 0; }
+.week-body { scrollbar-width: thin; scrollbar-color: var(--border-color) transparent; }
+.time-column { background: transparent !important; border-right: none !important; }
+.time-label { font-size: 10.5px !important; font-weight: 500 !important; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; padding-right: 12px !important; color: var(--text-secondary) !important; }
+.day-column {
+    border-right: 1px solid var(--border-color) !important;
+    background-image:
+        linear-gradient(to bottom, var(--border-color) 1px, transparent 1px),
+        linear-gradient(to bottom, transparent 39px, var(--border-color) 39px, var(--border-color) 40px, transparent 40px);
+    background-size: 100% 80px, 100% 80px;
+}
+.day-column:last-child { border-right: none !important; }
+@supports (color: color-mix(in srgb, red, blue)) {
+    .day-column {
+        border-right-color: color-mix(in srgb, var(--border-color) 55%, transparent) !important;
+        background-image:
+            linear-gradient(to bottom, color-mix(in srgb, var(--border-color) 90%, transparent) 1px, transparent 1px),
+            linear-gradient(to bottom, transparent 39px, color-mix(in srgb, var(--border-color) 45%, transparent) 39px, color-mix(in srgb, var(--border-color) 45%, transparent) 40px, transparent 40px);
+    }
+}
+.day-column > div[style*="sticky"] > div:first-child { background: var(--bg-danger) !important; border-color: var(--bg-danger) !important; box-shadow: 0 1px 2px rgba(20, 20, 26, 0.06) !important; font-weight: 600; }
+.rdv-card-accordeon { border-radius: 10px !important; padding: 5px 8px 5px 11px !important; box-shadow: inset 3px 0 0 rgba(17, 24, 39, 0.28), 0 1px 2px rgba(17, 24, 39, 0.12) !important; }
 .agenda-card {
     border-radius: 8px;
     padding: 6px 8px;
