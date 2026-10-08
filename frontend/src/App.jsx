@@ -380,10 +380,16 @@ function App() {
       const debloquerScrollChat = () => {
           if (document.visibilityState !== 'visible') return;
           const el = chatMessagesRef.current;
-          if (!el) return;
-          el.style.overflowY = 'hidden';
-          void el.offsetHeight; // force le reflow
-          el.style.overflowY = 'auto';
+          if (el) {
+              el.style.overflowY = 'hidden';
+              void el.offsetHeight; // force le reflow
+              el.style.overflowY = 'auto';
+          }
+          // Même correctif pour le scroll de la page entière
+          const overflowAvant = document.body.style.overflow;
+          document.body.style.overflow = 'hidden';
+          void document.body.offsetHeight;
+          document.body.style.overflow = overflowAvant;
       };
       document.addEventListener('visibilitychange', debloquerScrollChat);
       window.addEventListener('pageshow', debloquerScrollChat);
