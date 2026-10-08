@@ -4267,10 +4267,24 @@ function App() {
                   </div>
                   
                   {superAdminData ? (
-                      <div className="cartes-financieres">
-                          <div className="carte" style={{border: '1px solid #aa3bff'}}><div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div><p className="montant" style={{color: '#aa3bff'}}>{superAdminData?.mrr_estime || 0} <span className="devise">€ / mois</span></p></div>
-                          <div className="carte"><div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div><p className="montant">{superAdminData?.salons_actifs || 0} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData?.total_salons || 0} au total</span></p></div>
-                      </div>
+                      <>
+                          <div className="cartes-financieres">
+                              <div className="carte" style={{border: '1px solid #aa3bff'}}><div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div><p className="montant" style={{color: '#aa3bff'}}>{superAdminData?.mrr_estime || 0} <span className="devise">€ / mois</span></p></div>
+                              <div className="carte"><div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div><p className="montant">{superAdminData?.salons_actifs || 0} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData?.total_salons || 0} au total</span></p></div>
+                          </div>
+                          
+                          <div className="carte export-carte" style={{borderColor: '#aa3bff', marginTop: '-12px'}}>
+                              <div><h3 style={{margin: '0 0 4px 0', color: '#aa3bff', fontSize: '15px'}}>Forcer les Robots (CRON)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Déclenche l'envoi du récapitulatif hebdo et autres tâches.</span></div>
+                              <button className="btn-export" onClick={async () => {
+                                  try {
+                                      showToast("Lancement des robots...");
+                                      const res = await fetch('https://api-salon-backend.onrender.com/api/admin/forcer-robot');
+                                      const data = await res.json();
+                                      showToast(data.message || "Robots exécutés", "success");
+                                  } catch (e) { showToast("Erreur", "error"); }
+                              }} style={{background: '#aa3bff', color: 'white', border: 'none'}}>Exécuter</button>
+                          </div>
+                      </>
                   ) : <div className="skeleton-loading" style={{height: '120px', marginBottom: '32px'}}></div>}
 
                   <div className="section-titre" style={{marginTop: '32px', color: '#aa3bff', borderColor: '#aa3bff'}}>Gestion des Salons (Clients)</div>
