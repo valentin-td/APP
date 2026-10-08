@@ -3934,12 +3934,25 @@ cron.schedule('*/10 9-19 * * *', () => { executerRobotAvisSatisfaction(); });
 cron.schedule('0 4 * * *', () => { executerRobotAvisSatisfaction(); }); 
 
 app.get('/api/admin/forcer-robot', async (req, res) => { 
-    executerRobotComptable(); 
-    executerClotureFantome();
-    executerRobotMarketingEtPredictif();
-    executerEnvoiComptable();
-    executerRapportHebdoGerant();
-    res.json({ message: "Tous les robots (Compta, Fantôme, Prédictif, Envoi Bilan & Rapport Hebdo) sont lancés avec succès." }); 
+    try {
+        console.log("=========================================");
+        console.log("=== DÉCLENCHEMENT MANUEL DES ROBOTS ===");
+        console.log("=========================================");
+        
+        // 1. On AWAIT spécifiquement le rapport hebdo pour que la requête attende sa fin
+        await executerRapportHebdoGerant();
+        
+        // 2. Les autres tournent en arrière-plan sans bloquer
+        executerRobotComptable(); 
+        executerClotureFantome();
+        executerRobotMarketingEtPredictif();
+        executerEnvoiComptable();
+        
+        res.json({ message: "Le cycle du robot hebdomadaire est terminé ! Les autres robots tournent en fond." }); 
+    } catch (e) {
+        console.error("❌ ERREUR CRITIQUE DANS LA ROUTE FORCER-ROBOT :", e);
+        res.status(500).json({ erreur: e.message, stack: e.stack });
+    }
 });
 
 // --- CHEAT CODE : VOYAGE DANS LE TEMPS (TESTS UNIQUEMENT) ---
