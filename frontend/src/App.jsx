@@ -51,6 +51,8 @@ window.fetch = async (...args) => {
     if (typeof resource === 'string' && resource.includes('api-salon-backend.onrender.com')) {
         config = config || {};
         config.credentials = 'include';
+        const tokenApi = localStorage.getItem('api_token');
+        if (tokenApi) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${tokenApi}` };
     }
     return originalFetch(resource, config);
 };
@@ -995,7 +997,7 @@ function App() {
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomGerantInput }) });
       const data = await response.json();
       if (response.ok) { 
-          localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); 
+          localStorage.setItem('ui_token', data.ui_token); if (data.token_api) localStorage.setItem('api_token', data.token_api); setToken(data.ui_token); setErreurLogin(null);
           const decoded = decodeToken(data.ui_token);
           setUserRole(decoded?.role || 'gerant');
           setIsAbonnementInactif(false); 
@@ -1041,7 +1043,7 @@ function App() {
 
   const seDeconnecter = () => {
       fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(e => console.log(e));
-      localStorage.removeItem('ui_token'); setToken(null); setIsAbonnementInactif(false); setUserRole('gerant'); if(socket) socket.disconnect(); 
+      localStorage.removeItem('ui_token'); localStorage.removeItem('api_token'); setToken(null); setIsAbonnementInactif(false); setUserRole('gerant'); if(socket) socket.disconnect(); 
   };
 
   const lancerPaiementStripe = async () => {
