@@ -438,9 +438,10 @@ body.dark-mode .theme-toggle-btn {
     z-index: 9998;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.3s ease;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0s linear 0.3s;
 }
-.outils-bottom-sheet-overlay.open { opacity: 1; pointer-events: auto; }
+.outils-bottom-sheet-overlay.open { opacity: 1; pointer-events: auto; visibility: visible; transition: opacity 0.3s ease, visibility 0s; }
 .outils-bottom-sheet {
     position: fixed;
     bottom: 0; left: 0; right: 0;
@@ -452,11 +453,12 @@ body.dark-mode .theme-toggle-btn {
     padding-bottom: calc(110px + env(safe-area-inset-bottom));
     
     transform: translateY(100%);
-    transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+    visibility: hidden;
+    transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s linear 0.4s;
     z-index: 9999;
     box-shadow: var(--shadow-md);
 }
-.outils-bottom-sheet.open { transform: translateY(0); }
+.outils-bottom-sheet.open { transform: translateY(0); visibility: visible; transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s; }
 .outils-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
