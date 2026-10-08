@@ -4276,13 +4276,30 @@ function App() {
                           <div className="carte export-carte" style={{borderColor: '#aa3bff', marginTop: '-12px'}}>
                               <div><h3 style={{margin: '0 0 4px 0', color: '#aa3bff', fontSize: '15px'}}>Forcer les Robots (CRON)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Déclenche l'envoi du récapitulatif hebdo et autres tâches.</span></div>
                               <button className="btn-export" onClick={async () => {
+                                  console.log("🔘 Clic sur le bouton 'Forcer les Robots'");
                                   try {
-                                      showToast("Lancement des robots...");
+                                      showToast("⏳ Exécution en cours, patientez...", "info");
+                                      
                                       const res = await fetch('https://api-salon-backend.onrender.com/api/admin/forcer-robot');
-                                      const data = await res.json();
-                                      showToast(data.message || "Robots exécutés", "success");
-                                  } catch (e) { showToast("Erreur", "error"); }
-                              }} style={{background: '#aa3bff', color: 'white', border: 'none'}}>Exécuter</button>
+                                      const data = await res.json().catch(() => null);
+                                      
+                                      console.log("📡 Statut HTTP :", res.status);
+                                      console.log("📦 Données reçues :", data);
+                                      
+                                      if (!res.ok) {
+                                          alert(`❌ ERREUR SERVEUR (${res.status})\n\nDétails : ${JSON.stringify(data)}`);
+                                          showToast("Échec de l'exécution", "error");
+                                          return;
+                                      }
+
+                                      alert(`✅ REQUÊTE RÉUSSIE !\n\nRéponse du serveur : ${data?.message || 'OK'}\n\n⚠️ IMPORTANT : Regarde dans ton navigateur (F12 > Console) et surtout dans les "Logs" de Render pour lire ce que le robot a réellement fait !`);
+                                      showToast("Robots terminés", "success");
+                                  } catch (e) { 
+                                      console.error("❌ Crash lors de l'appel :", e);
+                                      alert(`❌ CRASH RESEAU\n\nErreur : ${e.message}`);
+                                      showToast("Erreur de connexion", "error"); 
+                                  }
+                              }} style={{background: '#aa3bff', color: 'white', border: 'none'}}>Exécuter (Test)</button>
                           </div>
                       </>
                   ) : <div className="skeleton-loading" style={{height: '120px', marginBottom: '32px'}}></div>}
