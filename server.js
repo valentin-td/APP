@@ -3166,7 +3166,6 @@ async function executerRobotComptable() {
 }
 cron.schedule('*/10 8-19 * * *', () => { executerRobotComptable(); });
 cron.schedule('0 2 * * *', () => { executerRobotComptable(); });
-app.get('/api/admin/forcer-robot', async (req, res) => { executerRobotComptable(); res.json({ message: "Robot IA & Comptable lancé." }); });
 
 // =========================================================================
 // --- CENTRE D'ACTION (TÂCHES & URGENCES) ---
