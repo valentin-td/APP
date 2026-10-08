@@ -3805,9 +3805,8 @@ async function executerRapportHebdoGerant() {
                     console.log(`⚠️ [ROBOT-HEBDO] Ignoré : Aucun compte 'gerant' avec un email trouvé pour ce salon.`);
                     continue;
                 }
-                // FORCAGE TEMPORAIRE POUR LE TEST
-                const emailGerant = 'samba.valentin04@gmail.com'; // Remplacez par votre adresse e-mail
-                console.log(`👤 [ROBOT-HEBDO] Gérant ciblé (TEST FORCE) : ${emailGerant}`);
+                const emailGerant = gerantRes.rows[0].email;
+                console.log(`👤 [ROBOT-HEBDO] Gérant ciblé : ${emailGerant}`);
 
                 // 2. Requête d'agrégation intelligente
                 const statsQuery = `
