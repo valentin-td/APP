@@ -1021,7 +1021,7 @@ function App() {
       const data = await response.json();
       
       if (response.ok) { 
-          localStorage.setItem('ui_token', data.ui_token); setToken(data.ui_token); setErreurLogin(null); 
+          localStorage.setItem('ui_token', data.ui_token); if (data.token_api) localStorage.setItem('api_token', data.token_api); setToken(data.ui_token); setErreurLogin(null);
           const decoded = decodeToken(data.ui_token); 
           setUserRole(decoded?.role || 'gerant'); // 👈 Sécurité ici avec le "?"
           setIsAbonnementInactif(false);
