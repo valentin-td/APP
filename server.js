@@ -3780,7 +3780,16 @@ async function executerRapportHebdoGerant() {
         }
         console.log(`📧 [ROBOT-HEBDO] Connexion SMTP configurée avec : ${process.env.SMTP_USER}`);
         
-        const transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+        // Activation du mode DEBUG complet et forçage de l'IPv4
+        const transporter = nodemailer.createTransport({ 
+            host: 'smtp.gmail.com', 
+            port: 465, 
+            secure: true, 
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+            family: 4,
+            logger: true, // Force l'affichage de toutes les étapes SMTP
+            debug: true   // Affiche les requêtes réseau brutes
+        });
 
         const salons = await clientDB.query("SELECT id_salon, nom_salon FROM configuration_salon");
         console.log(`🔍 [ROBOT-HEBDO] ${salons.rowCount} salon(s) trouvé(s) en base.`);
