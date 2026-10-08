@@ -2353,32 +2353,6 @@ function App() {
                               </div>
                           </div>
                           <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '8px'}}>
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
-                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
-                                      <div className="rank-list">
-                                          {(() => {
-                                              const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
-                                              return (dashboardData.top_3_prestations || []).map((p, i) => {
-                                                  const val = parseFloat(p.total_genere || 0);
-                                                  return (
-                                                      <div key={i} className="rank-row">
-                                                          <span className="rank-badge">{i + 1}</span>
-                                                          <div className="rank-info">
-                                                              <div className="rank-info-top">
-                                                                  <span className="rank-name">{p.nom}</span>
-                                                                  <span className="rank-value">{val.toFixed(2)} €</span>
-                                                              </div>
-                                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{width: `${(val / maxVal) * 100}%`}}></div></div>
-                                                          </div>
-                                                      </div>
-                                                  );
-                                              });
-                                          })()}
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
-                              </div>
-
                               <div className="carte" style={{flex: 1, minWidth: '300px', display: 'flex', flexDirection: 'column', maxHeight: '400px'}}>
                                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0}}>
                                       <h3 style={{marginTop: 0, marginBottom: 0, color: 'var(--text-main)'}}>Mur des Verbatims</h3>
@@ -2437,6 +2411,32 @@ function App() {
                                           })
                                       )}
                                   </div>
+                              </div>
+
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
+                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
+                                      <div className="rank-list">
+                                          {(() => {
+                                              const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
+                                              return (dashboardData.top_3_prestations || []).map((p, i) => {
+                                                  const val = parseFloat(p.total_genere || 0);
+                                                  return (
+                                                      <div key={i} className="rank-row">
+                                                          <span className="rank-badge">{i + 1}</span>
+                                                          <div className="rank-info">
+                                                              <div className="rank-info-top">
+                                                                  <span className="rank-name">{p.nom}</span>
+                                                                  <span className="rank-value">{val.toFixed(2)} €</span>
+                                                              </div>
+                                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{width: `${(val / maxVal) * 100}%`}}></div></div>
+                                                          </div>
+                                                      </div>
+                                                  );
+                                              });
+                                          })()}
+                                      </div>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
                               </div>
 
                               <div className="carte" style={{flex: 1, minWidth: '300px'}}>
