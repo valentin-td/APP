@@ -2813,118 +2813,265 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
     const dateCible = req.params.date;
     const estEmploye = req.user.role === 'employe';
     const id_employe = req.user.id_employe;
+    
     try {
         const filtreEmploye = estEmploye ? ' AND t.id_employe = $3' : '';
         const paramsVentes = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
+        
+        // 1. Ventes Détaillées
         const ventesResult = await pool.query(`
             SELECT 
-                t.id_ticket, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
+                t.id_ticket, t.numero_ticket_caisse, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
                 COALESCE(e.nom, 'Inconnu') as employe,
                 (SELECT string_agg(COALESCE(lt.nom_article_snapshot, c.nom), ', ') FROM lignes_ticket lt LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE lt.id_ticket = t.id_ticket) as prestations
             FROM tickets t
             LEFT JOIN employes e ON t.id_employe = e.id_employe
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'${filtreEmploye}
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
             ORDER BY t.date_creation ASC
         `, paramsVentes);
 
-        const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'${filtreEmploye}`, paramsVentes);
+        // 2. CA Total
+        const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
+        // 3. Clôture Info
         const clotureRes = await pool.query(`SELECT ferme_par FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
         const cloturePar = clotureRes.rowCount > 0 ? clotureRes.rows[0].ferme_par : 'Non spécifié';
 
-        // Clients reçus, commission et produits vendus (bilan individuel employé, ou salon entier pour le gérant)
+        // Identification du Gérant pour la signature
+        const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
+        const nomGerant = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Gérant';
+
+        let responsableCloture = cloturePar;
+        if (cloturePar === 'Non spécifié' || cloturePar === 'Gérant') {
+            responsableCloture = nomGerant;
+        } else if (cloturePar.includes('Fermeture Automatique')) {
+            responsableCloture = 'Fermeture Automatique';
+        }
+
+        // 4. Stats Commerciales & Commissions
         const filtreEmployeCommissions = estEmploye ? ' AND c.id_employe = $3' : '';
         const paramsStats = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
         const statsResult = await pool.query(`
             SELECT
                 COUNT(DISTINCT c.id_ticket) as nb_clients,
-                COALESCE(SUM(c.montant_commission), 0) as commission_totale,
-                COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as nb_produits_vendus
+                COALESCE(SUM(c.montant_commission), 0) as commission_totale
             FROM commissions c
             WHERE c.id_salon = $1 AND DATE(c.date_creation) = $2${filtreEmployeCommissions}
         `, paramsStats);
         const nbClients = parseInt(statsResult.rows[0].nb_clients) || 0;
         const commissionTotale = parseFloat(statsResult.rows[0].commission_totale) || 0;
-        const nbProduitsVendus = parseInt(statsResult.rows[0].nb_produits_vendus) || 0;
 
-        // Configuration PDFKit (A4, Gestion des pages)
-        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Bilan_${dateCible}.pdf"`);
-        doc.pipe(res);
+        // 5. CA par Catégorie
+        const caCategories = await pool.query(`
+            SELECT COALESCE(c.type_article, 'PRESTATION') as type_article, SUM(lt.total_ligne_ttc) as total
+            FROM lignes_ticket lt
+            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            LEFT JOIN catalogue c ON c.id_article = lt.id_article
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            GROUP BY COALESCE(c.type_article, 'PRESTATION')
+        `, paramsVentes);
+        
+        let totalPrestations = 0, totalRevente = 0;
+        caCategories.rows.forEach(r => {
+            if (r.type_article === 'PRESTATION') totalPrestations += parseFloat(r.total);
+            else totalRevente += parseFloat(r.total); // Regroupe PRODUIT_REVENTE et CONSOMMABLE
+        });
 
-        // --- PALETTE DE COULEURS (Thème STACK) ---
-        const THEME_COLOR = '#00B4D8'; // Cyan vif
-        const TEXT_DARK = '#1f2937';
-        const TEXT_LIGHT = '#6b7280';
-        const LINE_COLOR = '#e5e7eb';
+        // 6. Détail TVA
+        const tvaDetails = await pool.query(`
+            SELECT lt.taux_tva_snapshot as taux, SUM(lt.total_ligne_ttc) as total_ttc
+            FROM lignes_ticket lt
+            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            GROUP BY lt.taux_tva_snapshot
+            ORDER BY lt.taux_tva_snapshot DESC
+        `, paramsVentes);
 
-        // --- HEADER ---
-        try {
-            doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 });
-        } catch(e) {
-            doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' });
+        // 7. Méthodes de Paiement
+        const paiements = await pool.query(`
+            SELECT methode_paiement, SUM(total_ttc) as total
+            FROM tickets t
+            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
+            GROUP BY methode_paiement
+        `, paramsVentes);
+        
+        let totalCB = 0, totalEspeces = 0, totalCheques = 0;
+        paiements.rows.forEach(r => {
+            if (r.methode_paiement === 'CARTE') totalCB += parseFloat(r.total);
+            if (r.methode_paiement === 'ESPECES') totalEspeces += parseFloat(r.total);
+            if (r.methode_paiement === 'CHEQUE') totalCheques += parseFloat(r.total);
+        });
+
+        // 8. Stats par employé (Uniquement pour le Gérant)
+        let employesStats = [];
+        if (!estEmploye) {
+            const empStatsRes = await pool.query(`
+                SELECT e.nom, 
+                       COALESCE(SUM(t.total_ttc), 0) as ca_genere,
+                       (SELECT COALESCE(SUM(c.montant_commission), 0) FROM commissions c WHERE c.id_employe = e.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) = $2) as prime_due
+                FROM employes e
+                LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
+                WHERE e.id_salon = $1
+                GROUP BY e.id_employe, e.nom
+                HAVING COALESCE(SUM(t.total_ttc), 0) > 0 OR (SELECT COALESCE(SUM(c.montant_commission), 0) FROM commissions c WHERE c.id_employe = e.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) = $2) > 0
+                ORDER BY ca_genere DESC
+            `, [id_salon, dateCible]);
+            employesStats = empStatsRes.rows;
         }
 
-        // Titre Principal
-        doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Bilan Journalier', 50, 50);
-        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Date de clôture : ${new Date(dateCible).toLocaleDateString('fr-FR')}`, 50, 95);
-        doc.moveDown(4);
+        // ================== CRÉATION DU PDF (Format Ledger Google Sheets) ==================
+        const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Bilan_Journalier_${dateCible}.pdf"`);
+        doc.pipe(res);
 
-        // --- FONCTIONS UTILITAIRES DE DESSIN ---
-        const drawTableRow = (col1, col2, col3, isHeader = false, isTotal = false) => {
-            if (doc.y > 750) doc.addPage();
-            const startY = doc.y;
+        let currentY = 40;
+
+        // --- EN-TÊTE ---
+        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text(`BILAN JOURNALIER - ${estEmploye ? 'EMPLOYÉ' : 'SALON'}`, 40, currentY);
+        currentY += 25;
+        doc.font('Helvetica').fontSize(10).fillColor('#4b5563').text(`Date : ${new Date(dateCible).toLocaleDateString('fr-FR')}`, 40, currentY);
+        currentY += 15;
+        doc.text(`Responsable cloture de caisse : ${responsableCloture}`, 40, currentY);
+        currentY += 30;
+
+        // --- MOTEUR DE DESSIN DE TABLEAU ---
+        const drawTableTitle = (title) => {
+            if (currentY > 750) { doc.addPage(); currentY = 40; }
+            doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(title, 40, currentY);
+            currentY += 18;
+        };
+
+        const drawRow = (cols, isHeader = false, isBold = false) => {
+            if (currentY > 780) { doc.addPage(); currentY = 40; }
+            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
+            doc.fillColor(isHeader ? '#6b7280' : '#111827');
             
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col1, 50, startY, { width: 50 });
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col2, 110, startY, { width: 330 });
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? THEME_COLOR : TEXT_DARK).text(col3, 450, startY, { width: 95, align: 'right' });
-            
-            const currentY = doc.y;
-            if (!isHeader && !isTotal) {
-                doc.moveTo(50, currentY + 5).lineTo(545, currentY + 5).lineWidth(0.5).strokeColor(LINE_COLOR).stroke();
+            const startX = 40;
+            if (cols.length === 2) {
+                doc.text(cols[0], startX, currentY);
+                doc.text(cols[1], startX + 350, currentY, { width: 165, align: 'right' });
+            } else if (cols.length === 3) {
+                doc.text(cols[0], startX, currentY);
+                doc.text(cols[1], startX + 250, currentY, { width: 130, align: 'right' });
+                doc.text(cols[2], startX + 380, currentY, { width: 135, align: 'right' });
+            } else if (cols.length === 4) {
+                doc.text(cols[0], startX, currentY);
+                doc.text(cols[1], startX + 150, currentY, { width: 120, align: 'right' });
+                doc.text(cols[2], startX + 270, currentY, { width: 120, align: 'right' });
+                doc.text(cols[3], startX + 390, currentY, { width: 125, align: 'right' });
             }
-            doc.y = currentY + 12;
+            
+            currentY += 12;
+            if (!isHeader) {
+                doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
+            } else {
+                doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
+            }
+            currentY += 6;
         };
 
-        const drawSectionHeader = (title) => {
-            if (doc.y > 700) doc.addPage();
-            doc.moveDown(1.5);
-            doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
-            doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
-            doc.moveDown(0.5);
-        };
+        // --- 1. CHIFFRE D'AFFAIRE ---
+        drawTableTitle("1. CHIFFRE D'AFFAIRE (TTC)");
+        drawRow(['Categorie', 'Montant TTC'], true);
+        drawRow(['Total Prestations', `${totalPrestations.toFixed(2).replace('.', ',')}`]);
+        drawRow(['Total Revente', `${totalRevente.toFixed(2).replace('.', ',')}`]);
+        drawRow(["CHIFFRE D'AFFAIRE TOTAL", `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
+        currentY += 20;
 
-   
-        // --- SECTION : RÉCAPITULATIF FINANCIER ---
-        drawSectionHeader(estEmploye ? 'Mon Récapitulatif' : 'Récapitulatif Global');
-        drawTableRow('', 'Total Encaissé', `${caTotal.toFixed(2)} €`, false, true);
-        if (!estEmploye) drawTableRow('', 'Clôturé par', cloturePar, false, true);
-        drawTableRow('', estEmploye ? 'Clients servis' : 'Clients reçus', `${nbClients}`, false, true);
-        drawTableRow('', 'Produits vendus', `${nbProduitsVendus}`, false, true);
-        if (estEmploye) drawTableRow('', 'Ma commission du jour', `${commissionTotale.toFixed(2)} €`, false, true);
+        // --- 2. DETAIL TVA ---
+        drawTableTitle("2. DETAIL TVA (20%)");
+        drawRow(['Base HT', 'TVA Collectée', 'Total TTC'], true);
+        tvaDetails.rows.forEach(t => {
+            const taux = parseFloat(t.taux) || 20;
+            const ttc = parseFloat(t.total_ttc);
+            const ht = ttc / (1 + taux/100);
+            const tva = ttc - ht;
+            drawRow([`${ht.toFixed(2).replace('.', ',')}`, `${tva.toFixed(2).replace('.', ',')}`, `${ttc.toFixed(2).replace('.', ',')}`]);
+        });
+        if (tvaDetails.rowCount === 0) drawRow(['0', '0', '0']);
+        currentY += 20;
 
-        // --- SECTION : DÉTAIL DES VENTES (LOI NF525) ---
-        drawSectionHeader('Détail des Ventes (Loi NF525)');
-        drawTableRow('HEURE', 'DÉTAIL (TICKET, PRESTATIONS, PAIEMENT)', 'MONTANT TTC', true);
+        // --- 3. ENCAISSEMENTS ---
+        drawTableTitle("3. ENCAISSEMENTS");
+        drawRow(['Mode de paiment', 'Montant'], true);
+        drawRow(['Carte bancaire', `${totalCB.toFixed(2).replace('.', ',')}`]);
+        drawRow(['Espèces', `${totalEspeces.toFixed(2).replace('.', ',')}`]);
+        drawRow(['Chèques', `${totalCheques.toFixed(2).replace('.', ',')}`]);
+        drawRow(["TOTAL ENCAISSÉ", `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
+        currentY += 20;
+
+        // --- 4. CONTROLE DE LA CAISSE (Gérant uniquement) ---
+        if (!estEmploye) {
+            drawTableTitle("4. CONTROLE DE LA CAISSE (Espèces)");
+            drawRow(['Mouvement', 'Montant'], true);
+            drawRow(['Fond de caisse matin', `0,00`]); // Non tracké
+            drawRow(['Espèces encaissées clients', `${totalEspeces.toFixed(2).replace('.', ',')}`]);
+            drawRow(['Sorties de caisse (Dépenses)', `0,00`]); // Non tracké
+            drawRow(['Total Théorique', `${totalEspeces.toFixed(2).replace('.', ',')}`], false, true);
+            drawRow(['Total Réel (Compté)', `Non renseigné`], false, true); 
+            drawRow(['ECART DE CAISSE', `0,00`], false, true);
+            currentY += 20;
+        }
+
+        // --- 5. INDICATEURS COMMERCIAUX ---
+        drawTableTitle("5. INDICATEURS COMMERCIAUX");
+        drawRow(['Indicateur', 'Valeur'], true);
+        drawRow(['Nombre de clients', `${nbClients}`]);
+        const ticketMoyen = nbClients > 0 ? caTotal / nbClients : 0;
+        drawRow(['Ticket moyen', `${ticketMoyen.toFixed(2).replace('.', ',')}`]);
+        
+        if (!estEmploye) {
+            // CA et Prime de CHAQUE employé
+            employesStats.forEach(emp => {
+                drawRow([`CA ${emp.nom}`, `${parseFloat(emp.ca_genere).toFixed(2).replace('.', ',')}`]);
+            });
+            employesStats.forEach(emp => {
+                drawRow([`Prime dû ${emp.nom}`, `${parseFloat(emp.prime_due).toFixed(2).replace('.', ',')}`]);
+            });
+        } else {
+            drawRow([`CA Généré`, `${caTotal.toFixed(2).replace('.', ',')}`]);
+            drawRow([`Prime dûe`, `${commissionTotale.toFixed(2).replace('.', ',')}`]);
+        }
+        currentY += 20;
+
+        // --- 6. DETAIL DES VENTES (Loi NF525) ---
+        drawTableTitle("6. DETAIL DES VENTES (Loi NF525)");
+        if (currentY > 750) { doc.addPage(); currentY = 40; }
+        
+        // En-tête manuel avec format libre pour accommoder la 2ème colonne très large
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#6b7280');
+        doc.text('Heure', 40, currentY, { width: 50 });
+        doc.text('Détail (ticket, prestation, payement)', 100, currentY, { width: 330 });
+        doc.text('Montant TTC', 440, currentY, { width: 115, align: 'right' });
+        currentY += 12;
+        doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
+        currentY += 8;
 
         if (ventesResult.rowCount === 0) {
-            doc.moveDown(0.5);
-            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune vente enregistrée ce jour-là.', 50, doc.y);
+            doc.font('Helvetica').fontSize(9).fillColor('#111827').text('Aucune transaction enregistrée.', 40, currentY);
         } else {
             ventesResult.rows.forEach(v => {
-                const description = `Ticket #${v.id_ticket} - ${v.prestations} (Paiement: ${v.methode_paiement}, par ${v.employe})`;
-                drawTableRow(v.heure, description, `${parseFloat(v.total_ttc).toFixed(2)} €`);
+                // Construction du détail du ticket (ex: Ticket #TKT-CA-12345 - Balayage)
+                const desc = `Ticket ${v.numero_ticket_caisse || ''} - ${v.prestations || 'Article'}\n(Paiement: ${v.methode_paiement}, par ${v.employe})`;
+                
+                // Calcul de la hauteur que prendra le texte sur plusieurs lignes
+                const textHeight = doc.heightOfString(desc, { width: 330, fontSize: 9 });
+                
+                if (currentY + textHeight > 780) { doc.addPage(); currentY = 40; }
+
+                doc.font('Helvetica').fontSize(9).fillColor('#111827');
+                doc.text(v.heure, 40, currentY, { width: 50 });
+                doc.text(desc, 100, currentY, { width: 330 });
+                doc.text(`${parseFloat(v.total_ttc).toFixed(2).replace('.', ',')}`, 440, currentY, { width: 115, align: 'right' });
+                
+                currentY += textHeight + 6;
+                doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
+                currentY += 8;
             });
         }
 
-        // --- FOOTER ---
-        const pages = doc.bufferedPageRange();
-        for (let i = 0; i < pages.count; i++) {
-            doc.switchToPage(i);
-            doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR);
-        }
         doc.end();
     } catch (erreur) { 
         console.error(erreur);
