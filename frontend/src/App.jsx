@@ -4239,12 +4239,13 @@ function App() {
                                               </div>
                                               
                                               {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                                                  <div className="chat-reactions-display" style={{justifyContent: isMine ? 'flex-end' : 'flex-start'}}>
+                                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px', width: '100%', justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
                                                       {Object.entries(msg.reactions).map(([em, users]) => {
                                                           const listeNoms = users.map(id => resoudreProfilVu(id).nom).join(', ');
+                                                          const isReacted = users.includes(myReactId);
                                                           return (
-                                                              <div key={em} title={listeNoms} className={`chat-reaction-badge ${users.includes(myReactId) ? 'active' : ''}`} onClick={() => toggleReaction(msg.id_message, em)}>
-                                                                  {em} {users.length}
+                                                              <div key={em} title={listeNoms} onClick={() => toggleReaction(msg.id_message, em)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold', border: `1px solid ${isReacted ? 'var(--color-info)' : 'var(--border-color)'}`, background: isReacted ? 'var(--bg-info)' : 'var(--bg-card)', color: isReacted ? 'var(--color-info)' : 'var(--text-secondary)' }}>
+                                                                  <span>{em}</span> <span>{users.length}</span>
                                                               </div>
                                                           );
                                                       })}
