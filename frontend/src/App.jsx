@@ -3992,13 +3992,56 @@ function App() {
                       <div><h1 style={{margin: 0}}>Comptabilité</h1><span className="date-subtitle" style={{margin: 0}}>Clôture NF525</span></div>
                       <ThemeToggle />
                   </div>
+                  
+                  {/* ENCART PETITE CAISSE (MOUVEMENTS) */}
+                  <div style={{ background: 'var(--bg-card)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', boxShadow: 'var(--shadow-sm)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                          <div>
+                              <h3 style={{ margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px' }}>Petite Caisse (Aujourd'hui)</h3>
+                              <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Dépenses et remises en banque.</span>
+                          </div>
+                          <button onClick={() => { chargerMouvementsCaisse(); setShowMouvementModal(true); }} style={{ background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '10px 16px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                              Ajouter Entrée / Sortie
+                          </button>
+                      </div>
+                      
+                      {mouvementsCaisse.length === 0 ? (
+                          <div className="empty-state" style={{padding: '20px 0', margin: 0, minHeight: 'auto'}}><p style={{margin: 0}}>Aucun mouvement enregistré aujourd'hui.</p></div>
+                      ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {mouvementsCaisse.map(m => (
+                                  <div key={m.id_mouvement} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: m.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-danger)', color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                              {m.type_mouvement === 'ENTREE' ? (
+                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                              ) : (
+                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                              )}
+                                          </div>
+                                          <div>
+                                              <div style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>{m.motif}</div>
+                                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                  {new Date(m.date_creation).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})} • Par {m.nom_employe || 'Gérant'}
+                                              </div>
+                                          </div>
+                                      </div>
+                                      <strong style={{ color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                          {m.type_mouvement === 'ENTREE' ? '+' : '-'}{parseFloat(m.montant).toFixed(2)} €
+                                      </strong>
+                                  </div>
+                              ))}
+                          </div>
+                      )}
+                  </div>
+
                   <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
                      <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
                      <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
                   </div>
                 </div>
               )}
-
               {role === 'employe' && activeTab === 'admin' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
@@ -4069,6 +4112,50 @@ function App() {
                   
                   {/* ZONE DÉFILANTE */}
                   <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                  
+                  {/* ENCART PETITE CAISSE (MOUVEMENTS) */}
+                  <div style={{ background: 'var(--bg-card)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', boxShadow: 'var(--shadow-sm)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                          <div>
+                              <h3 style={{ margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px' }}>Petite Caisse (Aujourd'hui)</h3>
+                              <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Dépenses et remises en banque.</span>
+                          </div>
+                          <button onClick={() => { chargerMouvementsCaisse(); setShowMouvementModal(true); }} style={{ background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '10px 16px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                              Ajouter Entrée / Sortie
+                          </button>
+                      </div>
+                      
+                      {mouvementsCaisse.length === 0 ? (
+                          <div className="empty-state" style={{padding: '20px 0', margin: 0, minHeight: 'auto'}}><p style={{margin: 0}}>Aucun mouvement enregistré aujourd'hui.</p></div>
+                      ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {mouvementsCaisse.map(m => (
+                                  <div key={m.id_mouvement} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: m.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-danger)', color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                              {m.type_mouvement === 'ENTREE' ? (
+                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                              ) : (
+                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                              )}
+                                          </div>
+                                          <div>
+                                              <div style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>{m.motif}</div>
+                                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                  {new Date(m.date_creation).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})} • Par {m.nom_employe || 'Gérant'}
+                                              </div>
+                                          </div>
+                                      </div>
+                                      <strong style={{ color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                          {m.type_mouvement === 'ENTREE' ? '+' : '-'}{parseFloat(m.montant).toFixed(2)} €
+                                      </strong>
+                                  </div>
+                              ))}
+                          </div>
+                      )}
+                  </div>
+
                   <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
                      <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
                      <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
@@ -4457,6 +4544,59 @@ function App() {
       )}
       
       {/* --- MODALES GLOBALES --- */}
+      
+      {/* MODALE PETITE CAISSE (ENTRÉE/SORTIE) */}
+      {showMouvementModal && (
+          <div className="modal-overlay" style={{ zIndex: 100000 }}>
+              <div className="modal-content" style={{ maxWidth: '400px', padding: 0, overflow: 'hidden' }}>
+                  <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)' }}>
+                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Mouvement de Caisse</h3>
+                      <button onClick={() => setShowMouvementModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                  </div>
+                  <div style={{ padding: '24px' }}>
+                      
+                      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+                          <button onClick={() => setNewMouvement({...newMouvement, type_mouvement: 'SORTIE'})} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${newMouvement.type_mouvement === 'SORTIE' ? 'var(--color-danger)' : 'var(--border-color)'}`, background: newMouvement.type_mouvement === 'SORTIE' ? 'var(--bg-danger)' : 'var(--bg-app)', color: newMouvement.type_mouvement === 'SORTIE' ? 'var(--color-danger)' : 'var(--text-secondary)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px' }}>
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                              Sortie d'espèces
+                          </button>
+                          <button onClick={() => setNewMouvement({...newMouvement, type_mouvement: 'ENTREE'})} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${newMouvement.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--border-color)'}`, background: newMouvement.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-app)', color: newMouvement.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--text-secondary)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px' }}>
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                              Entrée d'espèces
+                          </button>
+                      </div>
+
+                      <div style={{ marginBottom: '16px' }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Montant (€)</label>
+                          <div style={{ position: 'relative' }}>
+                              <input type="number" placeholder="0.00" value={newMouvement.montant} onChange={(e) => setNewMouvement({...newMouvement, montant: e.target.value})} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '18px', fontWeight: 'bold' }} />
+                              <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '18px', fontWeight: 'bold' }}>€</span>
+                          </div>
+                      </div>
+
+                      <div style={{ marginBottom: '16px' }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Motif obligatoire</label>
+                          <input type="text" placeholder="Ex: Achat café, rendu monnaie..." value={newMouvement.motif} onChange={(e) => setNewMouvement({...newMouvement, motif: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }} />
+                      </div>
+
+                      <div style={{ marginBottom: '24px' }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Collaborateur responsable</label>
+                          <select value={newMouvement.id_employe} onChange={(e) => setNewMouvement({...newMouvement, id_employe: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
+                              <option value="">Moi-même (Gérant)</option>
+                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                          </select>
+                      </div>
+
+                      <button onClick={ajouterMouvementCaisse} className="btn-action" style={{ width: '100%', padding: '14px', borderRadius: '12px', fontSize: '16px' }}>
+                          Valider l'opération
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {zDialogOuvert && (
           <div className="modal-overlay" style={{ zIndex: 100000 }}>
               <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px', paddingBottom: '30px'}}>
