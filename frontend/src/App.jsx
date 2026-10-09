@@ -4702,12 +4702,35 @@ function App() {
                   </div>
 
                   <div style={{ padding: '20px', borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                           <span style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--text-main)' }}>Total Compté (Réel) :</span>
                           <span style={{ fontSize: '24px', fontWeight: '900', color: 'var(--btn-primary)' }}>{calculerTotalCaisseReel().toFixed(2)} €</span>
                       </div>
-                      <button onClick={() => executerZDeCaisse(zEmployeSelect)} disabled={!zEmployeSelect || !fondCaisseMatin} className="btn-action" style={{ width: '100%', padding: '16px', fontSize: '16px' }}>
-                          Sceller la caisse (Validation NF525)
+                      
+                      {ecartDetecte !== null && (
+                          <div style={{ background: 'var(--bg-danger)', padding: '16px', borderRadius: '12px', border: '1px solid var(--color-danger)', marginBottom: '16px', textAlign: 'left', animation: 'fadeIn 0.3s ease' }}>
+                              <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold', color: 'var(--color-danger)' }}>
+                                  ⚠️ Écart de caisse détecté : {ecartDetecte > 0 ? '+' : ''}{ecartDetecte.toFixed(2)} €
+                              </p>
+                              <label style={{ display: 'block', fontSize: '12px', color: 'var(--color-danger)', marginBottom: '8px' }}>Pour valider la clôture NF525, une justification est obligatoire :</label>
+                              <textarea 
+                                  className="input-fournisseur" 
+                                  placeholder="Ex: Erreur de rendu de monnaie, ou oubli de saisie d'une petite caisse..."
+                                  rows="3"
+                                  value={justificationEcart}
+                                  onChange={e => setJustificationEcart(e.target.value)}
+                                  style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--color-danger)' }}
+                              />
+                          </div>
+                      )}
+
+                      <button 
+                          onClick={() => executerZDeCaisse(zEmployeSelect)} 
+                          disabled={!zEmployeSelect || !fondCaisseMatin || (ecartDetecte !== null && !justificationEcart.trim())} 
+                          className="btn-action" 
+                          style={{ width: '100%', padding: '16px', fontSize: '16px', background: (ecartDetecte !== null && !justificationEcart.trim()) ? 'var(--text-muted)' : (ecartDetecte !== null ? 'var(--color-danger)' : 'var(--text-main)') }}
+                      >
+                          {ecartDetecte !== null ? "Justifier et Sceller" : "Sceller la caisse (Validation NF525)"}
                       </button>
                   </div>
               </div>
