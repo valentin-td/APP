@@ -141,7 +141,8 @@ function App() {
   const [emailInput, setEmailInput] = useState('');
   const [motDePasseInput, setMotDePasseInput] = useState('');
   const [nomSalonInput, setNomSalonInput] = useState('');
-  const [nomGerantInput, setNomGerantInput] = useState('');
+  const [prenomGerantInput, setPrenomGerantInput] = useState('');
+  const [nomFamilleGerantInput, setNomFamilleGerantInput] = useState('');
   const [idSalonInput, setIdSalonInput] = useState('');
   const [nomEmployeInput, setNomEmployeInput] = useState('');
   const [pinEmployeInput, setPinEmployeInput] = useState('');
@@ -510,7 +511,7 @@ function App() {
   const [telephoneTicketClient, setTelephoneTicketClient] = useState('');
 
   const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
-  const [newEmploye, setNewEmploye] = useState({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null });
+  const [newEmploye, setNewEmploye] = useState({ prenom: '', nomFamille: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null });
   const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3, duree_estimee_minutes: 30 });
 
   const [posStep, setPosStep] = useState('employee');
@@ -1001,12 +1002,13 @@ function App() {
   };
 
   const sInscrire = async () => {
-    if (!isLoginMode && !nomGerantInput.trim().includes(' ')) {
-        setErreurLogin("Veuillez saisir votre prénom ET votre nom de famille.");
+    if (!isLoginMode && (!prenomGerantInput.trim() || !nomFamilleGerantInput.trim())) {
+        setErreurLogin("Veuillez remplir les DEUX cases (Prénom et Nom de famille).");
         return;
     }
     try {
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomGerantInput }) });
+      const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
+      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomCompletGerant }) });
       const data = await response.json();
       if (response.ok) { 
           localStorage.setItem('ui_token', data.ui_token); if (data.token_api) localStorage.setItem('api_token', data.token_api); setToken(data.ui_token); setErreurLogin(null);
@@ -1148,7 +1150,7 @@ function App() {
 
   const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); setShowAddClient(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
-  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!newEmploye.nom.trim().includes(' ')) return showToast("Le prénom et le nom sont obligatoires.", "error"); if(!newEmploye.code_pin) return showToast("Le code PIN est obligatoire.", "error"); if(isPinWeak(newEmploye.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newEmploye) }); await handleFetchError(res); setNewEmploye({ nom: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!newEmploye.prenom.trim() || !newEmploye.nomFamille.trim()) return showToast("Le prénom ET le nom sont obligatoires.", "error"); if(!newEmploye.code_pin) return showToast("Le code PIN est obligatoire.", "error"); if(isPinWeak(newEmploye.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const payload = { ...newEmploye, nom: `${newEmploye.prenom.trim()} ${newEmploye.nomFamille.trim()}` }; const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) }); await handleFetchError(res); setNewEmploye({ prenom: '', nomFamille: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
   const sauvegarderModifEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!modifEmployeDialog.nom.trim().includes(' ')) return showToast("Le prénom et le nom sont obligatoires.", "error"); if(modifEmployeDialog.code_pin && isPinWeak(modifEmployeDialog.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${modifEmployeDialog.id_employe}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifEmployeDialog.nom, code_pin: modifEmployeDialog.code_pin, taux_commission_prestation: modifEmployeDialog.taux_commission_prestation, taux_commission_produit: modifEmployeDialog.taux_commission_produit }) }); await handleFetchError(res); chargerTout(); showToast("Employé mis à jour.", "success"); setModifEmployeDialog(null); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   
@@ -1786,7 +1788,12 @@ function App() {
                 {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500' }}>{erreurLogin}</div>)}
                 {loginType === 'gerant' ? (
                    <>
-                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Votre prénom et nom (Le Gérant)" style={{marginBottom: '12px'}} value={nomGerantInput} onChange={(e) => setNomGerantInput(e.target.value)} />)}
+                      {!isLoginMode && (
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                              <input type="text" className="input-fournisseur" placeholder="Prénom (Gérant)" style={{flex: 1}} value={prenomGerantInput} onChange={(e) => setPrenomGerantInput(e.target.value)} />
+                              <input type="text" className="input-fournisseur" placeholder="Nom de famille" style={{flex: 1}} value={nomFamilleGerantInput} onChange={(e) => setNomFamilleGerantInput(e.target.value)} />
+                          </div>
+                      )}
                       {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
                       <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
                       <input type="password" className="input-fournisseur" placeholder="Mot de passe" value={motDePasseInput} onChange={(e) => setMotDePasseInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (isLoginMode ? seConnecter() : sInscrire())} />
@@ -3807,7 +3814,8 @@ function App() {
                       <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
                           <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
                           <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                            <input type="text" className="input-fournisseur" placeholder="Prénom et Nom" value={newEmploye.nom} onChange={(e) => setNewEmploye({...newEmploye, nom: e.target.value})} />
+                            <input type="text" className="input-fournisseur" placeholder="Prénom" style={{flex: 1}} value={newEmploye.prenom} onChange={(e) => setNewEmploye({...newEmploye, prenom: e.target.value})} />
+                            <input type="text" className="input-fournisseur" placeholder="Nom de famille" style={{flex: 1}} value={newEmploye.nomFamille} onChange={(e) => setNewEmploye({...newEmploye, nomFamille: e.target.value})} />
                             <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
                           </div>
 
@@ -3930,10 +3938,13 @@ function App() {
                       <div className="modal-overlay">
                           <div className="modal-content">
                               <div className="modal-header">
-                                  <h3 style={{margin: 0, fontSize: '18px'}}>Modifier {modifEmployeDialog.nom}</h3>
+                                  <h3 style={{margin: 0, fontSize: '18px'}}>Modifier {modifEmployeDialog.nom.split(' ')[0]}</h3>
                                   <button className="modal-close-btn" onClick={() => setModifEmployeDialog(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                               </div>
-                              <input type="text" className="input-fournisseur" placeholder="Prénom et Nom" value={modifEmployeDialog.nom} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, nom: e.target.value})} style={{marginBottom: '12px'}} />
+                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                  <input type="text" className="input-fournisseur" placeholder="Prénom" style={{flex: 1}} value={(modifEmployeDialog.nom || '').split(' ')[0] || ''} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, nom: `${e.target.value} ${(modifEmployeDialog.nom || '').split(' ').slice(1).join(' ')}`.trim()})} />
+                                  <input type="text" className="input-fournisseur" placeholder="Nom de famille" style={{flex: 1}} value={(modifEmployeDialog.nom || '').split(' ').slice(1).join(' ') || ''} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, nom: `${(modifEmployeDialog.nom || '').split(' ')[0] || ''} ${e.target.value}`.trim()})} />
+                              </div>
                               <input type="password" maxLength="4" className="input-fournisseur" placeholder="Nouveau PIN (laisser vide pour ne pas changer)" value={modifEmployeDialog.code_pin} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, code_pin: e.target.value})} style={{marginBottom: '12px'}} />
                               <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
                                   <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={modifEmployeDialog.taux_commission_prestation} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, taux_commission_prestation: e.target.value})} />
