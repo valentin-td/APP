@@ -253,6 +253,25 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ferme_par VARCHAR(100) DEFAULT 'Non spécifié';
+    
+    -- Nouvelles colonnes pour le Z de caisse complet
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS fond_caisse_matin NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_theorique NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_reel NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ecart_caisse NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS justification_ecart TEXT;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS est_cloture_automatique BOOLEAN DEFAULT FALSE;
+
+    -- NOUVELLE TABLE : Petite caisse et régularisations
+    CREATE TABLE IF NOT EXISTS mouvements_caisse (
+        id_mouvement SERIAL PRIMARY KEY,
+        id_salon INTEGER REFERENCES salons(id_salon) ON DELETE CASCADE,
+        id_employe INTEGER REFERENCES employes(id_employe) ON DELETE SET NULL,
+        type_mouvement VARCHAR(50) NOT NULL, -- 'ENTREE', 'SORTIE', 'REGULARISATION'
+        montant NUMERIC(10, 2) NOT NULL,
+        motif TEXT NOT NULL,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS frequence_paiement VARCHAR(20) DEFAULT 'MENSUEL';
@@ -343,7 +362,7 @@ pool.query(`
                            OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
                             RAISE EXCEPTION 'Action bloquée (NF525) : Altération des données fiscales, de paiement ou de traçabilité interdite.';
                         END IF;
-                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'clotures_caisse', 'jet_logs') THEN
+                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'clotures_caisse', 'jet_logs', 'mouvements_caisse') THEN
                         RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table %', TG_TABLE_NAME;
                     END IF;
                 END IF;
@@ -363,6 +382,10 @@ pool.query(`
 
             DROP TRIGGER IF EXISTS trigger_nf525_jet ON jet_logs;
             CREATE TRIGGER trigger_nf525_jet BEFORE DELETE OR UPDATE ON jet_logs FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            -- 🚨 Sécurisation NF525 de la nouvelle table de mouvements d'espèces
+            DROP TRIGGER IF EXISTS trigger_nf525_mouvements ON mouvements_caisse;
+            CREATE TRIGGER trigger_nf525_mouvements BEFORE DELETE OR UPDATE ON mouvements_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
         `);
     } catch (e) { console.error("Erreur Triggers NF525:", e); }
 }).catch((e) => console.error("Erreur Init DB:", e));
