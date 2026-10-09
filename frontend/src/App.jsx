@@ -507,6 +507,30 @@ function App() {
   const [chargementFiche, setChargementFiche] = useState(false);
 
   const [ticketGenere, setTicketGenere] = useState(null);
+    const [mouvementsCaisse, setMouvementsCaisse] = useState([]);
+    const [showMouvementModal, setShowMouvementModal] = useState(false);
+    const [newMouvement, setNewMouvement] = useState({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
+
+    const chargerMouvementsCaisse = async () => {
+        try {
+            const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements/aujourdhui', { headers: getAuthHeaders(true) });
+            if (res.ok) setMouvementsCaisse(await res.json());
+        } catch (e) {}
+    };
+
+    const ajouterMouvementCaisse = async () => {
+        if (!newMouvement.motif.trim() || !newMouvement.montant) return showToast("Veuillez remplir le montant et le motif.", "error");
+        try {
+            const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements', {
+                method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newMouvement)
+            });
+            await handleFetchError(res);
+            showToast("Mouvement enregistré.", "success");
+            setShowMouvementModal(false);
+            setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
+            chargerMouvementsCaisse();
+        } catch (e) { showToast(e.message, "error"); }
+    };
   const [emailTicketClient, setEmailTicketClient] = useState('');
   const [telephoneTicketClient, setTelephoneTicketClient] = useState('');
 
