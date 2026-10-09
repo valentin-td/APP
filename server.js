@@ -321,9 +321,8 @@ pool.query(`
         await pool.query(`
             CREATE OR REPLACE FUNCTION nf525_prevent_alteration() RETURNS TRIGGER AS $$
             BEGIN
-                IF current_setting('myapp.bypass_nf525', true) = 'true' THEN
-                    IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-                END IF;
+                -- 🚨 SUPPRESSION DE LA PORTE DÉROBÉE : L'inaltérabilité NF525 est désormais absolue.
+                -- Aucun compte, pas même le Super-Admin, ne peut contourner ce blocage.
 
                 IF TG_OP = 'DELETE' THEN
                     RAISE EXCEPTION 'Action bloquée (NF525) : Suppression interdite sur la table %', TG_TABLE_NAME;
@@ -331,11 +330,21 @@ pool.query(`
                 
                 IF TG_OP = 'UPDATE' THEN
                     IF TG_TABLE_NAME = 'tickets' THEN
-                        IF OLD.total_ttc IS DISTINCT FROM NEW.total_ttc OR OLD.numero_ticket_caisse IS DISTINCT FROM NEW.numero_ticket_caisse OR OLD.date_creation IS DISTINCT FROM NEW.date_creation OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
-                            RAISE EXCEPTION 'Action bloquée (NF525) : Altération des montants, dates ou signatures interdite sur les tickets.';
+                        -- Liste stricte des champs intouchables. 
+                        -- Seuls "hash_ticket" (si NULL à la base) et "est_compense" peuvent être modifiés par le code.
+                        IF OLD.total_ttc IS DISTINCT FROM NEW.total_ttc 
+                           OR OLD.numero_ticket_caisse IS DISTINCT FROM NEW.numero_ticket_caisse 
+                           OR OLD.date_creation IS DISTINCT FROM NEW.date_creation 
+                           OR OLD.methode_paiement IS DISTINCT FROM NEW.methode_paiement
+                           OR OLD.statut IS DISTINCT FROM NEW.statut
+                           OR OLD.type_ticket IS DISTINCT FROM NEW.type_ticket
+                           OR OLD.id_employe IS DISTINCT FROM NEW.id_employe
+                           OR OLD.id_client IS DISTINCT FROM NEW.id_client
+                           OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Altération des données fiscales, de paiement ou de traçabilité interdite.';
                         END IF;
-                    ELSIF TG_TABLE_NAME IN ('clotures_caisse', 'jet_logs') THEN
-                        RAISE EXCEPTION 'Action bloquée (NF525) : Modification interdite sur la table %', TG_TABLE_NAME;
+                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'clotures_caisse', 'jet_logs') THEN
+                        RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table %', TG_TABLE_NAME;
                     END IF;
                 END IF;
                 RETURN NEW;
@@ -344,6 +353,10 @@ pool.query(`
 
             DROP TRIGGER IF EXISTS trigger_nf525_tickets ON tickets;
             CREATE TRIGGER trigger_nf525_tickets BEFORE DELETE OR UPDATE ON tickets FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+            
+            -- Sécurisation des lignes de vente (TVA et Articles) manquante dans la V1
+            DROP TRIGGER IF EXISTS trigger_nf525_lignes ON lignes_ticket;
+            CREATE TRIGGER trigger_nf525_lignes BEFORE DELETE OR UPDATE ON lignes_ticket FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
 
             DROP TRIGGER IF EXISTS trigger_nf525_clotures ON clotures_caisse;
             CREATE TRIGGER trigger_nf525_clotures BEFORE DELETE OR UPDATE ON clotures_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
@@ -4037,15 +4050,11 @@ app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, asyn
     try {
         await clientDB.query('BEGIN');
         
-        // 🚨 SÉCURITÉ : On autorise exceptionnellement la destruction NF525 pour le superadmin
-        await clientDB.query("SET LOCAL myapp.bypass_nf525 = 'true'");
+        // 🚨 CONFORMITÉ NF525 : On NE supprime PLUS JAMAIS les données fiscales (6 ans de conservation).
+        // On conserve indéfiniment en lecture seule : jet_logs, tickets, lignes_ticket, commissions, clotures_caisse.
+        // Seules les données opérationnelles et personnelles (pour la conformité RGPD) du salon sont purgées.
 
-        // Ordre de suppression calculé pour éviter les conflits de clés étrangères
-        await clientDB.query('DELETE FROM jet_logs WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM commissions WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM lignes_ticket WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM tickets WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM clotures_caisse WHERE id_salon = $1', [id]);
+        // Ordre de suppression calculé pour purger le SaaS tout en gardant l'archive fiscale intacte
         await clientDB.query('DELETE FROM rendez_vous WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM absences_employes WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM recettes_articles WHERE id_protocole IN (SELECT id_protocole FROM protocoles WHERE id_salon = $1)', [id]);
