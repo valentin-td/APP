@@ -4233,11 +4233,14 @@ function App() {
                                               
                                               {msg.reactions && Object.keys(msg.reactions).length > 0 && (
                                                   <div className="chat-reactions-display" style={{justifyContent: isMine ? 'flex-end' : 'flex-start'}}>
-                                                      {Object.entries(msg.reactions).map(([em, users]) => (
-                                                          <div key={em} className={`chat-reaction-badge ${users.includes(myReactId) ? 'active' : ''}`} onClick={() => toggleReaction(msg.id_message, em)}>
-                                                              {em} {users.length}
-                                                          </div>
-                                                      ))}
+                                                      {Object.entries(msg.reactions).map(([em, users]) => {
+                                                          const listeNoms = users.map(id => resoudreProfilVu(id).nom).join(', ');
+                                                          return (
+                                                              <div key={em} title={listeNoms} className={`chat-reaction-badge ${users.includes(myReactId) ? 'active' : ''}`} onClick={() => toggleReaction(msg.id_message, em)}>
+                                                                  {em} {users.length}
+                                                              </div>
+                                                          );
+                                                      })}
                                                   </div>
                                               )}
                                               
