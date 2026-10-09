@@ -1625,7 +1625,7 @@ app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
-    const { ferme_par } = req.body;
+    const { ferme_par, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
@@ -1661,6 +1661,30 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
         const grandTotalPerpetuel = grandTotalResult.rows[0].total;
 
+        // --- CALCUL NF525 DE L'ÉCART DE CAISSE (BLIND CLOSE) ---
+        const fCaisseMatin = parseFloat(fond_caisse_matin) || 0;
+        const tEspecesReel = parseFloat(total_especes_reel) || 0;
+
+        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE' AND est_compense = FALSE`, [id_salon, dateACloturerStr]);
+        const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
+
+        const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE 0 END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
+        const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
+
+        const tEspecesTheorique = fCaisseMatin + totalEspecesVentes + totalMouvements;
+        const ecartCaisse = tEspecesReel - tEspecesTheorique;
+
+        // 🚨 SI L'ÉCART EST > 2€ ET QU'ON N'A PAS ENCORE DE JUSTIFICATION, ON BLOQUE !
+        if (Math.abs(ecartCaisse) > 2.00 && (!justification_ecart || justification_ecart.trim() === '')) {
+            await clientDB.query('ROLLBACK');
+            return res.status(400).json({ 
+                erreur: `Un écart de caisse de ${ecartCaisse > 0 ? '+' : ''}${ecartCaisse.toFixed(2)} € a été détecté. Une justification est requise pour la loi NF525.`, 
+                require_justification: true, 
+                ecart: ecartCaisse 
+            });
+        }
+        // --------------------------------------------------------
+
         const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1', [id_salon]);
         const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
         const dateISO = new Date().toISOString();
@@ -1669,11 +1693,12 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             .digest('hex');
 
         await clientDB.query(
-            'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant']
+            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant', fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null]
         );
 
-        await enregistrerJET(id_salon, 'CLOTURE_Z', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
+        await enregistrerJET(id_salon, 'CLOTURE_Z', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
 
         // --- PHASE 4 : WEBHOOK / POUSSÉE API TEMPS RÉEL (Ex: Pennylane) ---
         try {
@@ -1720,7 +1745,7 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         // ------------------------------------------------------------------
 
         await clientDB.query('COMMIT');
-        res.json({ message: `Caisse clôturée avec succès pour le ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')}. Total : ${totalJour} €`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
+        res.json({ message: `Caisse clôturée avec succès pour le ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')}.`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
     } catch (e) {
         await clientDB.query('ROLLBACK');
         res.status(500).json({ erreur: e.message || "Erreur lors de la clôture." });
