@@ -1755,12 +1755,68 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
 app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
     try {
         const r = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [req.user.id_salon]);
-        const auto = await pool.query("SELECT TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_auto FROM clotures_caisse WHERE id_salon = $1 AND ferme_par = 'Fermeture Automatique (Robot)' ORDER BY id_cloture DESC LIMIT 1", [req.user.id_salon]);
+        const auto = await pool.query("SELECT TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_auto FROM clotures_caisse WHERE id_salon = $1 AND est_cloture_automatique = TRUE ORDER BY id_cloture DESC LIMIT 1", [req.user.id_salon]);
         res.json({ 
             cloture_faite: r.rowCount > 0,
             derniere_cloture_auto: auto.rowCount > 0 ? auto.rows[0].date_auto : null
         });
     } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
+});
+
+app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => {
+    try {
+        // On cherche si la TOUTE DERNIÈRE clôture Z (globale du salon) était automatique et est toujours en attente
+        const auto = await pool.query(
+            "SELECT id_cloture, TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_cloture_fr, total_especes_theorique FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1", 
+            [req.user.id_salon]
+        );
+        
+        if (auto.rowCount > 0 && auto.rows[0].total_especes_theorique !== null) {
+            // Si c'est bien la dernière et qu'elle attend d'être régularisée
+            const derniereEstAuto = await pool.query(
+                "SELECT 1 FROM clotures_caisse WHERE id_cloture = $1 AND est_cloture_automatique = TRUE", 
+                [auto.rows[0].id_cloture]
+            );
+            
+            if (derniereEstAuto.rowCount > 0) {
+                return res.json({ necessite_regularisation: true, cloture: auto.rows[0] });
+            }
+        }
+        res.json({ necessite_regularisation: false });
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification matinale." }); }
+});
+
+app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
+    const { id_cloture, montant_reel, id_employe } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE", [id_cloture, req.user.id_salon]);
+        if (clotureRes.rowCount === 0) throw new Error("Clôture automatique introuvable ou déjà régularisée.");
+        
+        const cloture = clotureRes.rows[0];
+        const theorique = parseFloat(cloture.total_especes_theorique);
+        const reel = parseFloat(montant_reel);
+        const ecart = reel - theorique;
+
+        // Si l'équipe ne trouve pas le même montant que ce que le robot prévoyait, on l'injecte dans le bilan comptable du jour.
+        if (Math.abs(ecart) > 0) {
+            await clientDB.query(
+                `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif) VALUES ($1, $2, $3, $4, $5)`,
+                [req.user.id_salon, id_employe || null, 'REGULARISATION', ecart, `Régularisation ouverture suite fermeture auto`]
+            );
+            await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, theorique, reel, ecart }, clientDB);
+        }
+
+        // On lève le flag pour débloquer le logiciel
+        await clientDB.query("UPDATE clotures_caisse SET est_cloture_automatique = FALSE, ferme_par = 'Robot (Régularisé)' WHERE id_cloture = $1", [id_cloture]);
+        
+        await clientDB.query('COMMIT');
+        res.json({ message: "Caisse régularisée avec succès." });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message || "Erreur de régularisation." });
+    } finally { clientDB.release(); }
 });
 
 app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
@@ -3974,6 +4030,20 @@ async function executerClotureFantome() {
                     const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) <= $2`, [id_salon, dateACloturerStr]);
                     const grandTotalPerpetuel = grandTotalResult.rows[0].total;
 
+                    // --- CALCUL DU THÉORIQUE POUR LE ROBOT ---
+                    const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE' AND est_compense = FALSE`, [id_salon, dateACloturerStr]);
+                    const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
+
+                    const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE 0 END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
+                    const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
+
+                    const lastCloseRes = await clientDB.query('SELECT total_especes_reel FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
+                    const fCaisseMatin = lastCloseRes.rowCount > 0 ? parseFloat(lastCloseRes.rows[0].total_especes_reel) : 0;
+
+                    const tEspecesTheorique = fCaisseMatin + totalEspecesVentes + totalMouvements;
+                    // Le robot force le total_reel au total_theorique (écart = 0) pour valider mathématiquement la journée
+                    // -----------------------------------------
+
                     const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
                     const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
                     const dateISO = new Date(j.jour); 
@@ -3982,11 +4052,12 @@ async function executerClotureFantome() {
                     const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
 
                     await clientDB.query(
-                        'INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-                        [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, 'Fermeture Automatique (Robot)']
+                        `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique) 
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                        [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, 'Fermeture Automatique (En attente)', fCaisseMatin, tEspecesTheorique, tEspecesTheorique, 0, 'Clôture générée par le système', true]
                     );
 
-                    await enregistrerJET(id_salon, 'CLOTURE_Z_AUTOMATIQUE', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, signature }, clientDB);
+                    await enregistrerJET(id_salon, 'CLOTURE_Z_AUTOMATIQUE', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: 0, signature }, clientDB);
                     await clientDB.query('COMMIT');
                     console.log(`[ROBOT] Clôture fantôme réussie pour le salon ${id_salon} (Date: ${dateACloturerStr})`);
                 } catch (e) {
