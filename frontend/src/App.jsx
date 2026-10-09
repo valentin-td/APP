@@ -1651,30 +1651,47 @@ function App() {
 
   const [zDialogOuvert, setZDialogOuvert] = useState(false);
   const [zEmployeSelect, setZEmployeSelect] = useState('');
+  
+  // Nouveaux états pour la calculatrice de caisse (Blind Close)
+  const [compteCaisse, setCompteCaisse] = useState({
+      b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '',
+      p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: ''
+  });
+  const [fondCaisseMatin, setFondCaisseMatin] = useState('');
+
+  const calculerTotalCaisseReel = () => {
+      return ((parseInt(compteCaisse.b500)||0) * 500) + ((parseInt(compteCaisse.b200)||0) * 200) + ((parseInt(compteCaisse.b100)||0) * 100) +
+             ((parseInt(compteCaisse.b50)||0) * 50) + ((parseInt(compteCaisse.b20)||0) * 20) + ((parseInt(compteCaisse.b10)||0) * 10) + ((parseInt(compteCaisse.b5)||0) * 5) +
+             ((parseInt(compteCaisse.p2)||0) * 2) + ((parseInt(compteCaisse.p1)||0) * 1) + ((parseInt(compteCaisse.p050)||0) * 0.50) + ((parseInt(compteCaisse.p020)||0) * 0.20) +
+             ((parseInt(compteCaisse.p010)||0) * 0.10) + ((parseInt(compteCaisse.p005)||0) * 0.05) + ((parseInt(compteCaisse.p002)||0) * 0.02) + ((parseInt(compteCaisse.p001)||0) * 0.01);
+  };
 
   const demanderZDeCaisse = () => {
-      if (role === 'gerant') {
-          setConfirmDialog({ titre: "Clôture Journalière (Z)", message: "Êtes-vous sûr de vouloir clôturer la caisse d'aujourd'hui ? Les données seront cryptées et figées de manière irréversible selon la loi NF525.", btnTexte: "Générer le Z", action: () => executerZDeCaisse('Gérant') });
-      } else {
-          setZDialogOuvert(true);
-      }
+      // On ouvre toujours la modale "Blind Close", même pour le gérant.
+      setZEmployeSelect(role === 'gerant' ? 'Gérant' : '');
+      setCompteCaisse({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
+      setFondCaisseMatin('');
+      setZDialogOuvert(true);
   };
 
   const executerZDeCaisse = async (employeNom) => {
-      if(isOffline || !navigator.onLine) { setConfirmDialog(null); setZDialogOuvert(false); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
-      setConfirmDialog(null);
+      if(isOffline || !navigator.onLine) { setZDialogOuvert(false); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
+      if (!fondCaisseMatin || isNaN(fondCaisseMatin)) return showToast("Le fond de caisse du matin est obligatoire.", "error");
+      
+      const totalReel = calculerTotalCaisseReel();
       setZDialogOuvert(false);
+      
       const enAttente = await localforage.getItem('offline_tickets') || [];
       if (enAttente.length > 0) { await syncOfflineTickets(); const reste = await localforage.getItem('offline_tickets') || []; if (reste.length > 0) return showToast(`${reste.length} ticket(s) hors-ligne à synchroniser avant la clôture.`, "error"); }
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ferme_par: employeNom }) });
+          // On envoie le fond de caisse et le total réel pour que le serveur calcule l'écart (Étape 4)
+          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ferme_par: employeNom, fond_caisse_matin: parseFloat(fondCaisseMatin), total_especes_reel: totalReel }) });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
-          setClotureFaiteAujourdhui(true); // le bandeau de rappel disparaît immédiatement
+          setClotureFaiteAujourdhui(true);
           setZEmployeSelect('');
-      } catch(e) { showToast("Erreur lors de la clôture.", "error"); }
+      } catch(e) { showToast(e.message || "Erreur lors de la clôture.", "error"); }
   };
-
   // --- Rappel de clôture journalière (bandeau) ---
   const [clotureFaiteAujourdhui, setClotureFaiteAujourdhui] = useState(true);
   const [heureActuelle, setHeureActuelle] = useState(new Date());
@@ -4598,22 +4615,87 @@ function App() {
       )}
 
       {zDialogOuvert && (
-          <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px', paddingBottom: '30px'}}>
-                  <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <div className="modal-overlay" style={{ zIndex: 100000, padding: isMobile ? '0' : '16px' }}>
+              <div className="modal-content" style={{ maxWidth: '600px', width: '100%', padding: '0', overflow: 'hidden', height: isMobile ? '100%' : 'auto', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ color: 'var(--btn-primary)' }}><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+                          <div>
+                              <h2 style={{ margin: 0, color: 'var(--text-main)', fontSize: '18px' }}>Clôture de Caisse (Z)</h2>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Comptage physique obligatoire (Loi NF525)</span>
+                          </div>
+                      </div>
+                      <button onClick={() => { setZDialogOuvert(false); setZEmployeSelect(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
                   </div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Clôture Journalière (Z)</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>Sélectionnez la personne responsable de la fermeture de la caisse ce soir.</p>
                   
-                  <select className="input-fournisseur" value={zEmployeSelect} onChange={e => setZEmployeSelect(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}}>
-                      <option value="">-- Sélectionnez votre nom --</option>
-                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
-                  </select>
+                  <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+                      {role === 'salon' && (
+                          <div style={{ marginBottom: '24px' }}>
+                              <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Responsable de la fermeture</label>
+                              <select className="input-fournisseur" value={zEmployeSelect} onChange={e => setZEmployeSelect(e.target.value)} style={{ margin: 0 }}>
+                                  <option value="">-- Sélectionnez votre nom --</option>
+                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
+                                  <option value="Gérant">Le Gérant</option>
+                              </select>
+                          </div>
+                      )}
 
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => { setZDialogOuvert(false); setZEmployeSelect(''); }} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={() => executerZDeCaisse(zEmployeSelect)} disabled={!zEmployeSelect} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: zEmployeSelect ? 'pointer' : 'not-allowed', opacity: zEmployeSelect ? 1 : 0.5, transition: 'all 0.15s'}}>Générer le Z</button>
+                      <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px dashed var(--border-color)', marginBottom: '24px' }}>
+                          <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)', marginBottom: '8px' }}>
+                              <span>Fond de caisse du matin (Ouverture)</span>
+                          </label>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>Montant en espèces (fonds de roulement) présent à l'ouverture.</p>
+                          <div style={{ position: 'relative' }}>
+                              <input type="number" placeholder="Ex: 150.00" value={fondCaisseMatin} onChange={(e) => setFondCaisseMatin(e.target.value)} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold' }} />
+                              <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '16px', fontWeight: 'bold' }}>€</span>
+                          </div>
+                      </div>
+
+                      <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" ry="2"/><circle cx="12" cy="12" r="2"/></svg>
+                          Billets comptés
+                      </h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
+                          {[
+                              { key: 'b500', label: '500 €' }, { key: 'b200', label: '200 €' }, { key: 'b100', label: '100 €' }, 
+                              { key: 'b50', label: '50 €' }, { key: 'b20', label: '20 €' }, { key: 'b10', label: '10 €' }, { key: 'b5', label: '5 €' }
+                          ].map(b => (
+                              <div key={b.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 8px' }}>
+                                  <span style={{ width: '45px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{b.label}</span>
+                                  <span style={{ color: 'var(--border-color)', margin: '0 8px' }}>×</span>
+                                  <input type="number" min="0" value={compteCaisse[b.key]} onChange={e => setCompteCaisse({...compteCaisse, [b.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
+                              </div>
+                          ))}
+                      </div>
+
+                      <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
+                          Pièces comptées
+                      </h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                          {[
+                              { key: 'p2', label: '2 €' }, { key: 'p1', label: '1 €' }, { key: 'p050', label: '0.50 €' }, { key: 'p020', label: '0.20 €' }, 
+                              { key: 'p010', label: '0.10 €' }, { key: 'p005', label: '0.05 €' }, { key: 'p002', label: '0.02 €' }, { key: 'p001', label: '0.01 €' }
+                          ].map(p => (
+                              <div key={p.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 8px' }}>
+                                  <span style={{ width: '45px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{p.label}</span>
+                                  <span style={{ color: 'var(--border-color)', margin: '0 8px' }}>×</span>
+                                  <input type="number" min="0" value={compteCaisse[p.key]} onChange={e => setCompteCaisse({...compteCaisse, [p.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+
+                  <div style={{ padding: '20px', borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                          <span style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--text-main)' }}>Total Compté (Réel) :</span>
+                          <span style={{ fontSize: '24px', fontWeight: '900', color: 'var(--btn-primary)' }}>{calculerTotalCaisseReel().toFixed(2)} €</span>
+                      </div>
+                      <button onClick={() => executerZDeCaisse(zEmployeSelect)} disabled={!zEmployeSelect || !fondCaisseMatin} className="btn-action" style={{ width: '100%', padding: '16px', fontSize: '16px' }}>
+                          Sceller la caisse (Validation NF525)
+                      </button>
                   </div>
               </div>
           </div>
