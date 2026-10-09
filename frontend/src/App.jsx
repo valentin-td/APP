@@ -1711,6 +1711,42 @@ function App() {
   const [clotureAutoInfo, setClotureAutoInfo] = useState(null);
   const [alertesFermees, setAlertesFermees] = useState(() => { try { return JSON.parse(localStorage.getItem('alertesFermees')) || {}; } catch(e) { return {}; } });
 
+  // --- Garde-Fou : Régularisation Matinale (Blind Close) ---
+  const [reguCloture, setReguCloture] = useState(null);
+  const [reguMontant, setReguMontant] = useState('');
+
+  const verifierRegularisationMatinale = async () => {
+      if (!token) return;
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/verification-matinale', { headers: getAuthHeaders() });
+          const data = await res.json();
+          if (data.necessite_regularisation) {
+              setReguCloture(data.cloture);
+          } else {
+              setReguCloture(null);
+          }
+      } catch(e) {}
+  };
+
+  const soumettreRegularisation = async () => {
+      if (!reguMontant || isNaN(reguMontant)) return showToast("Veuillez saisir le montant réel.", "error");
+      try {
+          const payload = { 
+              id_cloture: reguCloture.id_cloture, 
+              montant_reel: parseFloat(reguMontant), 
+              id_employe: decodeToken(token)?.role === 'employe' ? decodeToken(token).id_employe : null 
+          };
+          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/regulariser', {
+              method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload)
+          });
+          await handleFetchError(res);
+          showToast("Caisse ouverte et régularisée !", "success");
+          setReguCloture(null);
+          setReguMontant('');
+          if (typeof chargerMouvementsCaisse === 'function') chargerMouvementsCaisse();
+      } catch (e) { showToast(e.message, "error"); }
+  };
+
   const fermerAlerte = (cle) => {
       const next = { ...alertesFermees, [cle]: true };
       setAlertesFermees(next);
@@ -1730,6 +1766,7 @@ function App() {
   useEffect(() => {
       if (!token) return;
       verifierStatutCloture();
+      verifierRegularisationMatinale();
       const intervalStatut = setInterval(verifierStatutCloture, 5 * 60 * 1000);
       const intervalHorloge = setInterval(() => setHeureActuelle(new Date()), 60 * 1000);
       return () => { clearInterval(intervalStatut); clearInterval(intervalHorloge); };
@@ -4575,6 +4612,43 @@ function App() {
       
       {/* --- MODALES GLOBALES --- */}
       
+      {/* MODALE GARDE-FOU (RÉGULARISATION MATINALE OBLIGATOIRE) */}
+      {reguCloture && (
+          <div className="modal-overlay" style={{ zIndex: 999999, background: 'var(--bg-app)' }}>
+              <div className="modal-content" style={{ maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
+                  <div style={{ color: 'var(--color-info)', display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  </div>
+                  <h2 style={{ margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px' }}>Ouverture de Caisse</h2>
+                  <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>
+                      La caisse a été fermée automatiquement hier soir par le système avec un solde théorique estimé à <strong>{parseFloat(reguCloture.total_especes_theorique).toFixed(2)} €</strong>.<br/><br/>
+                      Quel est votre <strong>Fond de Caisse Réel</strong> (espèces physiquement présentes) ce matin ?
+                  </p>
+                  
+                  <div style={{ position: 'relative', marginBottom: '24px' }}>
+                      <input 
+                          type="number" 
+                          placeholder="Ex: 150.00" 
+                          value={reguMontant} 
+                          onChange={(e) => setReguMontant(e.target.value)} 
+                          style={{ width: '100%', padding: '16px 16px 16px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '2px solid var(--btn-primary)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }} 
+                          autoFocus
+                      />
+                      <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }}>€</span>
+                  </div>
+
+                  <button 
+                      onClick={soumettreRegularisation} 
+                      disabled={!reguMontant} 
+                      className="btn-action" 
+                      style={{ width: '100%', padding: '16px', fontSize: '16px' }}
+                  >
+                      Valider et Ouvrir la caisse
+                  </button>
+              </div>
+          </div>
+      )}
+
       {/* MODALE PETITE CAISSE (ENTRÉE/SORTIE) */}
       {showMouvementModal && (
           <div className="modal-overlay" style={{ zIndex: 100000 }}>
