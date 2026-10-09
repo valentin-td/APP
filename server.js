@@ -1599,6 +1599,30 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
     } catch (error) { res.status(500).json({ erreur: "Erreur envoi ticket." }); }
 });
 
+app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT m.*, e.nom as nom_employe FROM mouvements_caisse m LEFT JOIN employes e ON m.id_employe = e.id_employe WHERE m.id_salon = $1 AND DATE(m.date_creation) = CURRENT_DATE ORDER BY m.date_creation DESC`,
+            [req.user.id_salon]
+        );
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture mouvements." }); }
+});
+
+app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
+    const { type_mouvement, montant, motif, id_employe } = req.body;
+    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
+    if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
+    try {
+        await pool.query(
+            `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif) VALUES ($1, $2, $3, $4, $5)`,
+            [req.user.id_salon, id_employe || null, type_mouvement, parseFloat(montant), motif.trim()]
+        );
+        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { type_mouvement, montant: parseFloat(montant), motif });
+        res.status(201).json({ message: "Mouvement de caisse enregistré." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
+});
+
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     const { ferme_par } = req.body;
