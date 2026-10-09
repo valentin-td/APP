@@ -234,7 +234,9 @@ function App() {
       if (messagesEndRef.current && activeTab === 'messagerie') {
           messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
       }
-  }, [messagesListe, chatActif, activeTab]);
+  // On écoute la LONGUEUR de la liste (messagesListe.length) au lieu de l'objet entier, 
+  // pour ne pas scroller automatiquement quand on ajoute une simple réaction !
+  }, [messagesListe.length, chatActif, activeTab]);
 
   // --- Pastilles de messages non lus ---
   const [dernierLuParConv, setDernierLuParConv] = useState({});
@@ -4183,18 +4185,23 @@ function App() {
                                                                       );
                                                                   })}
                                                                   {vuParOuvertMsgId === msg.id_message && (
-                                                                      <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)} onClick={(e) => e.stopPropagation()}>
-                                                                          <div className="chat-vu-par-liste-titre">Vu par</div>
-                                                                          {msg.vu_par.map(idProfil => {
-                                                                              const profil = resoudreProfilVu(idProfil);
-                                                                              return (
-                                                                                  <div key={idProfil} className="chat-vu-par-liste-item">
-                                                                                      {renderAvatar(profil.photo_url, profil.nom, 22)}
-                                                                                      <span>{profil.nom}</span>
-                                                                                  </div>
-                                                                              );
-                                                                          })}
-                                                                      </div>
+                                                                      <>
+                                                                          {/* Calque invisible pour fermer l'encart en cliquant n'importe où à côté */}
+                                                                          <div onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(null); }} style={{position: 'fixed', inset: 0, zIndex: 19}}></div>
+                                                                          
+                                                                          <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)} onClick={(e) => e.stopPropagation()}>
+                                                                              <div className="chat-vu-par-liste-titre">Vu par</div>
+                                                                              {msg.vu_par.map(idProfil => {
+                                                                                  const profil = resoudreProfilVu(idProfil);
+                                                                                  return (
+                                                                                      <div key={idProfil} className="chat-vu-par-liste-item">
+                                                                                          {renderAvatar(profil.photo_url, profil.nom, 22)}
+                                                                                          <span>{profil.nom}</span>
+                                                                                      </div>
+                                                                                  );
+                                                                              })}
+                                                                          </div>
+                                                                      </>
                                                                   )}
                                                               </div>
                                                           )}
