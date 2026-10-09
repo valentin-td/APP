@@ -1941,7 +1941,30 @@ function App() {
   };
 
   const toggleReaction = async (id, emoji) => {
-      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); setActiveReactionId(null); } catch(e) { showToast("Erreur d'ajout de la réaction", "error"); }
+      setActiveReactionId(null); // On ferme le menu des emojis tout de suite
+      
+      // 1. MISE À JOUR OPTIMISTE : On met à jour l'écran instantanément (sans attendre le serveur)
+      const monProfilId = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : (role === 'salon' ? 'salon' : 'gerant');
+      setMessagesListe(prev => (prev || []).map(m => {
+          if (m.id_message !== id) return m;
+          const rec = { ...(m.reactions || {}) };
+          if (!rec[emoji]) rec[emoji] = [];
+          if (rec[emoji].includes(monProfilId)) {
+              rec[emoji] = rec[emoji].filter(uid => uid !== monProfilId);
+              if (rec[emoji].length === 0) delete rec[emoji];
+          } else {
+              rec[emoji] = [...rec[emoji], monProfilId];
+          }
+          return { ...m, reactions: rec };
+      }));
+
+      // 2. ENVOI SILENCIEUX : Le serveur enregistre la réaction en arrière-plan
+      try { 
+          await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); 
+      } catch(e) { 
+          showToast("Erreur réseau", "error"); 
+          chargerTout(); // Si ça échoue vraiment, on recharge pour effacer la fausse réaction
+      }
   };
 
   const iconBord = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
