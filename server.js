@@ -2962,9 +2962,13 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
-        // 3. Clôture Info
-        const clotureRes = await pool.query(`SELECT ferme_par FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
-        const cloturePar = clotureRes.rowCount > 0 ? clotureRes.rows[0].ferme_par : 'Non spécifié';
+        // 3. Clôture Info et Mouvements
+        const clotureRes = await pool.query(`SELECT ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
+        const clotureData = clotureRes.rowCount > 0 ? clotureRes.rows[0] : null;
+        const cloturePar = clotureData ? clotureData.ferme_par : 'Non spécifié';
+
+        const mouvementsResult = await pool.query(`SELECT COALESCE(SUM(montant), 0) as total_sorties FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2 AND type_mouvement = 'SORTIE'`, [id_salon, dateCible]);
+        const totalSorties = parseFloat(mouvementsResult.rows[0].total_sorties);
 
         // Identification du Gérant pour la signature
         const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
@@ -3134,13 +3138,30 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         if (!estEmploye) {
             drawTableTitle("4. CONTROLE DE LA CAISSE (Espèces)");
             drawRow(['Mouvement', 'Montant'], true);
-            drawRow(['Fond de caisse matin', `0,00`]); // Non tracké
+            
+            const fMatin = clotureData ? parseFloat(clotureData.fond_caisse_matin) : 0;
+            const tTheorique = clotureData ? parseFloat(clotureData.total_especes_theorique) : totalEspeces;
+            const tReel = clotureData ? parseFloat(clotureData.total_especes_reel) : 0;
+            const ecart = clotureData ? parseFloat(clotureData.ecart_caisse) : 0;
+
+            drawRow(['Fond de caisse matin', `${fMatin.toFixed(2).replace('.', ',')}`]);
             drawRow(['Espèces encaissées clients', `${totalEspeces.toFixed(2).replace('.', ',')}`]);
-            drawRow(['Sorties de caisse (Dépenses)', `0,00`]); // Non tracké
-            drawRow(['Total Théorique', `${totalEspeces.toFixed(2).replace('.', ',')}`], false, true);
-            drawRow(['Total Réel (Compté)', `Non renseigné`], false, true); 
-            drawRow(['ECART DE CAISSE', `0,00`], false, true);
-            currentY += 20;
+            drawRow(['Sorties de caisse (Dépenses)', `-${totalSorties.toFixed(2).replace('.', ',')}`]);
+            drawRow(['Total Théorique', `${tTheorique.toFixed(2).replace('.', ',')}`], false, true);
+            
+            // Si la caisse a été fermée par le robot, on le précise
+            const texteReel = cloturePar.includes('Robot') ? 'Non compté (Fermeture Auto)' : `${tReel.toFixed(2).replace('.', ',')}`;
+            drawRow(['Total Réel (Compté)', texteReel], false, true); 
+            drawRow(['ECART DE CAISSE', `${ecart > 0 ? '+' : ''}${ecart.toFixed(2).replace('.', ',')}`], false, true);
+            
+            if (clotureData && clotureData.justification_ecart) {
+                currentY += 5;
+                doc.font('Helvetica-Oblique').fontSize(8).fillColor('#ef4444');
+                doc.text(`Justification de l'écart : "${clotureData.justification_ecart}"`, 40, currentY);
+                currentY += 15;
+            } else {
+                currentY += 20;
+            }
         }
 
         // --- 5. INDICATEURS COMMERCIAUX ---
