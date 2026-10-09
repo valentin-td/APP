@@ -1424,6 +1424,8 @@ function App() {
           await handleFetchError(res);
           showToast(`Ticket envoyé par ${methode.toUpperCase()} !`, "success");
           setTicketGenere(null);
+          setPosEmploye(null);
+          setClientsSuggeres([]);
       } catch (e) { showToast(`Erreur d'envoi : ${e.message}`, "error"); }
   }
 
@@ -2579,7 +2581,7 @@ function App() {
                                         </div>
                                     )}
                                 </div>
-                                <button onClick={() => setTicketGenere(null)} className="hover-text-main" style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}}>Fermer (Sans reçu)</button>
+                                <button onClick={() => { setTicketGenere(null); setPosEmploye(null); setClientsSuggeres([]); }} className="hover-text-main" style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}}>Fermer (Sans reçu)</button>
                             </div>
                         ) : (
                             <>
