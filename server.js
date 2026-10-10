@@ -265,8 +265,8 @@ pool.query(`
     -- NOUVELLE TABLE : Petite caisse et régularisations
     CREATE TABLE IF NOT EXISTS mouvements_caisse (
         id_mouvement SERIAL PRIMARY KEY,
-        id_salon INTEGER REFERENCES salons(id_salon) ON DELETE CASCADE,
-        id_employe INTEGER REFERENCES employes(id_employe) ON DELETE SET NULL,
+        id_salon INT,
+        id_employe INT,
         type_mouvement VARCHAR(50) NOT NULL, -- 'ENTREE', 'SORTIE', 'REGULARISATION'
         montant NUMERIC(10, 2) NOT NULL,
         motif TEXT NOT NULL,
