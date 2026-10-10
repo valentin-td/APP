@@ -3244,6 +3244,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         const configResult = await pool.query('SELECT email_reception_factures, mot_de_passe_app_email, nom_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : null;
+        const nomDuSalon = salonConfig?.nom_salon || 'Salon';
         
         const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
         const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
@@ -3261,7 +3262,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         const caTotal = parseFloat(caResult.rows[0].ca_total || 0);
 
-        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
+        const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
         let buffers = [];
         doc.on('data', buffers.push.bind(buffers));
         
@@ -3271,7 +3272,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 try {
                     let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: dechiffrer(salonConfig.mot_de_passe_app_email) } });
                     await transporter.sendMail({
-                        from: `"${salonConfig.nom_salon || 'SaaS Caisse'}" <${salonConfig.email_reception_factures}>`, 
+                        from: `"${nomDuSalon}" <${salonConfig.email_reception_factures}>`, 
                         to: salonConfig.email_reception_factures, 
                         subject: '📊 Liasse Comptable Mensuelle', 
                         text: 'Bonjour, \nVeuillez trouver en pièce jointe la liasse comptable du mois avec le détail des encaissements.',
@@ -3285,105 +3286,108 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="Liasse_Comptable.pdf"`);
         doc.pipe(res);
 
-        const THEME_COLOR = '#00B4D8';
-        const TEXT_DARK = '#1f2937';
-        const TEXT_LIGHT = '#6b7280';
-        const LINE_COLOR = '#e5e7eb';
+        let currentY = 40;
 
-        try {
-            doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 });
-        } catch(e) {
-            doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' });
-        }
+        // --- EN-TÊTE ---
+        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text(`LIASSE MENSUELLE - ${nomDuSalon}`, 40, currentY);
+        currentY += 25;
+        doc.font('Helvetica').fontSize(10).fillColor('#4b5563').text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 40, currentY);
+        currentY += 35;
 
-        doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
-        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 50, 95);
-        doc.moveDown(4);
+        // --- MOTEUR DE DESSIN DE TABLEAU ---
+        const drawTableTitle = (title) => {
+            if (currentY > 750) { doc.addPage(); currentY = 40; }
+            doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(title, 40, currentY);
+            currentY += 18;
+        };
 
-        const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
-            if (doc.y > 750) doc.addPage();
-            const y = doc.y;
-            const text1 = col1 != null ? String(col1) : '';
-            const text2 = col2 != null ? String(col2) : '';
+        const drawRow = (cols, isHeader = false, isBold = false) => {
+            if (currentY > 780) { doc.addPage(); currentY = 40; }
+            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
+            doc.fillColor(isHeader ? '#6b7280' : '#111827');
             
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(text1, 50, y);
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(text2, 450, y, { width: 95, align: 'right' });
-            
-            if (!isHeader && !isTotal) {
-                doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke();
+            const startX = 40;
+            if (cols.length === 2) {
+                doc.text(cols[0], startX, currentY, { width: 350 });
+                doc.text(cols[1], startX + 350, currentY, { width: 165, align: 'right' });
+            } else if (cols.length === 3) {
+                doc.text(cols[0], startX, currentY);
+                doc.text(cols[1], startX + 250, currentY, { width: 130, align: 'right' });
+                doc.text(cols[2], startX + 380, currentY, { width: 135, align: 'right' });
             }
-            doc.y += 18;
+            
+            currentY += 12;
+            if (!isHeader) {
+                doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
+            } else {
+                doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
+            }
+            currentY += 6;
         };
 
-        const drawSectionHeader = (title) => {
-            if (doc.y > 700) doc.addPage();
-            doc.moveDown(1.5);
-            doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(String(title || '').toUpperCase(), 50, doc.y);
-            doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
-            doc.moveDown(0.5);
-        };
-
-        drawSectionHeader('Chiffre d\'Affaires & Encaissements');
-        drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
+        // --- 1. CHIFFRE D'AFFAIRES & ENCAISSEMENTS ---
+        drawTableTitle("1. CHIFFRE D'AFFAIRES & ENCAISSEMENTS");
+        drawRow(['Méthode de paiement', 'Montant'], true);
         caParMethodeResult.rows.forEach(m => {
-            drawTableRow(m.methode_paiement || 'Autre', `${parseFloat(m.total || 0).toFixed(2)} €`);
+            drawRow([m.methode_paiement || 'Autre', `${parseFloat(m.total || 0).toFixed(2).replace('.', ',')}`]);
         });
-        doc.moveDown(0.5);
-        drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
+        if (caParMethodeResult.rowCount === 0) drawRow(['Aucun encaissement', '0,00']);
+        drawRow(['TOTAL CHIFFRE D\'AFFAIRES', `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
+        currentY += 20;
 
-        drawSectionHeader('Dépenses (Factures Fournisseurs)');
-        drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
+        // --- 2. DÉPENSES (FACTURES FOURNISSEURS) ---
+        drawTableTitle("2. DÉPENSES (FACTURES FOURNISSEURS)");
+        drawRow(['Fournisseur / Date', 'Montant TTC'], true);
         let totalDepenses = 0;
         if (facturesResult.rowCount === 0) { 
-            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois-ci.', 50, doc.y);
-            doc.moveDown(1);
+            drawRow(['Aucune facture scannée ce mois-ci.', '0,00']);
         } else { 
             facturesResult.rows.forEach(f => { 
-                drawTableRow(`${f.nom_fournisseur || 'Facture'} (${f.date || ''})`, `${parseFloat(f.montant_ttc || 0).toFixed(2)} €`);
+                drawRow([`${f.nom_fournisseur || 'Facture'} (${f.date || ''})`, `${parseFloat(f.montant_ttc || 0).toFixed(2).replace('.', ',')}`]);
                 totalDepenses += parseFloat(f.montant_ttc || 0); 
             }); 
         }
-        doc.moveDown(0.5);
-        drawTableRow('Total Dépenses', `${totalDepenses.toFixed(2)} €`, false, true);
+        drawRow(['TOTAL DÉPENSES', `${totalDepenses.toFixed(2).replace('.', ',')}`], false, true);
+        currentY += 20;
 
-        drawSectionHeader('Commissions Employés');
-        drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
+        // --- 3. COMMISSIONS EMPLOYÉS ---
+        drawTableTitle("3. COMMISSIONS EMPLOYÉS");
+        drawRow(['Collaborateur', 'Prime Due'], true);
         let totalPrimes = 0;
         if (rhResult.rowCount === 0) { 
-            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y);
+            drawRow(['Aucune commission enregistrée.', '0,00']);
         } else { 
             rhResult.rows.forEach(c => { 
-                drawTableRow(c.nom || 'Employé', `${parseFloat(c.total_prime || 0).toFixed(2)} €`);
+                drawRow([c.nom || 'Employé', `${parseFloat(c.total_prime || 0).toFixed(2).replace('.', ',')}`]);
                 totalPrimes += parseFloat(c.total_prime || 0); 
             }); 
         }
-        doc.moveDown(0.5);
-        drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
+        drawRow(['TOTAL PRIMES ÉQUIPE', `${totalPrimes.toFixed(2).replace('.', ',')}`], false, true);
+        currentY += 30;
 
+        // --- 4. REGISTRE DES ABSENCES VALIDÉES ---
+        // Force le passage à la page suivante pour le registre des absences
         doc.addPage();
-        doc.font('Helvetica-Bold').fontSize(24).fillColor(THEME_COLOR).text('Variables de Paie & Absences', 50, 50);
-        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 50, 80);
-        doc.moveDown(3);
+        currentY = 40;
+        
+        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text(`VARIABLES DE PAIE & ABSENCES`, 40, currentY);
+        currentY += 25;
+        doc.font('Helvetica').fontSize(10).fillColor('#4b5563').text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 40, currentY);
+        currentY += 35;
 
-        drawSectionHeader('Registre des Absences Validées');
+        drawTableTitle("REGISTRE DES ABSENCES VALIDÉES");
+        drawRow(['Employé & Nature', 'Dates'], true);
+        
         if (absencesResult.rowCount === 0) {
-            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune absence enregistrée sur cette période.', 50, doc.y);
+            drawRow(['Aucune absence enregistrée sur cette période.', '']);
         } else {
-            drawTableRow('EMPLOYÉ & NATURE', 'DATES', true);
             absencesResult.rows.forEach(abs => {
                 const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence || ''})` : `Congé (${abs.nature_absence || ''})`;
-                const docsFournis = abs.fichier_cle_r2 ? " (Justificatif fourni)" : "";
                 let dateD = ''; let dateF = '';
                 try { dateD = new Date(abs.date_debut).toLocaleDateString('fr-FR'); } catch(e){}
                 try { dateF = new Date(abs.date_fin).toLocaleDateString('fr-FR'); } catch(e){}
-                drawTableRow(`${abs.nom_employe || ''} - ${natureStr.replace('_', ' ')}${docsFournis}`, `Du ${dateD} au ${dateF}`);
+                drawRow([`${abs.nom_employe || ''} - ${natureStr.replace('_', ' ')}`, `Du ${dateD} au ${dateF}`]);
             });
-        }
-
-        const pages = doc.bufferedPageRange();
-        for (let i = 0; i < pages.count; i++) {
-            doc.switchToPage(i);
-            doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR);
         }
 
         doc.end();
