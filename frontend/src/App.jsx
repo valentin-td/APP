@@ -4863,7 +4863,7 @@ function App() {
                           className="btn-action" 
                           style={{ width: '100%', padding: '16px', fontSize: '16px', background: (ecartDetecte !== null && !justificationEcart.trim()) ? 'var(--text-muted)' : (ecartDetecte !== null ? 'var(--color-danger)' : 'var(--text-main)') }}
                       >
-                          {ecartDetecte !== null ? "Justifier et Sceller" : "Sceller la caisse (Validation NF525)"}
+                          {ecartDetecte !== null ? "Justifier et Sceller" : "Sceller la caisse"}
                       </button>
                   </div>
               </div>
