@@ -511,6 +511,21 @@ function App() {
     const [showMouvementModal, setShowMouvementModal] = useState(false);
     const [newMouvement, setNewMouvement] = useState({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
 
+    // Nouveaux états pour le mode calculatrice de la Petite Caisse
+    const [modeCalculatrice, setModeCalculatrice] = useState(false);
+    const [ongletCalculatrice, setOngletCalculatrice] = useState('MONNAIES');
+    const [detailsMonnaie, setDetailsMonnaie] = useState({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
+
+    useEffect(() => {
+        if (modeCalculatrice) {
+            const total = ((parseInt(detailsMonnaie.b500)||0) * 500) + ((parseInt(detailsMonnaie.b200)||0) * 200) + ((parseInt(detailsMonnaie.b100)||0) * 100) +
+                          ((parseInt(detailsMonnaie.b50)||0) * 50) + ((parseInt(detailsMonnaie.b20)||0) * 20) + ((parseInt(detailsMonnaie.b10)||0) * 10) + ((parseInt(detailsMonnaie.b5)||0) * 5) +
+                          ((parseInt(detailsMonnaie.p2)||0) * 2) + ((parseInt(detailsMonnaie.p1)||0) * 1) + ((parseInt(detailsMonnaie.p050)||0) * 0.50) + ((parseInt(detailsMonnaie.p020)||0) * 0.20) +
+                          ((parseInt(detailsMonnaie.p010)||0) * 0.10) + ((parseInt(detailsMonnaie.p005)||0) * 0.05) + ((parseInt(detailsMonnaie.p002)||0) * 0.02) + ((parseInt(detailsMonnaie.p001)||0) * 0.01);
+            setNewMouvement(prev => ({ ...prev, montant: total > 0 ? total.toFixed(2) : '' }));
+        }
+    }, [detailsMonnaie, modeCalculatrice]);
+
     const chargerMouvementsCaisse = async () => {
         try {
             const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements/aujourdhui', { headers: getAuthHeaders(true) });
@@ -528,6 +543,8 @@ function App() {
             showToast("Mouvement enregistré.", "success");
             setShowMouvementModal(false);
             setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
+            setModeCalculatrice(false);
+            setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
             chargerMouvementsCaisse();
         } catch (e) { showToast(e.message, "error"); }
     };
@@ -4655,7 +4672,7 @@ function App() {
               <div className="modal-content" style={{ maxWidth: '400px', padding: 0, overflow: 'hidden' }}>
                   <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)' }}>
                       <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Mouvement de Caisse</h3>
-                      <button onClick={() => setShowMouvementModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                      <button onClick={() => { setShowMouvementModal(false); setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: ''}); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
                   </div>
@@ -4672,13 +4689,55 @@ function App() {
                           </button>
                       </div>
 
-                      <div style={{ marginBottom: '16px' }}>
-                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Montant (€)</label>
-                          <div style={{ position: 'relative' }}>
-                              <input type="number" placeholder="0.00" value={newMouvement.montant} onChange={(e) => setNewMouvement({...newMouvement, montant: e.target.value})} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '18px', fontWeight: 'bold' }} />
-                              <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '18px', fontWeight: 'bold' }}>€</span>
+                      {!modeCalculatrice ? (
+                          <div style={{ marginBottom: '16px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '8px' }}>
+                                  <label style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Montant (€)</label>
+                                  <button onClick={() => setModeCalculatrice(true)} style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.8 }}>
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" ry="2"/><circle cx="12" cy="12" r="2"/></svg>
+                                      Mode billets
+                                  </button>
+                              </div>
+                              <div style={{ position: 'relative' }}>
+                                  <input type="number" placeholder="0.00" value={newMouvement.montant} onChange={(e) => setNewMouvement({...newMouvement, montant: e.target.value})} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '18px', fontWeight: 'bold' }} />
+                                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '18px', fontWeight: 'bold' }}>€</span>
+                              </div>
                           </div>
-                      </div>
+                      ) : (
+                          <div style={{ marginBottom: '16px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                  <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-card)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                      <button onClick={() => setOngletCalculatrice('MONNAIES')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: ongletCalculatrice === 'MONNAIES' ? 'var(--text-main)' : 'transparent', color: ongletCalculatrice === 'MONNAIES' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}>Monnaies</button>
+                                      <button onClick={() => setOngletCalculatrice('BILLETS')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: ongletCalculatrice === 'BILLETS' ? 'var(--text-main)' : 'transparent', color: ongletCalculatrice === 'BILLETS' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}>Billets</button>
+                                  </div>
+                                  <button onClick={() => { setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: ''}); }} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Annuler</button>
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
+                                  {ongletCalculatrice === 'MONNAIES' ? (
+                                      [ { key: 'p2', label: '2 €' }, { key: 'p1', label: '1 €' }, { key: 'p050', label: '0.50 €' }, { key: 'p020', label: '0.20 €' }, { key: 'p010', label: '0.10 €' }, { key: 'p005', label: '0.05 €' }, { key: 'p002', label: '0.02 €' }, { key: 'p001', label: '0.01 €' } ].map(item => (
+                                          <div key={item.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px 10px' }}>
+                                              <span style={{ width: '45px', fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{item.label}</span>
+                                              <span style={{ color: 'var(--border-color)', margin: '0 6px' }}>×</span>
+                                              <input type="number" min="0" value={detailsMonnaie[item.key]} onChange={e => setDetailsMonnaie({...detailsMonnaie, [item.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '14px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
+                                          </div>
+                                      ))
+                                  ) : (
+                                      [ { key: 'b500', label: '500 €' }, { key: 'b200', label: '200 €' }, { key: 'b100', label: '100 €' }, { key: 'b50', label: '50 €' }, { key: 'b20', label: '20 €' }, { key: 'b10', label: '10 €' }, { key: 'b5', label: '5 €' } ].map(item => (
+                                          <div key={item.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px 10px' }}>
+                                              <span style={{ width: '45px', fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{item.label}</span>
+                                              <span style={{ color: 'var(--border-color)', margin: '0 6px' }}>×</span>
+                                              <input type="number" min="0" value={detailsMonnaie[item.key]} onChange={e => setDetailsMonnaie({...detailsMonnaie, [item.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '14px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
+                                          </div>
+                                      ))
+                                  )}
+                              </div>
+                              <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>Total calculé :</span>
+                                  <span style={{ fontSize: '18px', fontWeight: '900', color: 'var(--text-main)' }}>{newMouvement.montant || '0.00'} €</span>
+                              </div>
+                          </div>
+                      )}
 
                       <div style={{ marginBottom: '16px' }}>
                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Motif obligatoire</label>
