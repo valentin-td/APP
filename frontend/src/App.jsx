@@ -1045,28 +1045,54 @@ function App() {
   };
 
   const sInscrire = async () => {
-    if (!isLoginMode && (!prenomGerantInput.trim() || !nomFamilleGerantInput.trim())) {
-        setErreurLogin("Veuillez remplir les DEUX cases (Prénom et Nom de famille).");
-        return;
+    if (!isLoginMode) {
+        if (!prenomGerantInput.trim() || !nomFamilleGerantInput.trim()) {
+            return setErreurLogin("Veuillez remplir les DEUX cases (Prénom et Nom de famille).");
+        }
+        
+        // --- 1. SÉCURITÉ SIRET ---
+        const siretPropre = siretInput.replace(/\s/g, ''); // Enlève les espaces éventuels
+        if (!/^\d{14}$/.test(siretPropre)) {
+            return setErreurLogin("Le SIRET doit contenir exactement 14 chiffres.");
+        }
+
+        // --- 2. SÉCURITÉ MOT DE PASSE ---
+        if (motDePasseInput.length < 8) {
+            return setErreurLogin("Le mot de passe doit contenir au moins 8 caractères.");
+        }
+        // Interdit les suites faciles (ex: 12345678, azerty123, 11111111)
+        const passwordSimple = motDePasseInput.toLowerCase();
+        if (/^(1234|azerty|qwerty|password|motdepasse)/.test(passwordSimple) || /^(\w)\1+$/.test(passwordSimple) || '0123456789'.includes(passwordSimple) || '9876543210'.includes(passwordSimple)) {
+            return setErreurLogin("Mot de passe trop faible ou suite logique détectée. Sécurisez-le.");
+        }
+
+        if (!adresseSalonInput.trim()) {
+            return setErreurLogin("L'adresse complète du salon est obligatoire.");
+        }
     }
-    if (!isLoginMode && !siretInput.trim()) {
-        setErreurLogin("Le numéro SIRET est obligatoire pour la conformité comptable.");
-        return;
-    }
-    if (!isLoginMode && !adresseSalonInput.trim()) {
-        setErreurLogin("L'adresse complète du salon est obligatoire.");
-        return;
-    }
+
     try {
       const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomCompletGerant, siret: siretInput.trim(), adresse_salon: adresseSalonInput.trim() }) });
+      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomCompletGerant, siret: siretInput.replace(/\s/g, ''), adresse_salon: adresseSalonInput.trim() }) });
       const data = await response.json();
+      
       if (response.ok) { 
-          localStorage.setItem('ui_token', data.ui_token); if (data.token_api) localStorage.setItem('api_token', data.token_api); setToken(data.ui_token); setErreurLogin(null);
+          localStorage.setItem('ui_token', data.ui_token); 
+          if (data.token_api) localStorage.setItem('api_token', data.token_api); 
+          setToken(data.ui_token); 
+          setErreurLogin(null);
+          
           const decoded = decodeToken(data.ui_token);
           setUserRole(decoded?.role || 'gerant');
           setIsAbonnementInactif(false); 
-      } else { setErreurLogin(data.erreur); }
+          
+          // --- 3. FORCE L'AFFICHAGE DU POPUP LÉGAL ---
+          // Le nouveau gérant n'a par définition pas encore accepté les conditions
+          setLegalStatut({ accepte: false, en_attente: true });
+          
+      } else { 
+          setErreurLogin(data.erreur); 
+      }
     } catch (e) { 
         console.error("Détails du crash d'inscription :", e);
         setErreurLogin(`Erreur technique : ${e.message}`); 
