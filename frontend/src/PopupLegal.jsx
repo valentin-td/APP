@@ -30,20 +30,30 @@ export default function PopupLegal({ apiBase, token, onAccepted, onRefuse }) {
     
     fetch(`${apiBase}/api/legal/statut`, { headers: headers(false) })
       .then(r => r.json().then(d => ({ ok: r.ok, d })))
-      .then(({ ok, d }) => {
+      .then(async ({ ok, d }) => {
         if (annule) return;
         if (!ok) { setErreur(d.erreur || 'Erreur de chargement.'); setEtape('identite'); return; }
         if (d.accepte) { onAccepted(); return; }
         
-        setIdentite({
-            nom_salon: d.identite?.nom_salon || '',
-            gerant_prenom: d.identite?.gerant_prenom || '',
-            gerant_nom: d.identite?.gerant_nom || '',
-            adresse_salon: d.identite?.adresse_salon || '',
-            siret_salon: d.identite?.siret_salon || '',
-            email: d.identite?.email || ''
-        });
-        setEtape('identite');
+        try {
+            // Appel explicite à la route identité comme demandé pour pré-remplir le formulaire
+            const resId = await fetch(`${apiBase}/api/legal/identite`, { headers: headers(false) });
+            const dataId = await resId.json();
+            
+            if (!annule) {
+                setIdentite({
+                    nom_salon: dataId.identite?.nom_salon || '',
+                    gerant_prenom: dataId.identite?.gerant_prenom || '',
+                    gerant_nom: dataId.identite?.gerant_nom || '',
+                    adresse_salon: dataId.identite?.adresse_salon || '',
+                    siret_salon: dataId.identite?.siret_salon || '',
+                    email: dataId.identite?.email || ''
+                });
+                setEtape('identite');
+            }
+        } catch (e) {
+            if (!annule) { setErreur('Erreur lors du chargement de votre identité.'); setEtape('identite'); }
+        }
       })
       .catch(() => { if (!annule) { setErreur('Connexion impossible. Vérifiez votre réseau.'); setEtape('identite'); } });
     return () => { annule = true; };
