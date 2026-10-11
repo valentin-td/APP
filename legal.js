@@ -209,7 +209,7 @@ const textesIncomplets = (docs) => docs.filter(d => /\{\{\w+\}\}/.test(d.texte))
 
 async function chargerContexte(pool, id_salon) {
     const r = await pool.query(
-        `SELECT c.nom_salon, c.gerant_prenom, c.gerant_nom, c.adresse_salon, c.siret_salon, c.stripe_reader_id, c.tpe_modele, c.tpe_accessoires, u.email
+        `SELECT c.nom_salon, c.gerant_prenom, c.gerant_nom, c.adresse_salon, COALESCE(c.siret_salon, c.siret) as siret_salon, c.stripe_reader_id, c.tpe_modele, c.tpe_accessoires, u.email
          FROM configuration_salon c LEFT JOIN utilisateurs u ON u.id_salon = c.id_salon WHERE c.id_salon = $1`, [id_salon]);
     return r.rows[0] || null;
 }
@@ -371,7 +371,8 @@ function installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, n
         if (!identiteComplete(ident)) return res.status(400).json({ erreur: 'Tous les champs sont obligatoires.' });
         if (!/^\d{14}$/.test(ident.siret_salon)) return res.status(400).json({ erreur: 'Le SIRET doit comporter 14 chiffres.' });
         try {
-            await pool.query('UPDATE configuration_salon SET nom_salon=$1, gerant_prenom=$2, gerant_nom=$3, adresse_salon=$4, siret_salon=$5 WHERE id_salon=$6',
+            // CORRECTION CRITIQUE : On met à jour `siret_salon` (pour le module légal) ET `siret` (pour débloquer la Liasse Mensuelle)
+            await pool.query('UPDATE configuration_salon SET nom_salon=$1, gerant_prenom=$2, gerant_nom=$3, adresse_salon=$4, siret_salon=$5, siret=$5 WHERE id_salon=$6',
                 [ident.nom_salon, ident.gerant_prenom, ident.gerant_nom, ident.adresse_salon, ident.siret_salon, req.user.id_salon]);
             const ctx = await chargerContexte(pool, req.user.id_salon);
             const enAttente = await documentsEnAttente(pool, req.user.id_salon);
