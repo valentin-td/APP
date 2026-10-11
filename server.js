@@ -2977,7 +2977,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                             'ttc', COALESCE(lt.total_ligne_ttc, 0),
                             'tva', COALESCE(lt.taux_tva_snapshot, 20)
                         )
-                    ) FILTER (WHERE lt.id_article IS NOT NULL), '[]'::json
+                    ) FILTER (WHERE lt.id_ticket IS NOT NULL), '[]'::json
                 ) as lignes
             FROM tickets t
             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
@@ -2991,7 +2991,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total) || 0;
 
-        // 3. Clôture Info et Mouvements (RETRAIT DE date_creation POUR ÉVITER LE CRASH 500)
+        // 3. Clôture Info et Mouvements
         const clotureRes = await pool.query(`SELECT id_cloture, cumul_perpetuel_ttc, signature_hash, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
         const clotureData = clotureRes.rowCount > 0 ? clotureRes.rows[0] : null;
         const cloturePar = clotureData ? clotureData.ferme_par : 'Non spécifié';
