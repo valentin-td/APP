@@ -23,25 +23,40 @@ export default function PopupLegal({ apiBase, token, onAccepted, onRefuse }) {
 
   useEffect(() => {
     let annule = false;
+    if (!token) {
+        setErreur("Veuillez vous reconnecter.");
+        return;
+    }
+    
     fetch(`${apiBase}/api/legal/statut`, { headers: headers(false) })
       .then(r => r.json().then(d => ({ ok: r.ok, d })))
       .then(({ ok, d }) => {
         if (annule) return;
         if (!ok) { setErreur(d.erreur || 'Erreur de chargement.'); setEtape('identite'); return; }
         if (d.accepte) { onAccepted(); return; }
-        setIdentite(d.identite); setEtape('identite');
+        
+        setIdentite({
+            nom_salon: d.identite?.nom_salon || '',
+            gerant_prenom: d.identite?.gerant_prenom || '',
+            gerant_nom: d.identite?.gerant_nom || '',
+            adresse_salon: d.identite?.adresse_salon || '',
+            siret_salon: d.identite?.siret_salon || '',
+            email: d.identite?.email || ''
+        });
+        setEtape('identite');
       })
       .catch(() => { if (!annule) { setErreur('Connexion impossible. Vérifiez votre réseau.'); setEtape('identite'); } });
     return () => { annule = true; };
-  }, []);
+  }, [token, apiBase]);
 
   const maj = (champ) => (e) => setIdentite(prev => ({ ...prev, [champ]: e.target.value }));
-  const identiteOk = identite.nom_salon.trim() && identite.gerant_prenom.trim() && identite.gerant_nom.trim() && identite.adresse_salon.trim() && identite.siret_salon.replace(/\s/g, '').length === 14;
+  const identiteOk = identite.nom_salon.trim() && identite.gerant_prenom.trim() && identite.gerant_nom.trim() && identite.adresse_salon.trim() && (identite.siret_salon || '').replace(/\s/g, '').length === 14;
 
   const validerIdentite = async () => {
     setEnvoi(true); setErreur(null);
     try {
-      const r = await fetch(`${apiBase}/api/legal/identite`, { method: 'POST', headers: headers(true), body: JSON.stringify(identite) });
+      const identitePropre = { ...identite, siret_salon: (identite.siret_salon || '').replace(/\s/g, '') };
+      const r = await fetch(`${apiBase}/api/legal/identite`, { method: 'POST', headers: headers(true), body: JSON.stringify(identitePropre) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.erreur || 'Erreur.');
       setDocs(d.documents); setEtape('documents');
