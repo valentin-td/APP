@@ -345,6 +345,24 @@ function installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, n
         } catch (e) { console.error('legal/statut', e.message); res.status(500).json({ erreur: 'Erreur de vérification des conditions.' }); }
     });
 
+    // Étape 0 : Récupération de l'identité en base pour affichage dynamique dans PopupLegal
+    app.get('/api/legal/identite', verifierGerantLegal, async (req, res) => {
+        try {
+            const ctx = await chargerContexte(pool, req.user.id_salon);
+            if (!ctx) return res.status(404).json({ erreur: 'Salon introuvable.' });
+            res.json({
+                identite: { 
+                    nom_salon: ctx.nom_salon || '', 
+                    gerant_prenom: ctx.gerant_prenom || '', 
+                    gerant_nom: ctx.gerant_nom || '', 
+                    adresse_salon: ctx.adresse_salon || '', 
+                    siret_salon: ctx.siret_salon || '', 
+                    email: ctx.email || '' 
+                }
+            });
+        } catch (e) { res.status(500).json({ erreur: 'Erreur de lecture de l\'identité.' }); }
+    });
+
     // Étape 1 : enregistrer l'identité (mentions du contrat remplies automatiquement) et renvoyer les documents à lire
     app.post('/api/legal/identite', verifierGerantLegal, async (req, res) => {
         const b = req.body || {};
