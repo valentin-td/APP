@@ -1049,14 +1049,8 @@ function App() {
         if (!prenomGerantInput.trim() || !nomFamilleGerantInput.trim()) {
             return setErreurLogin("Veuillez remplir les DEUX cases (Prénom et Nom de famille).");
         }
-        
-        // --- 1. SÉCURITÉ SIRET ---
-        const siretPropre = siretInput.replace(/\s/g, ''); // Enlève les espaces éventuels
-        if (!/^\d{14}$/.test(siretPropre)) {
-            return setErreurLogin("Le SIRET doit contenir exactement 14 chiffres.");
-        }
 
-        // --- 2. SÉCURITÉ MOT DE PASSE ---
+        // --- 1. SÉCURITÉ MOT DE PASSE ---
         if (motDePasseInput.length < 8) {
             return setErreurLogin("Le mot de passe doit contenir au moins 8 caractères.");
         }
@@ -1065,20 +1059,28 @@ function App() {
         if (/^(1234|azerty|qwerty|password|motdepasse)/.test(passwordSimple) || /^(\w)\1+$/.test(passwordSimple) || '0123456789'.includes(passwordSimple) || '9876543210'.includes(passwordSimple)) {
             return setErreurLogin("Mot de passe trop faible ou suite logique détectée. Sécurisez-le.");
         }
-
-        if (!adresseSalonInput.trim()) {
-            return setErreurLogin("L'adresse complète du salon est obligatoire.");
-        }
     }
 
     try {
       const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomCompletGerant, siret: siretInput.replace(/\s/g, ''), adresse_salon: adresseSalonInput.trim() }) });
+      
+      // On n'envoie plus siret et adresse_salon ici
+      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify({ 
+              email: emailInput, 
+              mot_de_passe: motDePasseInput, 
+              nom_salon: nomSalonInput, 
+              nom_gerant: nomCompletGerant 
+          }) 
+      });
       const data = await response.json();
       
       if (response.ok) { 
           localStorage.setItem('ui_token', data.ui_token); 
           if (data.token_api) localStorage.setItem('api_token', data.token_api); 
+          
           setToken(data.ui_token); 
           setErreurLogin(null);
           
@@ -1086,9 +1088,11 @@ function App() {
           setUserRole(decoded?.role || 'gerant');
           setIsAbonnementInactif(false); 
           
-          // --- 3. FORCE L'AFFICHAGE DU POPUP LÉGAL ---
-          // Le nouveau gérant n'a par définition pas encore accepté les conditions
-          setLegalStatut({ accepte: false, en_attente: true });
+          // --- FORCE L'AFFICHAGE DU POPUP LÉGAL ---
+          // On attend 100ms que le token s'enregistre bien avant de déclencher la popup
+          setTimeout(() => {
+              setLegalStatut({ accepte: false, en_attente: true });
+          }, 100); 
           
       } else { 
           setErreurLogin(data.erreur); 
@@ -1939,8 +1943,6 @@ function App() {
                           </div>
                       )}
                       {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
-                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Adresse complète du salon" style={{marginBottom: '12px'}} value={adresseSalonInput} onChange={(e) => setAdresseSalonInput(e.target.value)} />)}
-                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="N° SIRET (Obligatoire pour la liasse)" style={{marginBottom: '12px'}} value={siretInput} onChange={(e) => setSiretInput(e.target.value)} />)}
                       <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
                       <input type="password" className="input-fournisseur" placeholder="Mot de passe" value={motDePasseInput} onChange={(e) => setMotDePasseInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (isLoginMode ? seConnecter() : sInscrire())} />
                       <button className="btn-action" onClick={isLoginMode ? seConnecter : sInscrire} style={{ width: '100%', marginTop: '16px' }}>{isLoginMode ? 'Se connecter' : "S'inscrire"}</button>
