@@ -4436,6 +4436,18 @@ app.get('/api/admin/time-travel/:id_salon', async (req, res) => {
     }
 });
 
+// --- CHEAT CODE : INJECTION SIRET POUR TEST PDF ---
+app.get('/api/admin/fix-siret-38', async (req, res) => {
+    try {
+        await pool.query(
+            "UPDATE configuration_salon SET siret = '12345678901234', siret_salon = '12345678901234', adresse_salon = '123 Rue de Test, 75000 Paris' WHERE id_salon = 38"
+        );
+        res.json({ message: "✅ SIRET (12345678901234) et Adresse injectés avec succès pour le salon 38 !" });
+    } catch (e) { 
+        res.status(500).json({ erreur: e.message }); 
+    }
+});
+
 // =========================================================================
 // --- GOD MODE (SUPER-ADMIN) ---
 // =========================================================================
