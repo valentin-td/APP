@@ -571,23 +571,23 @@ const authLimiter = rateLimit({
 });
 
 app.post('/api/register', authLimiter, async (req, res) => {
-    const { email, mot_de_passe, nom_salon, nom_gerant, siret, adresse_salon } = req.body;
+    const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
         const checkEmail = await clientDB.query('SELECT email FROM utilisateurs WHERE email = $1', [email]);
         if (checkEmail.rowCount > 0) throw new Error('Cet e-mail est déjà utilisé.');
         const hash = await bcrypt.hash(mot_de_passe, 10);
+        
         const salonResult = await clientDB.query(
-            "INSERT INTO configuration_salon (nom_salon, siret, adresse_salon, date_fin_essai, plan_actuel) VALUES ($1, $2, $3, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
-            [nom_salon || 'Nouveau Salon', siret || null, adresse_salon || null]
+            "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
+            [nom_salon || 'Nouveau Salon']
         );
         const idNouveauSalon = salonResult.rows[0].id_salon;
         let customerId = null;
         try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
         await clientDB.query('INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']); 
         
-        // Création automatique de la fiche employé pour le gérant avec un PIN chiffré par défaut
         const defaultPinHash = await bcrypt.hash('0000', 10);
         await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)", [nom_gerant || 'Patron', idNouveauSalon, defaultPinHash]);
 
@@ -595,7 +595,9 @@ app.post('/api/register', authLimiter, async (req, res) => {
         const payload = { id_salon: idNouveauSalon, role: 'gerant', email };
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 24 * 60 * 60 * 1000 });
-        res.status(201).json({ message: "Inscription réussie", ui_token: generateUIToken(payload) });
+        
+        // IMPORTANT: Renvoie le vrai token_api nécessaire au module légal juste après
+        res.status(201).json({ message: "Inscription réussie", ui_token: generateUIToken(payload), token_api: token });
     } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
 });
 
