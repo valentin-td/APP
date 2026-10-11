@@ -147,6 +147,8 @@ function App() {
   const [nomEmployeInput, setNomEmployeInput] = useState('');
   const [pinEmployeInput, setPinEmployeInput] = useState('');
   const [pinSalonInput, setPinSalonInput] = useState('');
+  const [siretInput, setSiretInput] = useState('');
+  const [adresseSalonInput, setAdresseSalonInput] = useState('');
 
   const [isAbonnementInactif, setIsAbonnementInactif] = useState(false);
   const [userRole, setUserRole] = useState('gerant'); 
@@ -1047,9 +1049,17 @@ function App() {
         setErreurLogin("Veuillez remplir les DEUX cases (Prénom et Nom de famille).");
         return;
     }
+    if (!isLoginMode && !siretInput.trim()) {
+        setErreurLogin("Le numéro SIRET est obligatoire pour la conformité comptable.");
+        return;
+    }
+    if (!isLoginMode && !adresseSalonInput.trim()) {
+        setErreurLogin("L'adresse complète du salon est obligatoire.");
+        return;
+    }
     try {
       const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomCompletGerant }) });
+      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput, mot_de_passe: motDePasseInput, nom_salon: nomSalonInput, nom_gerant: nomCompletGerant, siret: siretInput.trim(), adresse_salon: adresseSalonInput.trim() }) });
       const data = await response.json();
       if (response.ok) { 
           localStorage.setItem('ui_token', data.ui_token); if (data.token_api) localStorage.setItem('api_token', data.token_api); setToken(data.ui_token); setErreurLogin(null);
@@ -1903,6 +1913,8 @@ function App() {
                           </div>
                       )}
                       {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
+                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Adresse complète du salon" style={{marginBottom: '12px'}} value={adresseSalonInput} onChange={(e) => setAdresseSalonInput(e.target.value)} />)}
+                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="N° SIRET (Obligatoire pour la liasse)" style={{marginBottom: '12px'}} value={siretInput} onChange={(e) => setSiretInput(e.target.value)} />)}
                       <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
                       <input type="password" className="input-fournisseur" placeholder="Mot de passe" value={motDePasseInput} onChange={(e) => setMotDePasseInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (isLoginMode ? seConnecter() : sInscrire())} />
                       <button className="btn-action" onClick={isLoginMode ? seConnecter : sInscrire} style={{ width: '100%', marginTop: '16px' }}>{isLoginMode ? 'Se connecter' : "S'inscrire"}</button>
