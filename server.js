@@ -2995,7 +2995,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const caTotal = parseFloat(caResult.rows[0].ca_total) || 0;
 
         // 3. Clôture Info et Mouvements
-        const clotureRes = await pool.query(`SELECT id_cloture, date_creation as heure_cloture, cumul_perpetuel_ttc, signature_hash, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
+        const clotureRes = await pool.query(`SELECT id_cloture, cumul_perpetuel_ttc, signature_hash, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
         const clotureData = clotureRes.rowCount > 0 ? clotureRes.rows[0] : null;
         const cloturePar = clotureData ? clotureData.ferme_par : 'Non spécifié';
 
@@ -3092,13 +3092,13 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         if (clotureData) {
             doc.font('Helvetica-Bold').fillColor('#16a34a').text(`STATUT : CLÔTURÉ (Z n°${clotureData.id_cloture})`, 40, currentY);
             currentY += 15;
-            doc.font('Helvetica').fillColor('#4b5563').text(`Clôturé le : ${new Date(clotureData.heure_cloture).toLocaleString('fr-FR')} par ${responsableCloture}`, 40, currentY);
+            doc.font('Helvetica').fillColor('#4b5563').text(`Clôturé par : ${responsableCloture}`, 40, currentY);
             currentY += 15;
             doc.text(`Cumul perpétuel TTC : ${parseFloat(clotureData.cumul_perpetuel_ttc || 0).toFixed(2).replace('.', ',')} €`, 40, currentY);
             currentY += 15;
-            doc.font('Courier').fontSize(7).text(`Hash de ce Z : ${clotureData.signature_hash}`, 40, currentY);
+            doc.font('Courier').fontSize(7).text(`Hash de ce Z : ${clotureData.signature_hash || 'N/A'}`, 40, currentY);
             currentY += 10;
-            doc.text(`Hash chaîné (précédent) : ${clotureData.hash_precedent}`, 40, currentY);
+            doc.text(`Hash chaîné (précédent) : ${clotureData.hash_precedent || 'GENESIS_Z'}`, 40, currentY);
             currentY += 15;
         } else {
             doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`STATUT : PROVISOIRE (Caisse non clôturée)`, 40, currentY);
@@ -3286,9 +3286,9 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         currentY += 30;
         if (currentY > 720) { doc.addPage(); currentY = 40; }
         
-        if (clotureData) {
+       if (clotureData) {
             doc.font('Helvetica-Bold').fontSize(10).fillColor('#111827').text(`Clôturé et validé par : ${responsableCloture}`, 40, currentY);
-            doc.font('Helvetica').fontSize(9).text(`Le ${new Date(clotureData.heure_cloture).toLocaleString('fr-FR')}`, 40, currentY + 14);
+            doc.font('Helvetica').fontSize(9).text(`Date de clôture : ${new Date(dateCible).toLocaleDateString('fr-FR')}`, 40, currentY + 14);
             doc.rect(40, currentY + 30, 200, 50).stroke('#e5e7eb');
         }
 
