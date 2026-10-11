@@ -571,7 +571,7 @@ const authLimiter = rateLimit({
 });
 
 app.post('/api/register', authLimiter, async (req, res) => {
-    const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
+    const { email, mot_de_passe, nom_salon, nom_gerant, siret, adresse_salon } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
@@ -579,8 +579,8 @@ app.post('/api/register', authLimiter, async (req, res) => {
         if (checkEmail.rowCount > 0) throw new Error('Cet e-mail est déjà utilisé.');
         const hash = await bcrypt.hash(mot_de_passe, 10);
         const salonResult = await clientDB.query(
-            "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
-            [nom_salon || 'Nouveau Salon']
+            "INSERT INTO configuration_salon (nom_salon, siret, adresse_salon, date_fin_essai, plan_actuel) VALUES ($1, $2, $3, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
+            [nom_salon || 'Nouveau Salon', siret || null, adresse_salon || null]
         );
         const idNouveauSalon = salonResult.rows[0].id_salon;
         let customerId = null;
