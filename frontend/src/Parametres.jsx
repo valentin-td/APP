@@ -159,7 +159,7 @@ const groupesBas = [
                         </div>
                     )}
 
-                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '24px 0 8px 0'}}>📱 Relance SMS Auto</h4>
+                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '24px 0 8px 0'}}>Relance SMS Auto</h4>
                     <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
                         <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Délai d'inactivité avant relance (Jours)</label>
                         <input type="number" className="input-fournisseur" placeholder="Ex: 60" value={configSalon.fidelite_delai_sms || ''} onChange={e => setConfigSalon({...configSalon, fidelite_delai_sms: e.target.value})} />
@@ -202,7 +202,7 @@ const groupesBas = [
       </>);
       case 'alertes': return (<>
                   <div className="carte scan-carte">
-                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 16px 0'}}>🔔 Notifications sur ce téléphone</h4>
+                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 16px 0'}}>Notifications sur ce téléphone</h4>
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px'}}>Recevez des alertes en direct (messages, RDV, urgences) même si l'application est fermée.</span>
                     <button type="button" className="btn-action" style={{ width: '100%', marginBottom: '24px' }} onClick={onEnablePush}>Activer les notifications de l'App</button>
                     
