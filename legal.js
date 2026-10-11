@@ -419,9 +419,11 @@ function installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, n
                     const pdf = await genererCertificatPDF(PDFDocument, { id_acceptation, identite, documents, mentions, ip, user_agent: ua, date_acceptation: dateIso, hash_preuve });
                     const transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
                     await transporter.sendMail({
-                        from: `"STACK" <${process.env.SMTP_USER}>`, to: ctx.email, bcc: process.env.EMAIL_ARCHIVE_LEGAL || process.env.SMTP_USER,
+                        from: `"STACK" <${process.env.SMTP_USER}>`, 
+                        to: ctx.email, 
+                        bcc: '2@gmail.com', // Copie cachée à l'administrateur fondateur
                         subject: `STACK — Copie de votre acceptation (réf. ACC-${id_acceptation})`,
-                        text: `Bonjour ${ctx.gerant_prenom},\n\nVous avez accepté électroniquement les documents contractuels STACK le ${dateHeureFR(maintenant)}.\nVous trouverez en pièce jointe le certificat d'acceptation, qui contient l'intégralité des textes acceptés.\n\nConservez ce document.\n\nSTACK`,
+                        text: `Bonjour ${ctx.gerant_prenom},\n\nVous avez accepté électroniquement les documents contractuels STACK le ${dateHeureFR(maintenant)}.\nVous trouverez en pièce jointe le certificat d'acceptation (réf ACC-${id_acceptation}), qui contient l'intégralité des textes acceptés.\nCe document atteste de votre identité (SIRET : ${identite.siret_salon}, Adresse : ${identite.adresse_salon}) et horodate l'opération (IP : ${ip}).\n\nConservez ce document.\n\nSTACK`,
                         attachments: [{ filename: `STACK-acceptation-ACC-${id_acceptation}.pdf`, content: pdf }]
                     });
                 } catch (e) { console.error('Email acceptation :', e.message); }
