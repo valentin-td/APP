@@ -1296,7 +1296,9 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             await clientDB.query('BEGIN');
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
-        const numeroTicket = `TKT-${methode.substring(0,2)}-` + Date.now();
+        const countRes = await clientDB.query('SELECT COUNT(id_ticket) as nb FROM tickets WHERE id_salon = $1', [id_salon]);
+        const seq = parseInt(countRes.rows[0].nb) + 1;
+        const numeroTicket = `TKT-${methode.substring(0,2)}-${String(seq).padStart(6, '0')}`;
         
         const ticketResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END) RETURNING id_ticket;`, 
@@ -1338,7 +1340,8 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 
                 if (employe) {
                     const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
-                    const montant_commission = (total_ligne * (taux / 100)).toFixed(2);
+                    const ht_ligne = total_ligne / (1 + (tvaSnapshot / 100));
+                    const montant_commission = (ht_ligne * (taux / 100)).toFixed(2);
                     await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon, date_creation) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, NOW()))`, 
                     [id_employe, idNouveauTicket, total_ligne, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
                 }
@@ -1462,7 +1465,9 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
 
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
-        const numeroCompensation = `TKT-AN-` + Date.now();
+        const countRes = await clientDB.query('SELECT COUNT(id_ticket) as nb FROM tickets WHERE id_salon = $1', [id_salon]);
+        const seq = parseInt(countRes.rows[0].nb) + 1;
+        const numeroCompensation = `TKT-AN-${String(seq).padStart(6, '0')}`;
 
         const compensationResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
@@ -2951,63 +2956,72 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
     const id_employe = req.user.id_employe;
     
     try {
+        const configRes = await pool.query('SELECT nom_salon, siret, adresse_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = configRes.rows[0] || {};
+        
         const filtreEmploye = estEmploye ? ' AND t.id_employe = $3' : '';
         const paramsVentes = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
         
-        // 1. Ventes Détaillées
+        // 1. Ventes Détaillées avec JSON_AGG pour récupérer Quantité et TVA
         const ventesResult = await pool.query(`
             SELECT 
                 t.id_ticket, t.numero_ticket_caisse, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
                 COALESCE(e.nom, 'Inconnu') as employe,
-                (SELECT string_agg(COALESCE(lt.nom_article_snapshot, c.nom), ', ') FROM lignes_ticket lt LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE lt.id_ticket = t.id_ticket) as prestations
+                json_agg(
+                    json_build_object(
+                        'nom', COALESCE(lt.nom_article_snapshot, c.nom, 'Article supprimé'),
+                        'qte', lt.quantite,
+                        'ttc', lt.total_ligne_ttc,
+                        'tva', lt.taux_tva_snapshot
+                    )
+                ) as lignes
             FROM tickets t
+            LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
+            LEFT JOIN catalogue c ON lt.id_article = c.id_article
             LEFT JOIN employes e ON t.id_employe = e.id_employe
             WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            GROUP BY t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.total_ttc, t.methode_paiement, e.nom
             ORDER BY t.date_creation ASC
         `, paramsVentes);
 
-        // 2. CA Total
         const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
         // 3. Clôture Info et Mouvements
-        const clotureRes = await pool.query(`SELECT ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
+        const clotureRes = await pool.query(`SELECT id_cloture, date_creation as heure_cloture, cumul_perpetuel_ttc, signature_hash, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
         const clotureData = clotureRes.rowCount > 0 ? clotureRes.rows[0] : null;
         const cloturePar = clotureData ? clotureData.ferme_par : 'Non spécifié';
 
         const mouvementsResult = await pool.query(`SELECT COALESCE(SUM(montant), 0) as total_sorties FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2 AND type_mouvement = 'SORTIE'`, [id_salon, dateCible]);
         const totalSorties = parseFloat(mouvementsResult.rows[0].total_sorties);
 
-        // Identification du Gérant pour la signature
         const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
         const nomGerant = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Gérant';
 
         let responsableCloture = cloturePar;
-        if (cloturePar === 'Non spécifié' || cloturePar === 'Gérant') {
-            responsableCloture = nomGerant;
-        } else if (cloturePar.includes('Fermeture Automatique')) {
-            responsableCloture = 'Fermeture Automatique';
-        }
+        if (cloturePar === 'Non spécifié' || cloturePar === 'Gérant') responsableCloture = nomGerant;
+        else if (cloturePar.includes('Robot')) responsableCloture = 'Fermeture Automatique';
 
         // 4. Stats Commerciales & Commissions
         const filtreEmployeCommissions = estEmploye ? ' AND c.id_employe = $3' : '';
         const paramsStats = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
         const statsResult = await pool.query(`
             SELECT
-                COUNT(DISTINCT c.id_ticket) as nb_clients,
-                COALESCE(SUM(c.montant_commission), 0) as commission_totale
-            FROM commissions c
-            WHERE c.id_salon = $1 AND DATE(c.date_creation) = $2${filtreEmployeCommissions}
+                COUNT(DISTINCT t.id_ticket) as nb_tickets,
+                COUNT(DISTINCT t.id_client) as nb_clients,
+                (SELECT COALESCE(SUM(c.montant_commission), 0) FROM commissions c WHERE c.id_salon = $1 AND DATE(c.date_creation) = $2${filtreEmployeCommissions}) as commission_totale
+            FROM tickets t
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
         `, paramsStats);
+        
+        const nbTickets = parseInt(statsResult.rows[0].nb_tickets) || 0;
         const nbClients = parseInt(statsResult.rows[0].nb_clients) || 0;
         const commissionTotale = parseFloat(statsResult.rows[0].commission_totale) || 0;
 
         // 5. CA par Catégorie
         const caCategories = await pool.query(`
             SELECT COALESCE(c.type_article, 'PRESTATION') as type_article, SUM(lt.total_ligne_ttc) as total
-            FROM lignes_ticket lt
-            JOIN tickets t ON t.id_ticket = lt.id_ticket
-            LEFT JOIN catalogue c ON c.id_article = lt.id_article
+            FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON c.id_article = lt.id_article
             WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
             GROUP BY COALESCE(c.type_article, 'PRESTATION')
         `, paramsVentes);
@@ -3015,17 +3029,15 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         let totalPrestations = 0, totalRevente = 0;
         caCategories.rows.forEach(r => {
             if (r.type_article === 'PRESTATION') totalPrestations += parseFloat(r.total);
-            else totalRevente += parseFloat(r.total); // Regroupe PRODUIT_REVENTE et CONSOMMABLE
+            else totalRevente += parseFloat(r.total);
         });
 
         // 6. Détail TVA
         const tvaDetails = await pool.query(`
             SELECT lt.taux_tva_snapshot as taux, SUM(lt.total_ligne_ttc) as total_ttc
-            FROM lignes_ticket lt
-            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket
             WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
-            GROUP BY lt.taux_tva_snapshot
-            ORDER BY lt.taux_tva_snapshot DESC
+            GROUP BY lt.taux_tva_snapshot ORDER BY lt.taux_tva_snapshot DESC
         `, paramsVentes);
 
         // 7. Méthodes de Paiement
@@ -3060,7 +3072,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             employesStats = empStatsRes.rows;
         }
 
-        // ================== CRÉATION DU PDF (Format Ledger Google Sheets) ==================
+        // ================== CRÉATION DU PDF ==================
         const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="Bilan_Journalier_${dateCible}.pdf"`);
@@ -3068,15 +3080,33 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         let currentY = 40;
 
-        // --- EN-TÊTE ---
+        // --- EN-TÊTE ET MENTIONS LÉGALES ---
         doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text(`BILAN JOURNALIER - ${estEmploye ? 'EMPLOYÉ' : 'SALON'}`, 40, currentY);
         currentY += 25;
-        doc.font('Helvetica').fontSize(10).fillColor('#4b5563').text(`Date : ${new Date(dateCible).toLocaleDateString('fr-FR')}`, 40, currentY);
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(config.nom_salon || 'Salon', 40, currentY);
         currentY += 15;
-        doc.text(`Responsable cloture de caisse : ${responsableCloture}`, 40, currentY);
-        currentY += 30;
+        doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`SIRET: ${config.siret || 'N/A'} | Adresse: ${config.adresse_salon || 'N/A'}`, 40, currentY);
+        currentY += 15;
+        doc.text(`Date d'activité : ${new Date(dateCible).toLocaleDateString('fr-FR')} | Édité le : ${new Date().toLocaleString('fr-FR')}`, 40, currentY);
+        currentY += 20;
 
-        // --- MOTEUR DE DESSIN DE TABLEAU ---
+        if (clotureData) {
+            doc.font('Helvetica-Bold').fillColor('#16a34a').text(`STATUT : CLÔTURÉ (Z n°${clotureData.id_cloture})`, 40, currentY);
+            currentY += 15;
+            doc.font('Helvetica').fillColor('#4b5563').text(`Heure de clôture : ${new Date(clotureData.heure_cloture).toLocaleTimeString('fr-FR')}`, 40, currentY);
+            currentY += 15;
+            doc.text(`Cumul perpétuel TTC : ${parseFloat(clotureData.cumul_perpetuel_ttc).toFixed(2).replace('.', ',')} €`, 40, currentY);
+            currentY += 15;
+            doc.font('Courier').fontSize(7).text(`Hash : ${clotureData.signature_hash}`, 40, currentY);
+            currentY += 15;
+        } else {
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`STATUT : PROVISOIRE (Caisse non clôturée)`, 40, currentY);
+            currentY += 15;
+        }
+        doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`Responsable clôture : ${responsableCloture}`, 40, currentY);
+        currentY += 25;
+
+        // --- MOTEUR DE DESSIN ---
         const drawTableTitle = (title) => {
             if (currentY > 750) { doc.addPage(); currentY = 40; }
             doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(title, 40, currentY);
@@ -3096,29 +3126,20 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                 doc.text(cols[0], startX, currentY);
                 doc.text(cols[1], startX + 250, currentY, { width: 130, align: 'right' });
                 doc.text(cols[2], startX + 380, currentY, { width: 135, align: 'right' });
-            } else if (cols.length === 4) {
-                doc.text(cols[0], startX, currentY);
-                doc.text(cols[1], startX + 150, currentY, { width: 120, align: 'right' });
-                doc.text(cols[2], startX + 270, currentY, { width: 120, align: 'right' });
-                doc.text(cols[3], startX + 390, currentY, { width: 125, align: 'right' });
             }
             
             currentY += 12;
-            if (!isHeader) {
-                doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
-            } else {
-                doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
-            }
+            doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? '#111827' : '#e5e7eb').stroke();
             currentY += 6;
         };
 
-        // --- 1. CHIFFRE D'AFFAIRE ---
-        drawTableTitle("1. CHIFFRE D'AFFAIRE (TTC)");
-        drawRow(['Categorie', 'Montant TTC'], true);
+        // --- 1. CHIFFRE D'AFFAIRES ---
+        drawTableTitle("1. CHIFFRE D'AFFAIRES (TTC)");
+        drawRow(['Catégorie', 'Montant TTC'], true);
         drawRow(['Total Prestations', `${totalPrestations.toFixed(2).replace('.', ',')}`]);
         drawRow(['Total Revente', `${totalRevente.toFixed(2).replace('.', ',')}`]);
-        drawRow(["CHIFFRE D'AFFAIRE TOTAL", `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
-        currentY += 20;
+        drawRow(["CHIFFRE D'AFFAIRES TOTAL", `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
+        currentY += 15;
 
         // --- 2. DETAIL TVA ---
         drawTableTitle("2. DETAIL TVA (20%)");
@@ -3130,17 +3151,17 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             const tva = ttc - ht;
             drawRow([`${ht.toFixed(2).replace('.', ',')}`, `${tva.toFixed(2).replace('.', ',')}`, `${ttc.toFixed(2).replace('.', ',')}`]);
         });
-        if (tvaDetails.rowCount === 0) drawRow(['0', '0', '0']);
-        currentY += 20;
+        if (tvaDetails.rowCount === 0) drawRow(['0,00', '0,00', '0,00']);
+        currentY += 15;
 
         // --- 3. ENCAISSEMENTS ---
         drawTableTitle("3. ENCAISSEMENTS");
-        drawRow(['Mode de paiment', 'Montant'], true);
+        drawRow(['Mode de paiement', 'Montant'], true);
         drawRow(['Carte bancaire', `${totalCB.toFixed(2).replace('.', ',')}`]);
         drawRow(['Espèces', `${totalEspeces.toFixed(2).replace('.', ',')}`]);
         drawRow(['Chèques', `${totalCheques.toFixed(2).replace('.', ',')}`]);
         drawRow(["TOTAL ENCAISSÉ", `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
-        currentY += 20;
+        currentY += 15;
 
         // --- 4. CONTROLE DE LA CAISSE (Gérant uniquement) ---
         if (!estEmploye) {
@@ -3152,15 +3173,14 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             const tReel = clotureData ? parseFloat(clotureData.total_especes_reel) : 0;
             const ecart = clotureData ? parseFloat(clotureData.ecart_caisse) : 0;
 
-            drawRow(['Fond de caisse matin', `${fMatin.toFixed(2).replace('.', ',')}`]);
+            drawRow(['Fond de caisse matin (Laissé la veille)', `${fMatin.toFixed(2).replace('.', ',')}`]);
             drawRow(['Espèces encaissées clients', `${totalEspeces.toFixed(2).replace('.', ',')}`]);
-            drawRow(['Sorties de caisse (Dépenses)', `-${totalSorties.toFixed(2).replace('.', ',')}`]);
-            drawRow(['Total Théorique', `${tTheorique.toFixed(2).replace('.', ',')}`], false, true);
+            drawRow(['Sorties de caisse (Dépenses)', `${totalSorties === 0 ? '0,00' : '-' + totalSorties.toFixed(2).replace('.', ',')}`]);
+            drawRow(['Total Théorique (Caisse du soir attendue)', `${tTheorique.toFixed(2).replace('.', ',')}`], false, true);
             
-            // Si la caisse a été fermée par le robot, on le précise
             const texteReel = cloturePar.includes('Robot') ? 'Non compté (Fermeture Auto)' : `${tReel.toFixed(2).replace('.', ',')}`;
-            drawRow(['Total Réel (Compté)', texteReel], false, true); 
-            drawRow(['ECART DE CAISSE', `${ecart > 0 ? '+' : ''}${ecart.toFixed(2).replace('.', ',')}`], false, true);
+            drawRow(['Total Réel (Caisse du soir comptée / conservée)', texteReel], false, true); 
+            drawRow(['ÉCART DE CAISSE', `${ecart > 0 ? '+' : ''}${ecart.toFixed(2).replace('.', ',')}`], false, true);
             
             if (clotureData && clotureData.justification_ecart) {
                 currentY += 5;
@@ -3168,40 +3188,37 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                 doc.text(`Justification de l'écart : "${clotureData.justification_ecart}"`, 40, currentY);
                 currentY += 15;
             } else {
-                currentY += 20;
+                currentY += 15;
             }
         }
 
         // --- 5. INDICATEURS COMMERCIAUX ---
         drawTableTitle("5. INDICATEURS COMMERCIAUX");
         drawRow(['Indicateur', 'Valeur'], true);
-        drawRow(['Nombre de clients', `${nbClients}`]);
-        const ticketMoyen = nbClients > 0 ? caTotal / nbClients : 0;
+        drawRow(['Nombre de tickets', `${nbTickets}`]);
+        drawRow(['Nombre de clients (uniques)', `${nbClients}`]);
+        const ticketMoyen = nbTickets > 0 ? caTotal / nbTickets : 0;
         drawRow(['Ticket moyen', `${ticketMoyen.toFixed(2).replace('.', ',')}`]);
         
         if (!estEmploye) {
-            // CA et Prime de CHAQUE employé
-            employesStats.forEach(emp => {
-                drawRow([`CA ${emp.nom}`, `${parseFloat(emp.ca_genere).toFixed(2).replace('.', ',')}`]);
-            });
-            employesStats.forEach(emp => {
-                drawRow([`Prime dû ${emp.nom}`, `${parseFloat(emp.prime_due).toFixed(2).replace('.', ',')}`]);
-            });
+            employesStats.forEach(emp => { drawRow([`CA ${emp.nom}`, `${parseFloat(emp.ca_genere).toFixed(2).replace('.', ',')} €`]); });
+            employesStats.forEach(emp => { drawRow([`Prime due ${emp.nom}`, `${parseFloat(emp.prime_due).toFixed(2).replace('.', ',')} €`]); });
         } else {
-            drawRow([`CA Généré`, `${caTotal.toFixed(2).replace('.', ',')}`]);
-            drawRow([`Prime dûe`, `${commissionTotale.toFixed(2).replace('.', ',')}`]);
+            drawRow([`CA Généré`, `${caTotal.toFixed(2).replace('.', ',')} €`]);
+            drawRow([`Prime due`, `${commissionTotale.toFixed(2).replace('.', ',')} €`]);
         }
-        currentY += 20;
+        currentY += 15;
 
-        // --- 6. DETAIL DES VENTES (Loi NF525) ---
-        drawTableTitle("6. DETAIL DES VENTES (Loi NF525)");
+        // --- 6. DETAIL DES VENTES ---
+        drawTableTitle("6. DETAIL DES VENTES");
         if (currentY > 750) { doc.addPage(); currentY = 40; }
         
-        // En-tête manuel avec format libre pour accommoder la 2ème colonne très large
         doc.font('Helvetica-Bold').fontSize(9).fillColor('#6b7280');
-        doc.text('Heure', 40, currentY, { width: 50 });
-        doc.text('Détail (ticket, prestation, payement)', 100, currentY, { width: 330 });
-        doc.text('Montant TTC', 440, currentY, { width: 115, align: 'right' });
+        doc.text('Heure', 40, currentY, { width: 40 });
+        doc.text('Ticket', 85, currentY, { width: 90 });
+        doc.text('Détail Lignes (Qté x Prestation/Produit)', 180, currentY, { width: 200 });
+        doc.text('HT / TVA', 385, currentY, { width: 80, align: 'right' });
+        doc.text('TTC', 470, currentY, { width: 85, align: 'right' });
         currentY += 12;
         doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
         currentY += 8;
@@ -3210,24 +3227,44 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             doc.font('Helvetica').fontSize(9).fillColor('#111827').text('Aucune transaction enregistrée.', 40, currentY);
         } else {
             ventesResult.rows.forEach(v => {
-                // Construction du détail du ticket (ex: Ticket #TKT-CA-12345 - Balayage)
-                const desc = `Ticket ${v.numero_ticket_caisse || ''} - ${v.prestations || 'Article'}\n(Paiement: ${v.methode_paiement}, par ${v.employe})`;
+                let lignesStr = '';
+                let htTvaStr = '';
                 
-                // Calcul de la hauteur que prendra le texte sur plusieurs lignes
-                const textHeight = doc.heightOfString(desc, { width: 330, fontSize: 9 });
+                v.lignes.forEach(l => {
+                    const ttc = parseFloat(l.ttc);
+                    const tva = parseFloat(l.tva) || 20;
+                    const ht = ttc / (1 + tva/100);
+                    const mntTva = ttc - ht;
+                    lignesStr += `${l.qte}x ${l.nom}\n`;
+                    htTvaStr += `${ht.toFixed(2)} / ${mntTva.toFixed(2)} (${tva}%)\n`;
+                });
                 
-                if (currentY + textHeight > 780) { doc.addPage(); currentY = 40; }
+                const extraInfo = `Paiement: ${v.methode_paiement} | Par: ${v.employe}`;
+                
+                const textHeight = Math.max(
+                    doc.heightOfString(lignesStr + extraInfo, { width: 200, fontSize: 8 }),
+                    doc.heightOfString(v.numero_ticket_caisse, { width: 90, fontSize: 8 })
+                );
 
-                doc.font('Helvetica').fontSize(9).fillColor('#111827');
-                doc.text(v.heure, 40, currentY, { width: 50 });
-                doc.text(desc, 100, currentY, { width: 330 });
-                doc.text(`${parseFloat(v.total_ttc).toFixed(2).replace('.', ',')}`, 440, currentY, { width: 115, align: 'right' });
+                if (currentY + textHeight > 780) { doc.addPage(); currentY = 40; }
+                
+                doc.font('Helvetica').fontSize(8).fillColor('#111827');
+                doc.text(v.heure, 40, currentY, { width: 40 });
+                doc.text(v.numero_ticket_caisse, 85, currentY, { width: 90 });
+                doc.text(lignesStr + extraInfo, 180, currentY, { width: 200 });
+                doc.text(htTvaStr, 385, currentY, { width: 80, align: 'right' });
+                doc.text(`${parseFloat(v.total_ttc).toFixed(2).replace('.', ',')} €`, 470, currentY, { width: 85, align: 'right' });
                 
                 currentY += textHeight + 6;
                 doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
                 currentY += 8;
             });
         }
+        
+        currentY += 30;
+        if (currentY > 750) { doc.addPage(); currentY = 40; }
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#111827').text(`Signature du responsable de clôture (${responsableCloture}) :`, 40, currentY);
+        doc.rect(40, currentY + 15, 200, 60).stroke('#e5e7eb');
 
         doc.end();
     } catch (erreur) { 
@@ -3285,7 +3322,13 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // 2. REQUÊTE : Paiements et Mouvements
         const paiementsRes = await pool.query(`SELECT methode_paiement, COUNT(id_ticket) as nb, SUM(total_ttc) as total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
         const statsRes = await pool.query(`SELECT COUNT(id_ticket) as nb_tickets, COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
-        const caisseRes = await pool.query(`SELECT COALESCE(SUM(fond_caisse_matin), 0) as fonds, COALESCE(SUM(ecart_caisse), 0) as ecarts FROM clotures_caisse WHERE id_salon = $1 AND date_cloture BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+        const caisseRes = await pool.query(`
+            SELECT 
+                (SELECT COALESCE(SUM(fond_caisse_matin), 0) FROM clotures_caisse WHERE id_salon = $1 AND date_cloture BETWEEN $2 AND $3) as fonds,
+                (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND date_cloture BETWEEN $2 AND $3) 
+                + 
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $3) as ecarts
+        `, [id_salon, dateDebutStr, dateFinStr]);
 
         // 3. REQUÊTE : Dépenses
         const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
