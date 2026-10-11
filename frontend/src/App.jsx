@@ -1085,11 +1085,10 @@ function App() {
             return setErreurLogin("Veuillez remplir les DEUX cases (Prénom et Nom de famille).");
         }
 
-        // --- 1. SÉCURITÉ MOT DE PASSE ---
+        // --- 1. SÉCURITÉ MOT DE PASSE (Renforcée) ---
         if (motDePasseInput.length < 8) {
             return setErreurLogin("Le mot de passe doit contenir au moins 8 caractères.");
         }
-        // Interdit les suites faciles (ex: 12345678, azerty123, 11111111)
         const passwordSimple = motDePasseInput.toLowerCase();
         if (/^(1234|azerty|qwerty|password|motdepasse)/.test(passwordSimple) || /^(\w)\1+$/.test(passwordSimple) || '0123456789'.includes(passwordSimple) || '9876543210'.includes(passwordSimple)) {
             return setErreurLogin("Mot de passe trop faible ou suite logique détectée. Sécurisez-le.");
@@ -1099,7 +1098,6 @@ function App() {
     try {
       const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
       
-      // On n'envoie plus siret et adresse_salon ici
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { 
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' }, 
@@ -1123,8 +1121,7 @@ function App() {
           setUserRole(decoded?.role || 'gerant');
           setIsAbonnementInactif(false); 
           
-          // --- FORCE L'AFFICHAGE DU POPUP LÉGAL ---
-          // On attend 100ms que le token s'enregistre bien avant de déclencher la popup
+          // --- FORCE L'AFFICHAGE DU POPUP LÉGAL IMMÉDIATEMENT ---
           setTimeout(() => {
               setLegalStatut({ accepte: false, en_attente: true });
           }, 100); 
@@ -2012,7 +2009,7 @@ function App() {
     return (
       <PopupLegal
         apiBase="https://api-salon-backend.onrender.com"
-        token={token}
+        token={localStorage.getItem('api_token')}
         onAccepted={() => setLegalStatut({ ...legalStatut, accepte: true })}
         onRefuse={seDeconnecter}
       />
