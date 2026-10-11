@@ -154,14 +154,49 @@ function App() {
   const [userRole, setUserRole] = useState('gerant'); 
   const [legalStatut, setLegalStatut] = useState(null); // null = inconnu / non concerné, sinon { accepte, en_attente, identite }
 
-  // Acceptation des documents contractuels : vérifiée à chaque connexion du gérant (échec réseau = on ne bloque pas)
+  // Acceptation des documents contractuels : vérifiée à chaque connexion du gérant
   useEffect(() => {
-    if (!token || decodeToken(token)?.role !== 'gerant') { setLegalStatut(null); return undefined; }
+    if (!token || decodeToken(token)?.role !== 'gerant') { 
+        setLegalStatut(null); 
+        return; 
+    }
+    
     let annule = false;
-    fetch('https://api-salon-backend.onrender.com/api/legal/statut', { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (!annule && d) setLegalStatut(d); })
-      .catch(() => {});
+    
+    const verifierStatutLegal = async () => {
+        try {
+            // On utilise l'intercepteur global pour s'assurer que les identifiants/cookies sont transmis
+            const res = await fetch('https://api-salon-backend.onrender.com/api/legal/statut', { 
+                headers: getAuthHeaders() 
+            });
+            
+            // Si le token est expiré ou le compte bloqué
+            if (res.status === 401 || res.status === 403) {
+                const data = await res.json().catch(() => ({}));
+                // Si l'erreur est juste un manque de forfait, on ne bloque pas le processus légal
+                if (!data.require_upsell) {
+                    seDeconnecter();
+                    return;
+                }
+            }
+            
+            if (res.ok) {
+                const data = await res.json();
+                if (!annule && data) {
+                    setLegalStatut(data);
+                }
+            } else {
+                // Par sécurité, en cas d'erreur inattendue (sauf réseau pur), on force la vérification
+                if (!annule) setLegalStatut({ accepte: false, en_attente: true });
+            }
+        } catch (e) {
+            console.error("Impossible de vérifier le statut légal :", e);
+            // Mode dégradé si le réseau plante totalement (pour ne pas bloquer un utilisateur en plein salon)
+        }
+    };
+
+    verifierStatutLegal();
+    
     return () => { annule = true; };
   }, [token]);
 
