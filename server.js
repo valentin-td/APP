@@ -2962,18 +2962,20 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const filtreEmploye = estEmploye ? ' AND t.id_employe = $3' : '';
         const paramsVentes = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
         
-        // 1. Ventes Détaillées avec JSON_AGG pour récupérer Quantité et TVA
+        // 1. Ventes Détaillées avec JSON_AGG protégé
         const ventesResult = await pool.query(`
             SELECT 
                 t.id_ticket, t.numero_ticket_caisse, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
                 COALESCE(e.nom, 'Inconnu') as employe,
-                json_agg(
-                    json_build_object(
-                        'nom', COALESCE(lt.nom_article_snapshot, c.nom, 'Article supprimé'),
-                        'qte', lt.quantite,
-                        'ttc', lt.total_ligne_ttc,
-                        'tva', lt.taux_tva_snapshot
-                    )
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'nom', COALESCE(lt.nom_article_snapshot, c.nom, 'Article supprimé'),
+                            'qte', COALESCE(lt.quantite, 0),
+                            'ttc', COALESCE(lt.total_ligne_ttc, 0),
+                            'tva', COALESCE(lt.taux_tva_snapshot, 20)
+                        )
+                    ) FILTER (WHERE lt.id_article IS NOT NULL), '[]'::json
                 ) as lignes
             FROM tickets t
             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
@@ -2985,15 +2987,15 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         `, paramsVentes);
 
         const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}`, paramsVentes);
-        const caTotal = parseFloat(caResult.rows[0].ca_total);
+        const caTotal = parseFloat(caResult.rows[0].ca_total) || 0;
 
         // 3. Clôture Info et Mouvements
-        const clotureRes = await pool.query(`SELECT id_cloture, date_creation as heure_cloture, cumul_perpetuel_ttc, signature_hash, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
+        const clotureRes = await pool.query(`SELECT id_cloture, cumul_perpetuel_ttc, signature_hash, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
         const clotureData = clotureRes.rowCount > 0 ? clotureRes.rows[0] : null;
         const cloturePar = clotureData ? clotureData.ferme_par : 'Non spécifié';
 
         const mouvementsResult = await pool.query(`SELECT COALESCE(SUM(montant), 0) as total_sorties FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2 AND type_mouvement = 'SORTIE'`, [id_salon, dateCible]);
-        const totalSorties = parseFloat(mouvementsResult.rows[0].total_sorties);
+        const totalSorties = parseFloat(mouvementsResult.rows[0].total_sorties) || 0;
 
         const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
         const nomGerant = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Gérant';
@@ -3021,257 +3023,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         // 5. CA par Catégorie
         const caCategories = await pool.query(`
             SELECT COALESCE(c.type_article, 'PRESTATION') as type_article, SUM(lt.total_ligne_ttc) as total
-            FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON c.id_article = lt.id_article
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
-            GROUP BY COALESCE(c.type_article, 'PRESTATION')
-        `, paramsVentes);
-        
-        let totalPrestations = 0, totalRevente = 0;
-        caCategories.rows.forEach(r => {
-            if (r.type_article === 'PRESTATION') totalPrestations += parseFloat(r.total);
-            else totalRevente += parseFloat(r.total);
-        });
-
-        // 6. Détail TVA
-        const tvaDetails = await pool.query(`
-            SELECT lt.taux_tva_snapshot as taux, SUM(lt.total_ligne_ttc) as total_ttc
-            FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
-            GROUP BY lt.taux_tva_snapshot ORDER BY lt.taux_tva_snapshot DESC
-        `, paramsVentes);
-
-        // 7. Méthodes de Paiement
-        const paiements = await pool.query(`
-            SELECT methode_paiement, SUM(total_ttc) as total
-            FROM tickets t
-            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
-            GROUP BY methode_paiement
-        `, paramsVentes);
-        
-        let totalCB = 0, totalEspeces = 0, totalCheques = 0;
-        paiements.rows.forEach(r => {
-            if (r.methode_paiement === 'CARTE') totalCB += parseFloat(r.total);
-            if (r.methode_paiement === 'ESPECES') totalEspeces += parseFloat(r.total);
-            if (r.methode_paiement === 'CHEQUE') totalCheques += parseFloat(r.total);
-        });
-
-        // 8. Stats par employé (Uniquement pour le Gérant)
-        let employesStats = [];
-        if (!estEmploye) {
-            const empStatsRes = await pool.query(`
-                SELECT e.nom, 
-                       COALESCE(SUM(t.total_ttc), 0) as ca_genere,
-                       (SELECT COALESCE(SUM(c.montant_commission), 0) FROM commissions c WHERE c.id_employe = e.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) = $2) as prime_due
-                FROM employes e
-                LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
-                WHERE e.id_salon = $1
-                GROUP BY e.id_employe, e.nom
-                HAVING COALESCE(SUM(t.total_ttc), 0) > 0 OR (SELECT COALESCE(SUM(c.montant_commission), 0) FROM commissions c WHERE c.id_employe = e.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) = $2) > 0
-                ORDER BY ca_genere DESC
-            `, [id_salon, dateCible]);
-            employesStats = empStatsRes.rows;
-        }
-
-        // ================== CRÉATION DU PDF ==================
-        const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Bilan_Journalier_${dateCible}.pdf"`);
-        doc.pipe(res);
-
-        let currentY = 40;
-
-        // --- EN-TÊTE ET MENTIONS LÉGALES ---
-        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text(`BILAN JOURNALIER - ${estEmploye ? 'EMPLOYÉ' : 'SALON'}`, 40, currentY);
-        currentY += 25;
-        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(config.nom_salon || 'Salon', 40, currentY);
-        currentY += 15;
-        doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`SIRET: ${config.siret || 'N/A'} | Adresse: ${config.adresse_salon || 'N/A'}`, 40, currentY);
-        currentY += 15;
-        doc.text(`Date d'activité : ${new Date(dateCible).toLocaleDateString('fr-FR')} | Édité le : ${new Date().toLocaleString('fr-FR')}`, 40, currentY);
-        currentY += 20;
-
-        if (clotureData) {
-            doc.font('Helvetica-Bold').fillColor('#16a34a').text(`STATUT : CLÔTURÉ (Z n°${clotureData.id_cloture})`, 40, currentY);
-            currentY += 15;
-            doc.font('Helvetica').fillColor('#4b5563').text(`Heure de clôture : ${new Date(clotureData.heure_cloture).toLocaleTimeString('fr-FR')}`, 40, currentY);
-            currentY += 15;
-            doc.text(`Cumul perpétuel TTC : ${parseFloat(clotureData.cumul_perpetuel_ttc).toFixed(2).replace('.', ',')} €`, 40, currentY);
-            currentY += 15;
-            doc.font('Courier').fontSize(7).text(`Hash : ${clotureData.signature_hash}`, 40, currentY);
-            currentY += 15;
-        } else {
-            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`STATUT : PROVISOIRE (Caisse non clôturée)`, 40, currentY);
-            currentY += 15;
-        }
-        doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`Responsable clôture : ${responsableCloture}`, 40, currentY);
-        currentY += 25;
-
-        // --- MOTEUR DE DESSIN ---
-        const drawTableTitle = (title) => {
-            if (currentY > 750) { doc.addPage(); currentY = 40; }
-            doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(title, 40, currentY);
-            currentY += 18;
-        };
-
-        const drawRow = (cols, isHeader = false, isBold = false) => {
-            if (currentY > 780) { doc.addPage(); currentY = 40; }
-            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
-            doc.fillColor(isHeader ? '#6b7280' : '#111827');
-            
-            const startX = 40;
-            if (cols.length === 2) {
-                doc.text(cols[0], startX, currentY);
-                doc.text(cols[1], startX + 350, currentY, { width: 165, align: 'right' });
-            } else if (cols.length === 3) {
-                doc.text(cols[0], startX, currentY);
-                doc.text(cols[1], startX + 250, currentY, { width: 130, align: 'right' });
-                doc.text(cols[2], startX + 380, currentY, { width: 135, align: 'right' });
-            }
-            
-            currentY += 12;
-            doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? '#111827' : '#e5e7eb').stroke();
-            currentY += 6;
-        };
-
-        // --- 1. CHIFFRE D'AFFAIRES ---
-        drawTableTitle("1. CHIFFRE D'AFFAIRES (TTC)");
-        drawRow(['Catégorie', 'Montant TTC'], true);
-        drawRow(['Total Prestations', `${totalPrestations.toFixed(2).replace('.', ',')}`]);
-        drawRow(['Total Revente', `${totalRevente.toFixed(2).replace('.', ',')}`]);
-        drawRow(["CHIFFRE D'AFFAIRES TOTAL", `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
-        currentY += 15;
-
-        // --- 2. DETAIL TVA ---
-        drawTableTitle("2. DETAIL TVA (20%)");
-        drawRow(['Base HT', 'TVA Collectée', 'Total TTC'], true);
-        tvaDetails.rows.forEach(t => {
-            const taux = parseFloat(t.taux) || 20;
-            const ttc = parseFloat(t.total_ttc);
-            const ht = ttc / (1 + taux/100);
-            const tva = ttc - ht;
-            drawRow([`${ht.toFixed(2).replace('.', ',')}`, `${tva.toFixed(2).replace('.', ',')}`, `${ttc.toFixed(2).replace('.', ',')}`]);
-        });
-        if (tvaDetails.rowCount === 0) drawRow(['0,00', '0,00', '0,00']);
-        currentY += 15;
-
-        // --- 3. ENCAISSEMENTS ---
-        drawTableTitle("3. ENCAISSEMENTS");
-        drawRow(['Mode de paiement', 'Montant'], true);
-        drawRow(['Carte bancaire', `${totalCB.toFixed(2).replace('.', ',')}`]);
-        drawRow(['Espèces', `${totalEspeces.toFixed(2).replace('.', ',')}`]);
-        drawRow(['Chèques', `${totalCheques.toFixed(2).replace('.', ',')}`]);
-        drawRow(["TOTAL ENCAISSÉ", `${caTotal.toFixed(2).replace('.', ',')}`], false, true);
-        currentY += 15;
-
-        // --- 4. CONTROLE DE LA CAISSE (Gérant uniquement) ---
-        if (!estEmploye) {
-            drawTableTitle("4. CONTROLE DE LA CAISSE (Espèces)");
-            drawRow(['Mouvement', 'Montant'], true);
-            
-            const fMatin = clotureData ? parseFloat(clotureData.fond_caisse_matin) : 0;
-            const tTheorique = clotureData ? parseFloat(clotureData.total_especes_theorique) : totalEspeces;
-            const tReel = clotureData ? parseFloat(clotureData.total_especes_reel) : 0;
-            const ecart = clotureData ? parseFloat(clotureData.ecart_caisse) : 0;
-
-            drawRow(['Fond de caisse matin (Laissé la veille)', `${fMatin.toFixed(2).replace('.', ',')}`]);
-            drawRow(['Espèces encaissées clients', `${totalEspeces.toFixed(2).replace('.', ',')}`]);
-            drawRow(['Sorties de caisse (Dépenses)', `${totalSorties === 0 ? '0,00' : '-' + totalSorties.toFixed(2).replace('.', ',')}`]);
-            drawRow(['Total Théorique (Caisse du soir attendue)', `${tTheorique.toFixed(2).replace('.', ',')}`], false, true);
-            
-            const texteReel = cloturePar.includes('Robot') ? 'Non compté (Fermeture Auto)' : `${tReel.toFixed(2).replace('.', ',')}`;
-            drawRow(['Total Réel (Caisse du soir comptée / conservée)', texteReel], false, true); 
-            drawRow(['ÉCART DE CAISSE', `${ecart > 0 ? '+' : ''}${ecart.toFixed(2).replace('.', ',')}`], false, true);
-            
-            if (clotureData && clotureData.justification_ecart) {
-                currentY += 5;
-                doc.font('Helvetica-Oblique').fontSize(8).fillColor('#ef4444');
-                doc.text(`Justification de l'écart : "${clotureData.justification_ecart}"`, 40, currentY);
-                currentY += 15;
-            } else {
-                currentY += 15;
-            }
-        }
-
-        // --- 5. INDICATEURS COMMERCIAUX ---
-        drawTableTitle("5. INDICATEURS COMMERCIAUX");
-        drawRow(['Indicateur', 'Valeur'], true);
-        drawRow(['Nombre de tickets', `${nbTickets}`]);
-        drawRow(['Nombre de clients (uniques)', `${nbClients}`]);
-        const ticketMoyen = nbTickets > 0 ? caTotal / nbTickets : 0;
-        drawRow(['Ticket moyen', `${ticketMoyen.toFixed(2).replace('.', ',')}`]);
-        
-        if (!estEmploye) {
-            employesStats.forEach(emp => { drawRow([`CA ${emp.nom}`, `${parseFloat(emp.ca_genere).toFixed(2).replace('.', ',')} €`]); });
-            employesStats.forEach(emp => { drawRow([`Prime due ${emp.nom}`, `${parseFloat(emp.prime_due).toFixed(2).replace('.', ',')} €`]); });
-        } else {
-            drawRow([`CA Généré`, `${caTotal.toFixed(2).replace('.', ',')} €`]);
-            drawRow([`Prime due`, `${commissionTotale.toFixed(2).replace('.', ',')} €`]);
-        }
-        currentY += 15;
-
-        // --- 6. DETAIL DES VENTES ---
-        drawTableTitle("6. DETAIL DES VENTES");
-        if (currentY > 750) { doc.addPage(); currentY = 40; }
-        
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#6b7280');
-        doc.text('Heure', 40, currentY, { width: 40 });
-        doc.text('Ticket', 85, currentY, { width: 90 });
-        doc.text('Détail Lignes (Qté x Prestation/Produit)', 180, currentY, { width: 200 });
-        doc.text('HT / TVA', 385, currentY, { width: 80, align: 'right' });
-        doc.text('TTC', 470, currentY, { width: 85, align: 'right' });
-        currentY += 12;
-        doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
-        currentY += 8;
-
-        if (ventesResult.rowCount === 0) {
-            doc.font('Helvetica').fontSize(9).fillColor('#111827').text('Aucune transaction enregistrée.', 40, currentY);
-        } else {
-            ventesResult.rows.forEach(v => {
-                let lignesStr = '';
-                let htTvaStr = '';
-                
-                v.lignes.forEach(l => {
-                    const ttc = parseFloat(l.ttc);
-                    const tva = parseFloat(l.tva) || 20;
-                    const ht = ttc / (1 + tva/100);
-                    const mntTva = ttc - ht;
-                    lignesStr += `${l.qte}x ${l.nom}\n`;
-                    htTvaStr += `${ht.toFixed(2)} / ${mntTva.toFixed(2)} (${tva}%)\n`;
-                });
-                
-                const extraInfo = `Paiement: ${v.methode_paiement} | Par: ${v.employe}`;
-                
-                const textHeight = Math.max(
-                    doc.heightOfString(lignesStr + extraInfo, { width: 200, fontSize: 8 }),
-                    doc.heightOfString(v.numero_ticket_caisse, { width: 90, fontSize: 8 })
-                );
-
-                if (currentY + textHeight > 780) { doc.addPage(); currentY = 40; }
-                
-                doc.font('Helvetica').fontSize(8).fillColor('#111827');
-                doc.text(v.heure, 40, currentY, { width: 40 });
-                doc.text(v.numero_ticket_caisse, 85, currentY, { width: 90 });
-                doc.text(lignesStr + extraInfo, 180, currentY, { width: 200 });
-                doc.text(htTvaStr, 385, currentY, { width: 80, align: 'right' });
-                doc.text(`${parseFloat(v.total_ttc).toFixed(2).replace('.', ',')} €`, 470, currentY, { width: 85, align: 'right' });
-                
-                currentY += textHeight + 6;
-                doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
-                currentY += 8;
-            });
-        }
-        
-        currentY += 30;
-        if (currentY > 750) { doc.addPage(); currentY = 40; }
-        doc.font('Helvetica-Bold').fontSize(10).fillColor('#111827').text(`Signature du responsable de clôture (${responsableCloture}) :`, 40, currentY);
-        doc.rect(40, currentY + 15, 200, 60).stroke('#e5e7eb');
-
-        doc.end();
-    } catch (erreur) { 
-        console.error(erreur);
-        res.status(500).send("Erreur lors de la génération du PDF journalier."); 
-    }
-});
+            FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id
 
 // =========================================================================
 // --- EXPORT PDF : LIASSE MENSUELLE COMPTABLE & LÉGALE (NF525) ---
