@@ -3125,8 +3125,8 @@ function App() {
                       <div className="agenda-actions-group" style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
                           
-                          {/* BOUTON POINTEUSE : Affiché pour TOUS si activé en Premium */}
-                          {configSalon.mode_suivi_heures === 'POINTEUSE' && (
+                          {/* BOUTON POINTEUSE : EXCLUSIF AU RÔLE "SALON" */}
+                          {role === 'salon' && configSalon.mode_suivi_heures === 'POINTEUSE' && (
                               <button onClick={() => setPointeuse({ open: true, step: 1, employe: null, pin: '' })} style={{background: '#f59e0b', color: 'white', border: 'none', padding: '10px 16px', borderRadius: 'var(--radius-input)', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px'}}>
                                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                                   {!isMobile && "Pointeuse"}
