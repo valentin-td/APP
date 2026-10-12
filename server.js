@@ -3440,8 +3440,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') != 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_produit_ht,
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_prestation / 100) ELSE (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_produit / 100) END), 0) as total_prime
             FROM employes e 
-            LEFT JOIN lignes_ticket lt ON lt.id_employe = e.id_employe
-            LEFT JOIN tickets t ON t.id_ticket = lt.id_ticket AND t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+            LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+            LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
             WHERE e.id_salon = $1 
             GROUP BY e.id_employe, e.nom, e.est_gerant 
