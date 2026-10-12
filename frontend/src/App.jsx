@@ -546,8 +546,7 @@ function App() {
   const [ticketGenere, setTicketGenere] = useState(null);
     const [mouvementsCaisse, setMouvementsCaisse] = useState([]);
     const [showMouvementModal, setShowMouvementModal] = useState(false);
-    // On retire id_employe de l'état par défaut, on le gérera dans l'interface
-    const [newMouvement, setNewMouvement] = useState({ type_mouvement: 'SORTIE', montant: '', motif: '' });
+    const [newMouvement, setNewMouvement] = useState({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
 
     // Nouveaux états pour le mode calculatrice de la Petite Caisse
     const [modeCalculatrice, setModeCalculatrice] = useState(false);
@@ -4157,106 +4156,11 @@ function App() {
                               <h3 style={{ margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px' }}>Petite Caisse (Aujourd'hui)</h3>
                               <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Dépenses et remises en banque.</span>
                           </div>
-                          {showMouvementModal && (
-                          <div className="modal-overlay" style={{ zIndex: 9999 }}>
-                              <div className="modal-content" style={{ maxWidth: '400px' }}>
-                                  <div className="modal-header">
-                                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Mouvement de Caisse</h3>
-                                      <button className="modal-close-btn" onClick={() => setShowMouvementModal(false)}>
-                                          <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                                      </button>
-                                  </div>
-
-                                  <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                                      <button
-                                          style={{
-                                              flex: 1, padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer',
-                                              border: newMouvement.type_mouvement === 'SORTIE' ? '2px solid var(--color-danger)' : '1px solid var(--border-color)',
-                                              background: newMouvement.type_mouvement === 'SORTIE' ? 'var(--bg-danger)' : 'var(--bg-app)',
-                                              color: newMouvement.type_mouvement === 'SORTIE' ? 'var(--color-danger)' : 'var(--text-main)'
-                                          }}
-                                          onClick={() => setNewMouvement({ ...newMouvement, type_mouvement: 'SORTIE' })}
-                                      >
-                                          — Sortie d'espèces
-                                      </button>
-                                      <button
-                                          style={{
-                                              flex: 1, padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer',
-                                              border: newMouvement.type_mouvement === 'ENTREE' ? '2px solid var(--color-success)' : '1px solid var(--border-color)',
-                                              background: newMouvement.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-app)',
-                                              color: newMouvement.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--text-main)'
-                                          }}
-                                          onClick={() => setNewMouvement({ ...newMouvement, type_mouvement: 'ENTREE' })}
-                                      >
-                                          + Entrée d'espèces
-                                      </button>
-                                  </div>
-
-                                  <div style={{ marginBottom: '16px' }}>
-                                      <label style={{ fontSize: '14px', fontWeight: 'bold', display: 'block', marginBottom: '8px', color: 'var(--text-main)' }}>Montant (€)</label>
-                                      <input
-                                          type="number"
-                                          className="input-fournisseur"
-                                          placeholder="0.00"
-                                          value={newMouvement.montant}
-                                          onChange={(e) => setNewMouvement({ ...newMouvement, montant: e.target.value })}
-                                          style={{ width: '100%', marginBottom: 0 }}
-                                      />
-                                  </div>
-
-                                  <div style={{ marginBottom: '16px' }}>
-                                      <label style={{ fontSize: '14px', fontWeight: 'bold', display: 'block', marginBottom: '8px', color: 'var(--text-main)' }}>Motif obligatoire</label>
-                                      <input
-                                          type="text"
-                                          className="input-fournisseur"
-                                          placeholder="Ex: Achat café, rendu monnaie..."
-                                          value={newMouvement.motif}
-                                          onChange={(e) => setNewMouvement({ ...newMouvement, motif: e.target.value })}
-                                          style={{ width: '100%', marginBottom: '12px' }}
-                                      />
-
-                                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                          <span
-                                              onClick={() => setNewMouvement({ ...newMouvement, motif: "Remise en banque (Dépôt)" })}
-                                              style={{
-                                                  fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
-                                                  borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
-                                              }}
-                                          >
-                                              Dépôt Banque
-                                          </span>
-                                          <span
-                                              onClick={() => setNewMouvement({ ...newMouvement, motif: "Apport de monnaie (Retrait banque)" })}
-                                              style={{
-                                                  fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
-                                                  borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
-                                              }}
-                                          >
-                                              Retrait Monnaie
-                                          </span>
-                                          <span
-                                              onClick={() => setNewMouvement({ ...newMouvement, motif: "Achat fournitures (Café, etc.)" })}
-                                              style={{
-                                                  fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
-                                                  borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
-                                              }}
-                                          >
-                                              ☕ Achats / Frais
-                                          </span>
-                                      </div>
-                                  </div>
-
-                                  <button
-                                      className="btn-action"
-                                      style={{ width: '100%' }}
-                                      onClick={ajouterMouvementCaisse}
-                                      disabled={!newMouvement.montant || !newMouvement.motif}
-                                  >
-                                      Valider l'opération
-                                  </button>
-                              </div>
-                          </div>
-                      )}
+                          <button onClick={() => { chargerMouvementsCaisse(); setShowMouvementModal(true); }} style={{ background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '10px 16px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                              Ajouter Entrée / Sortie
+                          </button>
+                      </div>
                       
                       {mouvementsCaisse.length === 0 ? (
                           <div className="empty-state" style={{padding: '20px 0', margin: 0, minHeight: 'auto'}}><p style={{margin: 0}}>Aucun mouvement enregistré aujourd'hui.</p></div>
