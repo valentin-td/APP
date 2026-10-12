@@ -605,6 +605,8 @@ function App() {
   const [clientCaisse, setClientCaisse] = useState('');
   const [panierCaisse, setPanierCaisse] = useState([]); 
   const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
+  const [pourboireCaisse, setPourboireCaisse] = useState(''); // Montant du pourboire
+  const [showPourboireInput, setShowPourboireInput] = useState(false); // Afficher ou non le champ
   const [methodePaiement, setMethodePaiement] = useState('ESPECES');
   const [clientsSuggeres, setClientsSuggeres] = useState([]); 
   const [socket, setSocket] = useState(null);
@@ -1469,6 +1471,8 @@ function App() {
           }
       }
   }
+  const montantPourboireFinal = parseFloat(pourboireCaisse) || 0;
+  totalCaisse += montantPourboireFinal;
 
   const validerEncaisser = () => {
       if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
@@ -1484,7 +1488,7 @@ function App() {
     const vraimentHorsLigne = isOffline || !navigator.onLine;
     if (vraimentHorsLigne !== isOffline) setIsOffline(vraimentHorsLigne);
 
-    const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement };
+    const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement, pourboire: montantPourboireFinal };
 
     const forcerSauvegardeLocale = async () => {
         const offlineTicketId = `TKT-OFFLINE-${Date.now()}`;
@@ -1502,7 +1506,7 @@ function App() {
             is_offline: true
         });
         
-        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES'); setRechercheCaisse('');
+        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES'); setRechercheCaisse(''); setPourboireCaisse(''); setShowPourboireInput(false);
         showToast("Ticket sauvegardé localement (Mode Hors-Ligne)", "success");
     };
 
@@ -1526,7 +1530,7 @@ function App() {
         });
         setEmailTicketClient(clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email || '' : '');
         
-        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('CARTE');
+        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('CARTE'); setPourboireCaisse(''); setShowPourboireInput(false);
         chargerTout();
     } catch (error) { 
         if(error.message === "Load failed" || error.message === "Failed to fetch" || !navigator.onLine) {
@@ -2888,9 +2892,42 @@ function App() {
                                         )}
                                     </div>
 
+                                    {/* NOUVEAU : BLOC POURBOIRE */}
+                                    <div style={{ marginBottom: '12px' }}>
+                                        {!showPourboireInput && !pourboireCaisse ? (
+                                            <button 
+                                                onClick={() => setShowPourboireInput(true)} 
+                                                style={{ background: 'none', border: '1px dashed var(--btn-primary)', color: 'var(--btn-primary)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
+                                            >
+                                                <span>🎁</span> Ajouter un pourboire pour l'équipe
+                                            </button>
+                                        ) : (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ede9fe', padding: '8px 12px', borderRadius: '8px', border: '1px solid #8b5cf6' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span>🎁</span>
+                                                    <span style={{ fontWeight: 'bold', color: '#7c3aed', fontSize: '14px' }}>Pourboire</span>
+                                                </div>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <input 
+                                                        type="number" 
+                                                        min="0"
+                                                        placeholder="0.00"
+                                                        value={pourboireCaisse}
+                                                        onChange={(e) => setPourboireCaisse(e.target.value)}
+                                                        style={{ width: '60px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #c4b5fd', textAlign: 'right', fontWeight: 'bold', color: '#6d28d9' }}
+                                                        autoFocus
+                                                    />
+                                                    <span style={{ color: '#7c3aed', fontWeight: 'bold' }}>€</span>
+                                                    <button onClick={() => { setPourboireCaisse(''); setShowPourboireInput(false); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 0, marginLeft: '4px', fontWeight: 'bold' }}>✕</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {/* FIN BLOC POURBOIRE */}
+
                                     <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
                                         <span>Total TTC</span>
-                                        <span>{(totalCaisse + (newMouvement.type_mouvement === 'POURBOIRE' ? (parseFloat(newMouvement.montant) || 0) : 0)).toFixed(2)} €</span>
+                                        <span>{totalCaisse.toFixed(2)} €</span>
                                     </div>
 
                                     <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
