@@ -3135,21 +3135,22 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         const drawRow = (cols, isHeader = false, isBold = false) => {
             if (currentY > 780) { doc.addPage(); currentY = 40; }
-            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
-            doc.fillColor(isHeader ? '#6b7280' : '#111827');
-            
-            const startX = 40;
-            if (cols.length === 2) {
-                doc.text(cols[0], startX, currentY);
-                doc.text(cols[1], startX + 350, currentY, { width: 165, align: 'right' });
-            } else if (cols.length === 3) {
-                doc.text(cols[0], startX, currentY);
-                doc.text(cols[1], startX + 250, currentY, { width: 130, align: 'right' });
-                doc.text(cols[2], startX + 380, currentY, { width: 135, align: 'right' });
-            }
-            
-            currentY += 12;
-            doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? '#111827' : '#e5e7eb').stroke();
+            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(isHeader ? 8 : 9).fillColor(isHeader ? SEC_COLOR : MAIN_COLOR);
+            let xPos = 40;
+            let maxH = 0;
+            // Calcule la hauteur maximale de la ligne pour éviter les chevauchements
+            cols.forEach(col => {
+                const txt = col.text != null ? String(col.text) : '';
+                const h = doc.heightOfString(txt, { width: col.w });
+                if (h > maxH) maxH = h;
+            });
+            if (currentY + maxH > 780) { doc.addPage(); currentY = 40; }
+            cols.forEach(col => {
+                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left' });
+                xPos += col.w + 10;
+            });
+            currentY += maxH + 4;
+            doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? MAIN_COLOR : BORDER_COLOR).stroke();
             currentY += 6;
         };
 
@@ -3482,7 +3483,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         caDetailRes.rows.forEach(r => {
             let ht = parseFloat(r.total_ht), ttc = parseFloat(r.total_ttc), tva = ttc - ht;
             if (franchiseTVA) { ht = ttc; tva = 0; } // En franchise, HT = TTC
-            const label = `${r.type_article === 'PRESTATION' ? 'Prestations de services' : 'Vente de produits'} (${franchiseTVA ? '0%' : parseFloat(r.taux_tva) + '%'})`;
+            const tauxTvaFormate = franchiseTVA ? '0%' : parseFloat(r.taux_tva).toString().replace('.', ',') + '%';
+            const label = `${r.type_article === 'PRESTATION' ? 'Prestations de services' : 'Vente de produits'} (${tauxTvaFormate})`;
             
             totalHT += ht; totalTVA += tva; globalTTC += ttc;
             drawRow([{text: label, w: 180}, {text: fMnt(ht), w: 100, align: 'right'}, {text: fMnt(tva), w: 100, align: 'right'}, {text: fMnt(ttc), w: 105, align: 'right'}]);
@@ -3510,6 +3512,10 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
         
+        drawRow([{text: 'Fond de caisse (Ouverture matin)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].fonds), w: 225, align: 'right'}]);
+        drawRow([{text: 'Fond de caisse (Clôture soir / Espèces)', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
+        drawRow([{text: 'Apport de caisse (+) : ........................', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
+        drawRow([{text: 'Retrait de caisse (-) : ........................', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
         drawRow([{text: 'Dépenses / Sorties de caisse (Espèces)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].sorties), w: 225, align: 'right'}]);
         drawRow([{text: 'Régularisations d\'écarts de caisse', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].ecarts), w: 225, align: 'right'}]);
 
@@ -3593,6 +3599,17 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("(Signature valant certification des données d'encaissement)", 350, currentY + 30);
         } else {
             doc.font('Helvetica-Bold').fontSize(14).fillColor('#ea580c').text("DOCUMENT PROVISOIRE - NON SIGNÉ", 250, currentY);
+        }
+
+        // --- PAGINATION DYNAMIQUE ---
+        const range = doc.bufferedPageRange();
+        for (let i = range.start, end = range.start + range.count, page = 1; i < end; i++, page++) {
+            doc.switchToPage(i);
+            doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+                `Page ${page} / ${range.count}`, 
+                0, 810, 
+                { align: 'center', width: doc.page.width }
+            );
         }
 
         doc.end();
