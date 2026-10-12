@@ -82,6 +82,9 @@ export default function Parametres({
       { id: 'config_compta', icone: ICONS.file, label: 'Configuration Comptable (FEC)' },
       { id: 'tpe', icone: ICONS.card, label: 'TPE physique', valeur: statut(configSalon.stripe_reader_id) },
     ] },
+    { titre: 'Ressources Humaines (RH)', lignes: [
+      { id: 'suivi_heures', icone: ICONS.person, label: 'Suivi des heures', valeur: configSalon.mode_suivi_heures === 'POINTEUSE' ? 'Pointeuse (Premium)' : 'Semi-Auto (Pro)' },
+    ] },
   ] : role === 'salon' ? [
     { titre: 'Salon', lignes: [
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
@@ -372,6 +375,33 @@ case 'tpe': return (<>
                   </div>
               )}
           </div>
+      </>);
+      case 'suivi_heures': return (<>
+          <div className="carte scan-carte">
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', color: 'var(--text-main)' }}>Suivi des heures & Liasse comptable</h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '24px' }}>
+                  STACK pré-remplit les heures de vos collaborateurs sur la liasse mensuelle. Choisissez votre méthode de suivi.
+              </p>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <label style={{ display: 'flex', gap: '12px', padding: '16px', background: configSalon.mode_suivi_heures !== 'POINTEUSE' ? 'var(--bg-hover)' : 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer' }}>
+                      <input type="radio" name="mode_suivi" checked={configSalon.mode_suivi_heures !== 'POINTEUSE'} onChange={() => setConfigSalon({...configSalon, mode_suivi_heures: 'MANUEL'})} style={{ accentColor: 'var(--btn-primary)', marginTop: '4px' }} />
+                      <div>
+                          <span style={{ display: 'block', fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Mode Semi-Automatique (Inclus Pro)</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Les contrats (35h, 24h...) s'inscrivent automatiquement à la fin du mois. Vous ne saisissez que les ajustements (Heures Supp/Absences) dans l'onglet Équipe.</span>
+                      </div>
+                  </label>
+
+                  <label style={{ display: 'flex', gap: '12px', padding: '16px', background: configSalon.mode_suivi_heures === 'POINTEUSE' ? 'var(--bg-info)' : 'var(--bg-app)', border: configSalon.mode_suivi_heures === 'POINTEUSE' ? '1px solid var(--color-info)' : '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer' }}>
+                      <input type="radio" name="mode_suivi" checked={configSalon.mode_suivi_heures === 'POINTEUSE'} onChange={() => setConfigSalon({...configSalon, mode_suivi_heures: 'POINTEUSE'})} style={{ accentColor: 'var(--btn-primary)', marginTop: '4px' }} />
+                      <div>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold', color: 'var(--text-main)', fontSize: '14px' }}>Pointeuse Numérique <span style={{ background: '#f59e0b', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '10px' }}>PREMIUM</span></span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Vos employés pointent chaque matin/soir avec leur code PIN. STACK calcule le temps de travail réel à la minute près et déduit les Heures Supp' tout seul.</span>
+                      </div>
+                  </label>
+              </div>
+          </div>
+        {carteSauvegarde}
       </>);
       
       case 'cgu': return (
