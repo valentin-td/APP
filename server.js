@@ -3575,6 +3575,10 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
+
+        // Lignes à remplir manuellement ou rapprochées par le comptable
+        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
+        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
         
         const especesEncaissees = mapPaiements['ESPECES'] ? parseFloat(mapPaiements['ESPECES'].total) : 0;
         const fondDebut = parseFloat(caisseRes.rows[0].fond_debut_mois) || 0;
@@ -3615,31 +3619,43 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
-        drawRow([{text: 'Fournisseur', w: 110}, {text: 'Date', w: 50, align: 'center'}, {text: 'Compte Comptable', w: 100, align: 'center'}, {text: 'HT', w: 60, align: 'right'}, {text: 'TVA', w: 50, align: 'right'}, {text: 'TTC', w: 65, align: 'right'}], true);
+        drawRow([
+            {text: 'Fournisseur', w: 110}, 
+            {text: 'Date', w: 50, align: 'center'}, 
+            {text: 'Compte Comptable', w: 90, align: 'center'}, 
+            {text: 'Justificatif', w: 60, align: 'center'},
+            {text: 'HT', w: 50, align: 'right'}, 
+            {text: 'TVA', w: 40, align: 'right'}, 
+            {text: 'TTC', w: 65, align: 'right'}
+        ], true);
+        
         let sumDepenses = 0;
         facturesRes.rows.forEach(f => {
             sumDepenses += parseFloat(f.montant_ttc);
             const ht = franchiseTVA ? parseFloat(f.montant_ttc) : parseFloat(f.montant_ht);
             const tva = franchiseTVA ? 0 : parseFloat(f.montant_tva);
             
-            // Attribution d'un compte comptable "Achats de marchandises (revente)" (607) basé sur le contexte de la coiffure
             let compte = '604 - Achats divers';
             const nomLower = (f.nom_fournisseur || '').toLowerCase();
             if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) {
-                compte = '607 - Achat M/ses (Revente)';
+                compte = '607 - Achat M/ses';
             }
 
             drawRow([
                 {text: f.nom_fournisseur.substring(0,20), w: 110}, 
                 {text: f.date_facture, w: 50, align: 'center'}, 
-                {text: compte, w: 100, align: 'center'},
-                {text: fMnt(ht), w: 60, align: 'right'}, 
-                {text: fMnt(tva), w: 50, align: 'right'}, 
+                {text: compte, w: 90, align: 'center'},
+                {text: 'Dans l\'App', w: 60, align: 'center'},
+                {text: fMnt(ht), w: 50, align: 'right'}, 
+                {text: fMnt(tva), w: 40, align: 'right'}, 
                 {text: fMnt(f.montant_ttc), w: 65, align: 'right'}
             ]);
         });
-        drawRow([{text: 'Charges fixes non numérisées (Loyer, URSSAF...)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '613 / 645', w: 100, align: 'center'}, {text: '-', w: 60, align: 'right'}, {text: '-', w: 50, align: 'right'}, {text: 'Voir Banque', w: 65, align: 'right'}]);
-        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 280}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 50}, {text: fMnt(sumDepenses), w: 65, align: 'right'}], false, true);
+        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '613 / 645', w: 90, align: 'center'}, {text: 'À joindre', w: 60, align: 'center'}, {text: '-', w: 50, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 65, align: 'right'}]);
+        
+        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 270}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 50}, {text: '', w: 40}, {text: fMnt(sumDepenses), w: 65, align: 'right'}], false, true);
+        
+        currentY += 15; // Sécurité : Saut de ligne avant la section Variables de paie
 
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
@@ -3757,7 +3773,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         }
 
         // --- 6. MENTIONS LÉGALES & VALIDATION ---
-        currentY += 40;
+        currentY += 30;
+        if (currentY > 600) { doc.addPage(); currentY = 40; }
         
         doc.rect(40, currentY, 515, 85).fillAndStroke('#f9fafb', BORDER_COLOR);
         doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances)', 50, currentY + 10);
@@ -3769,25 +3786,30 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             50, currentY + 25, { width: 495, lineGap: 2 }
         );
 
-        // Signature du gérant
-        currentY += 120;
+        currentY += 100;
+
+        // --- BLOC "BON POUR TRANSMISSION" ---
+        doc.rect(40, currentY, 515, 80).stroke(BORDER_COLOR);
+        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text("BON POUR TRANSMISSION COMPTABLE", 50, currentY + 10);
         
         if (estMoisCloture) {
-            doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("Gérant de la société : " + nomGerant, 350, currentY);
-            doc.font('Helvetica').fontSize(9).text(`Fait le ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 350, currentY + 14);
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("(Signature valant certification des données d'encaissement)", 350, currentY + 30);
+            doc.font('Helvetica').fontSize(10).text(`Nom du Gérant : ${nomGerant}`, 50, currentY + 30);
+            doc.text(`Date : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 50, currentY + 45);
+            
+            doc.text(`Signature :`, 350, currentY + 30);
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("(Signature valant certification des données et validation du document)", 350, currentY + 55, { width: 150 });
         } else {
-            doc.font('Helvetica-Bold').fontSize(14).fillColor('#ea580c').text("DOCUMENT PROVISOIRE - NON SIGNÉ", 250, currentY);
+            doc.font('Helvetica-Bold').fontSize(14).fillColor('#ea580c').text("DOCUMENT PROVISOIRE - NON SIGNÉ", 150, currentY + 35);
         }
 
-        // --- PAGINATION DYNAMIQUE ---
+        // --- PAGINATION DYNAMIQUE (Correction : ancrage absolu) ---
         const range = doc.bufferedPageRange();
         for (let i = range.start, end = range.start + range.count, page = 1; i < end; i++, page++) {
             doc.switchToPage(i);
-            doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+            doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(
                 `Page ${page} / ${range.count}`, 
-                0, 810, 
-                { align: 'center', width: doc.page.width }
+                0, 815, 
+                { align: 'center', width: 595 }
             );
         }
 
