@@ -3353,7 +3353,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             numeroArchive = `ARCH-${id_salon}-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}-${signatureArchive}`;
         }
 
-        const configResult = await pool.query('SELECT nom_salon, email_reception_factures, mot_de_passe_app_email, siret, tva_intra, adresse_salon, telephone_gerant FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        // Utilisation de SELECT * pour éviter les crashs si la colonne forme_juridique n'est pas encore créée
+        const configResult = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : {};
         const nomDuSalon = salonConfig.nom_salon || 'Salon Inconnu';
         
@@ -3519,20 +3520,28 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // --- EN-TÊTE LÉGAL ---
         doc.font('Helvetica-Bold').fontSize(16).fillColor(MAIN_COLOR).text(`LIASSE COMPTABLE MENSUELLE`, 40, currentY);
         currentY += 20;
-        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Raison sociale : ${nomDuSalon}`, 40, currentY);
+        
+        const formeJuridique = salonConfig.forme_juridique ? ` - ${salonConfig.forme_juridique}` : '';
+        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Raison sociale : ${nomDuSalon}${formeJuridique}`, 40, currentY);
         currentY += 14;
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${salonConfig.adresse_salon}`, 40, currentY);
         currentY += 12;
         doc.text(`SIRET: ${salonConfig.siret} | ${mentionTVA} | NAF: 96.02A | IDCC: 2596 (Coiffure)`, 40, currentY);
+        currentY += 12;
+        doc.text(`Gérant(e) : ${nomGerant}`, 40, currentY);
         currentY += 15;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 250, currentY);
         doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
         currentY += 15;
         if (estMoisCloture) {
-            doc.text(`Réf. Archive NF525 : ${numeroArchive}`, 40, currentY);
+            doc.font('Helvetica-Bold').fillColor(MAIN_COLOR).text(`Clôture Mensuelle N° ${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}`, 40, currentY);
             currentY += 12;
-            doc.font('Helvetica-Oblique').fontSize(8).text(`Logiciel STACK v1.0 - Conforme conditions d'inaltérabilité (CGI, art. 286, I-3° bis)`, 40, currentY);
+            doc.font('Helvetica').fontSize(9).text(`Hash de validation : ${signatureArchive}`, 40, currentY);
+            currentY += 12;
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text(`Logiciel STACK v1.0 - Certificat NF525 (CGI, art. 286, I-3° bis)`, 40, currentY);
+            currentY += 12;
+            doc.text(`Réf. Archive : ${numeroArchive}`, 40, currentY);
         }
         currentY += 25;
 
@@ -3720,7 +3729,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         let globalPrimes = 0;
         rhRes.rows.forEach(e => {
-            const prenom = e.nom.split(' ')[0].toLowerCase();
+            // Utilisation du nom complet tel qu'enregistré, sans altération
+            const nomComplet = e.nom;
             const caRealiseBaseHT = mapCaEmployes[e.id_employe] || 0;
             
             // Les bases sont maintenant calculées à la virgule près avec la vraie TVA
@@ -3729,7 +3739,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             
             if (e.est_gerant) {
                 drawRow([
-                    {text: prenom, w: 60}, 
+                    {text: nomComplet.substring(0,18), w: 60}, 
                     {text: 'Gérant', w: 45, align: 'center'},
                     {text: 'N/A', w: 35, align: 'center'},
                     {text: 'N/A', w: 35, align: 'center'},
@@ -3867,15 +3877,16 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         currentY += 100;
 
         // --- BLOC "BON POUR TRANSMISSION" ---
-        doc.rect(40, currentY, 515, 80).stroke(BORDER_COLOR);
+        doc.rect(40, currentY, 515, 90).stroke(BORDER_COLOR);
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text("BON POUR TRANSMISSION COMPTABLE", 50, currentY + 10);
         
         if (estMoisCloture) {
             doc.font('Helvetica').fontSize(10).text(`Nom du Gérant : ${nomGerant}`, 50, currentY + 30);
             doc.text(`Date : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 50, currentY + 45);
             
-            doc.text(`Signature :`, 350, currentY + 30);
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("(Signature valant certification des données et validation du document)", 350, currentY + 55, { width: 150 });
+            doc.font('Helvetica-Bold').text(`Signature :`, 350, currentY + 30);
+            // Espace pour signer (plus large pour être bien sous "Bon pour transmission")
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("(Signature valant certification des données et validation du document)", 350, currentY + 65, { width: 150 });
         } else {
             doc.font('Helvetica-Bold').fontSize(14).fillColor('#ea580c').text("DOCUMENT PROVISOIRE - NON SIGNÉ", 150, currentY + 35);
         }
