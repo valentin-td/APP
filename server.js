@@ -264,6 +264,7 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ecart_caisse NUMERIC(10, 2) DEFAULT 0.00;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS justification_ecart TEXT;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS est_cloture_automatique BOOLEAN DEFAULT FALSE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compteur_tickets INT DEFAULT 0;
 
     -- NOUVELLE TABLE : Petite caisse et régularisations
     CREATE TABLE IF NOT EXISTS mouvements_caisse (
@@ -1294,11 +1295,19 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             }
 
             await clientDB.query('BEGIN');
+        
+        // 🚨 VERROU TRANSACTIONNEL : On bloque la lecture/écriture du compteur pour ce salon précis
+        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+        
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
-        const countRes = await clientDB.query('SELECT COUNT(id_ticket) as nb FROM tickets WHERE id_salon = $1', [id_salon]);
-        const seq = parseInt(countRes.rows[0].nb) + 1;
-        const numeroTicket = `TKT-${methode.substring(0,2)}-${String(seq).padStart(6, '0')}`;
+        
+        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', ''); // Ex: 202610
+        const numeroTicket = `TKT-${anneeMois}-${String(seq).padStart(6, '0')}`;
+
+        // Mise à jour du compteur pour le prochain ticket
+        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
         
         const ticketResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END) RETURNING id_ticket;`, 
@@ -1463,11 +1472,18 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
 
         const montantCompensation = -lignesToProcess.reduce((sum, l) => sum + parseFloat(l.total_ligne_ttc), 0);
 
+        // 🚨 VERROU TRANSACTIONNEL
+        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
-        const countRes = await clientDB.query('SELECT COUNT(id_ticket) as nb FROM tickets WHERE id_salon = $1', [id_salon]);
-        const seq = parseInt(countRes.rows[0].nb) + 1;
-        const numeroCompensation = `TKT-AN-${String(seq).padStart(6, '0')}`;
+        
+        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', '');
+        const numeroCompensation = `TKT-AN-${anneeMois}-${String(seq).padStart(6, '0')}`;
+
+        // Mise à jour du compteur pour le prochain ticket
+        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
 
         const compensationResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
