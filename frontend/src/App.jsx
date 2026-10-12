@@ -2891,8 +2891,8 @@ function App() {
                                             </div>
                                         )}
                                     </div>
-                                        )}
-                                    </div>
+                                        
+                                  
 
                                    
                                     {/* FIN BLOC POURBOIRE */}
