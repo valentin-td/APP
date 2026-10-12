@@ -2860,53 +2860,19 @@ function App() {
                                         </div>
                                     )}
 
-                                    {/* NOUVEAU : BLOC POURBOIRE DIRECT DANS LE TICKET */}
-                                    <div style={{ marginBottom: '12px' }}>
-                                        {!newMouvement.montant || newMouvement.type_mouvement !== 'POURBOIRE' ? (
-                                            <button 
-                                                onClick={() => setNewMouvement({ type_mouvement: 'POURBOIRE', montant: '', motif: 'Pourboire client', id_employe: posEmploye || '' })} 
-                                                style={{ background: 'none', border: '1px dashed var(--btn-primary)', color: 'var(--btn-primary)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
-                                            >
-                                                <span></span> Ajouter un pourboire
-                                            </button>
-                                        ) : (
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ede9fe', padding: '8px 12px', borderRadius: '8px', border: '1px solid #8b5cf6' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                    <span></span>
-                                                    <span style={{ fontWeight: 'bold', color: '#7c3aed', fontSize: '14px' }}>Pourboire</span>
-                                                </div>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                    <input 
-                                                        type="number" 
-                                                        min="0"
-                                                        placeholder="0.00"
-                                                        value={newMouvement.montant}
-                                                        onChange={(e) => setNewMouvement({ ...newMouvement, montant: e.target.value })}
-                                                        style={{ width: '60px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #c4b5fd', textAlign: 'right', fontWeight: 'bold', color: '#6d28d9' }}
-                                                        autoFocus
-                                                    />
-                                                    <span style={{ color: '#7c3aed', fontWeight: 'bold' }}>€</span>
-                                                    <button onClick={() => setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 0, marginLeft: '4px', fontWeight: 'bold' }}>✕</button>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* NOUVEAU : BLOC POURBOIRE */}
-                                    <div style={{ marginBottom: '12px' }}>
+                                    {/* BLOC POURBOIRE ÉPURÉ */}
+                                    <div style={{ marginBottom: '16px' }}>
                                         {!showPourboireInput && !pourboireCaisse ? (
                                             <button 
                                                 onClick={() => setShowPourboireInput(true)} 
-                                                style={{ background: 'none', border: '1px dashed var(--btn-primary)', color: 'var(--btn-primary)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
+                                                style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '10px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', width: '100%', transition: 'all 0.15s' }}
                                             >
-                                                <span>🎁</span> Ajouter un pourboire pour l'équipe
+                                                Ajouter un pourboire
                                             </button>
                                         ) : (
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ede9fe', padding: '8px 12px', borderRadius: '8px', border: '1px solid #8b5cf6' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                    <span>🎁</span>
-                                                    <span style={{ fontWeight: 'bold', color: '#7c3aed', fontSize: '14px' }}>Pourboire</span>
-                                                </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)', padding: '10px 16px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>Pourboire</span>
+                                                
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                     <input 
                                                         type="number" 
@@ -2914,15 +2880,21 @@ function App() {
                                                         placeholder="0.00"
                                                         value={pourboireCaisse}
                                                         onChange={(e) => setPourboireCaisse(e.target.value)}
-                                                        style={{ width: '60px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #c4b5fd', textAlign: 'right', fontWeight: 'bold', color: '#6d28d9' }}
+                                                        style={{ width: '70px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', textAlign: 'right', fontWeight: 'bold', fontSize: '14px' }}
                                                         autoFocus
                                                     />
-                                                    <span style={{ color: '#7c3aed', fontWeight: 'bold' }}>€</span>
-                                                    <button onClick={() => { setPourboireCaisse(''); setShowPourboireInput(false); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 0, marginLeft: '4px', fontWeight: 'bold' }}>✕</button>
+                                                    <span style={{ color: 'var(--text-main)', fontWeight: 'bold' }}>€</span>
+                                                    <button onClick={() => { setPourboireCaisse(''); setShowPourboireInput(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', marginLeft: '4px' }}>
+                                                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                                    </button>
                                                 </div>
                                             </div>
                                         )}
                                     </div>
+                                        )}
+                                    </div>
+
+                                   
                                     {/* FIN BLOC POURBOIRE */}
 
                                     <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
