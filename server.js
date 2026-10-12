@@ -3802,15 +3802,23 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             doc.font('Helvetica-Bold').fontSize(14).fillColor('#ea580c').text("DOCUMENT PROVISOIRE - NON SIGNÉ", 150, currentY + 35);
         }
 
-        // --- PAGINATION DYNAMIQUE (Correction : ancrage absolu) ---
+        // --- PAGINATION DYNAMIQUE (Correction : ancrage absolu sans saut de page) ---
         const range = doc.bufferedPageRange();
         for (let i = range.start, end = range.start + range.count, page = 1; i < end; i++, page++) {
             doc.switchToPage(i);
+            
+            // On désactive temporairement la marge du bas pour forcer l'écriture sans créer de nouvelle page
+            const originalBottomMargin = doc.page.margins.bottom;
+            doc.page.margins.bottom = 0;
+            
             doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(
                 `Page ${page} / ${range.count}`, 
                 0, 815, 
                 { align: 'center', width: 595 }
             );
+            
+            // On restaure la marge
+            doc.page.margins.bottom = originalBottomMargin;
         }
 
         doc.end();
