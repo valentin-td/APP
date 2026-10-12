@@ -3420,12 +3420,19 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             GROUP BY COALESCE(c.type_article, 'PRESTATION')
         `, [id_salon, dateDebutAnneeStr, dateFinStr]);
 
-        // REQUÊTE : Historique des Z du mois
+        // REQUÊTE : Historique des Z du mois (Enrichie avec le CA et tickets)
         const zMoisRes = await pool.query(`
-            SELECT id_cloture, TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_z, total_especes_reel, ferme_par, signature_hash 
-            FROM clotures_caisse 
-            WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3 
-            ORDER BY date_cloture ASC
+            SELECT c.id_cloture, TO_CHAR(c.date_cloture, 'DD/MM/YYYY') as date_z, 
+                   c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc,
+                   COUNT(t.id_ticket) as nb_tickets,
+                   COALESCE(SUM(t.total_ttc), 0) as ca_ttc
+            FROM clotures_caisse c
+            LEFT JOIN tickets t ON t.id_salon = c.id_salon 
+                                AND DATE(t.date_creation) = DATE(c.date_cloture)
+                                AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+            WHERE c.id_salon = $1 AND DATE(c.date_cloture) BETWEEN $2 AND $3 
+            GROUP BY c.id_cloture, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc
+            ORDER BY c.date_cloture ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
 
         // 3. REQUÊTE : Dépenses
@@ -3780,20 +3787,54 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         // --- 5 BIS. ARCHIVE DES CLÔTURES (Z) ---
         drawTableTitle("5 BIS. HISTORIQUE DES CLÔTURES DE CAISSE (Z)");
-        drawRow([{text: 'N° Z', w: 40}, {text: 'Date', w: 60, align: 'center'}, {text: 'Opérateur', w: 100}, {text: 'Espèces (Réel)', w: 80, align: 'right'}, {text: 'Hash de validation (NF525)', w: 195, align: 'right'}], true);
+        drawRow([
+            {text: 'N° Z', w: 30}, 
+            {text: 'Date', w: 45, align: 'center'}, 
+            {text: 'Opérateur', w: 75}, 
+            {text: 'Tkts', w: 25, align: 'center'},
+            {text: 'CA TTC', w: 45, align: 'right'},
+            {text: 'Cumul P.', w: 55, align: 'right'},
+            {text: 'Espèces', w: 50, align: 'right'}, 
+            {text: 'Hash NF525', w: 120, align: 'right'}
+        ], true);
         
         if (zMoisRes.rowCount === 0) {
             drawRow([{text: 'Aucune clôture enregistrée ce mois-ci.', w: 515}]);
         } else {
+            let sumCaZ = 0;
             zMoisRes.rows.forEach(z => {
+                sumCaZ += parseFloat(z.ca_ttc) || 0;
+                
+                // Détection d'un robot ou absence d'opérateur
+                let operator = z.ferme_par || 'Non spécifié';
+                let isAuto = operator.toLowerCase().includes('robot') || operator.toLowerCase().includes('auto') || operator === 'Non spécifié';
+                if (operator === 'Non spécifié') operator = 'Système (Auto)';
+                
+                // Un robot ne compte pas la caisse
+                let especesReel = isAuto ? 'Non compté' : fMnt(z.total_especes_reel);
+                
                 drawRow([
-                    {text: `Z-${z.id_cloture}`, w: 40}, 
-                    {text: z.date_z, w: 60, align: 'center'}, 
-                    {text: z.ferme_par || 'Inconnu', w: 100}, 
-                    {text: fMnt(z.total_especes_reel), w: 80, align: 'right'}, 
-                    {text: z.signature_hash ? z.signature_hash.substring(0, 30) + '...' : 'NON-SIGNE', w: 195, align: 'right'}
+                    {text: `Z-${z.id_cloture}`, w: 30}, 
+                    {text: z.date_z, w: 45, align: 'center'}, 
+                    {text: operator.substring(0,12), w: 75}, 
+                    {text: z.nb_tickets, w: 25, align: 'center'},
+                    {text: fMnt(z.ca_ttc), w: 45, align: 'right'},
+                    {text: fMnt(z.cumul_perpetuel_ttc), w: 55, align: 'right'},
+                    {text: especesReel, w: 50, align: 'right'}, 
+                    {text: z.signature_hash ? z.signature_hash.substring(0, 18) + '...' : 'NON-SIGNE', w: 120, align: 'right'}
                 ]);
             });
+            
+            // Calcul du CA orphelin (Jours où il y a eu des ventes mais aucune clôture de caisse Z n'a été faite)
+            const caNonCloture = globalTTC - sumCaZ;
+            if (caNonCloture > 0.01 || caNonCloture < -0.01) {
+                drawRow([
+                    {text: 'CA des jours non clôturés (En attente de Z)', w: 175}, 
+                    {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, 
+                    {text: fMnt(caNonCloture), w: 45, align: 'right'}, 
+                    {text: '', w: 55}, {text: '', w: 50}, {text: '', w: 120}
+                ], false, true);
+            }
         }
 
         // --- 6. MENTIONS LÉGALES & VALIDATION ---
