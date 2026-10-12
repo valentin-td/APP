@@ -4058,8 +4058,34 @@ function App() {
                             <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
                             <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
                           </div>
+
+                          {/* NOUVEAU BLOC : CONTRAT RH */}
+                          <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '16px'}}>
+                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Base Contractuelle (RH & Comptabilité)</label>
+                              <div style={{display: 'flex', gap: '12px'}}>
+                                  <select className="input-fournisseur" style={{flex: 1}} value={newEmploye.type_contrat} onChange={(e) => {
+                                      const typeC = e.target.value;
+                                      let hBase = newEmploye.heures_mensuelles_base;
+                                      if (typeC === '35H') hBase = 151.67;
+                                      if (typeC === '39H') hBase = 169.00;
+                                      setNewEmploye({...newEmploye, type_contrat: typeC, heures_mensuelles_base: hBase});
+                                  }}>
+                                      <option value="35H">Temps Plein (35h / sem)</option>
+                                      <option value="39H">Temps Plein (39h / sem)</option>
+                                      <option value="PARTIEL">Temps Partiel</option>
+                                      <option value="APPRENTI">Apprenti / Alternant</option>
+                                  </select>
+                                  <div style={{flex: 1, display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                      <input type="number" step="0.01" className="input-fournisseur" value={newEmploye.heures_mensuelles_base} onChange={(e) => setNewEmploye({...newEmploye, heures_mensuelles_base: e.target.value})} style={{width: '100%'}} />
+                                      <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>h/mois</span>
+                                  </div>
+                              </div>
+                              <p style={{fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0}}>Cette base sera pré-remplie automatiquement chaque mois sur la Liasse Comptable de votre salon.</p>
+                          </div>
+
                           <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.prenom || !newEmploye.nomFamille || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
                       </div>
+                  )}
                   )}
                   
                   {(rhData || []).length === 0 ? (
