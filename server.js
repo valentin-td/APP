@@ -3757,7 +3757,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 const basesConcat = `${basePrestaHT.toFixed(2)} / ${baseProduitHT.toFixed(2)}`;
                 
                 drawRow([
-                    {text: prenom, w: 60}, 
+                    {text: nomComplet.substring(0,18), w: 60}, 
                     {text: 'À déclarer', w: 45, align: 'center'},
                     {text: '.......', w: 35, align: 'center'},
                     {text: '.......', w: 35, align: 'center'},
