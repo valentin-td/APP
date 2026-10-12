@@ -2291,13 +2291,28 @@ app.delete('/api/clients/:id', verifierToken, async (req, res) => { try { await 
 
 app.get('/api/employes', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM employes WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }});
 app.post('/api/employes', verifierToken, async (req, res) => { 
-    const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url } = req.body; 
+    const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, type_contrat, heures_mensuelles_base } = req.body; 
     try { 
         if (!code_pin) return res.status(400).json({ erreur: "Le code PIN est obligatoire." });
         if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
         
         const hashPin = await bcrypt.hash(code_pin, 10);
-        await pool.query('INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7)', [nom, role || 'Employé', taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, photo_url || null, req.user.id_salon]); 
+        
+        await pool.query(`
+            INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, type_contrat, heures_mensuelles_base, id_salon) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `, [
+            nom, 
+            role || 'Employé', 
+            taux_commission_prestation || 0, 
+            taux_commission_produit || 0, 
+            hashPin, 
+            photo_url || null, 
+            type_contrat || '35H', 
+            heures_mensuelles_base || 151.67, 
+            req.user.id_salon
+        ]); 
+        
         res.status(201).json({message: "Employé ajouté"});
     } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
 });
