@@ -624,6 +624,31 @@ app.post('/api/login', authLimiter, async (req, res) => {
     } catch (error) { res.status(500).json({ erreur: "Erreur serveur." }); }
 });
 
+// --- GESTION DES HEURES (AJUSTEMENTS MANUELS DU MODE PRO) ---
+app.post('/api/rh/ajustements', verifierToken, async (req, res) => {
+    const { id_employe, mois_annee, heures_ajoutees, motif } = req.body;
+    try {
+        await pool.query(
+            `INSERT INTO heures_ajustements (id_employe, mois_annee, heures_ajoutees, motif) VALUES ($1, $2, $3, $4)`,
+            [id_employe, mois_annee, heures_ajoutees, motif]
+        );
+        res.json({ message: "Ajustement enregistré avec succès" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
+});
+
+// --- GESTION DE LA POINTEUSE NUMÉRIQUE (MODE PREMIUM) ---
+app.post('/api/rh/pointage', verifierToken, async (req, res) => {
+    const { id_employe, type_action } = req.body; // 'ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'
+    const id_salon = req.user.id_salon;
+    try {
+        await pool.query(
+            `INSERT INTO pointages (id_employe, id_salon, date_jour, type_action) VALUES ($1, $2, CURRENT_DATE, $3)`,
+            [id_employe, id_salon, type_action]
+        );
+        res.json({ message: "Pointage enregistré" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
+});
+
 app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
     const { id_salon, nom_employe, code_pin } = req.body;
     try {
@@ -3467,22 +3492,28 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // 3. REQUÊTE : Dépenses
         const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
 
-        // 4. REQUÊTE : Commissions Employés (Recalcul exact au réel depuis les tickets pour annuler l'erreur de division par 1.2)
+        // 4. REQUÊTE : Commissions Employés & Contrats (Recalcul exact + Heures + Pourboires)
         const rhRes = await pool.query(`
-            SELECT e.id_employe, e.nom, e.est_gerant,
+            SELECT e.id_employe, e.nom, e.est_gerant, e.type_contrat, e.heures_mensuelles_base,
                    MAX(e.taux_commission_prestation) as taux_presta,
                    MAX(e.taux_commission_produit) as taux_produit,
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_presta_ht,
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') != 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_produit_ht,
-                   COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_prestation / 100) ELSE (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_produit / 100) END), 0) as total_prime
+                   COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_prestation / 100) ELSE (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_produit / 100) END), 0) as total_prime,
+                   (SELECT COALESCE(SUM(montant_pourboire), 0) FROM tickets t2 WHERE t2.id_employe = e.id_employe AND DATE(t2.date_creation) BETWEEN $2 AND $3 AND t2.statut = 'VALIDE' AND t2.est_compense = FALSE) as total_pourboire
             FROM employes e 
             LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
             WHERE e.id_salon = $1 
-            GROUP BY e.id_employe, e.nom, e.est_gerant 
+            GROUP BY e.id_employe, e.nom, e.est_gerant, e.type_contrat, e.heures_mensuelles_base
             ORDER BY e.est_gerant DESC, e.nom ASC
         `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
+
+        const anneeMoisAjustement = dateDebutStr.substring(0, 7); // Ex: "2026-10"
+        const ajustementsRes = await pool.query(`SELECT id_employe, SUM(heures_ajoutees) as heures_supp FROM heures_ajustements WHERE mois_annee = $1 GROUP BY id_employe`, [anneeMoisAjustement]);
+        const mapAjustements = {};
+        ajustementsRes.rows.forEach(r => mapAjustements[r.id_employe] = parseFloat(r.heures_supp));
 
         // 4bis. REQUÊTE : CA Réalisé par employé pour comparer avec la base (Passe en HT réel)
         const caEmployesRes = await pool.query(`
@@ -3752,13 +3783,39 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             const basePrestaHT = parseFloat(e.base_presta_ht || 0);
             const baseProduitHT = parseFloat(e.base_produit_ht || 0);
             
+            // NOUVEAU : Logique d'affichage automatisée des heures et pourboires
+            let heuresAffichees = '.......';
+            let hsAffichees = '.......';
+            let pourboireAffiche = parseFloat(e.total_pourboire) > 0 ? fMnt(e.total_pourboire) : '-';
+
+            if (e.est_gerant) {
+                heuresAffichees = 'N/A';
+                hsAffichees = 'N/A';
+                pourboireAffiche = 'N/A';
+            } else if (salonConfig.mode_suivi_heures === 'POINTEUSE') {
+                heuresAffichees = 'Extrait Log';
+                hsAffichees = 'Extrait Log';
+            } else {
+                const baseContrat = parseFloat(e.heures_mensuelles_base || 151.67);
+                const heuresAjust = mapAjustements[e.id_employe] || 0;
+                
+                heuresAffichees = `${baseContrat.toFixed(0)}h`;
+                
+                // Différence légale de terminologie entre Temps Partiel (HC) et Temps Plein (HS)
+                if (e.type_contrat === 'PARTIEL') {
+                    hsAffichees = heuresAjust !== 0 ? (heuresAjust > 0 ? `+${heuresAjust}h HC` : `${heuresAjust}h`) : '-';
+                } else {
+                    hsAffichees = heuresAjust !== 0 ? (heuresAjust > 0 ? `+${heuresAjust}h HS` : `${heuresAjust}h`) : '-';
+                }
+            }
+
             if (e.est_gerant) {
                 drawRow([
                     {text: nomComplet.substring(0,18), w: 60}, 
                     {text: 'Gérant', w: 45, align: 'center'},
-                    {text: 'N/A', w: 35, align: 'center'},
-                    {text: 'N/A', w: 35, align: 'center'},
-                    {text: 'N/A', w: 45, align: 'center'},
+                    {text: heuresAffichees, w: 35, align: 'center'},
+                    {text: hsAffichees, w: 35, align: 'center'},
+                    {text: pourboireAffiche, w: 45, align: 'center'},
                     {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
                     {text: '-', w: 75, align: 'right'}, 
                     {text: '-', w: 65, align: 'center'}, 
@@ -3774,9 +3831,9 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 drawRow([
                     {text: nomComplet.substring(0,18), w: 60}, 
                     {text: 'À déclarer', w: 45, align: 'center'},
-                    {text: '.......', w: 35, align: 'center'},
-                    {text: '.......', w: 35, align: 'center'},
-                    {text: '.......', w: 45, align: 'center'},
+                    {text: heuresAffichees, w: 35, align: 'center'},
+                    {text: hsAffichees, w: 35, align: 'center'},
+                    {text: pourboireAffiche, w: 45, align: 'center'},
                     {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
                     {text: basesConcat, w: 75, align: 'right'}, 
                     {text: regleTaux, w: 65, align: 'center'}, 
@@ -3787,7 +3844,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 515}]);
         
         currentY += 4;
-        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* L'écart logique entre le CA Réalisé et les Bases provient des articles non-éligibles. Complétez manuellement les heures et pourboires.", 40, currentY); currentY += 12;
+        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Le CA Réalisé inclut tout. La Base HT exclut les articles non-commissionnés (forfaits techniques...). HC = Heures Complémentaires, HS = Supplémentaires.", 40, currentY); currentY += 12;
         
         drawRow([
             {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 450}, 
