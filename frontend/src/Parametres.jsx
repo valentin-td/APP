@@ -32,6 +32,7 @@ const ICONS = {
 };
 
 const TITRES = {
+  identite: 'Identité & Légal (NF525)',
   fidelite: 'Programme de fidélité',
   sms: 'Fidélisation (SMS Auto)',
   horaires: "Horaires de l'agenda",
@@ -69,6 +70,7 @@ export default function Parametres({
       { id: 'sms', icone: ICONS.sms, label: 'Fidélisation SMS', valeur: statut(configSalon.brevo_api_key) },
     ] },
     { titre: 'Salon', lignes: [
+      { id: 'identite', icone: ICONS.shield, label: 'Identité & Légal', valeur: statut(configSalon.siret) },
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
       { id: 'alertes', icone: ICONS.bell, label: 'Alertes urgences', valeur: statut(configSalon.alertes_sms_actives, 'Activées', 'Désactivées') },
     ] },
@@ -113,6 +115,32 @@ const groupesBas = [
 
   const renderSection = (id) => {
     switch (id) {
+      case 'identite': return (<>
+          <div className="carte scan-carte">
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px' }}>Ces informations sont obligatoires pour générer votre Liasse Comptable Légale (NF525).</span>
+              
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nom du salon</label>
+              <input type="text" className="input-fournisseur" value={configSalon.nom_salon || ''} onChange={e => setConfigSalon({...configSalon, nom_salon: e.target.value})} style={{ marginBottom: '12px' }} />
+
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Adresse complète</label>
+              <input type="text" className="input-fournisseur" value={configSalon.adresse_salon || ''} onChange={e => setConfigSalon({...configSalon, adresse_salon: e.target.value})} style={{ marginBottom: '12px' }} />
+              
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                  <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Numéro SIRET</label>
+                      <input type="text" className="input-fournisseur" placeholder="Ex: 12345678900012" value={configSalon.siret || ''} onChange={e => setConfigSalon({...configSalon, siret: e.target.value})} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>N° TVA Intracom.</label>
+                      <input type="text" className="input-fournisseur" placeholder="Vide si franchise" value={configSalon.tva_intra || ''} onChange={e => setConfigSalon({...configSalon, tva_intra: e.target.value})} />
+                  </div>
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '0', fontStyle: 'italic' }}>
+                  * Laissez le champ TVA vide si vous êtes en Franchise en base de TVA. Le logiciel génèrera une liasse sans TVA. Remplissez-le dès le dépassement de votre seuil majoré.
+              </p>
+          </div>
+        {carteSauvegarde}
+      </>);
       case 'fidelite': return (<>
                   <div className="carte scan-carte">
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', display:'block', marginBottom: '16px'}}>Définissez les règles pour récompenser vos clients.</span>
