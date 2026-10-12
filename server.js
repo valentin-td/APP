@@ -3395,15 +3395,30 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             ORDER BY date_creation ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
 
+        // --- NOUVEAUTÉ : Cumul annuel pour la Franchise en Base ---
+        const firstDayOfYear = new Date(today.getFullYear(), 0, 1);
+        const dateDebutAnneeStr = formatYMD(firstDayOfYear);
+        const cumulAnnuelRes = await pool.query(`
+            SELECT 
+                COALESCE(c.type_article, 'PRESTATION') as type_article,
+                SUM(lt.total_ligne_ttc) as total_ttc
+            FROM lignes_ticket lt
+            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            LEFT JOIN catalogue c ON c.id_article = lt.id_article
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $4 AND $3
+            GROUP BY COALESCE(c.type_article, 'PRESTATION')
+        `, [id_salon, dateDebutStr, dateFinStr, dateDebutAnneeStr]);
+
         // 3. REQUÊTE : Dépenses
         const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
 
-        // 4. REQUÊTE : Commissions Employés
+        // 4. REQUÊTE : Commissions Employés (Enrichie pour gérer la différence CA vs Base, et Presta vs Produit)
         const rhRes = await pool.query(`
-            SELECT e.nom, e.est_gerant,
+            SELECT e.id_employe, e.nom, e.est_gerant,
                    MAX(e.taux_commission_prestation) as taux_presta,
-                   SUM(CASE WHEN c.type_vente = 'PRESTATION' THEN c.montant_vente / 1.20 ELSE 0 END) as base_presta_ht,
-                   SUM(CASE WHEN c.type_vente != 'PRESTATION' THEN c.montant_vente / 1.20 ELSE 0 END) as base_produit_ht,
+                   MAX(e.taux_commission_produit) as taux_produit,
+                   SUM(CASE WHEN c.type_vente = 'PRESTATION' THEN c.montant_vente ELSE 0 END) as base_presta_ttc,
+                   SUM(CASE WHEN c.type_vente != 'PRESTATION' THEN c.montant_vente ELSE 0 END) as base_produit_ttc,
                    SUM(c.montant_commission) as total_prime
             FROM employes e 
             LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3
@@ -3411,6 +3426,17 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             GROUP BY e.id_employe, e.nom, e.est_gerant 
             ORDER BY e.est_gerant DESC, e.nom ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
+
+        // 4bis. REQUÊTE : CA Réalisé par employé pour comparer avec la base
+        const caEmployesRes = await pool.query(`
+            SELECT lt.id_employe, SUM(lt.total_ligne_ttc) as ca_realise_ttc
+            FROM lignes_ticket lt
+            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+            GROUP BY lt.id_employe
+        `, [id_salon, dateDebutStr, dateFinStr]);
+        const mapCaEmployes = {};
+        caEmployesRes.rows.forEach(r => mapCaEmployes[r.id_employe] = parseFloat(r.ca_realise_ttc));
 
         // 5. REQUÊTE : Absences
         const absencesRes = await pool.query(`
@@ -3502,6 +3528,19 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         drawRow([{text: 'TOTAL GÉNÉRAL', w: 180}, {text: fMnt(totalHT), w: 100, align: 'right'}, {text: fMnt(totalTVA), w: 100, align: 'right'}, {text: fMnt(globalTTC), w: 105, align: 'right'}], false, true);
         if (franchiseTVA) {
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* TVA non applicable, art. 293 B du CGI.", 40, currentY); currentY += 12;
+            
+            // Affichage du cumul annuel pour surveillance des seuils de franchise
+            let cumulServices = 0;
+            let cumulTotal = 0;
+            cumulAnnuelRes.rows.forEach(r => {
+                const ttc = parseFloat(r.total_ttc) || 0;
+                if (r.type_article === 'PRESTATION') cumulServices += ttc;
+                cumulTotal += ttc;
+            });
+            currentY += 8;
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text("Suivi des seuils de Franchise en base (Cumul Annuel depuis le 1er janvier) :", 40, currentY); currentY += 14;
+            doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR).text(`• Prestations de services : ${fMnt(cumulServices)} (Seuil d'alerte : 36 800 € / Plafond : 39 100 €)`, 40, currentY); currentY += 12;
+            doc.text(`• Chiffre d'affaires global (Prestations + Ventes) : ${fMnt(cumulTotal)} (Seuil d'alerte : 91 900 € / Plafond : 101 000 €)`, 40, currentY); currentY += 16;
         }
 
         // --- 2. RAPPROCHEMENT BANCAIRE ---
@@ -3560,32 +3599,88 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
-        drawRow([{text: 'Fournisseur / Ligne', w: 140}, {text: 'Date', w: 60, align: 'center'}, {text: 'HT', w: 70, align: 'right'}, {text: 'TVA', w: 70, align: 'right'}, {text: 'TTC', w: 90, align: 'right'}], true);
+        drawRow([{text: 'Fournisseur', w: 110}, {text: 'Date', w: 50, align: 'center'}, {text: 'Compte Comptable', w: 100, align: 'center'}, {text: 'HT', w: 60, align: 'right'}, {text: 'TVA', w: 50, align: 'right'}, {text: 'TTC', w: 65, align: 'right'}], true);
         let sumDepenses = 0;
         facturesRes.rows.forEach(f => {
             sumDepenses += parseFloat(f.montant_ttc);
             const ht = franchiseTVA ? parseFloat(f.montant_ttc) : parseFloat(f.montant_ht);
             const tva = franchiseTVA ? 0 : parseFloat(f.montant_tva);
-            drawRow([{text: f.nom_fournisseur.substring(0,25), w: 140}, {text: f.date_facture, w: 60, align: 'center'}, {text: fMnt(ht), w: 70, align: 'right'}, {text: fMnt(tva), w: 70, align: 'right'}, {text: fMnt(f.montant_ttc), w: 90, align: 'right'}]);
+            
+            // Attribution d'un compte comptable "Achats de marchandises (revente)" (607) basé sur le contexte de la coiffure
+            let compte = '604 - Achats divers';
+            const nomLower = (f.nom_fournisseur || '').toLowerCase();
+            if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) {
+                compte = '607 - Achat M/ses (Revente)';
+            }
+
+            drawRow([
+                {text: f.nom_fournisseur.substring(0,20), w: 110}, 
+                {text: f.date_facture, w: 50, align: 'center'}, 
+                {text: compte, w: 100, align: 'center'},
+                {text: fMnt(ht), w: 60, align: 'right'}, 
+                {text: fMnt(tva), w: 50, align: 'right'}, 
+                {text: fMnt(f.montant_ttc), w: 65, align: 'right'}
+            ]);
         });
-        drawRow([{text: 'Charges fixes non numérisées (Loyer, URSSAF...)', w: 140}, {text: 'N/A', w: 60, align: 'center'}, {text: '-', w: 70, align: 'right'}, {text: '-', w: 70, align: 'right'}, {text: 'Voir Banque', w: 90, align: 'right'}]);
-        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 280}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 0}, {text: fMnt(sumDepenses), w: 90, align: 'right'}], false, true);
+        drawRow([{text: 'Charges fixes non numérisées (Loyer, URSSAF...)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '613 / 645', w: 100, align: 'center'}, {text: '-', w: 60, align: 'right'}, {text: '-', w: 50, align: 'right'}, {text: 'Voir Banque', w: 65, align: 'right'}]);
+        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 280}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 50}, {text: fMnt(sumDepenses), w: 65, align: 'right'}], false, true);
 
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
-        drawRow([{text: 'Employé', w: 100}, {text: 'Statut', w: 70}, {text: 'Hrs/HS/Pourb.', w: 80}, {text: 'Base HT', w: 80, align: 'right'}, {text: 'Prime Brute', w: 95, align: 'right'}], true);
+        
+        // Nouvelle structure du tableau pour gérer les bases multiples et l'explication des écarts
+        drawRow([
+            {text: 'Employé', w: 65}, 
+            {text: 'CA Réalisé', w: 60, align: 'right'}, 
+            {text: 'Base Prestas', w: 65, align: 'right'}, 
+            {text: 'Base Produits', w: 70, align: 'right'}, 
+            {text: 'Règle Taux (Prst/Prod)', w: 100, align: 'center'}, 
+            {text: 'Prime Brute', w: 60, align: 'right'}
+        ], true);
+
         let globalPrimes = 0;
         rhRes.rows.forEach(e => {
+            const caRealiseTtc = mapCaEmployes[e.id_employe] || 0;
+            const caRealiseBaseHT = franchiseTVA ? caRealiseTtc : (caRealiseTtc / 1.20);
+            
+            const basePrestaHT = franchiseTVA ? parseFloat(e.base_presta_ttc || 0) : (parseFloat(e.base_presta_ttc || 0) / 1.20);
+            const baseProduitHT = franchiseTVA ? parseFloat(e.base_produit_ttc || 0) : (parseFloat(e.base_produit_ttc || 0) / 1.20);
+            
             if (e.est_gerant) {
-                drawRow([{text: e.nom, w: 100}, {text: 'Gérant (Non sal.)', w: 70}, {text: 'N/A', w: 80}, {text: '-', w: 80, align: 'right'}, {text: '-', w: 95, align: 'right'}]);
+                drawRow([
+                    {text: e.nom.substring(0,12), w: 65}, 
+                    {text: fMnt(caRealiseBaseHT), w: 60, align: 'right'}, 
+                    {text: '-', w: 65, align: 'right'}, 
+                    {text: '-', w: 70, align: 'right'}, 
+                    {text: 'Gérant (N/A)', w: 100, align: 'center'}, 
+                    {text: '-', w: 60, align: 'right'}
+                ]);
             } else {
                 globalPrimes += (parseFloat(e.total_prime) || 0);
-                const baseHT = parseFloat(e.base_presta_ht) + parseFloat(e.base_produit_ht);
-                drawRow([{text: e.nom, w: 100}, {text: 'Salarié', w: 70}, {text: 'À déclarer', w: 80}, {text: fMnt(baseHT), w: 80, align: 'right'}, {text: fMnt(e.total_prime), w: 95, align: 'right'}]);
+                const tauxPresta = parseFloat(e.taux_presta || 0);
+                const tauxProduit = parseFloat(e.taux_produit || 0);
+                const regleTaux = `${tauxPresta}% / ${tauxProduit}%`;
+                
+                drawRow([
+                    {text: e.nom.substring(0,12), w: 65}, 
+                    {text: fMnt(caRealiseBaseHT), w: 60, align: 'right'}, 
+                    {text: fMnt(basePrestaHT), w: 65, align: 'right'}, 
+                    {text: fMnt(baseProduitHT), w: 70, align: 'right'}, 
+                    {text: regleTaux, w: 100, align: 'center'}, 
+                    {text: fMnt(e.total_prime), w: 60, align: 'right'}
+                ]);
             }
         });
-        if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 100}, {text: '-', w: 70}, {text: '-', w: 80}, {text: '-', w: 80, align: 'right'}, {text: '-', w: 95, align: 'right'}]);
-        drawRow([{text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 270}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: fMnt(globalPrimes), w: 95, align: 'right'}], false, true);
+        if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 65}, {text: '-', w: 60, align: 'right'}, {text: '-', w: 65, align: 'right'}, {text: '-', w: 70, align: 'right'}, {text: '-', w: 100, align: 'center'}, {text: '-', w: 60, align: 'right'}]);
+        
+        currentY += 4;
+        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* L'écart logique entre le CA Réalisé et les Bases provient des articles non-éligibles aux commissions ou des remises.", 40, currentY); currentY += 12;
+        
+        drawRow([
+            {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 385}, 
+            {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, 
+            {text: fMnt(globalPrimes), w: 60, align: 'right'}
+        ], false, true);
 
         doc.addPage();
         doc.font('Helvetica-Bold').fontSize(20).fillColor(MAIN_COLOR).text('Variables de Paie & Absences (Suite)', 40, 40);
