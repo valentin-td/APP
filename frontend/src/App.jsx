@@ -2807,7 +2807,7 @@ function App() {
                                         {posEmploye && <button onClick={() => { setPosEmploye(null); setClientsSuggeres([]); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
                                     </div>
                                     <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
-                                        <option value="">🤝 Client de passage...</option>
+                                        <option value=""> Client de passage...</option>
                                         {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
                                         {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>{c.nom} {c.prenom}</option>)}
                                     </select>
@@ -2837,8 +2837,8 @@ function App() {
                                         <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
                                             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                                                 <div>
-                                                    <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}</span>
-                                                    <span style={{fontSize: '12px', color: 'var(--color-info)'}}>🎁 {texteRecompense}</span>
+                                                    <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? 'Fidélité atteinte !' : 'Carte complétée !'}</span>
+                                                    <span style={{fontSize: '12px', color: 'var(--color-info)'}}> {texteRecompense}</span>
                                                 </div>
                                                 {!remiseAppliquee ? (
                                                     <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
@@ -2851,14 +2851,46 @@ function App() {
                                     
                                     {remiseAppliquee && configSalon.fidelite_type !== 'NONE' && (
                                         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px', color: 'var(--color-success)'}}>
-                                            <span style={{fontWeight: 'bold'}}>🎁 Remise Fidélité</span>
+                                            <span style={{fontWeight: 'bold'}}>Remise Fidélité</span>
                                             <span style={{fontWeight: 'bold'}}>-{Math.max(0, sousTotalCaisse - totalCaisse).toFixed(2)} €</span>
                                         </div>
                                     )}
 
+                                    {/* NOUVEAU : BLOC POURBOIRE DIRECT DANS LE TICKET */}
+                                    <div style={{ marginBottom: '12px' }}>
+                                        {!newMouvement.montant || newMouvement.type_mouvement !== 'POURBOIRE' ? (
+                                            <button 
+                                                onClick={() => setNewMouvement({ type_mouvement: 'POURBOIRE', montant: '', motif: 'Pourboire client', id_employe: posEmploye || '' })} 
+                                                style={{ background: 'none', border: '1px dashed var(--btn-primary)', color: 'var(--btn-primary)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
+                                            >
+                                                <span></span> Ajouter un pourboire
+                                            </button>
+                                        ) : (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ede9fe', padding: '8px 12px', borderRadius: '8px', border: '1px solid #8b5cf6' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span></span>
+                                                    <span style={{ fontWeight: 'bold', color: '#7c3aed', fontSize: '14px' }}>Pourboire</span>
+                                                </div>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <input 
+                                                        type="number" 
+                                                        min="0"
+                                                        placeholder="0.00"
+                                                        value={newMouvement.montant}
+                                                        onChange={(e) => setNewMouvement({ ...newMouvement, montant: e.target.value })}
+                                                        style={{ width: '60px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #c4b5fd', textAlign: 'right', fontWeight: 'bold', color: '#6d28d9' }}
+                                                        autoFocus
+                                                    />
+                                                    <span style={{ color: '#7c3aed', fontWeight: 'bold' }}>€</span>
+                                                    <button onClick={() => setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 0, marginLeft: '4px', fontWeight: 'bold' }}>✕</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
                                     <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
                                         <span>Total TTC</span>
-                                        <span>{totalCaisse.toFixed(2)} €</span>
+                                        <span>{(totalCaisse + (newMouvement.type_mouvement === 'POURBOIRE' ? (parseFloat(newMouvement.montant) || 0) : 0)).toFixed(2)} €</span>
                                     </div>
 
                                     <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
