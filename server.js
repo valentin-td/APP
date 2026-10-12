@@ -280,6 +280,7 @@ pool.query(`
 
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS siret VARCHAR(50);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS mode_suivi_heures VARCHAR(20) DEFAULT 'MANUEL';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS tva_intra VARCHAR(50);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS adresse_salon TEXT;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS frequence_paiement VARCHAR(20) DEFAULT 'MENSUEL';
