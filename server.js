@@ -1298,8 +1298,11 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             await clientDB.query('BEGIN');
         
         // 🚨 VERROU TRANSACTIONNEL : On bloque la lecture/écriture du compteur pour ce salon précis
-        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const configRes = await clientDB.query('SELECT compteur_tickets, tva_intra FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
         const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+        
+        // DÉTECTION FRANCHISE : Vérifie si le salon est assujetti à la TVA
+        const franchiseTVA = !configRes.rows[0].tva_intra || configRes.rows[0].tva_intra.trim() === '';
         
         const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
         const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
@@ -1352,10 +1355,16 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 
                 if (employe) {
                     const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
-                    const ht_ligne = total_ligne / (1 + (tvaSnapshot / 100));
-                    const montant_commission = (ht_ligne * (taux / 100)).toFixed(2);
+                    
+                    // CORRECTION FRANCHISE EN BASE : Si franchise, TVA = 0 (HT = TTC). Sinon on applique le vrai taux de l'article.
+                    const tauxTvaReel = franchiseTVA ? 0 : parseFloat(tvaSnapshot);
+                    const baseHtCommission = total_ligne / (1 + (tauxTvaReel / 100));
+                    
+                    const montant_commission = (baseHtCommission * (taux / 100)).toFixed(2);
+                    
+                    // On insère 'baseHtCommission' dans montant_vente pour que les tableaux de bord affichent la vraie base HT
                     await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon, date_creation) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, NOW()))`, 
-                    [id_employe, idNouveauTicket, total_ligne, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
+                    [id_employe, idNouveauTicket, baseHtCommission, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
                 }
             }
         }
@@ -3422,31 +3431,33 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // 3. REQUÊTE : Dépenses
         const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
 
-        // 4. REQUÊTE : Commissions Employés (Enrichie pour gérer la différence CA vs Base, et Presta vs Produit)
+        // 4. REQUÊTE : Commissions Employés (Recalcul exact au réel depuis les tickets pour annuler l'erreur de division par 1.2)
         const rhRes = await pool.query(`
             SELECT e.id_employe, e.nom, e.est_gerant,
                    MAX(e.taux_commission_prestation) as taux_presta,
                    MAX(e.taux_commission_produit) as taux_produit,
-                   SUM(CASE WHEN c.type_vente = 'PRESTATION' THEN c.montant_vente ELSE 0 END) as base_presta_ttc,
-                   SUM(CASE WHEN c.type_vente != 'PRESTATION' THEN c.montant_vente ELSE 0 END) as base_produit_ttc,
-                   SUM(c.montant_commission) as total_prime
+                   COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_presta_ht,
+                   COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') != 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_produit_ht,
+                   COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_prestation / 100) ELSE (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_produit / 100) END), 0) as total_prime
             FROM employes e 
-            LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3
+            LEFT JOIN lignes_ticket lt ON lt.id_employe = e.id_employe
+            LEFT JOIN tickets t ON t.id_ticket = lt.id_ticket AND t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+            LEFT JOIN catalogue c ON c.id_article = lt.id_article
             WHERE e.id_salon = $1 
             GROUP BY e.id_employe, e.nom, e.est_gerant 
             ORDER BY e.est_gerant DESC, e.nom ASC
-        `, [id_salon, dateDebutStr, dateFinStr]);
+        `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
 
-        // 4bis. REQUÊTE : CA Réalisé par employé pour comparer avec la base
+        // 4bis. REQUÊTE : CA Réalisé par employé pour comparer avec la base (Passe en HT réel)
         const caEmployesRes = await pool.query(`
-            SELECT t.id_employe, SUM(lt.total_ligne_ttc) as ca_realise_ttc
+            SELECT t.id_employe, SUM(lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) as ca_realise_ht
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
             GROUP BY t.id_employe
-        `, [id_salon, dateDebutStr, dateFinStr]);
+        `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
         const mapCaEmployes = {};
-        caEmployesRes.rows.forEach(r => mapCaEmployes[r.id_employe] = parseFloat(r.ca_realise_ttc));
+        caEmployesRes.rows.forEach(r => mapCaEmployes[r.id_employe] = parseFloat(r.ca_realise_ht));
 
         // 5. REQUÊTE : Absences
         const absencesRes = await pool.query(`
@@ -3545,6 +3556,16 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         if (franchiseTVA) {
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* TVA non applicable, art. 293 B du CGI.", 40, currentY); currentY += 12;
             
+            // Configuration des seuils légaux par année (Nouvelle réforme européenne applicable au 1er janvier 2025)
+            const anneeEnCours = today.getFullYear();
+            const seuilsFranchise = {
+                2024: { presta_base: 36800, presta_majore: 39100, global_base: 91900, global_majore: 101000 },
+                2025: { presta_base: 37500, presta_majore: 41250, global_base: 85000, global_majore: 93500 },
+                2026: { presta_base: 37500, presta_majore: 41250, global_base: 85000, global_majore: 93500 }
+            };
+            // Si l'année n'est pas encore dans le tableau, on prend la dernière législation connue (2026)
+            const s = seuilsFranchise[anneeEnCours] || seuilsFranchise[2026];
+
             // Affichage du cumul annuel pour surveillance des seuils de franchise
             let cumulServices = 0;
             let cumulTotal = 0;
@@ -3553,10 +3574,14 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 if (r.type_article === 'PRESTATION') cumulServices += ttc;
                 cumulTotal += ttc;
             });
+
             currentY += 8;
-            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text("Suivi des seuils de Franchise en base (Cumul Annuel depuis le 1er janvier) :", 40, currentY); currentY += 14;
-            doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR).text(`• Prestations de services : ${fMnt(cumulServices)} (Seuil d'alerte : 36 800 € / Plafond : 39 100 €)`, 40, currentY); currentY += 12;
-            doc.text(`• Chiffre d'affaires global (Prestations + Ventes) : ${fMnt(cumulTotal)} (Seuil d'alerte : 91 900 € / Plafond : 101 000 €)`, 40, currentY); currentY += 16;
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`Suivi des seuils de Franchise en base (Cumul ${anneeEnCours}) :`, 40, currentY); currentY += 14;
+            doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR).text(`• Prestations de services : ${fMnt(cumulServices)} (Seuil de base : ${fMnt(s.presta_base)} / Seuil majoré : ${fMnt(s.presta_majore)})`, 40, currentY); currentY += 12;
+            doc.text(`• Chiffre d'affaires global (Prestations + Ventes) : ${fMnt(cumulTotal)} (Seuil de base : ${fMnt(s.global_base)} / Seuil majoré : ${fMnt(s.global_majore)})`, 40, currentY); currentY += 14;
+            
+            // Note explicative sur l'impact des seuils
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Le dépassement du seuil majoré rend la TVA immédiate. Celui du seuil de base ne la déclenche qu'au 1er janvier suivant.", 40, currentY); currentY += 12;
         }
 
         // --- 2. RAPPROCHEMENT BANCAIRE ---
@@ -3674,13 +3699,12 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         let globalPrimes = 0;
         rhRes.rows.forEach(e => {
-            // Prénom en minuscules sans nom de famille
             const prenom = e.nom.split(' ')[0].toLowerCase();
-            const caRealiseTtc = mapCaEmployes[e.id_employe] || 0;
-            const caRealiseBaseHT = franchiseTVA ? caRealiseTtc : (caRealiseTtc / 1.20);
+            const caRealiseBaseHT = mapCaEmployes[e.id_employe] || 0;
             
-            const basePrestaHT = franchiseTVA ? parseFloat(e.base_presta_ttc || 0) : (parseFloat(e.base_presta_ttc || 0) / 1.20);
-            const baseProduitHT = franchiseTVA ? parseFloat(e.base_produit_ttc || 0) : (parseFloat(e.base_produit_ttc || 0) / 1.20);
+            // Les bases sont maintenant calculées à la virgule près avec la vraie TVA
+            const basePrestaHT = parseFloat(e.base_presta_ht || 0);
+            const baseProduitHT = parseFloat(e.base_produit_ht || 0);
             
             if (e.est_gerant) {
                 drawRow([
@@ -3695,11 +3719,11 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                     {text: '-', w: 55, align: 'right'}
                 ]);
             } else {
-                globalPrimes += (parseFloat(e.total_prime) || 0);
+                globalPrimes += parseFloat(e.total_prime || 0);
                 const tauxPresta = parseFloat(e.taux_presta || 0);
                 const tauxProduit = parseFloat(e.taux_produit || 0);
                 const regleTaux = `${tauxPresta}% / ${tauxProduit}%`;
-                const basesConcat = `${basePrestaHT.toFixed(0)} / ${baseProduitHT.toFixed(0)}`;
+                const basesConcat = `${basePrestaHT.toFixed(2)} / ${baseProduitHT.toFixed(2)}`;
                 
                 drawRow([
                     {text: prenom, w: 60}, 
