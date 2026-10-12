@@ -231,6 +231,49 @@ function App() {
   
   const [showAddClient, setShowAddClient] = useState(false);
   const [showAddEmploye, setShowAddEmploye] = useState(false);
+  // --- ÉTATS : POINTEUSE NUMÉRIQUE ---
+  const [pointeuse, setPointeuse] = useState({ open: false, step: 1, employe: null, pin: '' });
+
+  const handlePointeusePin = async (digit) => {
+      if (pointeuse.pin.length < 4) {
+          const newPin = pointeuse.pin + digit;
+          setPointeuse({ ...pointeuse, pin: newPin });
+          
+          if (newPin.length === 4) {
+              try {
+                  // 1. Vérification du PIN via ta route existante
+                  const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ id_salon: salonId, nom_employe: pointeuse.employe.nom, code_pin: newPin })
+                  });
+                  if (!resAuth.ok) throw new Error("Code PIN incorrect");
+                  
+                  // 2. PIN validé, on passe à l'écran des boutons d'action
+                  setPointeuse(prev => ({ ...prev, pin: newPin, step: 3 }));
+              } catch (e) {
+                  showToast("Code PIN incorrect", "error");
+                  setPointeuse(prev => ({ ...prev, pin: '' })); // On efface pour recommencer
+              }
+          }
+      }
+  };
+
+  const enregistrerPointage = async (action) => {
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/pointage', {
+              method: 'POST',
+              headers: getAuthHeaders(true),
+              body: JSON.stringify({ id_employe: pointeuse.employe.id_employe, type_action: action })
+          });
+          if (!res.ok) throw new Error("Erreur de pointage");
+          
+          showToast(`Pointage (${action}) validé !`, "success");
+          setPointeuse({ open: false, step: 1, employe: null, pin: '' });
+      } catch (e) {
+          showToast(e.message, "error");
+      }
+  };
   const [showAddProduit, setShowAddProduit] = useState(false);
   const [showAddPrestation, setShowAddPrestation] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
@@ -5310,6 +5353,70 @@ function App() {
                   }
               }}
           />
+      )}
+      {/* --- MODALE POINTEUSE PREMIUM --- */}
+      {pointeuse.open && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
+            <div className="carte" style={{ width: '90%', maxWidth: '400px', textAlign: 'center', position: 'relative', padding: '32px 24px' }}>
+                
+                <button onClick={() => setPointeuse({ open: false, step: 1, employe: null, pin: '' })} style={{ position: 'absolute', top: '16px', right: '16px', background: 'transparent', border: 'none', fontSize: '24px', color: 'var(--text-secondary)', cursor: 'pointer' }}>×</button>
+
+                {/* ÉTAPE 1 : CHOIX DE L'EMPLOYÉ */}
+                {pointeuse.step === 1 && (
+                    <>
+                        <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Qui êtes-vous ?</h2>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            {employesListe.map(emp => (
+                                <button key={emp.id_employe} onClick={() => setPointeuse({ ...pointeuse, step: 2, employe: emp })} style={{ background: 'var(--bg-hover)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: '0.2s' }}>
+                                    <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--btn-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold' }}>
+                                        {emp.photo_url ? <img src={emp.photo_url} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}/> : emp.nom.substring(0, 2).toUpperCase()}
+                                    </div>
+                                    <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>{emp.nom.split(' ')[0]}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </>
+                )}
+
+                {/* ÉTAPE 2 : PAVÉ NUMÉRIQUE (CODE PIN) */}
+                {pointeuse.step === 2 && (
+                    <>
+                        <h2 style={{ fontSize: '20px', marginBottom: '8px', color: 'var(--text-main)' }}>Bonjour {pointeuse.employe?.nom.split(' ')[0]}</h2>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '24px' }}>Saisissez votre code PIN</p>
+                        
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginBottom: '32px' }}>
+                            {[...Array(4)].map((_, i) => (
+                                <div key={i} style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid var(--btn-primary)', background: i < pointeuse.pin.length ? 'var(--btn-primary)' : 'transparent', transition: '0.2s' }}></div>
+                            ))}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', maxWidth: '250px', margin: '0 auto' }}>
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                                <button key={num} onClick={() => handlePointeusePin(num.toString())} style={{ height: '60px', borderRadius: '50%', border: '1px solid var(--border-color)', background: 'var(--bg-app)', fontSize: '24px', color: 'var(--text-main)', cursor: 'pointer' }}>{num}</button>
+                            ))}
+                            <div />
+                            <button onClick={() => handlePointeusePin('0')} style={{ height: '60px', borderRadius: '50%', border: '1px solid var(--border-color)', background: 'var(--bg-app)', fontSize: '24px', color: 'var(--text-main)', cursor: 'pointer' }}>0</button>
+                            <button onClick={() => setPointeuse({ ...pointeuse, pin: pointeuse.pin.slice(0, -1) })} style={{ height: '60px', borderRadius: '50%', border: 'none', background: 'transparent', fontSize: '24px', color: 'var(--text-secondary)', cursor: 'pointer' }}>⌫</button>
+                        </div>
+                    </>
+                )}
+
+                {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
+                {pointeuse.step === 3 && (
+                    <>
+                        <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Que souhaitez-vous faire ?</h2>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+                            <button onClick={() => enregistrerPointage('ENTREE')} style={{ padding: '16px', borderRadius: '8px', background: '#10b981', color: 'white', border: 'none', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>👋 Arrivée (Début de service)</button>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                <button onClick={() => enregistrerPointage('PAUSE_DEBUT')} style={{ padding: '16px', borderRadius: '8px', background: 'var(--bg-hover)', color: 'var(--text-main)', border: '1px solid var(--border-color)', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer' }}>☕ Départ Pause</button>
+                                <button onClick={() => enregistrerPointage('PAUSE_FIN')} style={{ padding: '16px', borderRadius: '8px', background: 'var(--bg-hover)', color: 'var(--text-main)', border: '1px solid var(--border-color)', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer' }}>🔙 Retour Pause</button>
+                            </div>
+                            <button onClick={() => enregistrerPointage('SORTIE')} style={{ padding: '16px', borderRadius: '8px', background: '#ef4444', color: 'white', border: 'none', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>🏠 Départ (Fin de service)</button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
       )}
 
             {toast && (
