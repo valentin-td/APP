@@ -3439,11 +3439,11 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         // 4bis. REQUÊTE : CA Réalisé par employé pour comparer avec la base
         const caEmployesRes = await pool.query(`
-            SELECT lt.id_employe, SUM(lt.total_ligne_ttc) as ca_realise_ttc
+            SELECT t.id_employe, SUM(lt.total_ligne_ttc) as ca_realise_ttc
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
-            GROUP BY lt.id_employe
+            GROUP BY t.id_employe
         `, [id_salon, dateDebutStr, dateFinStr]);
         const mapCaEmployes = {};
         caEmployesRes.rows.forEach(r => mapCaEmployes[r.id_employe] = parseFloat(r.ca_realise_ttc));
