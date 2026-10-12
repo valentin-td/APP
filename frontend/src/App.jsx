@@ -4086,7 +4086,7 @@ function App() {
                           <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.prenom || !newEmploye.nomFamille || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
                       </div>
                   )}
-                  )}
+              
                   
                   {(rhData || []).length === 0 ? (
                       <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
