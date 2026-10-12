@@ -4813,7 +4813,37 @@ function App() {
 
                       <div style={{ marginBottom: '16px' }}>
                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Motif obligatoire</label>
-                          <input type="text" placeholder="Ex: Achat café, rendu monnaie..." value={newMouvement.motif} onChange={(e) => setNewMouvement({...newMouvement, motif: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }} />
+                          <input type="text" placeholder="Ex: Achat café, rendu monnaie..." value={newMouvement.motif} onChange={(e) => setNewMouvement({...newMouvement, motif: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px', marginBottom: '8px' }} />
+                          
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <span
+                                  onClick={() => setNewMouvement({ ...newMouvement, motif: "Remise en banque (Dépôt)" })}
+                                  style={{
+                                      fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
+                                  }}
+                              >
+                                  Dépôt Banque
+                              </span>
+                              <span
+                                  onClick={() => setNewMouvement({ ...newMouvement, motif: "Apport de monnaie (Retrait banque)" })}
+                                  style={{
+                                      fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
+                                  }}
+                              >
+                                  Retrait Monnaie
+                              </span>
+                              <span
+                                  onClick={() => setNewMouvement({ ...newMouvement, motif: "Achat fournitures (Café, etc.)" })}
+                                  style={{
+                                      fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
+                                  }}
+                              >
+                                  ☕ Achats / Frais
+                              </span>
+                          </div>
                       </div>
 
                       <div style={{ marginBottom: '24px' }}>
