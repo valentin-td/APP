@@ -3608,31 +3608,45 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
 
-        // Lignes à remplir manuellement ou rapprochées par le comptable
+        // NOUVEAU : On récupère les sommes EXACTES arrêtées à la date du dernier Z pour comparer des pommes avec des pommes
+        const lastZRes = await pool.query(`SELECT MAX(DATE(date_cloture)) as date_max, TO_CHAR(MAX(date_cloture), 'DD/MM/YYYY') as date_max_str FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+        const lastZDate = lastZRes.rows[0].date_max || lastDayOfMonth;
+        const lastZDateStr = lastZRes.rows[0].date_max_str || 'N/A';
+
+        const controleRes = await pool.query(`
+            SELECT 
+                (SELECT COALESCE(SUM(total_ttc), 0) FROM tickets WHERE id_salon = $1 AND methode_paiement = 'ESPECES' AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $4) as especes_z,
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'ENTREE' AND DATE(date_creation) BETWEEN $2 AND $4) as entrees_z,
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $4) as sorties_z,
+                (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $4) + (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $4) as ecarts_z
+        `, [id_salon, dateDebutStr, dateFinStr, lastZDate]);
+
+        // Lignes à remplir manuellement par le comptable
         drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
         drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
         
-        const especesEncaissees = mapPaiements['ESPECES'] ? parseFloat(mapPaiements['ESPECES'].total) : 0;
         const fondDebut = parseFloat(caisseRes.rows[0].fond_debut_mois) || 0;
         const fondFin = parseFloat(caisseRes.rows[0].fond_fin_mois) || 0;
-        const apports = parseFloat(caisseRes.rows[0].entrees) || 0;
-        const retraits = parseFloat(caisseRes.rows[0].sorties) || 0;
-        const ecarts = parseFloat(caisseRes.rows[0].ecarts) || 0;
+        const especesEncaisseesZ = parseFloat(controleRes.rows[0].especes_z) || 0;
+        const apportsZ = parseFloat(controleRes.rows[0].entrees_z) || 0;
+        const retraitsZ = parseFloat(controleRes.rows[0].sorties_z) || 0;
+        const ecartsZ = parseFloat(controleRes.rows[0].ecarts_z) || 0;
         
-        // Formule de contrôle stricte
-        const caisseCalculee = fondDebut + especesEncaissees + apports - retraits + ecarts;
+        // Formule de contrôle stricte arrêtée à la date du Z
+        const caisseCalculee = fondDebut + especesEncaisseesZ + apportsZ - retraitsZ + ecartsZ;
         
         currentY += 5;
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("CONTRÔLE DE CAISSE (ESPÈCES)", 40, currentY); currentY += 14;
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text(`CONTRÔLE DE CAISSE (Arrêté au dernier Z du ${lastZDateStr})`, 40, currentY); currentY += 14;
         
         drawRow([{text: 'Fond de caisse au 1er du mois (Ouverture)', w: 260}, {text: '', w: 0}, {text: fMnt(fondDebut), w: 225, align: 'right'}]);
-        drawRow([{text: `Espèces encaissées (+)`, w: 260}, {text: '', w: 0}, {text: fMnt(especesEncaissees), w: 225, align: 'right'}]);
-        drawRow([{text: 'Apports de caisse (+)', w: 260}, {text: '', w: 0}, {text: fMnt(apports), w: 225, align: 'right'}]);
-        drawRow([{text: 'Retraits et Dépenses en espèces (-)', w: 260}, {text: '', w: 0}, {text: fMnt(retraits), w: 225, align: 'right'}]);
-        drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 260}, {text: '', w: 0}, {text: fMnt(ecarts), w: 225, align: 'right'}]);
+        drawRow([{text: `Espèces encaissées (Jusqu'au ${lastZDateStr}) (+)`, w: 260}, {text: '', w: 0}, {text: fMnt(especesEncaisseesZ), w: 225, align: 'right'}]);
+        drawRow([{text: 'Apports de caisse (+)', w: 260}, {text: '', w: 0}, {text: fMnt(apportsZ), w: 225, align: 'right'}]);
+        drawRow([{text: 'Retraits et Dépenses en espèces (-)', w: 260}, {text: '', w: 0}, {text: fMnt(retraitsZ), w: 225, align: 'right'}]);
+        drawRow([{text: 'Remises en banque non déclarées dans l\'App (-)', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
+        drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 260}, {text: '', w: 0}, {text: fMnt(ecartsZ), w: 225, align: 'right'}]);
         
         drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseCalculee), w: 225, align: 'right'}], false, true);
-        drawRow([{text: 'ESPÈCES COMPTÉES (Au dernier jour)', w: 260}, {text: '', w: 0}, {text: fMnt(fondFin), w: 225, align: 'right'}], false, true);
+        drawRow([{text: `ESPÈCES COMPTÉES (Lors du Z du ${lastZDateStr})`, w: 260}, {text: '', w: 0}, {text: fMnt(fondFin), w: 225, align: 'right'}], false, true);
         
         // Détail des mouvements de caisse (Apports/Retraits)
         if (mouvementsRes.rowCount > 0) {
@@ -3687,7 +3701,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         
         drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 270}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 50}, {text: '', w: 40}, {text: fMnt(sumDepenses), w: 65, align: 'right'}], false, true);
         
-        currentY += 15; // Sécurité : Saut de ligne avant la section Variables de paie
+        currentY += 25; // Saut de ligne renforcé pour empêcher le chevauchement !
 
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
@@ -3751,11 +3765,10 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* L'écart logique entre le CA Réalisé et les Bases provient des articles non-éligibles. Complétez manuellement les heures et pourboires.", 40, currentY); currentY += 12;
         
         drawRow([
-            {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 460}, 
-            {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, 
+            {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 450}, 
             {text: fMnt(globalPrimes), w: 55, align: 'right'}
         ], false, true);
-
+        
         doc.addPage();
         doc.font('Helvetica-Bold').fontSize(20).fillColor(MAIN_COLOR).text('Variables de Paie & Absences (Suite)', 40, 40);
         doc.font('Helvetica').fontSize(10).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 40, 70);
