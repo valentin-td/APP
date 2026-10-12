@@ -4008,6 +4008,13 @@ function App() {
                                   <option value="note">Tri : Palmarès (Note client)</option>
                               </select>
                               <ThemeToggle />
+                              {/* BOUTON POINTEUSE */}
+                              {configSalon.mode_suivi_heures === 'POINTEUSE' && (
+                                  <button onClick={() => setPointeuse({ open: true, step: 1, employe: null, pin: '' })} style={{background: '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 'bold'}}>
+                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                                      {!isMobile && "Pointeuse"}
+                                  </button>
+                              )}
                               <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
                           </div>
                       </div>
@@ -4194,6 +4201,33 @@ function App() {
                               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-hover)', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.2)'}}>
                                   <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--text-main)'}}>Prime estimée</span>
                                   <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--color-success)'}}>{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span>
+                              </div>
+                          </div>
+
+                          {/* SECTION AJUSTEMENTS HEURES */}
+                          <div style={{padding: '0 20px 20px 20px'}}>
+                              <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px'}}>
+                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                                      <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>Suivi des heures</span>
+                                      <span style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'var(--bg-card)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>{employe.type_contrat === 'PARTIEL' ? 'Temps Partiel' : 'Temps Plein'}</span>
+                                  </div>
+                                  <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                                      <input type="number" id={`heures_supp_${employe.id_employe}`} placeholder={employe.type_contrat === 'PARTIEL' ? "H. Complémentaires (ex: +3)" : "H. Supplémentaires (ex: +3)"} className="input-fournisseur" style={{flex: 1, marginBottom: 0, padding: '8px', fontSize: '13px'}} />
+                                      <button onClick={async () => {
+                                          const input = document.getElementById(`heures_supp_${employe.id_employe}`);
+                                          const hAjust = parseFloat(input.value);
+                                          if (!hAjust) return showToast("Veuillez saisir un nombre d'heures.", "error");
+                                          try {
+                                              const moisStr = new Date().toISOString().substring(0, 7);
+                                              const res = await fetch('https://api-salon-backend.onrender.com/api/rh/ajustements', {
+                                                  method: 'POST', headers: getAuthHeaders(true),
+                                                  body: JSON.stringify({ id_employe: employe.id_employe, mois_annee: moisStr, heures_ajoutees: hAjust, motif: 'Ajustement manuel' })
+                                              });
+                                              if (res.ok) { showToast("Heures ajoutées !", "success"); input.value = ''; }
+                                              else showToast("Erreur d'ajout", "error");
+                                          } catch (e) { showToast("Erreur serveur", "error"); }
+                                      }} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '8px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px'}}>Valider</button>
+                                  </div>
                               </div>
                           </div>
                           
