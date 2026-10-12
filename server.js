@@ -3395,9 +3395,11 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             ORDER BY date_creation ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
 
-        // --- NOUVEAUTÉ : Cumul annuel pour la Franchise en Base ---
+       // --- NOUVEAUTÉ : Cumul annuel pour la Franchise en Base ---
         const firstDayOfYear = new Date(today.getFullYear(), 0, 1);
         const dateDebutAnneeStr = formatYMD(firstDayOfYear);
+        
+        // CORRECTION DU CRASH : Paramètres $1, $2, $3 bien alignés
         const cumulAnnuelRes = await pool.query(`
             SELECT 
                 COALESCE(c.type_article, 'PRESTATION') as type_article,
@@ -3405,9 +3407,17 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
-            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $4 AND $3
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
             GROUP BY COALESCE(c.type_article, 'PRESTATION')
-        `, [id_salon, dateDebutStr, dateFinStr, dateDebutAnneeStr]);
+        `, [id_salon, dateDebutAnneeStr, dateFinStr]);
+
+        // REQUÊTE : Historique des Z du mois
+        const zMoisRes = await pool.query(`
+            SELECT id_cloture, TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_z, total_especes_reel, ferme_par, signature_hash 
+            FROM clotures_caisse 
+            WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3 
+            ORDER BY date_cloture ASC
+        `, [id_salon, dateDebutStr, dateFinStr]);
 
         // 3. REQUÊTE : Dépenses
         const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
@@ -3478,15 +3488,21 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // --- EN-TÊTE LÉGAL ---
         doc.font('Helvetica-Bold').fontSize(16).fillColor(MAIN_COLOR).text(`LIASSE COMPTABLE MENSUELLE`, 40, currentY);
         currentY += 20;
-        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(nomDuSalon, 40, currentY);
+        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Raison sociale : ${nomDuSalon}`, 40, currentY);
         currentY += 14;
-        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`SIRET: ${salonConfig.siret} | ${mentionTVA} | NAF: 96.02A | IDCC: 2596 (Coiffure)`, 40, currentY);
+        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${salonConfig.adresse_salon}`, 40, currentY);
+        currentY += 12;
+        doc.text(`SIRET: ${salonConfig.siret} | ${mentionTVA} | NAF: 96.02A | IDCC: 2596 (Coiffure)`, 40, currentY);
         currentY += 15;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 250, currentY);
         doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
         currentY += 15;
-        if (estMoisCloture) doc.text(`Réf. Archive NF525 : ${numeroArchive}`, 40, currentY);
+        if (estMoisCloture) {
+            doc.text(`Réf. Archive NF525 : ${numeroArchive}`, 40, currentY);
+            currentY += 12;
+            doc.font('Helvetica-Oblique').fontSize(8).text(`Logiciel STACK v1.0 - Conforme conditions d'inaltérabilité (CGI, art. 286, I-3° bis)`, 40, currentY);
+        }
         currentY += 25;
 
         const drawRow = (cols, isHeader = false, isBold = false) => {
@@ -3628,18 +3644,22 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
         
-        // Nouvelle structure du tableau pour gérer les bases multiples et l'explication des écarts
         drawRow([
-            {text: 'Employé', w: 65}, 
-            {text: 'CA Réalisé', w: 60, align: 'right'}, 
-            {text: 'Base Prestas', w: 65, align: 'right'}, 
-            {text: 'Base Produits', w: 70, align: 'right'}, 
-            {text: 'Règle Taux (Prst/Prod)', w: 100, align: 'center'}, 
-            {text: 'Prime Brute', w: 60, align: 'right'}
+            {text: 'Employé(e)', w: 60}, 
+            {text: 'Statut', w: 45, align: 'center'},
+            {text: 'Heures', w: 35, align: 'center'},
+            {text: 'H.S.', w: 35, align: 'center'},
+            {text: 'Pourboire', w: 45, align: 'center'},
+            {text: 'CA Rél.', w: 50, align: 'right'}, 
+            {text: 'Base HT (Prs/Prd)', w: 75, align: 'right'}, 
+            {text: 'Taux (Prs/Prd)', w: 65, align: 'center'}, 
+            {text: 'Prime Brute', w: 55, align: 'right'}
         ], true);
 
         let globalPrimes = 0;
         rhRes.rows.forEach(e => {
+            // Prénom en minuscules sans nom de famille
+            const prenom = e.nom.split(' ')[0].toLowerCase();
             const caRealiseTtc = mapCaEmployes[e.id_employe] || 0;
             const caRealiseBaseHT = franchiseTVA ? caRealiseTtc : (caRealiseTtc / 1.20);
             
@@ -3648,38 +3668,45 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             
             if (e.est_gerant) {
                 drawRow([
-                    {text: e.nom.substring(0,12), w: 65}, 
-                    {text: fMnt(caRealiseBaseHT), w: 60, align: 'right'}, 
-                    {text: '-', w: 65, align: 'right'}, 
-                    {text: '-', w: 70, align: 'right'}, 
-                    {text: 'Gérant (N/A)', w: 100, align: 'center'}, 
-                    {text: '-', w: 60, align: 'right'}
+                    {text: prenom, w: 60}, 
+                    {text: 'Gérant', w: 45, align: 'center'},
+                    {text: 'N/A', w: 35, align: 'center'},
+                    {text: 'N/A', w: 35, align: 'center'},
+                    {text: 'N/A', w: 45, align: 'center'},
+                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
+                    {text: '-', w: 75, align: 'right'}, 
+                    {text: '-', w: 65, align: 'center'}, 
+                    {text: '-', w: 55, align: 'right'}
                 ]);
             } else {
                 globalPrimes += (parseFloat(e.total_prime) || 0);
                 const tauxPresta = parseFloat(e.taux_presta || 0);
                 const tauxProduit = parseFloat(e.taux_produit || 0);
                 const regleTaux = `${tauxPresta}% / ${tauxProduit}%`;
+                const basesConcat = `${basePrestaHT.toFixed(0)} / ${baseProduitHT.toFixed(0)}`;
                 
                 drawRow([
-                    {text: e.nom.substring(0,12), w: 65}, 
-                    {text: fMnt(caRealiseBaseHT), w: 60, align: 'right'}, 
-                    {text: fMnt(basePrestaHT), w: 65, align: 'right'}, 
-                    {text: fMnt(baseProduitHT), w: 70, align: 'right'}, 
-                    {text: regleTaux, w: 100, align: 'center'}, 
-                    {text: fMnt(e.total_prime), w: 60, align: 'right'}
+                    {text: prenom, w: 60}, 
+                    {text: 'À déclarer', w: 45, align: 'center'},
+                    {text: '.......', w: 35, align: 'center'},
+                    {text: '.......', w: 35, align: 'center'},
+                    {text: '.......', w: 45, align: 'center'},
+                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
+                    {text: basesConcat, w: 75, align: 'right'}, 
+                    {text: regleTaux, w: 65, align: 'center'}, 
+                    {text: fMnt(e.total_prime), w: 55, align: 'right'}
                 ]);
             }
         });
-        if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 65}, {text: '-', w: 60, align: 'right'}, {text: '-', w: 65, align: 'right'}, {text: '-', w: 70, align: 'right'}, {text: '-', w: 100, align: 'center'}, {text: '-', w: 60, align: 'right'}]);
+        if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 515}]);
         
         currentY += 4;
-        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* L'écart logique entre le CA Réalisé et les Bases provient des articles non-éligibles aux commissions ou des remises.", 40, currentY); currentY += 12;
+        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* L'écart logique entre le CA Réalisé et les Bases provient des articles non-éligibles. Complétez manuellement les heures et pourboires.", 40, currentY); currentY += 12;
         
         drawRow([
-            {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 385}, 
-            {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, 
-            {text: fMnt(globalPrimes), w: 60, align: 'right'}
+            {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 460}, 
+            {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, 
+            {text: fMnt(globalPrimes), w: 55, align: 'right'}
         ], false, true);
 
         doc.addPage();
@@ -3707,6 +3734,24 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                     {text: `Du ${dDeb.toLocaleDateString('fr-FR')} au ${dFin.toLocaleDateString('fr-FR')}`, w: 140}, 
                     {text: `${joursOuvres} j.`, w: 40, align: 'center'},
                     {text: estMaladie ? 'Attente CPAM' : 'Solde CP: -', w: 75}
+                ]);
+            });
+        }
+
+        // --- 5 BIS. ARCHIVE DES CLÔTURES (Z) ---
+        drawTableTitle("5 BIS. HISTORIQUE DES CLÔTURES DE CAISSE (Z)");
+        drawRow([{text: 'N° Z', w: 40}, {text: 'Date', w: 60, align: 'center'}, {text: 'Opérateur', w: 100}, {text: 'Espèces (Réel)', w: 80, align: 'right'}, {text: 'Hash de validation (NF525)', w: 195, align: 'right'}], true);
+        
+        if (zMoisRes.rowCount === 0) {
+            drawRow([{text: 'Aucune clôture enregistrée ce mois-ci.', w: 515}]);
+        } else {
+            zMoisRes.rows.forEach(z => {
+                drawRow([
+                    {text: `Z-${z.id_cloture}`, w: 40}, 
+                    {text: z.date_z, w: 60, align: 'center'}, 
+                    {text: z.ferme_par || 'Inconnu', w: 100}, 
+                    {text: fMnt(z.total_especes_reel), w: 80, align: 'right'}, 
+                    {text: z.signature_hash ? z.signature_hash.substring(0, 30) + '...' : 'NON-SIGNE', w: 195, align: 'right'}
                 ]);
             });
         }
