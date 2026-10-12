@@ -1,5226 +1,4621 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { io } from 'socket.io-client';
-import localforage from 'localforage';
-import './App.css';
-import LiquidTabBar from './LiquidTabBar';
-import Parametres from './Parametres';
-import PopupLegal from './PopupLegal';  
-import PricingModal from './PricingModal';
+console.log("Étape 1 : Démarrage du script...");
+require('dotenv').config();
 
-// Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
-function urlBase64ToUint8Array(base64String) { 
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
+console.log("Étape 2 : Chargement des modules...");
+const express = require('express');
+const rateLimit = require('express-rate-limit');
+const cors = require('cors');
+const { Pool } = require('pg'); 
+const PDFDocument = require('pdfkit');
+const nodemailer = require('nodemailer');
+const { ImapFlow } = require('imapflow');
+const simpleParser = require('mailparser').simpleParser;
+const cron = require('node-cron');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const legal = require('./legal');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const OpenAI = require('openai');
+const webpush = require('web-push');
+const Sentry = require('@sentry/node');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+
+// Initialisation du client Cloudflare R2
+const s3Client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.net`,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+});
+
+if (process.env.SENTRY_DSN) {
+    Sentry.init({
+        dsn: process.env.SENTRY_DSN,
+        environment: process.env.NODE_ENV || 'production',
+        tracesSampleRate: 0.1,
+    });
+    console.log("Sentry (monitoring d'erreurs) activé.");
+} else {
+    console.log("SENTRY_DSN absent : monitoring d'erreurs désactivé.");
 }
 
-// Fonction sortie du composant pour être accessible partout sans erreur d'initialisation
-const decodeToken = (t) => { 
-    if (!t || !t.includes('.')) return null;
-    try { 
-        let base64Url = t.split('.')[1];
-        let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        // Remplissage automatique pour éviter le crash atob
-        const padding = '='.repeat((4 - base64.length % 4) % 4);
-        // Décodage compatible avec les accents (UTF-8)
-        const jsonPayload = decodeURIComponent(atob(base64 + padding).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-        return JSON.parse(jsonPayload); 
-    } catch(e) { 
-        return null; 
-    } 
-};
+process.on('uncaughtException', (e) => { console.error('[CRASH] Exception non interceptée :', e); if (process.env.SENTRY_DSN) Sentry.captureException(e); });
+process.on('unhandledRejection', (e) => { console.error('[CRASH] Promesse rejetée non interceptée :', e); if (process.env.SENTRY_DSN) Sentry.captureException(e); });
 
-const isPinWeak = (pin) => {
+const signalerErreur = (e, contexte) => { console.error(`[${contexte}]`, e); if (process.env.SENTRY_DSN) Sentry.captureException(e, { tags: { contexte } }); };
+
+let vapidPublicKey = "";
+let vapidPrivateKey = "";
+
+const groq = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: 'https://api.groq.com/openai/v1',
+});
+
+const http = require('http');
+const { Server } = require('socket.io');
+
+// 🚨 SÉCURITÉ : Vérification stricte des variables d'environnement cryptographiques
+if (!process.env.ENCRYPTION_SECRET && !process.env.JWT_SECRET) {
+    console.error("🚨 ERREUR CRITIQUE FATALE : Les variables d'environnement ENCRYPTION_SECRET ou JWT_SECRET sont manquantes.");
+    console.error("Le serveur refuse de démarrer car le chiffrement serait compromis.");
+    process.exit(1); // Force l'arrêt immédiat de l'application
+}
+
+const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET, 'salt', 32);
+const ALGORITHM = 'aes-256-cbc';
+
+function chiffrer(text) {
+    if (!text) return text;
+    try {
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return iv.toString('hex') + ':' + encrypted;
+    } catch (e) { return text; }
+}
+
+function dechiffrer(text) {
+    if (!text || !text.includes(':')) return text; 
+    try {
+        const textParts = text.split(':');
+        const iv = Buffer.from(textParts.shift(), 'hex');
+        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+        const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) { return text; }
+}
+
+function isPinWeak(pin) {
     if (!pin) return false;
     const strPin = String(pin);
-    const repeating = /^(\d)\1+$/.test(strPin);
-    const sequentialUp = '0123456789'.includes(strPin);
-    const sequentialDown = '9876543210'.includes(strPin);
+    const repeating = /^(\d)\1+$/.test(strPin);          // Ex: 0000, 1111, 22222...
+    const sequentialUp = '0123456789'.includes(strPin);  // Ex: 1234, 4567, 0123...
+    const sequentialDown = '9876543210'.includes(strPin);// Ex: 4321, 9876, 3210...
     return repeating || sequentialUp || sequentialDown;
-};
-
-// Intercepteur global pour inclure automatiquement le Cookie httpOnly sur toutes les requêtes
-const originalFetch = window.fetch;
-window.fetch = async (...args) => {
-    let [resource, config] = args;
-    if (typeof resource === 'string' && resource.includes('api-salon-backend.onrender.com')) {
-        config = config || {};
-        config.credentials = 'include';
-        const tokenApi = localStorage.getItem('api_token');
-        if (tokenApi) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${tokenApi}` };
-    }
-    return originalFetch(resource, config);
-};
-
-import AvisPublic from './AvisPublic.jsx';
-
-function App() {
-  if (window.location.pathname.startsWith('/avis/')) {
-      return <AvisPublic token={window.location.pathname.split('/avis/')[1]} />;
-  }
-
-  const [token, setToken] = useState(localStorage.getItem('ui_token') || null);
-  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
-
-  useEffect(() => {
-      const checkQueue = async () => {
-          const queue = await localforage.getItem('offline_tickets') || [];
-          setPendingOfflineCount(queue.length);
-      };
-      checkQueue();
-      const inter = setInterval(checkQueue, 3000); // Vérifie toutes les 3 secondes
-      return () => clearInterval(inter);
-  }, []);
-
-  const [isOutilsMenuOpen, setIsOutilsMenuOpen] = useState(false);
-
-  const SvgEmptyState = () => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-  );
-  
-  // Corrige le bug des "doubles clics" sur iPhone (PWA ajoutée à l'écran d'accueil) :
-  // en mode standalone, WebKit attend un évènement tactile réel avant de considérer
-  // les éléments comme interactifs, sinon le premier tap ne fait que simuler le
-  // survol (:hover) et il faut taper une seconde fois pour déclencher le clic.
-  useEffect(() => {
-      document.addEventListener('touchstart', function () {}, { passive: true });
-  }, []);
-
-  useEffect(() => {
-      // On récupère ou on crée la balise qui contrôle la barre de statut mobile
-      let metaThemeColor = document.querySelector('meta[name="theme-color"]');
-      if (!metaThemeColor) {
-          metaThemeColor = document.createElement('meta');
-          metaThemeColor.name = 'theme-color';
-          document.head.appendChild(metaThemeColor);
-      }
-
-      if (isDarkMode) {
-          document.body.classList.add('dark-mode'); document.documentElement.classList.add('dark-mode');
-          document.documentElement.style.backgroundColor = '#0b0b0d'; // Force le fond racine
-          document.body.style.backgroundColor = '#0b0b0d'; // Fix: Force le fond iOS
-          metaThemeColor.setAttribute('content', '#0b0b0d'); // Colore la barre iOS/Android
-          localStorage.setItem('theme', 'dark');
-      } else {
-          document.body.classList.remove('dark-mode'); document.documentElement.classList.remove('dark-mode');
-          document.documentElement.style.backgroundColor = '#f6f6f7';
-          document.body.style.backgroundColor = '#f6f6f7'; // Fix: Force le fond iOS
-          metaThemeColor.setAttribute('content', '#f6f6f7');
-          localStorage.setItem('theme', 'light');
-      }
-  }, [isDarkMode]);
-
-  const ThemeToggle = ({ isFixed }) => {
-      // Nous utilisons des styles en ligne stricts pour forcer le positionnement si isFixed est vrai (ex: page de connexion)
-      const fixedStyle = isFixed ? { position: 'absolute', top: '24px', right: '24px', zIndex: 1000 } : {};
-      
-      return (
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="theme-toggle-btn" style={fixedStyle} title="Basculer le thème">
-              {isDarkMode ? (
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-              ) : (
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-              )}
-          </button>
-      );
-  };
-
-  const [isLoginMode, setIsLoginMode] = useState(true);
-  const [loginType, setLoginType] = useState('gerant'); 
-  const [isForgotPassword, setIsForgotPassword] = useState(false);
-  const [erreurLogin, setErreurLogin] = useState(null);
-  const [msgSucces, setMsgSucces] = useState(null);
-  
-  const [emailInput, setEmailInput] = useState('');
-  const [motDePasseInput, setMotDePasseInput] = useState('');
-  const [nomSalonInput, setNomSalonInput] = useState('');
-  const [prenomGerantInput, setPrenomGerantInput] = useState('');
-  const [nomFamilleGerantInput, setNomFamilleGerantInput] = useState('');
-  const [idSalonInput, setIdSalonInput] = useState('');
-  const [nomEmployeInput, setNomEmployeInput] = useState('');
-  const [pinEmployeInput, setPinEmployeInput] = useState('');
-  const [pinSalonInput, setPinSalonInput] = useState('');
-  const [siretInput, setSiretInput] = useState('');
-  const [adresseSalonInput, setAdresseSalonInput] = useState('');
-
-  const [isAbonnementInactif, setIsAbonnementInactif] = useState(false);
-  const [userRole, setUserRole] = useState('gerant'); 
-  const [legalStatut, setLegalStatut] = useState(null); // null = inconnu / non concerné, sinon { accepte, en_attente, identite }
-
-  // Acceptation des documents contractuels : vérifiée à chaque connexion du gérant
-  useEffect(() => {
-    if (!token || decodeToken(token)?.role !== 'gerant') { 
-        setLegalStatut(null); 
-        return; 
-    }
-    
-    let annule = false;
-    
-    const verifierStatutLegal = async () => {
-        try {
-            // On utilise l'intercepteur global pour s'assurer que les identifiants/cookies sont transmis
-            const res = await fetch('https://api-salon-backend.onrender.com/api/legal/statut', { 
-                headers: getAuthHeaders() 
-            });
-            
-            // Si le token est expiré ou le compte bloqué
-            if (res.status === 401 || res.status === 403) {
-                const data = await res.json().catch(() => ({}));
-                // Si l'erreur est juste un manque de forfait, on ne bloque pas le processus légal
-                if (!data.require_upsell) {
-                    seDeconnecter();
-                    return;
-                }
-            }
-            
-            if (res.ok) {
-                const data = await res.json();
-                if (!annule && data) {
-                    setLegalStatut(data);
-                }
-            } else {
-                // Par sécurité, en cas d'erreur inattendue (sauf réseau pur), on force la vérification
-                if (!annule) setLegalStatut({ accepte: false, en_attente: true });
-            }
-        } catch (e) {
-            console.error("Impossible de vérifier le statut légal :", e);
-            // Mode dégradé si le réseau plante totalement (pour ne pas bloquer un utilisateur en plein salon)
-        }
-    };
-
-    verifierStatutLegal();
-    
-    return () => { annule = true; };
-  }, [token]);
-
-  const [activeTab, setActiveTab] = useState('accueil');
-  const [dashboardData, setDashboardData] = useState(null);
-  const [avisStats, setAvisStats] = useState(null);
-  const [salonDashboardData, setSalonDashboardData] = useState(null);
-  const [employeDashboardData, setEmployeDashboardData] = useState(null);
-  const [stocksData, setStocksData] = useState([]);
-  const [rhData, setRhData] = useState([]);
-  const [absencesRH, setAbsencesRH] = useState([]);
-  const [historiqueData, setHistoriqueData] = useState([]);
-  const [expandedYear, setExpandedYear] = useState(new Date().getFullYear().toString());
-  const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
-  const [planningData, setPlanningData] = useState([]); 
-  const [superAdminData, setSuperAdminData] = useState(null);
-  const [superAdminSalons, setSuperAdminSalons] = useState([]);
-  const [tachesListe, setTachesListe] = useState([]);
-  const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
-  const [sauvetageClient, setSauvetageClient] = useState(null);
-  const [smsSauvetage, setSmsSauvetage] = useState('');
-  const [rhSortBy, setRhSortBy] = useState('ca');
-  const [rhAvisExpanded, setRhAvisExpanded] = useState({});
-  
-  const envoyerSmsSauvetage = async () => {
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/sms/send', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ telephone: sauvetageClient.telephone, message: smsSauvetage }) });
-          if (res.ok) { showToast("SMS de sauvetage envoyé !", "success"); setSauvetageClient(null); } 
-          else { const data = await res.json(); showToast(data.erreur || "Erreur", "error"); }
-      } catch(e) { showToast("Erreur réseau", "error"); }
-  };
-  
-  const [showAddClient, setShowAddClient] = useState(false);
-  const [showAddEmploye, setShowAddEmploye] = useState(false);
-  const [showAddProduit, setShowAddProduit] = useState(false);
-  const [showAddPrestation, setShowAddPrestation] = useState(false);
-  const [stockSearch, setStockSearch] = useState('');
-  const [stockSortBy, setStockSortBy] = useState('nom');
-  const [isStockExpanded, setIsStockExpanded] = useState(true);
-  const [isTachesTermineesExpanded, setIsTachesTermineesExpanded] = useState(false);
-  const [stockMenuOuvert, setStockMenuOuvert] = useState(null);
-  const [modifStockDialog, setModifStockDialog] = useState(null);
-  const [employeMenuOuvert, setEmployeMenuOuvert] = useState(null);
-  const [modifEmployeDialog, setModifEmployeDialog] = useState(null);
-  
-  const [protocolesListe, setProtocolesListe] = useState([]);
-  const [nouveauProtocole, setNouveauProtocole] = useState({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false });
-  const [ingredientTemp, setIngredientTemp] = useState({ id_article: '', quantite_necessaire: '' });
-  const [etapeTemp, setEtapeTemp] = useState({ texte: '', timer_min: '' });
-  const [protocoleVisible, setProtocoleVisible] = useState(null); 
-  const [modeEditionProtocole, setModeEditionProtocole] = useState(null); 
-  const [rechercheProtocole, setRechercheProtocole] = useState('');
-
-  // --- DÉCLARATION DES LISTES (Remontées ici pour éviter le crash de l'écran blanc) ---
-  const [catalogueListe, setCatalogueListe] = useState([]);
-  const [employesListe, setEmployesListe] = useState([]);
-  const [clientsListe, setClientsListe] = useState([]);
-
-  const [messagesListe, setMessagesListe] = useState([]);
-  const [chatActif, setChatActif] = useState('salon');
-  const [msgInput, setMsgInput] = useState('');
-  const [msgFile, setMsgFile] = useState(null);
-  const [editingMsgId, setEditingMsgId] = useState(null);
-  const [editMsgContent, setEditMsgContent] = useState('');
-  const [activeMenuId, setActiveMenuId] = useState(null);
-  const [activeReactionId, setActiveReactionId] = useState(null);
-  const messagesEndRef = useRef(null);
-  const chatMessagesRef = useRef(null); // <-- LA LIGNE MANQUANTE EST ICI
-  
-
-  // Auto-scroll doux et contrôlé (syntaxe 100% compatible)
-  useEffect(() => {
-      if (messagesEndRef.current && activeTab === 'messagerie') {
-          messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-      }
-  // On écoute la LONGUEUR de la liste (messagesListe.length) au lieu de l'objet entier, 
-  // pour ne pas scroller automatiquement quand on ajoute une simple réaction !
-  }, [messagesListe.length, chatActif, activeTab]);
-
-  // --- Pastilles de messages non lus ---
-  const [dernierLuParConv, setDernierLuParConv] = useState({});
-  useEffect(() => { 
-      localforage.getItem('dernierLuParConv').then(saved => { 
-          if (saved) {
-              setDernierLuParConv(prev => {
-                  const next = { ...saved };
-                  // On garde toujours l'ID le plus élevé (évite que la mémoire locale écrase une lecture récente)
-                  for (let k in prev) {
-                      next[k] = Math.max(Number(next[k]) || 0, Number(prev[k]) || 0);
-                  }
-                  return next;
-              });
-          }
-      }); 
-  }, []);
-
-  // Identifie à quelle conversation (clé du contact) appartient un message.
-  // Renvoie null si le message ne concerne pas l'utilisateur courant (ex: échange entre deux autres employés).
-  const getCleConversation = (msg, roleUtilisateur, myId) => {
-      if (msg.id_destinataire === 0) return 'salon';
-      if (roleUtilisateur === 'employe') {
-          if (msg.id_expediteur === myId) return (msg.id_destinataire === null || msg.id_destinataire === -1) ? 'gerant' : msg.id_destinataire;
-          if (msg.id_destinataire === myId) return (msg.id_expediteur === null || msg.id_expediteur === -1) ? 'gerant' : msg.id_expediteur;
-          return null;
-      }
-      // Vue gérant ou salon : l'autre extrémité de la conversation est celle qui n'est ni null (gérant) ni -1 (salon)
-      const estIdentitePatron = (v) => v === null || v === -1;
-      if (estIdentitePatron(msg.id_expediteur) && !estIdentitePatron(msg.id_destinataire)) return msg.id_destinataire;
-      if (estIdentitePatron(msg.id_destinataire) && !estIdentitePatron(msg.id_expediteur)) return msg.id_expediteur;
-      return null;
-  };
-
-  // Calcule, pour chaque conversation, s'il reste des messages non lus
-  const nonLusParConv = useMemo(() => {
-      const roleUtilisateur = decodeToken(token)?.role;
-      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
-      const map = {};
-      
-      const clesActives = new Set(['salon']);
-      if (roleUtilisateur === 'employe') clesActives.add('gerant');
-      
-      // Sécurité anti-crash
-      const safeEmployes = Array.isArray(employesListe) ? employesListe : [];
-      const safeMessages = Array.isArray(messagesListe) ? messagesListe : [];
-
-      safeEmployes.forEach(emp => clesActives.add(String(emp.id_employe)));
-
-      safeMessages.forEach(m => {
-          if (m.id_expediteur === myId) return;
-          const cleBrute = getCleConversation(m, roleUtilisateur, myId);
-          if (cleBrute === null || cleBrute === undefined) return;
-          
-          const cle = String(cleBrute);
-          if (!clesActives.has(cle)) return;
-
-          if (activeTab === 'messagerie' && String(chatActif) === cle) return;
-
-          if (Number(m.id_message) > Number(dernierLuParConv[cle] || 0)) {
-              map[cle] = true;
-          }
-      });
-      return map;
-  }, [messagesListe, dernierLuParConv, token, employesListe, activeTab, chatActif]);
-
-  const aDesMessagesNonLus = Object.keys(nonLusParConv).length > 0;
-
-    // Dernier message de chaque conversation (sert à trier les contacts)
-  const dernierMessageParConv = useMemo(() => {
-      const roleUtilisateur = decodeToken(token)?.role;
-      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
-      const map = {};
-      (Array.isArray(messagesListe) ? messagesListe : []).forEach(m => {
-          const cle = getCleConversation(m, roleUtilisateur, myId);
-          if (cle === null || cle === undefined) return;
-          const id = Number(m.id_message) || 0;
-          if (id > (map[cle] || 0)) map[cle] = id;
-      });
-      return map;
-  }, [messagesListe, token]);
-
-  // Liste des contacts (hors "Groupe Salon", toujours épinglé en premier), triée du plus récent au plus ancien
-  const contactsTries = useMemo(() => {
-      const roleUtilisateur = decodeToken(token)?.role;
-      const myIdActuel = decodeToken(token)?.id_employe;
-      const safeEmployes = Array.isArray(employesListe) ? employesListe : []; // Sécurité anti-crash
-      let base;
-      if (roleUtilisateur === 'gerant') {
-          base = safeEmployes.map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }));
-      } else if (roleUtilisateur === 'salon') {
-          base = [
-              { key: 'gerant', nom: 'Gérant', photo_url: null },
-              ...safeEmployes.map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
-          ];
-      } else {
-          base = [
-              { key: 'gerant', nom: 'Gérant', photo_url: null },
-              ...safeEmployes.filter(e => e.id_employe !== myIdActuel).map(emp => ({ key: emp.id_employe, nom: emp.nom, photo_url: emp.photo_url }))
-          ];
-      }
-      return base.sort((a, b) => (dernierMessageParConv[b.key] || 0) - (dernierMessageParConv[a.key] || 0));
-  }, [employesListe, token, dernierMessageParConv]);
-
-  // Marque la conversation actuellement ouverte comme lue sans déclencher de boucle infinie
-  const marquerConversationCommeLue = () => {
-      if (activeTab !== 'messagerie') return;
-      
-      const roleUtilisateur = decodeToken(token)?.role;
-      const myId = roleUtilisateur === 'employe' ? decodeToken(token)?.id_employe : (roleUtilisateur === 'salon' ? -1 : null);
-      const monProfilId = roleUtilisateur === 'employe' ? `emp_${myId}` : (roleUtilisateur === 'salon' ? 'salon' : 'gerant');
-      const cleActuelleStr = String(chatActif);
-      
-      const messagesConv = (messagesListe || []).filter(m => String(getCleConversation(m, roleUtilisateur, myId)) === cleActuelleStr);
-      const idsConv = messagesConv.map(m => Number(m.id_message));
-      
-      if (idsConv.length === 0) return;
-      const maxId = Math.max(...idsConv);
-
-      setDernierLuParConv(prev => {
-          if (Number(prev[cleActuelleStr] || 0) >= maxId) return prev;
-          const next = { ...prev, [cleActuelleStr]: maxId };
-          localforage.setItem('dernierLuParConv', next);
-          return next;
-      });
-
-      const idsAVoir = messagesConv.filter(m => m.id_expediteur !== myId && !(m.vu_par || []).includes(monProfilId)).map(m => m.id_message);
-      if (idsAVoir.length > 0) {
-          fetch('https://api-salon-backend.onrender.com/api/messages/vu', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ids: idsAVoir }) })
-              .then(async (res) => { if (!res.ok) { const d = await res.json().catch(() => ({})); console.error('Erreur marquage vu :', res.status, d.erreur); } })
-              .catch((e) => console.error('Erreur réseau marquage vu :', e));
-      }
-  };
-
-  // N'exécute le check que si l'onglet Chat est ouvert OU que l'on change de contact
-  useEffect(() => {
-      marquerConversationCommeLue();
-  }, [chatActif, activeTab, messagesListe.length]);
-
-  // Corrige le gel du scroll tactile iOS/WebKit quand l'app revient du premier plan
-  // (bug connu : overflow-y:auto imbriqué dans un ancêtre position:fixed se fige après une mise en arrière-plan)
-  useEffect(() => {
-      const debloquerScrollChat = () => {
-          if (document.visibilityState !== 'visible') return;
-          const el = chatMessagesRef.current;
-          if (el) {
-              el.style.overflowY = 'hidden';
-              void el.offsetHeight; // force le reflow
-              el.style.overflowY = 'auto';
-          }
-          // Même correctif pour le scroll de la page entière
-          const overflowAvant = document.body.style.overflow;
-          document.body.style.overflow = 'hidden';
-          void document.body.offsetHeight;
-          document.body.style.overflow = overflowAvant;
-      };
-      document.addEventListener('visibilitychange', debloquerScrollChat);
-      window.addEventListener('pageshow', debloquerScrollChat);
-      return () => {
-          document.removeEventListener('visibilitychange', debloquerScrollChat);
-          window.removeEventListener('pageshow', debloquerScrollChat);
-      };
-  }, []);
-  
-  const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
-  const [vuParOuvertMsgId, setVuParOuvertMsgId] = useState(null);
-
-  const formatDateSeparateur = (dateStr) => {
-      const d = new Date(dateStr);
-      const maintenant = new Date();
-      const hier = new Date(); hier.setDate(hier.getDate() - 1);
-      if (d.toDateString() === maintenant.toDateString()) return "Aujourd'hui";
-      if (d.toDateString() === hier.toDateString()) return "Hier";
-      return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: d.getFullYear() !== maintenant.getFullYear() ? 'numeric' : undefined });
-  };
-
-  const resoudreProfilVu = (idProfil) => {
-      if (idProfil === 'gerant') return { nom: 'Gérant', photo_url: null };
-      if (idProfil === 'salon') return { nom: 'Salon', photo_url: null };
-      const idEmp = parseInt(String(idProfil).replace('emp_', ''));
-      const emp = (employesListe || []).find(e => e.id_employe === idEmp);
-      return { nom: emp?.nom || 'Employé', photo_url: emp?.photo_url || null };
-  };
-  const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
-
-  const [tachesIA, setTachesIA] = useState([]);
-  const [modalIA, setModalIA] = useState(null);
-  
-  const [erreur, setErreur] = useState(null);
-
-  const urlParams = new URLSearchParams(window.location.search);
-  const [resetTokenUrl] = useState(urlParams.get('resetToken'));
-  const [newPassword, setNewPassword] = useState('');
-
-  const [toast, setToast] = useState(null);
-
-  // Intercepte les retours de Stripe pour afficher un message
-  useEffect(() => {
-      const paiementStatus = urlParams.get('paiement');
-      if (paiementStatus === 'succes') {
-          setToast({ message: "Paiement réussi ! Votre abonnement est activé.", type: 'success' });
-          setTimeout(() => setToast(null), 4000);
-          window.history.replaceState({}, document.title, "/"); // Nettoie l'URL
-      } else if (paiementStatus === 'annule') {
-          setToast({ message: "Paiement annulé.", type: 'error' });
-          setTimeout(() => setToast(null), 4000);
-          window.history.replaceState({}, document.title, "/");
-      }
-  }, []);
-
-  const [confirmDialog, setConfirmDialog] = useState(null);
-  const [annulationDialog, setAnnulationDialog] = useState(null);
-  const [cancellationRobot, setCancellationRobot] = useState(null);
-  const [selectedCancelRdvs, setSelectedCancelRdvs] = useState([]);
-  const [cancelMessageTemplate, setCancelMessageTemplate] = useState('');
-  const [auditNf525, setAuditNf525] = useState(null);
-
-  const showToast = (message, type = 'success') => {
-      setToast({ message, type });
-      setTimeout(() => setToast(null), 4000);
-  };
-
-  const activerNotificationsPush = async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-          showToast("Les notifications Push ne sont pas supportées par ce navigateur.", "error");
-          return;
-      }
-      try {
-          const permission = await Notification.requestPermission();
-          if (permission !== 'granted') {
-              showToast("Vous avez refusé les notifications dans les réglages.", "error");
-              return;
-          }
-          const registration = await navigator.serviceWorker.ready;
-          
-          // 1. On récupère la clé publique du serveur
-          const response = await fetch('https://api-salon-backend.onrender.com/api/push/vapid-key');
-          const data = await response.json();
-          const convertedVapidKey = urlBase64ToUint8Array(data.publicKey);
-
-          // 2. On génère le ticket d'abonnement de cet appareil
-          const subscription = await registration.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: convertedVapidKey
-          });
-
-          // 3. On l'envoie au serveur
-          const resSub = await fetch('https://api-salon-backend.onrender.com/api/push/subscribe', {
-              method: 'POST',
-              headers: getAuthHeaders(true),
-              body: JSON.stringify({ subscription })
-          });
-
-          if(resSub.ok) {
-              showToast("Notifications activées avec succès sur ce téléphone !", "success");
-          } else {
-              showToast("Erreur lors de l'enregistrement côté serveur.", "error");
-          }
-      } catch (error) {
-          console.error(error);
-          showToast("Erreur lors de l'activation des notifications.", "error");
-      }
-  };
-  
-  const [clientSelectionne, setClientSelectionne] = useState(null);
-  const [clientHistorique, setClientHistorique] = useState({ rdv: [], achats: [], notes: '', gains: [] });
-  const [chargementFiche, setChargementFiche] = useState(false);
-
-  const [ticketGenere, setTicketGenere] = useState(null);
-    const [mouvementsCaisse, setMouvementsCaisse] = useState([]);
-    const [showMouvementModal, setShowMouvementModal] = useState(false);
-    const [newMouvement, setNewMouvement] = useState({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
-
-    // Nouveaux états pour le mode calculatrice de la Petite Caisse
-    const [modeCalculatrice, setModeCalculatrice] = useState(false);
-    const [ongletCalculatrice, setOngletCalculatrice] = useState('MONNAIES');
-    const [detailsMonnaie, setDetailsMonnaie] = useState({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
-
-    useEffect(() => {
-        if (modeCalculatrice) {
-            const total = ((parseInt(detailsMonnaie.b500)||0) * 500) + ((parseInt(detailsMonnaie.b200)||0) * 200) + ((parseInt(detailsMonnaie.b100)||0) * 100) +
-                          ((parseInt(detailsMonnaie.b50)||0) * 50) + ((parseInt(detailsMonnaie.b20)||0) * 20) + ((parseInt(detailsMonnaie.b10)||0) * 10) + ((parseInt(detailsMonnaie.b5)||0) * 5) +
-                          ((parseInt(detailsMonnaie.p2)||0) * 2) + ((parseInt(detailsMonnaie.p1)||0) * 1) + ((parseInt(detailsMonnaie.p050)||0) * 0.50) + ((parseInt(detailsMonnaie.p020)||0) * 0.20) +
-                          ((parseInt(detailsMonnaie.p010)||0) * 0.10) + ((parseInt(detailsMonnaie.p005)||0) * 0.05) + ((parseInt(detailsMonnaie.p002)||0) * 0.02) + ((parseInt(detailsMonnaie.p001)||0) * 0.01);
-            setNewMouvement(prev => ({ ...prev, montant: total > 0 ? total.toFixed(2) : '' }));
-        }
-    }, [detailsMonnaie, modeCalculatrice]);
-
-    const chargerMouvementsCaisse = async () => {
-        try {
-            const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements/aujourdhui', { headers: getAuthHeaders(true) });
-            if (res.ok) setMouvementsCaisse(await res.json());
-        } catch (e) {}
-    };
-
-    const ajouterMouvementCaisse = async () => {
-        if (!newMouvement.motif.trim() || !newMouvement.montant) return showToast("Veuillez remplir le montant et le motif.", "error");
-        try {
-            const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements', {
-                method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newMouvement)
-            });
-            await handleFetchError(res);
-            showToast("Mouvement enregistré.", "success");
-            setShowMouvementModal(false);
-            setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
-            setModeCalculatrice(false);
-            setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
-            chargerMouvementsCaisse();
-        } catch (e) { showToast(e.message, "error"); }
-    };
-  const [emailTicketClient, setEmailTicketClient] = useState('');
-  const [telephoneTicketClient, setTelephoneTicketClient] = useState('');
-
-  const [newClient, setNewClient] = useState({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' });
-  const [newEmploye, setNewEmploye] = useState({ prenom: '', nomFamille: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null });
-  const [newArticle, setNewArticle] = useState({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3, duree_estimee_minutes: 30 });
-
-  const [posStep, setPosStep] = useState('employee');
-  const [posEmploye, setPosEmploye] = useState(null);
-  const [posType, setPosType] = useState('PRESTATION'); 
-  const [rechercheCaisse, setRechercheCaisse] = useState('');
-
-  const nettoyerTexteRecherche = (texte) => {
-      if (!texte) return '';
-      return String(texte).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-  };
-  
-  const [clientCaisse, setClientCaisse] = useState('');
-  const [panierCaisse, setPanierCaisse] = useState([]); 
-  const [remiseAppliquee, setRemiseAppliquee] = useState(false); 
-  const [methodePaiement, setMethodePaiement] = useState('ESPECES');
-  const [clientsSuggeres, setClientsSuggeres] = useState([]); 
-  const [socket, setSocket] = useState(null);
-  const [notificationCaisse, setNotificationCaisse] = useState(null);
-  
-  const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
-
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-  useEffect(() => {
-      const handleResize = () => setWindowWidth(window.innerWidth);
-      window.addEventListener('resize', handleResize);
-      return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const isMobile = windowWidth < 768;
-  const isTablet = windowWidth >= 768 && windowWidth < 1024;
-  const nbJoursAffichage = isMobile ? 3 : (isTablet ? 4 : 7);
-
-  const getStartOfPeriod = (d, daysCount) => {
-      const date = new Date(d);
-      if (daysCount === 7) {
-          const day = date.getDay();
-          const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-          return new Date(date.setDate(diff));
-      }
-      return date; 
-  };
-
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const startDate = getStartOfPeriod(currentDate, nbJoursAffichage);
-  const joursSemaine = Array.from({length: nbJoursAffichage}).map((_, i) => { const d = new Date(startDate); d.setDate(d.getDate() + i); return d; });
-
-  const changerPeriode = (direction) => {
-      const newDate = new Date(currentDate);
-      newDate.setDate(newDate.getDate() + (direction * nbJoursAffichage));
-      setCurrentDate(newDate);
-  };
-  const resetToToday = () => setCurrentDate(new Date());
-
-  const [filtresEmployes, setFiltresEmployes] = useState([]); 
-  const [rdvSelectionne, setRdvSelectionne] = useState(null); 
-  const [isEditingRdv, setIsEditingRdv] = useState(false);
-  const [editRdvForm, setEditRdvForm] = useState({ date: '', heure: '', prestation: '', id_employe: '', duree_minutes: 30 });
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [showModalRdv, setShowModalRdv] = useState(false);
-  const [showModalAbsence, setShowModalAbsence] = useState(false);
-  const [isSubmittingAbsence, setIsSubmittingAbsence] = useState(false);
-  const [expandedAbsenceDate, setExpandedAbsenceDate] = useState(null);
-  const [ongletAbsence, setOngletAbsence] = useState('CONGES');
-  const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
-  const [formAbsence, setFormAbsence] = useState({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
-  const [showDropdownPresta, setShowDropdownPresta] = useState(false);
-  const [showDropdownClient, setShowDropdownClient] = useState(false);
-  const [formRdv, setFormRdv] = useState({ nom_client: '', telephone_client: '', id_employe: '', prestation: '', date: '', heure: '10:00', duree_minutes: 30 });
-
-  const [configSalon, setConfigSalon] = useState({
-    google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
-    fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
-    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null, pin_salon: '', temps_nettoyage_minutes: 0,
-    plan_actuel: 'PREMIUM_TRIAL', date_fin_essai: null
-  });
-
-  const [showPricingModal, setShowPricingModal] = useState(false);
-
-  // --- LOGIQUE REVERSE TRIAL ---
-  const isTrialing = configSalon.plan_actuel === 'PREMIUM_TRIAL';
-  const dateFinEssai = configSalon.date_fin_essai ? new Date(configSalon.date_fin_essai) : null;
-  const joursRestantsEssai = dateFinEssai ? Math.ceil((dateFinEssai.getTime() - new Date().getTime()) / (1000 * 3600 * 24)) : 999;
-  
-  const isSoftLock = isTrialing && joursRestantsEssai <= 0 && joursRestantsEssai >= -7;
-  // On déclenche le "Hard Lock" si l'essai est terminé OU si l'abonnement est impayé
-  const isHardLock = (isTrialing && joursRestantsEssai < -7) || isAbonnementInactif;
-
-  useEffect(() => {
-      if ((isSoftLock || isHardLock) && userRole === 'gerant' && activeTab !== 'caisse' && !showPricingModal) {
-          setShowPricingModal(true);
-      }
-  }, [isSoftLock, isHardLock, userRole, activeTab]); // Retire 'token' et ajoute la sécurité anti-boucle
-
-  const aLeNiveau = (niveauRequis) => {
-      const plan = configSalon.plan_actuel || 'PREMIUM_TRIAL';
-      if (plan === 'PREMIUM_TRIAL' || plan === 'PREMIUM') return true;
-      if (niveauRequis === 'PRO' && (plan === 'PRO' || plan === 'PREMIUM')) return true;
-      return false;
-  };
-
-  const handleTabClick = (tabName) => {
-      // On vérifie les droits pour TOUS les rôles (gérant, salon, employé)
-      if (tabName === 'admin' && !aLeNiveau('PREMIUM')) {
-          if (userRole !== 'gerant') return showToast("Le gérant doit débloquer l'accès Premium.", "error");
-          setShowPricingModal(true);
-          return;
-      }
-      if (tabName === 'protocoles' && !aLeNiveau('PRO')) {
-          if (userRole !== 'gerant') return showToast("Le gérant doit débloquer l'accès Pro.", "error");
-          setShowPricingModal(true);
-          return;
-      }
-      
-      // Si tout va bien, on change d'onglet
-      setShowPricingModal(false);
-      setActiveTab(tabName);
-  };
-
-  const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); }
-  const getAuthHeaders = (isJson = false) => { const headers = {}; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
-  
-  const handleFetchError = async (res) => {
-      // On lit le corps de la réponse en premier pour voir s'il y a des détails
-      const data = await res.json().catch(() => ({})); 
-
-      // Si c'est un problème de forfait (Upsell), on ne déconnecte SURTOUT PAS
-      if (res.status === 403 && data.require_upsell) {
-          throw new Error("Forfait insuffisant");
-      }
-
-      // Si c'est un vrai problème d'authentification, là on déconnecte
-      if (res.status === 401 || (res.status === 403 && !data.require_upsell)) { 
-          seDeconnecter(); 
-          throw new Error("Session expirée"); 
-      } 
-      
-      if (res.status === 402) { 
-          setIsAbonnementInactif(true); 
-          throw new Error("Abonnement inactif"); 
-      } 
-      
-      if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); 
-      return data; 
-  };
-
-  const formatNomClient = (client) => {
-      if (!client) return 'Client inconnu';
-      if (client.prenom && client.nom) return `${client.prenom} ${client.nom}`;
-      return client.nom || 'Client sans nom';
-  };
-
-  const handleImageUpload = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => { setNewEmploye({ ...newEmploye, photo_url: reader.result }); };
-          reader.readAsDataURL(file);
-      }
-  };
-
-  const handleImageUploadProtocole = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => { setNouveauProtocole({ ...nouveauProtocole, photo_url: reader.result }); };
-          reader.readAsDataURL(file);
-      }
-  };
-
-  useEffect(() => {
-      const handleOnline = () => { setIsOffline(false); syncOfflineTickets(); };
-      const handleOffline = () => { setIsOffline(true); setMethodePaiement('ESPECES'); }; 
-      
-      const checkNetworkAggressively = () => {
-          const currentOfflineStatus = !navigator.onLine;
-          if (isOffline !== currentOfflineStatus) {
-              setIsOffline(currentOfflineStatus);
-              if (!currentOfflineStatus) syncOfflineTickets();
-          }
-      };
-
-      window.addEventListener('online', handleOnline);
-      window.addEventListener('offline', handleOffline);
-      document.addEventListener('visibilitychange', checkNetworkAggressively);
-      window.addEventListener('focus', checkNetworkAggressively);
-
-      return () => {
-          window.removeEventListener('online', handleOnline);
-          window.removeEventListener('offline', handleOffline);
-          document.removeEventListener('visibilitychange', checkNetworkAggressively);
-          window.removeEventListener('focus', checkNetworkAggressively);
-      };
-  }, [token, isOffline]);
-
-  const syncEnCours = useRef(false);
-  const syncOfflineTickets = async () => {
-      if (!token || syncEnCours.current) return;
-      const queue = await localforage.getItem('offline_tickets') || [];
-      if (queue.length === 0) return;
-      const idSalonActuel = decodeToken(token)?.id_salon;
-
-      syncEnCours.current = true;
-      showToast(`Synchronisation de ${queue.length} ticket(s) en attente...`, "info");
-      let restants = [...queue];
-      let nbOk = 0, nbRejetes = 0, arret = null;
-
-      try {
-          // Ordre chronologique conservé : on s'arrête au premier échec temporaire
-          for (const ticket of queue) {
-              if (ticket._id_salon && idSalonActuel && String(ticket._id_salon) !== String(idSalonActuel)) continue; // ticket d'un autre salon : on n'y touche pas
-              let res;
-              try {
-                  res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(ticket) });
-              } catch (e) { arret = "Réseau instable, synchronisation reportée."; break; }
-
-              if (res.ok) {
-                  const data = await res.json().catch(() => ({}));
-                  restants = restants.filter(t => t !== ticket);
-                  nbOk++;
-                  await localforage.setItem('offline_tickets', restants);
-                  // Si ce ticket est encore affiché à l'écran (reçu ouvert), on remplace son ID temporaire par le vrai ID serveur
-                  setTicketGenere(prev => (prev && prev.id_ticket === ticket._id_temp) ? { ...prev, id_ticket: data.id_ticket, is_offline: false } : prev);
-                  continue;
-              }
-
-              const data = await res.json().catch(() => ({}));
-              if ([401, 402, 403, 423].includes(res.status) || res.status >= 500) {
-                  arret = res.status === 423 ? (data.erreur || "Clôture manquante : synchronisation reportée.")
-                        : res.status === 401 || res.status === 403 ? "Session expirée : reconnectez-vous, vos tickets sont conservés."
-                        : res.status === 402 ? "Abonnement inactif : vos tickets sont conservés."
-                        : "Serveur indisponible, synchronisation reportée.";
-                  break;
-              }
-
-              // Refus définitif (ex : donnée invalide) : on ne perd jamais le ticket, on le met de côté
-              const rejetes = await localforage.getItem('offline_tickets_rejetes') || [];
-              rejetes.push({ ...ticket, _erreur: data.erreur || `Erreur ${res.status}` });
-              await localforage.setItem('offline_tickets_rejetes', rejetes);
-              restants = restants.filter(t => t !== ticket);
-              await localforage.setItem('offline_tickets', restants);
-              nbRejetes++;
-          }
-      } finally { syncEnCours.current = false; }
-
-      if (nbOk > 0) chargerTout();
-      if (nbRejetes > 0) showToast(`${nbRejetes} ticket(s) refusé(s) par le serveur, conservés à part. Contactez le support.`, "error");
-      else if (arret) showToast(arret, "error");
-      else if (nbOk > 0) showToast("Tous les tickets hors-ligne ont été synchronisés !", "success");
-  };
-
-  // Nouvelle tentative automatique toutes les 5 minutes uniquement si hors-ligne
-  useEffect(() => {
-      if (!token) return;
-      const t = setInterval(() => { 
-          if (navigator.onLine && !syncEnCours.current) syncOfflineTickets(); 
-      }, 300000);
-      return () => clearInterval(t);
-  }, [token]);
-
-  const fetchAndCache = async (url, setter, cacheKey, expectedType = 'array') => {
-      const sanitizeData = (d) => {
-          if (expectedType === 'array') return Array.isArray(d) ? d : [];
-          return d || null; 
-      };
-
-      try {
-          const cacheBuster = url.includes('?') ? `&_=${Date.now()}` : `?_=${Date.now()}`;
-          const res = await fetch(`https://api-salon-backend.onrender.com${url}${cacheBuster}`, { 
-              headers: getAuthHeaders(),
-              credentials: 'include',
-              cache: 'no-store'
-          });
-          const data = await handleFetchError(res);
-          const cleanData = sanitizeData(data);
-          setter(cleanData);
-          await localforage.setItem(cacheKey, cleanData);
-      } catch (e) {
-          const cachedData = await localforage.getItem(cacheKey);
-          setter(sanitizeData(cachedData));
-      }
-  };
-
-  // Extraction des dates en nombres primitifs purs pour garantir la stabilité absolue du useEffect
-  const planningStartTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[0].getTime() : 0;
-  const planningEndTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[joursSemaine.length - 1].getTime() : 0;
-
-  useEffect(() => {
-      if (token && !isAbonnementInactif && planningStartTs > 0) {
-          const startStr = formatDateInput(new Date(planningStartTs)); 
-          const endStr = formatDateInput(new Date(planningEndTs));
-          fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData', 'object');
-          
-          if (decodeToken(token)?.role === 'employe') {
-              fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe', 'array');
-          }
-      }
-  // On n'utilise QUE des valeurs numériques et strings. Fini le windowWidth qui fluctue avec les barres de défilement !
-  }, [planningStartTs, planningEndTs, activeTab, refreshTrigger, token, isAbonnementInactif]);
-
-  const chargerTout = () => {
-    const role = decodeToken(token)?.role;
-
-    fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
-    fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
-    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
-    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
-
-    if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData', 'object');
-    if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData', 'object');
-
-    fetch(`https://api-salon-backend.onrender.com/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
-        .then(handleFetchError)
-        .then(async (d) => {
-            const config = { 
-                google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
-                fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
-                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null, pin_salon: d?.pin_salon || '', temps_nettoyage_minutes: d?.temps_nettoyage_minutes || 0,
-                plan_actuel: d?.plan_actuel || 'PREMIUM_TRIAL', date_fin_essai: d?.date_fin_essai || null, pennylane_api_key: d?.pennylane_api_key || ''
-            };
-            setConfigSalon(config);
-            await localforage.setItem('configSalon', config);
-        }).catch(async () => {
-            const cachedConf = await localforage.getItem('configSalon');
-            if(cachedConf) setConfigSalon(cachedConf);
-        });
-
-    if (role === 'employe') return;
-
-    setDashboardData(null); 
-    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData', 'object');
-    fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats', 'object');
-    fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
-    fetchAndCache('/api/stocks', setStocksData, 'stocksData');
-    fetchAndCache('/api/rh', setRhData, 'rhData');
-    fetchAndCache('/api/rh/absences', setAbsencesRH, 'absencesRH');
-    fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
-
-    if (decodeToken(token)?.id_salon === 38) {
-        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData', 'object');
-        fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
-    }
-  };
-
-  useEffect(() => {
-      if (token && !isAbonnementInactif) { 
-          const user = decodeToken(token); setUserRole(user?.role || 'gerant');
-          chargerTout(); 
-          if (user && user.id_salon && !isOffline && navigator.onLine) {
-              const newSocket = io('https://api-salon-backend.onrender.com', {
-                  transports: ['websocket'],
-                  reconnectionAttempts: Infinity,
-                  timeout: 5000,
-                  withCredentials: true
-              });
-              newSocket.on('connect', () => {
-                  newSocket.emit('rejoindreSalon', user.id_salon);
-              });
-              newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
-              newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-              newSocket.on('nouveauMessage', (data) => { setMessagesListe(prev => [...(prev || []), data]); });
-              newSocket.on('messageModifie', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, contenu: data.contenu } : m)); });
-              newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => m.id_message !== data.id_message)); });
-              newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, reactions: data.reactions } : m)); });
-              newSocket.on('messageVu', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, vu_par: data.vu_par } : m)); });
-              newSocket.on('connect_error', () => {});
-              setSocket(newSocket);
-              return () => newSocket.disconnect();
-          }
-      } 
-  }, [token, isAbonnementInactif, isOffline]);
-
-  const verifierTachesIAEnBase = async () => {
-      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { 
-              headers: getAuthHeaders(), 
-              cache: 'no-store',
-              pragma: 'no-cache'
-          });
-          if(res.ok) {
-              const data = await res.json();
-              setTachesIA(data || []);
-          }
-      } catch (e) { console.error("Erreur lecture IA", e); }
-  };
-
-  useEffect(() => {
-      if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
-      
-      const user = decodeToken(token);
-      let eventSource = null;
-      let watchdogId = null;
-      let dernierSignal = Date.now();
-      
-      const ouvrirConnexionSSE = () => {
-          if (eventSource) eventSource.close();
-          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}`;
-          eventSource = new EventSource(url, { withCredentials: true });
-          dernierSignal = Date.now();
-          
-          eventSource.addEventListener('connected', () => {
-              console.log('%c📡 SSE connecté', 'color: #00aa00; font-weight: bold;');
-              dernierSignal = Date.now();
-          });
-          eventSource.addEventListener('heartbeat', () => {
-              dernierSignal = Date.now();
-          });
-          
-          eventSource.addEventListener('nouvelleTacheIA', () => {
-              console.log('%c🤖 Event nouvelleTacheIA REÇU côté client', 'color: #ff0000; font-weight: bold; font-size: 14px');
-              dernierSignal = Date.now();
-              showToast("🤖 L'IA a détecté une nouvelle action !", "success");
-              verifierTachesIAEnBase(); 
-              chargerTout();
-          });
-      };
-      
-      ouvrirConnexionSSE();
-
-      const onFocus = () => verifierTachesIAEnBase();
-      const onVisibilityChange = () => {
-          if (document.visibilityState === 'visible') verifierTachesIAEnBase();
-      };
-      window.addEventListener('focus', onFocus);
-      window.addEventListener('visibilitychange', onVisibilityChange);
-
-      return () => {
-          window.removeEventListener('focus', onFocus);
-          window.removeEventListener('visibilitychange', onVisibilityChange);
-          if (eventSource) {
-              eventSource.close();
-              eventSource = null;
-          }
-      };
-  }, [token, isAbonnementInactif]);
-
-  useEffect(() => {
-      if (!modalIA && tachesIA && (tachesIA || []).length > 0) {
-          let premiereTache = { ...tachesIA[0] };
-          
-          // L'IA n'a pas trouvé de durée ? On cherche dans notre catalogue (Auto-Match) !
-          if (premiereTache.type_tache === 'RDV' && !premiereTache.donnees.duree_minutes) {
-              const nomPrestaIA = nettoyerTexteRecherche(premiereTache.donnees.prestation || '');
-              const prestaMatch = (catalogueListe || []).find(p => p.type_article === 'PRESTATION' && nettoyerTexteRecherche(p.nom).includes(nomPrestaIA));
-              premiereTache.donnees.duree_minutes = prestaMatch && prestaMatch.duree_estimee_minutes ? prestaMatch.duree_estimee_minutes : 30;
-          }
-          
-          setModalIA(premiereTache);
-      }
-  }, [tachesIA, modalIA, catalogueListe]);
-
-  const validerTacheIA = async (tache) => {
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/valider`, {
-              method: 'POST',
-              headers: getAuthHeaders(true),
-              body: JSON.stringify(tache.donnees)
-          });
-          
-          if (!res.ok) {
-              const err = await res.json();
-              throw new Error(err.erreur || "Erreur base de données");
-          }
-          
-          showToast("Action de l'IA confirmée !", "success");
-          setModalIA(null);
-          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-          setRefreshTrigger(prev => prev + 1); 
-      } catch (e) { 
-          showToast(`Erreur : ${e.message}`, "error"); 
-      }
-  };
-
-  const ignorerTacheIA = async (tache) => {
-      try {
-          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
-              method: 'POST',
-              headers: getAuthHeaders()
-          });
-          showToast("Tâche ignorée", "info");
-          setModalIA(null);
-          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-      } catch (e) { showToast("Erreur serveur.", "error"); }
-  };
-
-  const sInscrire = async () => {
-    if (!isLoginMode) {
-        if (!prenomGerantInput.trim() || !nomFamilleGerantInput.trim()) {
-            return setErreurLogin("Veuillez remplir les DEUX cases (Prénom et Nom de famille).");
-        }
-
-        // --- 1. SÉCURITÉ MOT DE PASSE (Renforcée) ---
-        if (motDePasseInput.length < 8) {
-            return setErreurLogin("Le mot de passe doit contenir au moins 8 caractères.");
-        }
-        const passwordSimple = motDePasseInput.toLowerCase();
-        if (/^(1234|azerty|qwerty|password|motdepasse)/.test(passwordSimple) || /^(\w)\1+$/.test(passwordSimple) || '0123456789'.includes(passwordSimple) || '9876543210'.includes(passwordSimple)) {
-            return setErreurLogin("Mot de passe trop faible ou suite logique détectée. Sécurisez-le.");
-        }
-    }
-
-    try {
-      const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
-      
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ 
-              email: emailInput, 
-              mot_de_passe: motDePasseInput, 
-              nom_salon: nomSalonInput, 
-              nom_gerant: nomCompletGerant 
-          }) 
-      });
-      const data = await response.json();
-      
-      if (response.ok) { 
-          localStorage.setItem('ui_token', data.ui_token); 
-          if (data.token_api) localStorage.setItem('api_token', data.token_api); 
-          
-          setToken(data.ui_token); 
-          setErreurLogin(null);
-          
-          const decoded = decodeToken(data.ui_token);
-          setUserRole(decoded?.role || 'gerant');
-          setIsAbonnementInactif(false); 
-          
-          // --- FORCE L'AFFICHAGE DU POPUP LÉGAL IMMÉDIATEMENT ---
-          setTimeout(() => {
-              setLegalStatut({ accepte: false, en_attente: true });
-          }, 100); 
-          
-      } else { 
-          setErreurLogin(data.erreur); 
-      }
-    } catch (e) { 
-        console.error("Détails du crash d'inscription :", e);
-        setErreurLogin(`Erreur technique : ${e.message}`); 
-    }
-  };
-
-  const seConnecter = async () => {
-    try {
-      const endpoint = loginType === 'employe' ? 'https://api-salon-backend.onrender.com/api/employes/login-pin'
-                      : loginType === 'salon' ? 'https://api-salon-backend.onrender.com/api/salon/login-pin'
-                      : 'https://api-salon-backend.onrender.com/api/login';
-      const payload = loginType === 'employe' ? { id_salon: idSalonInput, nom_employe: nomEmployeInput, code_pin: pinEmployeInput }
-                     : loginType === 'salon' ? { id_salon: idSalonInput, pin: pinSalonInput }
-                     : { email: emailInput, mot_de_passe: motDePasseInput };
-
-      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const data = await response.json();
-      
-      if (response.ok) { 
-          localStorage.setItem('ui_token', data.ui_token); if (data.token_api) localStorage.setItem('api_token', data.token_api); setToken(data.ui_token); setErreurLogin(null);
-          const decoded = decodeToken(data.ui_token); 
-          setUserRole(decoded?.role || 'gerant'); // 👈 Sécurité ici avec le "?"
-          setIsAbonnementInactif(false);
-          if(decoded?.role === 'employe') { setActiveTab('agenda'); } else { setActiveTab('accueil'); }
-      } else { setErreurLogin(data.erreur); }
-    } catch (e) { setErreurLogin("Mode hors-ligne ou erreur de connexion."); }
-  };
-
-  const motDePasseOublie = async () => {
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput }) });
-          const data = await res.json();
-          setMsgSucces(data.message); setErreurLogin(null);
-      } catch (e) { 
-        console.error("Détails du crash de mot de passe oublié :", e);
-        setErreurLogin(`Erreur technique : ${e.message}`); 
-      }
-  };
-
-  const seDeconnecter = () => {
-      fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(e => console.log(e));
-      localStorage.removeItem('ui_token'); localStorage.removeItem('api_token'); setToken(null); setIsAbonnementInactif(false); setUserRole('gerant'); if(socket) socket.disconnect(); 
-  };
-
-  const lancerPaiementStripe = async () => {
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', { method: 'POST', headers: getAuthHeaders() });
-          const data = await res.json();
-          if(data.url) { window.location.href = data.url; } 
-          else { showToast("Erreur lors de la création du lien de paiement.", "error"); }
-      } catch (e) { showToast("Erreur réseau avec Stripe.", "error"); }
-  };
-
-  const ouvrirFicheClient = async (client) => {
-      if(isOffline) return showToast("L'historique client est désactivé hors-ligne.", "error");
-      setClientSelectionne(client);
-      setChargementFiche(true);
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/clients/${client.id_client}/history`, { headers: getAuthHeaders() });
-          const data = await handleFetchError(res);
-          setClientHistorique(data);
-      } catch (e) { showToast("Erreur lors du chargement de l'historique.", "error"); }
-      setChargementFiche(false);
-  };
-
-  const sauvegarderNotesClient = async () => {
-      if(isOffline) return showToast("Impossible d'enregistrer des notes hors-ligne.", "error");
-      try {
-          await fetch(`https://api-salon-backend.onrender.com/api/clients/${clientSelectionne.id_client}/notes`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ notes: clientHistorique.notes }) });
-          showToast("Notes sauvegardées avec succès !", "success");
-      } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
-  };
-
-  
-  const annulerTicket = async (id_ticket) => {
-      if(isOffline) return showToast("Annulation impossible hors-ligne.", "error");
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/caisse/tickets/${id_ticket}`, { headers: getAuthHeaders() });
-          const data = await handleFetchError(res);
-          if (data.lignes.length === 0) return showToast("Ce ticket est déjà entièrement remboursé.", "info");
-          setAnnulationDialog({ id_ticket, motif: '', lignes: data.lignes, lignes_a_annuler: [] });
-      } catch(e) {
-          showToast("Erreur lors de la récupération des détails du ticket.", "error");
-      }
-  };
-
-  const confirmerAnnulationTicket = async () => {
-      if (!annulationDialog) return;
-      const motif = (annulationDialog.motif || '').trim();
-      if (!motif) return showToast("Le motif d'annulation est obligatoire.", "error");
-      try {
-          const payload = { motif, lignes_a_annuler: annulationDialog.lignes_a_annuler };
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/caisse/annuler-ticket/${annulationDialog.id_ticket}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          const data = await handleFetchError(res);
-          showToast(data.message, "success");
-          setAnnulationDialog(null);
-          if (clientSelectionne) ouvrirFicheClient(clientSelectionne);
-          chargerTout();
-      } catch (error) { showToast(error.message, "error"); }
-  };
-
-  const basculerStatutSalon = async (id_salon, statutActuel) => {
-      const nouveauStatut = statutActuel === 'actif' ? 'inactif' : 'actif';
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/superadmin/salons/${id_salon}/status`, {
-              method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: nouveauStatut })
-          });
-          const data = await handleFetchError(res);
-          showToast(data.message, "success");
-          chargerTout();
-      } catch (e) { showToast("Erreur lors de la modification", "error"); }
-  };
-
-  const supprimerSalonAdmin = async (id_salon, nom_salon) => {
-      setConfirmDialog({
-          titre: "DANGER : Destruction du Salon",
-          message: `Êtes-vous sûr de vouloir SUPPRIMER DÉFINITIVEMENT le salon "${nom_salon}" (ID: ${id_salon}) ? Absolument TOUT sera effacé de la base de données sans aucun retour en arrière possible.`,
-          btnTexte: "Oui, tout détruire",
-          action: async () => {
-              setConfirmDialog(null);
-              try {
-                  const res = await fetch(`https://api-salon-backend.onrender.com/api/superadmin/salons/${id_salon}`, {
-                      method: 'DELETE', headers: getAuthHeaders()
-                  });
-                  const data = await handleFetchError(res);
-                  showToast(data.message, "success");
-                  chargerTout();
-              } catch (e) { showToast(e.message || "Erreur de suppression", "error"); }
-          }
-      });
-  };
-
-  const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); setShowAddClient(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
-  const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
-  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!newEmploye.prenom.trim() || !newEmploye.nomFamille.trim()) return showToast("Le prénom ET le nom sont obligatoires.", "error"); if(!newEmploye.code_pin) return showToast("Le code PIN est obligatoire.", "error"); if(isPinWeak(newEmploye.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const payload = { ...newEmploye, nom: `${newEmploye.prenom.trim()} ${newEmploye.nomFamille.trim()}` }; const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) }); await handleFetchError(res); setNewEmploye({ prenom: '', nomFamille: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
-  const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
-  const sauvegarderModifEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!modifEmployeDialog.nom.trim().includes(' ')) return showToast("Le prénom et le nom sont obligatoires.", "error"); if(modifEmployeDialog.code_pin && isPinWeak(modifEmployeDialog.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${modifEmployeDialog.id_employe}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifEmployeDialog.nom, code_pin: modifEmployeDialog.code_pin, taux_commission_prestation: modifEmployeDialog.taux_commission_prestation, taux_commission_produit: modifEmployeDialog.taux_commission_produit }) }); await handleFetchError(res); chargerTout(); showToast("Employé mis à jour.", "success"); setModifEmployeDialog(null); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
-  
-  const ajouterArticle = async () => { 
-      if(isOffline) return showToast("Désactivé hors-ligne", "error"); 
-      if (newArticle.type_article === 'PRODUIT_REVENTE') { 
-          if (!newArticle.reference || newArticle.reference.trim().length < 4) { 
-              showToast("Veuillez saisir une référence d'au moins 4 caractères.", "error"); 
-              return; 
-          } 
-      } 
-      try { 
-          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { 
-              method: 'POST', 
-              headers: getAuthHeaders(true), 
-              body: JSON.stringify({
-                  ...newArticle,
-                  delai_livraison_jours: parseInt(newArticle.delai_livraison_jours) || 3
-              }) 
-          }); 
-          const data = await handleFetchError(res); 
-          if (data.message && data.message.includes("Stock mis à jour")) { 
-              showToast(data.message, "success"); 
-          } 
-          setNewArticle({ nom: '', type_article: 'PRESTATION', prix: '', stock_actuel: '', reference: '', delai_livraison_jours: 3 }); 
-          chargerTout(); 
-          showToast("Catalogue mis à jour.", "success"); 
-          setShowAddPrestation(false);
-          setShowAddProduit(false);
-      } catch(e) { 
-          if(e.message !== "Abonnement inactif") showToast(e.message, "error"); 
-      }
-  };
-  const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
-
-  const [modifNomDialog, setModifNomDialog] = useState(null);
-  const confirmerModifNom = async () => {
-      if (!modifNomDialog || !modifNomDialog.nom.trim()) return showToast("Le nom ne peut pas être vide.", "error");
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${modifNomDialog.id_article}/nom`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifNomDialog.nom.trim() }) });
-          await handleFetchError(res);
-          setModifNomDialog(null);
-          chargerTout();
-          showToast("Prestation renommée.", "success");
-      } catch (e) { showToast(e.message || "Erreur lors du renommage.", "error"); }
-  };
-
-  const confirmerModifStock = async () => {
-      if (!modifStockDialog) return;
-      const nouveauStock = parseInt(modifStockDialog.valeur);
-      if (isNaN(nouveauStock) || nouveauStock < 0) return showToast("Quantité invalide.", "error");
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/stocks/${modifStockDialog.id_article}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nouveau_stock: nouveauStock }) });
-          await handleFetchError(res);
-          setModifStockDialog(null);
-          chargerTout();
-          showToast("Stock mis à jour.", "success");
-      } catch (e) { showToast("Erreur lors de la mise à jour du stock.", "error"); }
-  };
-
-  const ajouterIngredientRecette = () => {
-      if (!ingredientTemp.id_article || !ingredientTemp.quantite_necessaire) return showToast("Sélectionnez un article et une quantité.", "error");
-      const art = (catalogueListe || []).find(a => a.id_article?.toString() === ingredientTemp.id_article);
-      if ((nouveauProtocole.ingredients || []).find(i => i.id_article === art.id_article)) return showToast("Ingrédient déjà dans la recette.", "error");
-      setNouveauProtocole({ ...nouveauProtocole, ingredients: [...(nouveauProtocole.ingredients || []), { id_article: art.id_article, nom: art.nom, quantite_necessaire: parseFloat(ingredientTemp.quantite_necessaire) }] });
-      setIngredientTemp({ id_article: '', quantite_necessaire: '' });
-  };
-  const supprimerIngredientRecette = (id_article) => { setNouveauProtocole({ ...nouveauProtocole, ingredients: (nouveauProtocole.ingredients || []).filter(i => i.id_article !== id_article) }); };
-
-  const ajouterEtapeRecette = () => {
-      if (!etapeTemp.texte) return showToast("La description de l'étape est requise.", "error");
-      setNouveauProtocole({ ...nouveauProtocole, etapes: [...(nouveauProtocole.etapes || []), { ...etapeTemp, id_etape: Date.now() }] });
-      setEtapeTemp({ texte: '', timer_min: '' });
-  };
-  const supprimerEtapeRecette = (id_etape) => { setNouveauProtocole({ ...nouveauProtocole, etapes: (nouveauProtocole.etapes || []).filter(e => e.id_etape !== id_etape) }); };
-
-  const toggleTag = (tag) => {
-      const tags = (nouveauProtocole.tags || []).includes(tag) ? (nouveauProtocole.tags || []).filter(t => t !== tag) : [...(nouveauProtocole.tags || []), tag];
-      setNouveauProtocole({ ...nouveauProtocole, tags });
-  };
-
-  const uploadMediaProtocole = (e, type) => {
-      const file = e.target.files[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => { setNouveauProtocole({ ...nouveauProtocole, medias: { ...nouveauProtocole.medias, [type]: reader.result } }); };
-          reader.readAsDataURL(file);
-      }
-  };
-
-  const creerProtocole = async () => {
-      if(isOffline) return showToast("Action impossible hors-ligne.", "error");
-      if(!nouveauProtocole.nom_prestation) return showToast("Le nom de la prestation est requis.", "error");
-      try {
-          const method = nouveauProtocole.id_protocole ? 'PUT' : 'POST';
-          const url = nouveauProtocole.id_protocole 
-              ? `https://api-salon-backend.onrender.com/api/protocoles/${nouveauProtocole.id_protocole}` 
-              : 'https://api-salon-backend.onrender.com/api/protocoles';
-
-          const res = await fetch(url, { method: method, headers: getAuthHeaders(true), body: JSON.stringify({...nouveauProtocole, temps_nettoyage_minutes: nouveauProtocole.a_temps_nettoyage ? nouveauProtocole.temps_nettoyage_minutes : 0}) });
-          await handleFetchError(res);
-          setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false });
-          setModeEditionProtocole(null);
-          chargerTout(); 
-          showToast(nouveauProtocole.id_protocole ? "Fiche modifiée !" : "Fiche créée !", "success");
-      } catch (e) { showToast("Erreur lors de la sauvegarde.", "error"); }
-  };
-
-  const supprimerProtocole = async (id) => {
-      if(isOffline) return showToast("Désactivé", "error");
-      try { 
-          await fetch(`https://api-salon-backend.onrender.com/api/protocoles/${id}`, { method: 'DELETE', headers: getAuthHeaders() }); 
-          setModeEditionProtocole(null);
-          chargerTout(); 
-          showToast("Protocole supprimé.", "success"); 
-      } catch (e) { showToast("Erreur suppression.", "error"); }
-  };
-
-  const getStockStatus = (q) => { const num = parseFloat(q); if (num > 20) return { bg: 'var(--bg-success)', text: 'var(--color-success)', label: 'En stock' }; if (num >= 6) return { bg: 'var(--bg-info)', text: 'var(--color-info)', label: 'Correct' }; if (num >= 1) return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Faible' }; return { bg: 'var(--bg-danger)', text: 'var(--color-danger)', label: 'Rupture' }; };
-
-  const getTendanceStock = (produit) => {
-      if (produit.jours_restants === null || produit.jours_restants === undefined) return null;
-      const jours = produit.jours_restants;
-      let couleur = 'var(--color-success)';
-      if (jours <= 3) couleur = 'var(--color-danger)';
-      else if (jours <= 10) couleur = 'var(--color-info)';
-      const texte = jours <= 0 ? "Rupture imminente" : `~${jours} j restant(s)`;
-      return { texte, couleur, date: produit.date_rupture_prevue };
-  };
-  
-  const dessinerCourbe = (d) => { 
-      if (!d || !Array.isArray(d) || d.length === 0) return null;
-      const points = d.map((val, i) => `${(i / 5) * 120},${40 - ((val - 4.0) / 1.0) * 40}`).join(' '); 
-      return <svg width="100%" height="40px" viewBox={`0 0 120 40`} preserveAspectRatio="none"><polyline points={points} fill="none" stroke="var(--color-success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>; 
-  };
-  
-  const dessinerChronogramme = (d) => { 
-      if (!d || !Array.isArray(d) || d.length === 0) return null;
-      const max = Math.max(...d) * 1.2 || 1; 
-      return (<svg width="100%" height="40px" viewBox={`0 0 100 40`} preserveAspectRatio="none">{d.map((val, i) => <rect key={i} x={i * 18} y={40 - ((val / max) * 40)} width={10} height={(val / max) * 40} fill="var(--btn-primary)" rx="2" />)}</svg>); 
-  };
-
-  const handleSelectEmployeCaisse = (id_employe) => {
-      setPosEmploye(id_employe);
-      const now = new Date();
-      let matches = [];
-
-      const listeRdvs = Array.isArray(planningData) ? planningData : (planningData.rendez_vous || []);
-      const rdvsToday = listeRdvs.filter(r => r.id_employe === id_employe && r.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', ''))));
-      rdvsToday.sort((a, b) => new Date(a.date_heure_debut.replace('Z', '')).getTime() - new Date(b.date_heure_debut.replace('Z', '')).getTime());
-
-      for (let rdv of rdvsToday) {
-          const rdvStart = new Date(rdv.date_heure_debut.replace('Z', ''));
-          const diffMinutes = (now.getTime() - rdvStart.getTime()) / 60000; 
-          
-          if (diffMinutes > -30 && diffMinutes < 150) { 
-              let clientInCRM = null;
-              if (rdv.telephone_client) {
-                  clientInCRM = (clientsListe || []).find(c => c.telephone === rdv.telephone_client);
-              }
-              if (!clientInCRM && rdv.nom_client) {
-                  clientInCRM = (clientsListe || []).find(c => (c.nom || '').toLowerCase() === (rdv.nom_client || '').toLowerCase());
-              }
-              if (clientInCRM && !matches.find(m => m.id_client === clientInCRM.id_client)) {
-                  matches.push({ ...clientInCRM, prestation_rdv: rdv.prestation, diffMinutes });
-              }
-          }
-      }
-
-      matches.sort((a, b) => b.diffMinutes - a.diffMinutes);
-
-      if (matches.length > 0) {
-          setClientsSuggeres(matches);
-          setClientCaisse(matches[0].id_client.toString());
-      } else {
-          setClientCaisse('');
-          setClientsSuggeres([]);
-      }
-      setPosStep('type');
-  };
-
-  const ajouterAuPanier = (article) => {
-      const exist = (panierCaisse || []).find(item => item.id_article === article.id_article);
-      if (exist) {
-          setPanierCaisse((panierCaisse || []).map(item => item.id_article === article.id_article ? { ...item, quantite: item.quantite + 1 } : item));
-      } else {
-          setPanierCaisse([...(panierCaisse || []), { ...article, quantite: 1, prix_unitaire: parseFloat(article.prix || 0) }]);
-      }
-  };
-  const retirerDuPanier = (id_article) => { setPanierCaisse((panierCaisse || []).filter(item => item.id_article !== id_article)); };
-
-  const sousTotalCaisse = (panierCaisse || []).reduce((acc, item) => acc + ((item.prix_unitaire || 0) * (item.quantite || 0)), 0);
-  let totalCaisse = sousTotalCaisse;
-  
-  if (remiseAppliquee) {
-      if (configSalon.fidelite_type === 'POINTS') {
-          totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur || 0));
-      } else if (configSalon.fidelite_type === 'TAMPONS') {
-          if (configSalon.fidelite_recompense_type === 'MONTANT') {
-              totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur || 0));
-          } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
-              totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur || 0) / 100));
-          }
-      }
-  }
-
-  const validerEncaisser = () => {
-      if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
-      if((panierCaisse || []).length === 0) { showToast("Le ticket est vide.", "error"); return; }
-      
-      const vraimentHorsLigne = isOffline || !navigator.onLine;
-      if (vraimentHorsLigne && methodePaiement === 'CARTE') { showToast("Le TPE (Carte) nécessite une connexion.", "error"); return; }
-      
-      lancerPaiementTPE(totalCaisse, panierCaisse);
-  };
-
-  const lancerPaiementTPE = async (montant, lignes) => {
-    const vraimentHorsLigne = isOffline || !navigator.onLine;
-    if (vraimentHorsLigne !== isOffline) setIsOffline(vraimentHorsLigne);
-
-    const payloadTPE = { montant, id_employe: posEmploye, id_client: clientCaisse || null, lignes, recompense_appliquee: remiseAppliquee, methode_paiement: methodePaiement };
-
-    const forcerSauvegardeLocale = async () => {
-        const offlineTicketId = `TKT-OFFLINE-${Date.now()}`;
-        const offlineTicket = { ...payloadTPE, _id_temp: offlineTicketId, _id_salon: decodeToken(token)?.id_salon, date_creation: new Date().toISOString() };
-        
-        const queue = await localforage.getItem('offline_tickets') || [];
-        queue.push(offlineTicket);
-        await localforage.setItem('offline_tickets', queue);
-
-        setTicketGenere({
-            id_ticket: offlineTicketId, montant: montant, client_id: clientCaisse,
-            client_nom: clientCaisse ? formatNomClient((clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)) : 'Client de passage',
-            client_email: clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email : '',
-            lignes: lignes,
-            is_offline: true
-        });
-        
-        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('ESPECES'); setRechercheCaisse('');
-        showToast("Ticket sauvegardé localement (Mode Hors-Ligne)", "success");
-    };
-
-    if (vraimentHorsLigne) {
-        await forcerSauvegardeLocale();
-        return;
-    }
-
-    if (methodePaiement === 'CARTE' && montant > 0) setNotificationCaisse(` Envoi de l'ordre au TPE physique. En attente de la carte...`);
-    
-    try {
-        const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
-        const data = await handleFetchError(res);
-        
-        setNotificationCaisse(null);
-        setTicketGenere({
-            id_ticket: data.id_ticket, montant: montant, client_id: clientCaisse,
-            client_nom: clientCaisse ? formatNomClient((clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)) : 'Client de passage',
-            client_email: clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email : '',
-            lignes: lignes
-        });
-        setEmailTicketClient(clientCaisse ? (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse)?.email || '' : '');
-        
-        setPanierCaisse([]); setClientCaisse(''); setRemiseAppliquee(false); setMethodePaiement('CARTE');
-        chargerTout();
-    } catch (error) { 
-        if(error.message === "Load failed" || error.message === "Failed to fetch" || !navigator.onLine) {
-            setIsOffline(true);
-            await forcerSauvegardeLocale();
-        } else if(error.message !== "Abonnement inactif") {
-            setNotificationCaisse(`❌ ${error.message || "Erreur Caisse."}`); 
-        }
-    }
-  };
-
-  const envoyerTicketEco = async (methode) => {
-      if(isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error");
-      try {
-      const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, telephone: telephoneTicketClient, methode }) });
-          await handleFetchError(res);
-          showToast(`Ticket envoyé par ${methode.toUpperCase()} !`, "success");
-          setTicketGenere(null);
-          setPosEmploye(null);
-          setClientsSuggeres([]);
-      } catch (e) { showToast(`Erreur d'envoi : ${e.message}`, "error"); }
-  }
-
-  const declencherExport = async () => { if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
-
-  const lancerAuditNF525 = async () => {
-      if(isOffline || !navigator.onLine) return showToast("Audit impossible hors-ligne.", "error");
-      showToast("Audit cryptographique en cours...", "info");
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/admin/verifier-nf525', { headers: getAuthHeaders(), credentials: 'include' });
-          const data = await handleFetchError(res);
-          setAuditNf525(data);
-      } catch (e) { showToast(e.message || "Erreur lors de l'audit.", "error"); }
-  };
-
-  const declencherExportFEC = async () => { 
-      if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); 
-      showToast("Génération du FEC (Partie Double) en cours..."); 
-      try {
-          const today = new Date(); 
-          const firstDay = new Date(today.getFullYear(), today.getMonth(), 1); 
-          const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0); 
-          const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; 
-          
-          const response = await fetch(`https://api-salon-backend.onrender.com/api/export-fec?date_debut=${formatYMD(firstDay)}&date_fin=${formatYMD(lastDay)}`, { headers: getAuthHeaders() }); 
-          if (response.status === 402) { setIsAbonnementInactif(true); return; } 
-          if (!response.ok) { const errData = await response.json().catch(() => ({})); throw new Error(errData.erreur || "Erreur Serveur"); } 
-          
-          const blob = await response.blob(); 
-          const url = window.URL.createObjectURL(blob); 
-          const a = document.createElement('a'); 
-          a.href = url; 
-          a.download = `FEC_${formatYMD(firstDay).replace(/-/g, '')}_${formatYMD(lastDay).replace(/-/g, '')}.txt`; 
-          document.body.appendChild(a); 
-          a.click(); 
-          a.remove(); 
-          window.URL.revokeObjectURL(url); 
-          showToast("Fichier FEC téléchargé avec succès !", "success"); 
-      } catch (error) { showToast(error.message, "error"); }
-  };
-
-  const telechargerBilanJour = async (date_brute) => {
-      if(isOffline || !navigator.onLine) return showToast("Téléchargement impossible hors-ligne.", "error");
-      showToast("Génération du PDF en cours...");
-      try {
-          const response = await fetch(`https://api-salon-backend.onrender.com/api/export-pdf/${date_brute}`, { headers: getAuthHeaders() });
-          if (response.status === 402) { setIsAbonnementInactif(true); return; }
-          if (!response.ok) throw new Error("Erreur Serveur");
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `Bilan_${date_brute}.pdf`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-          showToast("PDF téléchargé !", "success");
-      } catch (error) { showToast("Erreur lors du téléchargement.", "error"); }
-  };
-
-  const modifierMaPhoto = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-          try {
-              const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${decodeToken(token)?.id_employe}/photo`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ photo_url: reader.result }) });
-              await handleFetchError(res);
-              chargerTout();
-              showToast("Photo mise à jour.", "success");
-          } catch (err) { showToast("Erreur lors de la mise à jour de la photo.", "error"); }
-      };
-      reader.readAsDataURL(file);
-  };
-
-  const sauvegarderParametres = async () => {
-      if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
-      if(configSalon.pin_salon && isPinWeak(configSalon.pin_salon)) return showToast("Le code PIN du salon est trop simple (évitez 0000, 1234...).", "error");
-      showToast("Sauvegarde en cours...");
-      try { 
-          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); 
-          const data = await handleFetchError(response); 
-          showToast(data.message, "success"); 
-          chargerTout(); 
-          setTimeout(() => { setActiveTab('accueil'); }, 1000); 
-      } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
-  };
-
-  const creerRdvManuel = async (forcer = false) => {
-      if(isOffline || !navigator.onLine) return showToast("Impossible de créer un RDV hors-ligne.", "error");
-      try {
-          const datetime = `${formRdv.date}T${formRdv.heure}:00`;
-          const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime, forcer_ajout: forcer}) });
-          if(res.status === 409) {
-              const data = await res.json();
-              setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer l'ajout", action: () => { setConfirmDialog(null); creerRdvManuel(true); } });
-              return;
-          }
-          if(res.ok) { 
-              setShowModalRdv(false); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous créé", "success"); 
-          } else {
-              const err = await res.json(); throw new Error(err.erreur || "Erreur de création.");
-          }
-      } catch(e) { showToast(e.message || "Erreur de création.", "error"); }
-  }
-
-  const soumettreAbsence = async () => {
-      if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
-      if(!formAbsence.date_debut || !formAbsence.date_fin) return showToast("Veuillez sélectionner les dates.", "error");
-      if(isSubmittingAbsence) return; // Empêche les clics multiples
-      
-      setIsSubmittingAbsence(true);
-      try {
-          const payload = { ...formAbsence, type_demande: ongletAbsence };
-          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/absences', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          const data = await handleFetchError(res);
-          showToast(data.message, "success");
-          setShowModalAbsence(false);
-
-          if (data.conflits && data.conflits.length > 0) {
-              const empId = formAbsence.id_employe || decodeToken(token)?.id_employe;
-              const nomEmp = (employesListe || []).find(e => e.id_employe === Number(empId))?.nom || 'ce collaborateur';
-              const prenomEmp = nomEmp.split(' ')[0];
-              setCancellationRobot({ rdvs: data.conflits, id_employe: empId, nom_employe: prenomEmp });
-              setSelectedCancelRdvs(data.conflits.map(r => r.id_rdv)); // On coche tout par défaut
-              setCancelMessageTemplate(`Bonjour [Prénom], en raison d'une absence exceptionnelle, votre RDV du [Date] avec ${prenomEmp} ne pourra pas être assuré. Cliquez ici pour reprogrammer : [Lien]. L'équipe du Salon.`);
-          } else {
-              chargerTout(); setRefreshTrigger(prev => prev + 1);
-          }
-
-          const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
-          setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
-      } catch (e) { 
-          showToast(e.message || "Erreur de soumission", "error"); 
-      } finally {
-          setIsSubmittingAbsence(false);
-      }
-  };
-  const handleUploadJustificatifAbsence = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => setFormAbsence({ ...formAbsence, fichier_base64: reader.result, nom_fichier: file.name, type_mime: file.type });
-          reader.readAsDataURL(file);
-      }
-  };
-
-  const ouvrirRdvSelectionne = (rdv) => {
-      setRdvSelectionne(rdv);
-      setIsEditingRdv(false);
-      const d = new Date((rdv.date_heure_debut || '').replace('Z', ''));
-      setEditRdvForm({
-          date: formatDateInput(d),
-          heure: d.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
-          prestation: rdv.prestation,
-          id_employe: rdv.id_employe || '',
-          duree_minutes: rdv.duree_minutes || 30
-      });
-  };
-
-  const sauvegarderModifRdv = async (forcer = false) => {
-      if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
-      try {
-          const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime, forcer_ajout: forcer }) });
-          if(res.status === 409) {
-              const data = await res.json();
-              setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer la modification", action: () => { setConfirmDialog(null); sauvegarderModifRdv(true); } });
-              return;
-          }
-          if(res.ok) { 
-              setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous modifié", "success"); 
-          } else {
-              const err = await res.json(); throw new Error(err.erreur || "Erreur lors de la modification.");
-          }
-      } catch(e) { showToast(e.message || "Erreur lors de la modification.", "error"); }
-  };
-
-  const demanderSuppressionRdv = () => {
-      setConfirmDialog({ titre: "Supprimer le rendez-vous", message: "Êtes-vous sûr de vouloir annuler ce rendez-vous ? Cette action est irréversible.", btnTexte: "Supprimer le RDV", action: executerSuppressionRdv });
-  };
-  const executerSuppressionRdv = async () => {
-      if(isOffline || !navigator.onLine) { setConfirmDialog(null); return showToast("Action impossible hors-ligne.", "error"); }
-      setConfirmDialog(null);
-      try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'DELETE', headers: getAuthHeaders() });
-          if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous supprimé", "success"); }
-      } catch(e) { showToast("Erreur lors de la suppression.", "error"); }
-  };
-
-  const [zDialogOuvert, setZDialogOuvert] = useState(false);
-  const [zEmployeSelect, setZEmployeSelect] = useState('');
-  
-  // Nouveaux états pour la calculatrice de caisse (Blind Close)
-  const [compteCaisse, setCompteCaisse] = useState({
-      b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '',
-      p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: ''
-  });
-  const [fondCaisseMatin, setFondCaisseMatin] = useState('');
-  const [ecartDetecte, setEcartDetecte] = useState(null);
-  const [justificationEcart, setJustificationEcart] = useState('');
-
-  const calculerTotalCaisseReel = () => {
-      return ((parseInt(compteCaisse.b500)||0) * 500) + ((parseInt(compteCaisse.b200)||0) * 200) + ((parseInt(compteCaisse.b100)||0) * 100) +
-             ((parseInt(compteCaisse.b50)||0) * 50) + ((parseInt(compteCaisse.b20)||0) * 20) + ((parseInt(compteCaisse.b10)||0) * 10) + ((parseInt(compteCaisse.b5)||0) * 5) +
-             ((parseInt(compteCaisse.p2)||0) * 2) + ((parseInt(compteCaisse.p1)||0) * 1) + ((parseInt(compteCaisse.p050)||0) * 0.50) + ((parseInt(compteCaisse.p020)||0) * 0.20) +
-             ((parseInt(compteCaisse.p010)||0) * 0.10) + ((parseInt(compteCaisse.p005)||0) * 0.05) + ((parseInt(compteCaisse.p002)||0) * 0.02) + ((parseInt(compteCaisse.p001)||0) * 0.01);
-  };
-
-  const demanderZDeCaisse = () => {
-      setZEmployeSelect(role === 'gerant' ? 'Gérant' : '');
-      setCompteCaisse({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
-      setFondCaisseMatin('');
-      setEcartDetecte(null);
-      setJustificationEcart('');
-      setZDialogOuvert(true);
-  };
-
-  const executerZDeCaisse = async (employeNom) => {
-      if(isOffline || !navigator.onLine) { setZDialogOuvert(false); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
-      if (!fondCaisseMatin || isNaN(fondCaisseMatin)) return showToast("Le fond de caisse du matin est obligatoire.", "error");
-      
-      const totalReel = calculerTotalCaisseReel();
-      
-      const enAttente = await localforage.getItem('offline_tickets') || [];
-      if (enAttente.length > 0) { await syncOfflineTickets(); const reste = await localforage.getItem('offline_tickets') || []; if (reste.length > 0) { setZDialogOuvert(false); return showToast(`${reste.length} ticket(s) hors-ligne à synchroniser avant la clôture.`, "error"); } }
-      
-      try {
-          const payload = { ferme_par: employeNom, fond_caisse_matin: parseFloat(fondCaisseMatin), total_especes_reel: totalReel, justification_ecart: justificationEcart };
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          const data = await res.json().catch(() => ({}));
-          
-          if (!res.ok) {
-              if (data.require_justification) {
-                  setEcartDetecte(data.ecart);
-                  return; // 🚨 On bloque la fermeture de la modale pour forcer la justification !
-              }
-              throw new Error(data.erreur || "Erreur de clôture.");
-          }
-
-          setZDialogOuvert(false);
-          showToast(data.message, "success");
-          setClotureFaiteAujourdhui(true);
-          setZEmployeSelect('');
-      } catch(e) { showToast(e.message || "Erreur lors de la clôture.", "error"); }
-  };
-  // --- Rappel de clôture journalière (bandeau) ---
-  const [clotureFaiteAujourdhui, setClotureFaiteAujourdhui] = useState(true);
-  const [heureActuelle, setHeureActuelle] = useState(new Date());
-  const [clotureAutoInfo, setClotureAutoInfo] = useState(null);
-  const [alertesFermees, setAlertesFermees] = useState(() => { try { return JSON.parse(localStorage.getItem('alertesFermees')) || {}; } catch(e) { return {}; } });
-
-  // --- Garde-Fou : Régularisation Matinale (Blind Close) ---
-  const [reguCloture, setReguCloture] = useState(null);
-  const [reguMontant, setReguMontant] = useState('');
-
-  const verifierRegularisationMatinale = async () => {
-      if (!token) return;
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/verification-matinale', { headers: getAuthHeaders() });
-          const data = await res.json();
-          if (data.necessite_regularisation) {
-              setReguCloture(data.cloture);
-          } else {
-              setReguCloture(null);
-          }
-      } catch(e) {}
-  };
-
-  const soumettreRegularisation = async () => {
-      if (!reguMontant || isNaN(reguMontant)) return showToast("Veuillez saisir le montant réel.", "error");
-      try {
-          const payload = { 
-              id_cloture: reguCloture.id_cloture, 
-              montant_reel: parseFloat(reguMontant), 
-              id_employe: decodeToken(token)?.role === 'employe' ? decodeToken(token).id_employe : null 
-          };
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/regulariser', {
-              method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload)
-          });
-          await handleFetchError(res);
-          showToast("Caisse ouverte et régularisée !", "success");
-          setReguCloture(null);
-          setReguMontant('');
-          if (typeof chargerMouvementsCaisse === 'function') chargerMouvementsCaisse();
-      } catch (e) { showToast(e.message, "error"); }
-  };
-
-  const fermerAlerte = (cle) => {
-      const next = { ...alertesFermees, [cle]: true };
-      setAlertesFermees(next);
-      localStorage.setItem('alertesFermees', JSON.stringify(next));
-  };
-
-  const verifierStatutCloture = async () => {
-      if (decodeToken(token)?.role !== 'gerant') return;
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture/statut', { headers: getAuthHeaders() });
-          const data = await handleFetchError(res);
-          setClotureFaiteAujourdhui(!!data.cloture_faite);
-          if (data.derniere_cloture_auto) setClotureAutoInfo(data.derniere_cloture_auto);
-      } catch (e) { /* échec silencieux : on retentera au prochain intervalle */ }
-  };
-
-  useEffect(() => {
-      if (!token) return;
-      verifierStatutCloture();
-      verifierRegularisationMatinale();
-      const intervalStatut = setInterval(verifierStatutCloture, 5 * 60 * 1000);
-      const intervalHorloge = setInterval(() => setHeureActuelle(new Date()), 60 * 1000);
-      return () => { clearInterval(intervalStatut); clearInterval(intervalHorloge); };
-  }, [token]);
-
-  const afficherRappelCloture = (() => {
-      if (decodeToken(token)?.role !== 'gerant' || clotureFaiteAujourdhui) return false;
-      const heureFermeture = parseFloat(configSalon.heure_fermeture) || 20;
-      const minutesFermeture = heureFermeture * 60;
-      const minutesActuelles = heureActuelle.getHours() * 60 + heureActuelle.getMinutes();
-      return minutesActuelles >= (minutesFermeture - 30);
-  })();
-
-  // --- Rappel de vérification manuelle des stocks (tous les 3 mois) ---
-  const validerVerifStock = async () => {
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/stocks/verification/fait', { method: 'POST', headers: getAuthHeaders() });
-          await handleFetchError(res);
-          setConfigSalon(prev => ({ ...prev, derniere_verif_stock: new Date().toISOString() }));
-      } catch (e) { showToast("Erreur lors de l'enregistrement.", "error"); }
-  };
-
-  const afficherRappelStock = (() => {
-      if (!['gerant', 'salon'].includes(decodeToken(token)?.role)) return false;
-      if (!configSalon.derniere_verif_stock) return true;
-      const prochainRappel = new Date(configSalon.derniere_verif_stock);
-      prochainRappel.setMonth(prochainRappel.getMonth() + 3);
-      return heureActuelle >= prochainRappel;
-  })();
-
-  const getCouleurTache = (tache) => {
-      if (tache.statut === 'FAIT') return 'var(--color-success)'; 
-      if (!tache.date_echeance) return '#f59e0b'; 
-      const joursRestants = (new Date(tache.date_echeance) - new Date()) / (1000 * 60 * 60 * 24);
-      if (joursRestants <= 2) return 'var(--color-danger)'; 
-      return '#f59e0b'; 
-  };
-
-  const nbTachesUrgentes = (tachesListe || []).filter(t => {
-      const prop = t.proprietaire || 'gerant';
-      const isUrgent = t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2);
-      if (!isUrgent) return false;
-      
-      if (userRole === 'gerant') return true; // Le gérant est alerté de toutes les urgences
-      if (userRole === 'employe') return prop === `emp_${decodeToken(token)?.id_employe}` || prop === 'salon';
-      return prop === userRole || prop === 'salon';
-  }).length;
-
-  let clientCaisseObj = null;
-  let isEligibleFidelite = false;
-  let texteRecompense = '';
-
-  if (clientCaisse) {
-      clientCaisseObj = (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse);
-      if (clientCaisseObj && configSalon.fidelite_type !== 'NONE') {
-          if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= (configSalon.fidelite_points_seuil || 0)) {
-              isEligibleFidelite = true;
-              texteRecompense = `-${configSalon.fidelite_points_valeur}€ offerts`;
-          } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= (configSalon.fidelite_tampons_seuil || 0)) {
-              isEligibleFidelite = true;
-              texteRecompense = configSalon.fidelite_recompense_type === 'MONTANT' ? `-${configSalon.fidelite_recompense_valeur}€ offerts` : 
-                                configSalon.fidelite_recompense_type === 'POURCENTAGE' ? `-${configSalon.fidelite_recompense_valeur}% appliqués` : 
-                                `Cadeau: ${configSalon.fidelite_recompense_valeur}`;
-          }
-      }
-  }
-
-  if (resetTokenUrl) {
-      return (
-        <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh', position: 'relative' }}>
-          <ThemeToggle isFixed={true} />
-          <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
-            <div className="logo-container"><img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" /></div>
-            <h2 style={{color: 'var(--text-main)'}}>Nouveau mot de passe</h2>
-            <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
-            <input type="password" placeholder="Votre nouveau mot de passe" className="input-fournisseur" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-            <button className="btn-action" style={{ width: '100%', marginTop: '16px' }} onClick={async () => {
-               const res = await fetch('https://api-salon-backend.onrender.com/api/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword}) });
-               if(res.ok) { showToast("Mot de passe mis à jour !", "success"); setTimeout(() => window.location.href = '/', 2000); } else { showToast("Lien expiré ou invalide.", "error"); }
-            }}>Confirmer la modification</button>
-          </div>
-        </div>
-      )
-  }
-
-  if (!token) {
-    return (
-      <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
-        <ThemeToggle isFixed={true} />
-        <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px' }}>
-          <div className="logo-container"><img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" /></div>
-
-          <div style={{display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '24px'}}>
-             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Gérant</button>
-             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Employé</button>
-             <button onClick={() => {setLoginType('salon'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'salon' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'salon' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Salon</button>
-          </div>
-          
-          {isForgotPassword ? (
-              <>
-                 <h2 style={{color: 'var(--text-main)'}}>Mot de passe oublié</h2>
-                 <p style={{fontSize:'13px', color:'var(--text-secondary)', marginBottom: '24px'}}>Saisissez votre email pour réinitialiser l'accès.</p>
-                 {msgSucces && <div style={{backgroundColor: 'var(--bg-success)', color: 'var(--color-success)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500'}}>{msgSucces}</div>}
-                 <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
-                 <button className="btn-action" onClick={motDePasseOublie} style={{ width: '100%', marginTop: '8px' }}>Recevoir le lien</button>
-                 <p style={{fontSize: '13px', color: 'var(--text-main)', marginTop: '24px', cursor: 'pointer', fontWeight: '500'}} onClick={() => setIsForgotPassword(false)}>Retour à la connexion</p>
-              </>
-          ) : (
-             <>
-                {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500' }}>{erreurLogin}</div>)}
-                {loginType === 'gerant' ? (
-                   <>
-                      {!isLoginMode && (
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                              <input type="text" className="input-fournisseur" placeholder="Prénom (Gérant)" style={{flex: 1}} value={prenomGerantInput} onChange={(e) => setPrenomGerantInput(e.target.value)} />
-                              <input type="text" className="input-fournisseur" placeholder="Nom de famille" style={{flex: 1}} value={nomFamilleGerantInput} onChange={(e) => setNomFamilleGerantInput(e.target.value)} />
-                          </div>
-                      )}
-                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
-                      <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
-                      <input type="password" className="input-fournisseur" placeholder="Mot de passe" value={motDePasseInput} onChange={(e) => setMotDePasseInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (isLoginMode ? seConnecter() : sInscrire())} />
-                      <button className="btn-action" onClick={isLoginMode ? seConnecter : sInscrire} style={{ width: '100%', marginTop: '16px' }}>{isLoginMode ? 'Se connecter' : "S'inscrire"}</button>
-                      <div style={{display:'flex', justifyContent:'space-between', marginTop: '24px'}}>
-                         <p style={{fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer', margin:0, fontWeight: '600'}} onClick={() => { setIsLoginMode(!isLoginMode); setErreurLogin(null); }}>{isLoginMode ? "Créer un compte" : "Se connecter"}</p>
-                         {isLoginMode && <p style={{fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', margin:0}} onClick={() => setIsForgotPassword(true)}>Oublié ?</p>}
-                      </div>
-                   </>
-                ) : loginType === 'employe' ? (
-                   <>
-                      <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
-                      <input type="text" className="input-fournisseur" placeholder="Votre prénom" style={{marginBottom: '12px'}} value={nomEmployeInput} onChange={(e) => setNomEmployeInput(e.target.value)} />
-                      <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN à 4 chiffres" value={pinEmployeInput} onChange={(e) => setPinEmployeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
-                      <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '16px' }}>Accéder au Planning</button>
-                   </>
-                ) : (
-                   <>
-                      <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
-                      <input type="password" maxLength="10" inputMode="numeric" className="input-fournisseur" placeholder="Code PIN du salon" value={pinSalonInput} onChange={(e) => setPinSalonInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
-                      <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '16px' }}>Accéder au Salon</button>
-                   </>
-                )}
-             </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Pop-up bloquant : le gérant doit accepter les documents contractuels avant tout (et avant le paiement)
-  if (token && userRole === 'gerant' && legalStatut && legalStatut.accepte === false) {
-    return (
-      <PopupLegal
-        apiBase="https://api-salon-backend.onrender.com"
-        token={localStorage.getItem('api_token')}
-        onAccepted={() => setLegalStatut({ ...legalStatut, accepte: true })}
-        onRefuse={seDeconnecter}
-      />
-    );
-  }
-
-
-  const role = userRole;
-  const heureDebutAgenda = Math.max(0, Math.min(23, parseInt(configSalon.heure_ouverture) || 8));
-  const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
-  const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
-
-  const getPrestationsSuggerees = (texteSaisi) => {
-      const prestationsDb = (catalogueListe || []).filter(a => a.type_article === 'PRESTATION');
-      const searchClean = nettoyerTexteRecherche(texteSaisi);
-
-      let resultats = [];
-      
-      if (!searchClean) {
-          const topNoms = (dashboardData?.top_3_prestations || []).map(p => (p.nom || '').toLowerCase() || '') || [];
-          const topPrestas = prestationsDb.filter(p => p.nom && topNoms.includes((p.nom || '').toLowerCase()));
-          const autresPrestas = prestationsDb.filter(p => !p.nom || !topNoms.includes((p.nom || '').toLowerCase()));
-          resultats = [...topPrestas, ...autresPrestas];
-      } else {
-          resultats = prestationsDb.filter(p => nettoyerTexteRecherche(p.nom).includes(searchClean));
-      }
-      
-      return resultats.slice(0, 5); 
-  };
-
-  const getClientsSuggeresPourRdv = (texteSaisi) => {
-      if (!texteSaisi) return (clientsListe || []).slice(0, 5);
-
-      const searchClean = nettoyerTexteRecherche(texteSaisi);
-      
-      return (clientsListe || []).filter(cli => {
-          const nomComplet = nettoyerTexteRecherche(formatNomClient(cli));
-          const tel = nettoyerTexteRecherche(cli.telephone || '');
-          return nomComplet.includes(searchClean) || tel.includes(searchClean);
-      }).slice(0, 5); 
-  };
-
-  const formatPortion = (qte) => {
-      const val = parseFloat(qte);
-      if (Math.abs(val - 0.13) < 0.01) return "1/8";
-      if (Math.abs(val - 0.25) < 0.01) return "1/4";
-      if (Math.abs(val - 0.33) < 0.01) return "1/3";
-      if (Math.abs(val - 0.5) < 0.01) return "1/2";
-      if (Math.abs(val - 0.67) < 0.01) return "2/3";
-      if (Math.abs(val - 0.75) < 0.01) return "3/4";
-      return val;
-  };
-
-  const getInitials = (name) => {
-      if (!name) return '??';
-      const parts = name.trim().split(' ');
-      if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();
-      return name.substring(0, 2).toUpperCase();
-  };
-
-  const renderAvatar = (url, name, size = 40) => (
-      url ? 
-      <img src={url} alt={name} style={{width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border-color)'}} /> : 
-      <div style={{width: size, height: size, borderRadius: '50%', background: 'var(--btn-primary)', color: 'var(--btn-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.4, fontWeight: 'bold', flexShrink: 0, border: '1px solid var(--border-color)'}}>{getInitials(name || 'Inconnu')}</div>
-  );
-
-  const handleChatFileUpload = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => setMsgFile(reader.result);
-          reader.readAsDataURL(file);
-      }
-  };
-
-  const envoyerMessage = async () => {
-      if (!msgInput.trim() && !msgFile) return;
-      
-      const monProfil = role === 'employe' ? (employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe) : null;
-      
-      const payload = {
-          id_destinataire: chatActif,
-          contenu: msgInput.trim(),
-          fichier_url: msgFile,
-          nom_expediteur: monProfil?.nom,
-          photo_expediteur: monProfil?.photo_url
-      };
-
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/messages', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          const data = await handleFetchError(res);
-          setMsgInput('');
-          setMsgFile(null);
-          // Marquage "lu" immédiat, sans attendre l'effet ni l'écho du socket : évite le faux badge si on ferme/recharge juste après
-          if (data && data.id_message) {
-              const cleStr = String(chatActif);
-              setDernierLuParConv(prev => {
-                  if (Number(prev[cleStr] || 0) >= Number(data.id_message)) return prev;
-                  const next = { ...prev, [cleStr]: Number(data.id_message) };
-                  localforage.setItem('dernierLuParConv', next);
-                  return next;
-              });
-          }
-      } catch (e) { if (e.message !== "Session expirée" && e.message !== "Abonnement inactif") showToast(e.message || "Erreur d'envoi du message", "error"); }
-  };
-
-  const supprimerMessage = async (id) => {
-      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() }); setActiveMenuId(null); } catch (e) { showToast("Erreur de suppression", "error"); }
-  };
-
-  const demarrerEdition = (msg) => {
-      setEditingMsgId(msg.id_message);
-      setEditMsgContent(msg.contenu);
-      setActiveMenuId(null);
-  };
-
-  const validerEdition = async (id) => {
-      if(!editMsgContent.trim()) return setEditingMsgId(null);
-      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ contenu: editMsgContent.trim() }) }); setEditingMsgId(null); } catch (e) { showToast("Erreur de modification", "error"); }
-  };
-
-  const toggleReaction = async (id, emoji) => {
-      setActiveReactionId(null); // On ferme le menu des emojis tout de suite
-      
-      // 1. MISE À JOUR OPTIMISTE : On met à jour l'écran instantanément (sans attendre le serveur)
-      const monProfilId = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : (role === 'salon' ? 'salon' : 'gerant');
-      setMessagesListe(prev => (prev || []).map(m => {
-          if (m.id_message !== id) return m;
-          const rec = { ...(m.reactions || {}) };
-          if (!rec[emoji]) rec[emoji] = [];
-          if (rec[emoji].includes(monProfilId)) {
-              rec[emoji] = rec[emoji].filter(uid => uid !== monProfilId);
-              if (rec[emoji].length === 0) delete rec[emoji];
-          } else {
-              rec[emoji] = [...rec[emoji], monProfilId];
-          }
-          return { ...m, reactions: rec };
-      }));
-
-      // 2. ENVOI SILENCIEUX : Le serveur enregistre la réaction en arrière-plan
-      try { 
-          await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); 
-      } catch(e) { 
-          showToast("Erreur réseau", "error"); 
-          chargerTout(); // Si ça échoue vraiment, on recharge pour effacer la fausse réaction
-      }
-  };
-
-  const iconBord = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
-  const iconCaisse = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>;
-  const iconAgenda = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
-  const iconActions = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
-  const iconCompta = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>;
-  const iconOutils = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>;
-
-  const onglMobilesParRole = (r) => {
-      const iconComptaLock = !aLeNiveau('PREMIUM') ? (
-          <div style={{position:'relative'}}>
-              <span style={{position:'absolute', top:'-4px', right:'-4px', color:'var(--text-muted)', background:'var(--bg-app)', borderRadius:'50%', padding:'1px', display:'flex'}}><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>
-              {iconCompta}
-          </div>
-      ) : iconCompta;
-
-      if (r === 'gerant') return [
-          { key: 'accueil', label: 'Bord', icon: iconBord },
-          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
-          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
-          { key: 'outils', label: 'Outils', icon: iconOutils },
-      ];
-      if (r === 'salon') return [
-          { key: 'accueil', label: 'Bord', icon: iconBord },
-          { key: 'caisse', label: 'Caisse', icon: iconCaisse },
-          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
-          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
-          { key: 'outils', label: 'Outils', icon: iconOutils },
-      ];
-      // employe
-      return [
-          { key: 'accueil', label: 'Bord', icon: iconBord },
-          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
-          { key: 'admin', label: 'Compta', icon: iconComptaLock },
-          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
-          { key: 'outils', label: 'Outils', icon: iconOutils },
-      ];
-  };
-  return (
-    <>
-    <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
-
-      {(() => {
-          const jourKey = new Date().toLocaleDateString('fr-FR');
-          const showTrial = isTrialing && joursRestantsEssai <= 5 && joursRestantsEssai > 0 && !alertesFermees[`trial_${jourKey}`];
-          const showCloture = afficherRappelCloture && !alertesFermees[`cloture_${jourKey}`];
-          const showStock = afficherRappelStock && !alertesFermees[`stock_${jourKey}`];
-          const showAuto = clotureAutoInfo && !alertesFermees[`cloture_auto_${clotureAutoInfo}`];
-
-          if (!showTrial && !showCloture && !showStock && !showAuto) return null;
-
-          return (
-              <div className="rappels-fixes-container">
-                  {showTrial && (
-                      <div className="rappel-stock-banner" style={{borderColor: '#f59e0b', borderLeftColor: '#f59e0b', position: 'relative', paddingRight: '40px'}}>
-                          <span>⚠️ Votre mois d'essai gratuit se termine dans {joursRestantsEssai} jour(s). Pensez à choisir votre forfait.</span>
-                          <button onClick={() => setShowPricingModal(true)} style={{background: '#f59e0b'}}>Choisir</button>
-                          <button onClick={() => fermerAlerte(`trial_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-                  {showCloture && (
-                      <div className="rappel-cloture-banner" style={{position: 'relative', paddingRight: '40px'}}>
-                          <span>N'oublie pas d'effectuer la Clôture Journalière</span>
-                          <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
-                          <button onClick={() => fermerAlerte(`cloture_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-                  {showStock && (
-                      <div className="rappel-stock-banner" style={{position: 'relative', paddingRight: '40px'}}>
-                          <span>Nous vous conseillons de vérifier les stocks manuellement</span>
-                          <button onClick={validerVerifStock}>Fait</button>
-                          <button onClick={() => fermerAlerte(`stock_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-                  {showAuto && (
-                      <div className="rappel-stock-banner" style={{borderColor: 'var(--color-info)', borderLeftColor: 'var(--color-info)', position: 'relative', paddingRight: '40px'}}>
-                          <span>La caisse du {new Date(clotureAutoInfo).toLocaleDateString('fr-FR')} a été clôturée automatiquement.</span>
-                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{background: 'var(--color-info)'}}>OK</button>
-                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-              </div>
-          );
-      })()}
-
-      <style>{`
-          .rdv-card-accordeon {
-              transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-          }
-          .rdv-card-accordeon:hover {
-              z-index: 100 !important;
-              transform: scale(1.02);
-              box-shadow: 0 8px 16px rgba(0,0,0,0.25) !important;
-          }
-      `}</style>
-
-      <div style={{ position: 'sticky', top: 0, zIndex: 100000, width: '100%' }}>
-          {isOffline && (
-            <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', width: '100%', boxSizing: 'border-box' }}>
-                ⚠️ Connexion perdue. Mode hors-ligne activé.
-            </div>
-          )}
-
-          {pendingOfflineCount > 0 && (
-            <div style={{ background: '#991b1b', color: 'white', textAlign: 'center', padding: '12px 16px', fontSize: '13px', fontWeight: 'bold', width: '100%', boxSizing: 'border-box', boxShadow: '0 4px 12px rgba(153, 27, 27, 0.4)' }}>
-                ⚠️ {pendingOfflineCount} ticket(s) en attente de réseau. Ne fermez pas cette page et ne videz pas l'historique.
-            </div>
-          )}
-      </div>
-
-      {modalIA && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{maxWidth: '420px'}}>
-                  <div style={{display: 'flex', alignItems: 'flex-start', gap: '14px', marginBottom: '20px'}}>
-                      <div style={{width: '42px', height: '42px', borderRadius: '12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--text-main)'}}>
-                          {modalIA.type_tache === 'STOCK' ? (
-                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                          ) : modalIA.type_tache === 'RDV' ? (
-                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                          ) : modalIA.type_tache === 'ABSENCE' ? (
-                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 2v4M8 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9 14l2 2 4-4"/></svg>
-                          ) : (
-                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                          )}
-                      </div>
-                      <div style={{flex: 1, minWidth: 0}}>
-                          <span className="badge-discret" style={{background: 'var(--bg-app)', color: 'var(--text-secondary)', marginBottom: '6px'}}>Détection automatique</span>
-                          <h2 style={{margin: '2px 0 2px 0', color: 'var(--text-main)', fontSize: '17px'}}>
-                              {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : modalIA.type_tache === 'ABSENCE' ? "Absence détectée" : "Nouvelle action détectée"}
-                          </h2>
-                          <p style={{fontSize: '13px', color: 'var(--text-secondary)', margin: 0}}>
-                              {modalIA.type_tache === 'STOCK' ? "Extrait d'une facture reçue par e-mail" : modalIA.type_tache === 'RDV' ? "Extrait d'un e-mail de réservation" : modalIA.type_tache === 'ABSENCE' ? "Un collaborateur a signalé une absence" : "Extrait d'un e-mail entrant"}
-                          </p>
-                      </div>
-                  </div>
-
-                  <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px'}}>
-                      {modalIA.type_tache === 'STOCK' && (
-                          <>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Article commandé</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.nom_produit || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
-                              
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité</label>
-                                      <input type="number" className="input-fournisseur" value={modalIA.donnees?.quantite || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Référence</label>
-                                      <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees?.reference || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
-                                  </div>
-                              </div>
-                          </>
-                      )}
-                      
-                      {modalIA.type_tache === 'RDV' && (
-                          <>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Client</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees?.nom_client || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_client: e.target.value}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees?.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
-                                  </div>
-                              </div>
-                              
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Prestation demandée</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.prestation || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, prestation: e.target.value}})} />
-
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <div style={{flex: 2}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Date et Heure</label>
-                                      <input type="datetime-local" className="input-fournisseur" value={modalIA.donnees?.date_heure_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_heure_debut: e.target.value}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Durée (min)</label>
-                                      <input type="number" className="input-fournisseur" value={modalIA.donnees?.duree_minutes || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, duree_minutes: parseInt(e.target.value)}})} />
-                                  </div>
-                                  <div style={{flex: 2}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Coiffeur</label>
-                                      <select className="input-fournisseur" value={modalIA.donnees?.id_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, id_employe: e.target.value}})}>
-                                          <option value="">-- Choisir --</option>
-                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                      </select>
-                                  </div>
-                              </div>
-                          </>
-                      )}
-
-                      {modalIA.type_tache === 'ABSENCE' && (
-                          <>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Employé concerné</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees?.nom_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_employe: e.target.value}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Type</label>
-                                      <select className="input-fournisseur" value={modalIA.donnees?.type_demande || 'CONGES'} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, type_demande: e.target.value}})}>
-                                          <option value="CONGES">Congés (À valider)</option>
-                                          <option value="ARRET_MALADIE">Arrêt Maladie (Imposé)</option>
-                                      </select>
-                                  </div>
-                              </div>
-                              
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Du</label>
-                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_debut: e.target.value}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Au</label>
-                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_fin || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_fin: e.target.value}})} />
-                                  </div>
-                              </div>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Commentaire extrait</label>
-                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.commentaire || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, commentaire: e.target.value}})} />
-                          </>
-                      )}
-
-                      {modalIA.type_tache === 'ACTION' && (
-                          <>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Action requise détectée</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.titre || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, titre: e.target.value}})} />
-                              
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Échéance</label>
-                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_echeance || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_echeance: e.target.value}})} />
-                                  </div>
-                              </div>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', marginTop: '12px', display: 'block'}}>Détails extraits</label>
-                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.description || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, description: e.target.value}})} />
-                          </>
-                      )}
-                  </div>
-                  
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => ignorerTacheIA(modalIA)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Ignorer</button>
-                      <button onClick={() => validerTacheIA(modalIA)} className="btn-action" style={{flex: 2}}>
-                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : modalIA.type_tache === 'RDV' ? "Ajouter à l'Agenda" : modalIA.type_tache === 'ABSENCE' ? "Enregistrer l'absence" : "Ajouter au Centre d'Action"}
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {/* --- BARRE DE NAVIGATION (DESKTOP & MOBILE) --- */}
-      <div className="navbar-sidebar">
-          {/* VUE DESKTOP */}
-          {!isMobile && (
-              <>
-                 <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>
-                 {(role === 'gerant' || role === 'salon' || role === 'employe') && (
-                     <div className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => setActiveTab('actions')} style={{ position: 'relative' }}>
-                         {nbTachesUrgentes > 0 && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span>Actions</span>
-                     </div>
-                 )}
-                 <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative' }}>
-                     {(tachesIA || []).some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
-                     <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
-                 </div>
-                 {role === 'salon' && (
-                     <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
-                 )}
-                 {(role === 'gerant' || role === 'salon') && (
-                     <>
-                        <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => handleTabClick('protocoles')} style={{ position: 'relative' }}>
-                            {!aLeNiveau('PRO') && <span style={{position:'absolute', top:'8px', right:'8px', color:'var(--text-muted)'}}><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}
-                            <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span>
-                        </div>
-                        <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative' }}>
-                            {(tachesIA || []).some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
-                            <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
-                        </div>
-                     </>
-                 )}
-                 {role === 'gerant' && (
-                     <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => handleTabClick('rh')} style={{ position: 'relative' }}>
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span>
-                     </div>
-                 )}
-                 {(role === 'gerant' || role === 'salon' || role === 'employe') && (
-                     <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => handleTabClick('admin')} style={{ position: 'relative' }}>
-                         {!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'8px', right:'8px', color:'var(--text-muted)'}}><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span>
-                     </div>
-                 )}
-                 {role === 'gerant' && decodeToken(token)?.email === '2@gmail.com' && (
-                     <div className={`nav-item ${activeTab === 'superadmin' ? 'active' : ''}`} onClick={() => setActiveTab('superadmin')}>
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#aa3bff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span style={{color: '#aa3bff', fontWeight: 'bold'}}>God Mode</span>
-                     </div>
-                 )}
-                 <div className={`nav-item ${activeTab === 'messagerie' ? 'active' : ''}`} onClick={() => setActiveTab('messagerie')} style={{ position: 'relative' }}>
-                     {aDesMessagesNonLus && <span className="badge-ia-rouge"></span>}
-                     <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span><span>Chat</span>
-                 </div>
-                 <div className="navbar-spacer"></div>
-                 <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
-              </>
-          )}
-
-          {/* VUE MOBILE : BARRE "LIQUID GLASS" (voir LiquidTabBar.jsx) */}
-          {isMobile && (
-              <LiquidTabBar
-                  activeIndex={(() => {
-                      const items = onglMobilesParRole(role);
-                      const idxOutils = items.length - 1;
-                      if (isOutilsMenuOpen || ['protocoles', 'produits', 'rh', 'superadmin'].includes(activeTab)) return idxOutils;
-                      const idx = items.findIndex(it => it.key === activeTab || (it.key === 'admin' && activeTab === 'admin'));
-                      return idx >= 0 ? idx : 0;
-                  })()}
-                  items={onglMobilesParRole(role).map(it => {
-                      if (it.key === 'outils') return { ...it, badge: aDesMessagesNonLus && !isOutilsMenuOpen, onSelect: () => setIsOutilsMenuOpen(true) };
-                      return { ...it, onSelect: () => { handleTabClick(it.key); setIsOutilsMenuOpen(false); } };
-                  })}
-              />
-          )}
-      </div>
-
-      <div className="main-content">
-        <div className={`dashboard-container ${['caisse', 'agenda', 'messagerie'].includes(activeTab) ? 'wide' : ''}`}>
-
-              {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
-              {role === 'salon' && activeTab === 'accueil' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Tableau de bord</h1><span className="date-subtitle" style={{margin: 0}}>{configSalon.nom_salon || 'Salon'}</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                          </button>
-                      </div>
-                  </div>
-                  <div className="carte" style={{padding: '28px', textAlign: 'center'}}>
-                      <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Clients ce mois-ci</span>
-                      <div style={{fontSize: '48px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{salonDashboardData?.nb_clients_mois ?? '—'}</div>
-                      {salonDashboardData && (
-                          <span style={{fontSize: '14px', fontWeight: '600', color: salonDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
-                              {salonDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(salonDashboardData.evolution_pourcentage)}% vs mois dernier
-                          </span>
-                      )}
-                  </div>
-                </div>
-              )}
-
-              {role === 'employe' && activeTab === 'accueil' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Bienvenue {(employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe)?.nom || ''}</h1><span className="date-subtitle" style={{margin: 0}}>Votre tableau de bord — ce mois-ci</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                          </button>
-                      </div>
-                  </div>
-                  <div style={{display: 'flex', gap: '16px', flexWrap: 'wrap'}}>
-                      <div className="carte" style={{padding: '24px', textAlign: 'center', flex: '1 1 200px'}}>
-                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Mes clients</span>
-                          <div style={{fontSize: '40px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{employeDashboardData?.nb_clients_mois ?? '—'}</div>
-                          {employeDashboardData && (
-                              <span style={{fontSize: '13px', fontWeight: '600', color: employeDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
-                                  {employeDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(employeDashboardData.evolution_pourcentage)}%
-                              </span>
-                          )}
-                      </div>
-                      <div className="carte" style={{padding: '24px', textAlign: 'center', flex: '1 1 200px'}}>
-                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Ma commission</span>
-                          <div style={{fontSize: '40px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{(employeDashboardData?.commission_mois ?? 0).toFixed(2)} €</div>
-                          <span style={{fontSize: '13px', color: 'var(--text-muted)'}}>Mois en cours</span>
-                      </div>
-                  </div>
-                </div>
-              )}
-
-              {role === 'gerant' && activeTab === 'accueil' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  {/* EN-TÊTE FIXE */}
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div>
-                              <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
-                              <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
-                          </div>
-                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                              <ThemeToggle />
-                              <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                              </button>
-                          </div>
-                      </div>
-                  </div>
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-                  {!dashboardData ? (
-                      <div className="skeleton-loading" style={{height: '200px', borderRadius: 'var(--radius-card)'}}></div>
-                  ) : (
-                      <>
-                          <div className="kpi-grid">
-                              <div className="kpi-card">
-                                  <span className="kpi-label">Chiffre d'affaires</span>
-                                  <p className="kpi-value">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="kpi-currency">€</span></p>
-                              </div>
-                              <div className="kpi-card">
-                                  <span className="kpi-label">Panier moyen</span>
-                                  <p className="kpi-value">{dashboardData.finances?.panier_moyen || '0.00'} <span className="kpi-currency">€</span></p>
-                              </div>
-                          </div>
-                          <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '8px'}}>
-                              <div className="carte" style={{flex: 1, minWidth: '300px', display: 'flex', flexDirection: 'column', maxHeight: '400px'}}>
-                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0}}>
-                                      <h3 style={{marginTop: 0, marginBottom: 0, color: 'var(--text-main)'}}>Mur des Verbatims</h3>
-                                      {dashboardData.marketing?.nps !== null && dashboardData.marketing?.nps !== undefined && (
-                                          <div style={{background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px'}} title="Net Promoter Score (-100 à +100)">
-                                              NPS : <span style={{color: dashboardData.marketing.nps > 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>{dashboardData.marketing.nps > 0 ? '+' : ''}{dashboardData.marketing.nps}</span>
-                                          </div>
-                                      )}
-                                  </div>
-
-                                  {/* --- RETOUR DES STATISTIQUES GLOBALES DE CAMPAGNE --- */}
-                                  {avisStats && parseInt(avisStats.nb_envoyes) > 0 && (
-                                      <div style={{display: 'flex', gap: '12px', background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '16px', flexShrink: 0, border: '1px solid var(--border-color)'}}>
-                                          <div style={{flex: 1, textAlign: 'center', borderRight: '1px solid var(--border-color)'}}>
-                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)'}}>{avisStats.nb_envoyes}</span>
-                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>SMS Envoyés</span>
-                                          </div>
-                                          <div style={{flex: 1, textAlign: 'center', borderRight: '1px solid var(--border-color)'}}>
-                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)'}}>{avisStats.nb_repondus} <span style={{fontSize: '10px', fontWeight: 'normal', color: 'var(--text-secondary)'}}>({Math.round((avisStats.nb_repondus / avisStats.nb_envoyes) * 100)}%)</span></span>
-                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>Réponses</span>
-                                          </div>
-                                          <div style={{flex: 1, textAlign: 'center'}}>
-                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: '#f59e0b'}}>{avisStats.note_moyenne || '-'} ★</span>
-                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>Moyenne</span>
-                                          </div>
-                                      </div>
-                                  )}
-                                  
-                                  <div style={{overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px'}}>
-                                      {(dashboardData.marketing?.verbatims || []).length === 0 ? (
-                                          <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun avis client reçu récemment.</p>
-                                      ) : (
-                                          dashboardData.marketing.verbatims.map(avis => {
-                                              const isPositif = avis.note >= 4;
-                                              return (
-                                                  <div key={avis.id_demande} style={{background: isPositif ? 'var(--bg-card)' : 'var(--bg-danger)', border: `1px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`, borderLeftWidth: '4px', borderRadius: '8px', padding: '12px', position: 'relative'}}>
-                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
-                                                          <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                              <strong style={{color: isPositif ? 'var(--text-main)' : 'var(--color-danger)', fontSize: '14px'}}>{avis.prenom || 'Client'}</strong>
-                                                              <span style={{color: '#f59e0b', fontSize: '13px'}}>{'★'.repeat(avis.note)}{'☆'.repeat(5 - avis.note)}</span>
-                                                          </div>
-                                                          {isPositif && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Fidélisé</span>}
-                                                      </div>
-                                                      {avis.commentaire && <p style={{margin: '0 0 8px 0', fontSize: '13px', fontStyle: 'italic', color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)'}}>"{avis.commentaire}"</p>}
-                                                      
-                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px'}}>
-                                                          <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>
-                                                              {new Date(avis.date_creation).toLocaleDateString('fr-FR')} {avis.nom_employe ? `• Par ${avis.nom_employe}` : ''}
-                                                          </span>
-                                                          {!isPositif && avis.telephone && (
-                                                              <button onClick={() => { setSauvetageClient({ telephone: avis.telephone, prenom: avis.prenom }); setSmsSauvetage(`Bonjour ${avis.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre dernière expérience. Voici -20% sur votre prochaine visite pour nous faire pardonner. À très vite !`); }} style={{fontSize: '11px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer'}}>Sauver</button>
-                                                          )}
-                                                      </div>
-                                                  </div>
-                                              )
-                                          })
-                                      )}
-                                  </div>
-                              </div>
-
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
-                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
-                                      <div className="rank-list">
-                                          {(() => {
-                                              const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
-                                              return (dashboardData.top_3_prestations || []).map((p, i) => {
-                                                  const val = parseFloat(p.total_genere || 0);
-                                                  return (
-                                                      <div key={i} className="rank-row">
-                                                          <span className="rank-badge">{i + 1}</span>
-                                                          <div className="rank-info">
-                                                              <div className="rank-info-top">
-                                                                  <span className="rank-name">{p.nom}</span>
-                                                                  <span className="rank-value">{val.toFixed(2)} €</span>
-                                                              </div>
-                                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{width: `${(val / maxVal) * 100}%`}}></div></div>
-                                                          </div>
-                                                      </div>
-                                                  );
-                                              });
-                                          })()}
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
-                              </div>
-
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
-                                  {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
-                                          <div style={{textAlign: 'center'}}>
-                                              <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
-                                              <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
-                                          </div>
-                                          <div style={{flex: 1}}>
-                                              <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
-                                              {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
-                                          </div>
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres pour afficher les avis.</p>}
-                              </div>
-                          </div>
-                      </>
-                  )}
-                  </div> {/* FIN ZONE DÉFILANTE */}
-                </div>
-              )}
-
-              {/* VUE : PARAMÈTRES DU SALON */}
-              {activeTab === 'parametres' && (
-                <Parametres
-                  configSalon={configSalon}
-                  setConfigSalon={setConfigSalon}
-                  onSave={sauvegarderParametres}
-                  onBack={() => setActiveTab('accueil')}
-                  onLogout={seDeconnecter}
-                  salonId={decodeToken(token)?.id_salon}
-                  role={role}
-                  isDarkMode={isDarkMode}
-                  onToggleTheme={() => setIsDarkMode(!isDarkMode)}
-                  onEnablePush={activerNotificationsPush}
-                  photoUrl={(employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe)?.photo_url}
-                  onUploadPhoto={modifierMaPhoto}
-                  employesListe={employesListe}
-                />
-              )}
-              
-              {/* VUE : CAISSE & ENCAISSEMENT */}
-              {(role === 'gerant' || role === 'salon') && activeTab === 'caisse' && (
-                <div className="admin-container caisse-split-container">
-                    {/* LEFT PANEL - CATALOGUE */}
-                    <div className={`caisse-left-panel ${!posEmploye ? 'caisse-left-panel--waiting' : ''}`}>
-                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                            <div><h1 style={{margin: 0}}>Caisse</h1></div>
-                            <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                                <ThemeToggle />
-                                <button onClick={() => setShowAddClient(!showAddClient)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Client">+</button>
-                            </div>
-                        </div>
-
-                        {showAddClient && (
-                            <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                                <h3 style={{marginTop: 0}}>Nouveau Client</h3>
-                                <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <input type="text" className="input-fournisseur" placeholder="Prénom" value={newClient.prenom} onChange={(e) => setNewClient({...newClient, prenom: e.target.value})} />
-                                  <input type="text" className="input-fournisseur" placeholder="Nom" value={newClient.nom} onChange={(e) => setNewClient({...newClient, nom: e.target.value})} />
-                                </div>
-                                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                                  <input type="tel" className="input-fournisseur" placeholder="Téléphone" value={newClient.telephone} onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} />
-                                  <input type="date" className="input-fournisseur" placeholder="Date de naissance" value={newClient.date_naissance} onChange={(e) => setNewClient({...newClient, date_naissance: e.target.value})} />
-                                </div>
-                                <button className="btn-action" onClick={() => {ajouterClient(); setShowAddClient(false);}} disabled={!newClient.nom} style={{width: '100%'}}>Enregistrer le client</button>
-                            </div>
-                        )}
-
-                        {!posEmploye ? (
-                            <div className="carte">
-                                <h3 style={{color: 'var(--text-main)', marginBottom: '16px', fontWeight: '600', fontSize: '16px'}}>1. Qui réalise la vente ?</h3>
-                                {(employesListe || []).length === 0 ? (
-                                    <div className="empty-state"><p>Aucun collaborateur enregistré.</p></div>
-                                ) : (
-                                    <div className="grid-collaborateurs">
-                                        {(employesListe || []).map((emp, index) => (
-                                            <div key={emp.id_employe} onClick={() => handleSelectEmployeCaisse(emp.id_employe)} className="hover-lift"
-                                                style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '24px 12px', borderRadius: 'var(--radius-card)', fontSize: '16px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', boxShadow: 'var(--shadow-sm)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' }}>
-                                                {(emp.nom || 'Inconnu').split(' ')[0]}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ) : (
-                            <>
-                                <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                                    <button onClick={() => { setPosType('PRESTATION'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRESTATION' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRESTATION' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Prestations</button>
-                                    <button onClick={() => { setPosType('PRODUIT_REVENTE'); setRechercheCaisse(''); }} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-card)', border: 'none', background: posType === 'PRODUIT_REVENTE' ? 'var(--text-main)' : 'var(--bg-card)', color: posType === 'PRODUIT_REVENTE' ? 'var(--bg-app)' : 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'all 0.2s ease'}}>Produits</button>
-                                </div>
-                                <input type="text" className="input-fournisseur" placeholder="Rechercher un article ou un code-barres..." value={rechercheCaisse} onChange={e => setRechercheCaisse(e.target.value)} style={{marginBottom: '24px', fontSize: '15px'}} />
-                                
-                                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', overflowY: 'auto', paddingBottom: '20px', maxHeight: isMobile ? '40vh' : 'none'}}>
-                                    {(catalogueListe || [])
-                                        .filter(art => {
-                                            if (art.type_article !== posType) return false;
-                                            if (!rechercheCaisse) return true;
-                                            const searchClean = nettoyerTexteRecherche(rechercheCaisse);
-                                            const nomClean = nettoyerTexteRecherche(art.nom);
-                                            return nomClean.includes(searchClean);
-                                        })
-                                        .map(art => (
-                                        <div key={art.id_article} onClick={() => ajouterAuPanier(art)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', transition: 'transform 0.1s'}} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
-                                            <span style={{fontWeight: '600', fontSize: '13px', color: 'var(--text-main)'}}>{art.nom}</span>
-                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                                <span style={{fontWeight: 'bold', color: 'var(--btn-primary)'}}>{parseFloat(art.prix || 0).toFixed(2)}€</span>
-                                                {posType === 'PRODUIT_REVENTE' && <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Stock: {art.stock_actuel}</span>}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                                {(catalogueListe || []).filter(art => art.type_article === posType).length === 0 && (
-                                    <div className="empty-state"><SvgEmptyState /><p>Aucun élément dans cette catégorie.</p></div>
-                                )}
-                            </>
-                        )}
-                    </div>
-
-                    {/* RIGHT PANEL - PANIER & ENCAISSEMENT (FLOATING ACTION BAR SUR MOBILE) */}
-                    <div className={`caisse-right-panel ${!posEmploye ? 'caisse-right-panel--waiting' : ''}`}>
-                        {ticketGenere ? (
-                            <div style={{padding: '24px', textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center'}}>
-                                <div style={{color: 'var(--color-success)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-                                <h2 style={{marginTop: 0, marginBottom: '8px', color: 'var(--text-main)', fontSize: '24px'}}>Paiement Validé</h2>
-                                {ticketGenere.is_offline && <span style={{fontSize: '12px', color: 'var(--color-danger)', fontWeight: 'bold'}}>Ticket sauvegardé hors-ligne</span>}
-                                <h1 style={{color: 'var(--text-main)', fontSize: '40px', margin: '0 0 24px 0', letterSpacing: '-0.02em'}}>{ticketGenere.montant.toFixed(2)} <span style={{fontSize: '24px', color: 'var(--text-secondary)'}}>€</span></h1>
-                                
-                                <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '20px', borderRadius: 'var(--radius-card)', marginBottom: '24px', textAlign: 'left'}}>
-                                    <span style={{fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Reçu dématérialisé (Loi anti-gaspillage)</span>
-                                    <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}><input type="email" className="input-fournisseur" placeholder="Email du client" value={emailTicketClient} onChange={e => setEmailTicketClient(e.target.value)} style={{flex: 1}}/><button className="btn-action" onClick={() => { if (isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error"); if (!emailTicketClient) return showToast("Saisissez d'abord l'email du client.", "error"); envoyerTicketEco('email'); }}>Envoyer</button></div>
-                                    {ticketGenere.client_id ? (
-                                        <button className="btn-action" onClick={() => envoyerTicketEco('sms')} disabled={isOffline || !navigator.onLine} style={{width: '100%'}}>Envoyer par SMS ({ticketGenere.client_nom})</button>
-                                    ) : (
-                                        <div style={{display: 'flex', gap: '8px'}}>
-                                            <input type="tel" className="input-fournisseur" placeholder="Numéro du client" value={telephoneTicketClient} onChange={e => setTelephoneTicketClient(e.target.value)} style={{flex: 1}} />
-                                            <button className="btn-action" onClick={() => { if (isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error"); if (!telephoneTicketClient) return showToast("Saisissez d'abord le numéro du client.", "error"); envoyerTicketEco('sms'); }}>Envoyer</button>
-                                        </div>
-                                    )}
-                                </div>
-                                <button onClick={() => { setTicketGenere(null); setPosEmploye(null); setClientsSuggeres([]); }} className="hover-text-main" style={{background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer', padding: '10px', transition: 'color 0.15s'}}>Fermer (Sans reçu)</button>
-                            </div>
-                        ) : (
-                            <>
-                                <div style={{padding: '16px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
-                                    <div className="ticket-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
-                                        <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '16px'}}>Ticket en cours</h3>
-                                        {posEmploye && <button onClick={() => { setPosEmploye(null); setClientsSuggeres([]); }} style={{background:'none', border:'none', color:'var(--text-secondary)', fontSize:'12px', cursor:'pointer', textDecoration:'underline'}}>Changer employé</button>}
-                                    </div>
-                                    <select className="input-fournisseur" value={clientCaisse || ''} onChange={e => { setClientCaisse(e.target.value); setRemiseAppliquee(false); }} style={{marginBottom: 0, background: 'var(--bg-card)'}}>
-                                        <option value="">🤝 Client de passage...</option>
-                                        {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
-                                        {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>{c.nom} {c.prenom}</option>)}
-                                    </select>
-                                </div>
-
-                                <div className="ticket-lignes" style={{padding: '16px'}}>
-                                    {(panierCaisse || []).length === 0 ? (
-                                        <div className="empty-state" style={{marginTop: '10px'}}><p>Le ticket est vide.</p></div>
-                                    ) : (
-                                        (panierCaisse || []).map(item => (
-                                            <div key={item.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px'}}>
-                                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                    <span style={{background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: 'var(--text-main)'}}>{item.quantite}x</span>
-                                                    <span style={{color: 'var(--text-main)'}}>{item.nom}</span>
-                                                </div>
-                                                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                                                    <span style={{fontWeight: '600', color: 'var(--text-main)'}}>{((item.prix_unitaire || 0) * (item.quantite || 1)).toFixed(2)}€</span>
-                                                    <button onClick={() => retirerDuPanier(item.id_article)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-
-                                <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
-                                    {isEligibleFidelite && (
-                                        <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
-                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                                <div>
-                                                    <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? '💰 Fidélité atteinte !' : '🎟️ Carte complétée !'}</span>
-                                                    <span style={{fontSize: '12px', color: 'var(--color-info)'}}>🎁 {texteRecompense}</span>
-                                                </div>
-                                                {!remiseAppliquee ? (
-                                                    <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
-                                                ) : (
-                                                    <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>✅ Appliquée</span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-                                    
-                                    {remiseAppliquee && configSalon.fidelite_type !== 'NONE' && (
-                                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px', color: 'var(--color-success)'}}>
-                                            <span style={{fontWeight: 'bold'}}>🎁 Remise Fidélité</span>
-                                            <span style={{fontWeight: 'bold'}}>-{Math.max(0, sousTotalCaisse - totalCaisse).toFixed(2)} €</span>
-                                        </div>
-                                    )}
-
-                                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
-                                        <span>Total TTC</span>
-                                        <span>{totalCaisse.toFixed(2)} €</span>
-                                    </div>
-
-                                    <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
-                                        <button onClick={() => setMethodePaiement('CARTE')} disabled={isOffline || !navigator.onLine} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CARTE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CARTE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CARTE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: (isOffline || !navigator.onLine) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', opacity: (isOffline || !navigator.onLine) ? 0.5 : 1, transition: 'all 0.15s'}}>TPE</button>
-                                        <button onClick={() => setMethodePaiement('ESPECES')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'ESPECES' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'ESPECES' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'ESPECES' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>💶 Espèces</button>
-                                        <button onClick={() => setMethodePaiement('CHEQUE')} style={{flex: 1, padding: '8px', borderRadius: '4px', border: methodePaiement === 'CHEQUE' ? '2px solid var(--btn-primary)' : '1px solid var(--border-color)', background: methodePaiement === 'CHEQUE' ? 'var(--text-main)' : 'var(--bg-app)', color: methodePaiement === 'CHEQUE' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all 0.15s'}}>📝 Chèque</button>
-                                    </div>
-
-                                    {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
-                                    
-                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye}>
-                                        {notificationCaisse && notificationCaisse.includes('⏳') ? "En attente du TPE..." : `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`}
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-              )}
-
-              {/* === MODAL SUGGESTION DE CLIENTS INTELLIGENTE === */}
-              {clientsSuggeres.length > 0 && (
-                  <div className="modal-overlay">
-                      <div className="modal-content" style={{textAlign: 'center'}}>
-                          <div style={{color: 'var(--btn-primary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-                          <h2 style={{margin: '0 0 8px 0', color: 'var(--text-main)', fontSize: '20px'}}>{clientsSuggeres.length === 1 ? `Encaisser ${formatNomClient(clientsSuggeres[0])} ?` : "Quel client encaissez-vous ?"}</h2>
-                          <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px'}}>
-                              {clientsSuggeres.length === 1 
-                                  ? "D'après l'agenda, c'est le client le plus probable à encaisser pour vous en ce moment." 
-                                  : "D'après l'agenda, voici les clients que vous venez de coiffer, du plus ancien au plus récent."}
-                          </p>
-                          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                              {(clientsSuggeres || []).map((client, i) => (
-                                  <button key={client.id_client} onClick={() => { setClientCaisse(client.id_client.toString()); setClientsSuggeres([]); setPosStep('type'); }} className="btn-action" style={{padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: i === 0 ? 'var(--btn-primary)' : 'var(--bg-app)', color: i === 0 ? 'white' : 'var(--text-main)', border: i === 0 ? 'none' : '1px solid var(--border-color)'}}>
-                                      <span style={{fontSize: '16px'}}>✅ {formatNomClient(client)}</span><span style={{fontSize: '12px', opacity: 0.8}}>{client.prestation_rdv}</span>
-                                  </button>
-                              ))}
-                              <button onClick={() => { setClientCaisse(''); setClientsSuggeres([]); setPosStep('type'); }} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', marginTop: '8px'}}>❌ Aucun / Client de passage</button>
-                          </div>
-                      </div>
-                  </div>
-              )}
-
-              {/* VUE : CENTRE D'ACTION (TÂCHES) */}
-              {(role === 'gerant' || role === 'salon' || role === 'employe') && activeTab === 'actions' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-                  {/* EN-TÊTE FIXE */}
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div>
-                              <h1 style={{margin: 0}}>Centre d'Action</h1>
-                              <span className="date-subtitle" style={{margin: 0}}>Pilotez vos urgences administratives</span>
-                          </div>
-                          <ThemeToggle />
-                      </div>
-                  </div>
-
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-                  <div className="carte scan-carte">
-                      {role === 'gerant' && (
-                          <select className="input-fournisseur" style={{marginBottom: '12px'}} value={nouvelleTache.proprietaire || 'gerant'} onChange={e => setNouvelleTache({...nouvelleTache, proprietaire: e.target.value})}>
-                              <option value="gerant">Assigner à : Moi (Gérant)</option>
-                              <option value="salon">Assigner à : Tout le salon (Commun)</option>
-                              {(employesListe || []).map(emp => (
-                                  <option key={emp.id_employe} value={`emp_${emp.id_employe}`}>Assigner à : {emp.nom} {emp.est_gerant ? '(Mon profil employé)' : ''}</option>
-                              ))}
-                          </select>
-                      )}
-                      <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                          <input type="text" className="input-fournisseur" placeholder="Titre (ex: Payer l'URSSAF)" style={{flex: 2}} value={nouvelleTache.titre} onChange={e => setNouvelleTache({...nouvelleTache, titre: e.target.value})} />
-                          <input type="date" className="input-fournisseur" style={{flex: 1}} value={nouvelleTache.date_echeance} onChange={e => setNouvelleTache({...nouvelleTache, date_echeance: e.target.value})} />
-                      </div>
-                      <input type="text" className="input-fournisseur" placeholder="Détails (Optionnel)" style={{marginBottom: '16px'}} value={nouvelleTache.description} onChange={e => setNouvelleTache({...nouvelleTache, description: e.target.value})} />
-                      <button className="btn-action" style={{width: '100%'}} disabled={!nouvelleTache.titre} onClick={async () => {
-                          const proprietaireActuel = role === 'gerant' ? (nouvelleTache.proprietaire || 'gerant') : (role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role);
-                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...nouvelleTache, proprietaire: proprietaireActuel}) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:'', proprietaire: 'gerant'}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
-                      }}>Ajouter une tâche</button>
-                  </div>
-
-                  {(() => {
-                      const proprietaireActuel = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role;
-                      
-                      const mesTaches = (tachesListe || []).filter(t => {
-                          const prop = t.proprietaire || 'gerant';
-                          if (role === 'gerant') return true; // Le gérant voit TOUTES les tâches
-                          if (role === 'employe') return prop === proprietaireActuel || prop === 'salon';
-                          return prop === proprietaireActuel || prop === 'salon';
-                      });
-                      
-                      const tachesAFaire = mesTaches.filter(t => t.statut === 'A_FAIRE');
-                      const tachesFaites = mesTaches.filter(t => t.statut === 'FAIT');
-
-                      return (
-                          <>
-                              <div className="section-label">À traiter ({tachesAFaire.length})</div>
-                              {tachesAFaire.length === 0 ? (
-                                  <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>
-                              ) : (
-                                  <div className="list-group">
-                                      {tachesAFaire.map(tache => (
-                                          <div key={tache.id_tache} className="list-row" style={{alignItems: 'flex-start'}}>
-                                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} title="Marquer comme terminée" style={{background: 'none', border: `2px solid ${getCouleurTache(tache)}`, width: '20px', height: '20px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px', padding: 0}}></button>
-                                              <div className="list-row-content">
-                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
-                                                      <span className="list-row-label">{tache.titre}</span>
-                                                      {tache.source === 'IA' && <span style={{fontSize: '10px', background: 'var(--btn-primary)', color: 'var(--btn-text)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600'}}>DÉTECTÉ</span>}
-                                                      {tache.source === 'AVIS_CLIENT' && <button onClick={() => { setSauvetageClient(tache.donnees); setSmsSauvetage(`Bonjour ${tache.donnees?.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -20% sur votre prochaine coupe pour nous faire pardonner. À très vite !`); }} style={{fontSize: '10px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer', marginLeft: '8px'}}>Sauver ce client</button>}
-                                                      
-                                                      {/* BADGE POUR LE GÉRANT : Indique à qui appartient la tâche */}
-                                                      {role === 'gerant' && tache.proprietaire && tache.proprietaire !== 'gerant' && (
-                                                          <span style={{fontSize: '10px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 6px', borderRadius: '4px', fontWeight: '600', border: '1px solid #bfdbfe'}}>
-                                                              {tache.proprietaire === 'salon' ? 'SALON ENTIER' : ((employesListe || []).find(e => `emp_${e.id_employe}` === tache.proprietaire)?.nom || 'EMPLOYÉ')}
-                                                          </span>
-                                                      )}
-                                                  </div>
-                                                  {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
-                                                  {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
-                                              </div>
-                                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px'}}>
-                                                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                                              </button>
-                                          </div>
-                                      ))}
-                                  </div>
-                              )}
-
-                              {tachesFaites.length > 0 && (
-                                  <>
-                                      <div className="carte scan-carte" style={{marginTop: '16px'}}>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isTachesTermineesExpanded ? '12px' : '0'}} onClick={() => setIsTachesTermineesExpanded(!isTachesTermineesExpanded)}>
-                                              <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '15px'}}>Terminées ({tachesFaites.length})</h3>
-                                              <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isTachesTermineesExpanded ? '▲' : '▼'}</span>
-                                          </div>
-                                          {isTachesTermineesExpanded && (
-                                              <div className="list-group" style={{opacity: 0.65}}>
-                                                  {tachesFaites.map(tache => (
-                                                      <div key={tache.id_tache} className="list-row" style={{minHeight: '36px', padding: '8px 16px'}}>
-                                                          <span className="list-row-label" style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontWeight: 400, fontSize: '13px'}}>
-                                                              {tache.titre}
-                                                              {role === 'gerant' && tache.proprietaire && tache.proprietaire !== 'gerant' && (
-                                                                  <span style={{fontSize: '9px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 4px', borderRadius: '4px', fontWeight: '600', border: '1px solid #bfdbfe', marginLeft: '8px'}}>
-                                                                      {tache.proprietaire === 'salon' ? 'SALON' : ((employesListe || []).find(e => `emp_${e.id_employe}` === tache.proprietaire)?.nom || 'EMP')}
-                                                                  </span>
-                                                              )}
-                                                          </span>
-                                                          <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
-                                                          <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px', marginLeft: '4px'}}>
-                                                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                                                          </button>
-                                                      </div>
-                                                  ))}
-                                              </div>
-                                          )}
-                                      </div>
-                                  </>
-                              )}
-                          </>
-                      );
-                  })()}
-                  </div> {/* FIN ZONE DÉFILANTE */}
-                </div>
-              )}
-
-             {/* VUE : AGENDA */}
-             {activeTab === 'agenda' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  <div className="agenda-header">
-                      <div className="agenda-title-group" style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
-                          <h1 style={{margin: 0}}>Agenda</h1>
-                          <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-                              <button onClick={() => changerPeriode(-1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>◀</button>
-                              <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', padding: '0 10px'}}>{joursSemaine[0].toLocaleDateString('fr-FR', {month: 'short'})} {joursSemaine[0].getFullYear()}</span>
-                              <button onClick={() => changerPeriode(1)} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-main)'}}>▶</button>
-                              <button onClick={resetToToday} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', marginLeft: '5px'}}>Aujourd'hui</button>
-                          </div>
-                      </div>
-                      <div className="agenda-actions-group" style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          {role !== 'salon' && (
-                              <button onClick={() => setShowModalAbsence(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px 16px', borderRadius: 'var(--radius-input)', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px'}}>
-                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>
-                                  Absence
-                              </button>
-                          )}
-                          <button onClick={() => setShowModalRdv(true)} className="btn-action">+ Nouveau RDV</button>
-                      </div>
-                  </div>
-
-                 {/* SÉLECTEUR MULTI-COLLABORATEURS */}
-                  <div className="agenda-filtres-scroll" style={{ display: 'flex', flexWrap: 'nowrap', gap: '8px', marginBottom: '16px', alignItems: 'center', overflowX: 'auto', whiteSpace: 'nowrap', WebkitOverflowScrolling: 'touch', paddingBottom: '8px', width: '100%' }}>
-                      {role === 'gerant' && (
-                          <button 
-                              onClick={() => setFiltresEmployes([])} 
-                              style={{ background: filtresEmployes.length === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease', flexShrink: 0 }}>
-                              Toute l'équipe
-                          </button>
-                      )}
-                      {role === 'gerant' && decodeToken(token)?.id_employe && (
-                          <button 
-                              onClick={() => setFiltresEmployes([decodeToken(token)?.id_employe])} 
-                              style={{ background: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--text-main)' : 'var(--bg-card)', color: filtresEmployes.length === 1 && filtresEmployes[0] === decodeToken(token)?.id_employe ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease', flexShrink: 0 }}>
-                              Ma Vue
-                          </button>
-                      )}
-                      {role === 'gerant' && <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: '0 4px', flexShrink: 0 }}></div>}
-                      {(employesListe || [])
-                          .filter(emp => role === 'gerant' || emp.id_employe === decodeToken(token)?.id_employe)
-                          .map((emp) => {
-                              const originalIndex = (employesListe || []).findIndex(e => e.id_employe === emp.id_employe);
-                              const isActive = role === 'employe' ? true : filtresEmployes.includes(emp.id_employe);
-                              const color = COULEURS_EMPLOYES[originalIndex % COULEURS_EMPLOYES.length];
-                              return (
-                                  <button 
-                                      key={emp.id_employe}
-                                      onClick={() => {
-                                          if (role === 'employe') return; 
-                                          if (isActive) { setFiltresEmployes(filtresEmployes.filter(id => id !== emp.id_employe)); } 
-                                          else { setFiltresEmployes([...filtresEmployes, emp.id_employe]); }
-                                      }}
-                                      style={{ background: isActive ? color : 'var(--bg-card)', color: isActive ? '#111827' : 'var(--text-secondary)', border: `1px solid ${isActive ? color : 'var(--border-color)'}`, borderRadius: '16px', padding: '6px 12px', fontSize: '13px', cursor: role === 'gerant' ? 'pointer' : 'default', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease', flexShrink: 0 }}>
-                                      {!isActive && <span style={{display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color}}></span>}
-                                      {role === 'employe' ? `Mon Planning (${(emp.nom || '').split(' ')[0]})` : (emp.nom || '').split(' ')[0]}
-                                  </button>
-                              );
-                          })}
-                  </div>
-
-                  <div className="week-calendar" style={isMobile ? { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } : { display: 'flex', flexDirection: 'column' }}>
-                      <div className="week-header-row" style={{ display: 'flex' }}>
-                          <div className="time-spacer" style={isMobile ? { width: '48px', flexShrink: 0 } : { width: '64px', flexShrink: 0 }}></div>
-                          {joursSemaine.map((jour, index) => (
-                              <div key={index} className={`day-header ${isToday(jour) ? 'today' : ''}`} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}>
-                                  <span className="day-name">{jour.toLocaleDateString('fr-FR', {weekday: 'short'})}</span>
-                                  <span className="day-number">{jour.getDate()}</span>
-                              </div>
-                          ))}
-                      </div>
-                      <div className="week-body" style={isMobile ? { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', flex: 1, paddingTop: '10px', paddingBottom: '120px' } : { overflowY: 'auto', background: 'var(--bg-card)', overflowX: 'hidden', paddingTop: '10px' }}>
-                          <div style={{ display: 'flex', position: 'relative', height: `${nbHeures * 80}px`, minHeight: '100%' }}>
-                              <div className="time-column" style={isMobile ? { width: '48px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' } : { width: '64px', flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
-                                  {Array.from({ length: nbHeures }).map((_, i) => (
-                                      <div key={i} className="time-label" style={{ height: '80px', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', paddingRight: '10px', transform: 'translateY(-7px)', fontWeight: '500' }}>{heureDebutAgenda + i} h</div>
-                                  ))}
-                              </div>
-                              <div className="days-container" style={{ display: 'flex', flex: 1 }}>
-                                  {joursSemaine.map((jour, indexJour) => {
-                                      const dateStringJour = formatDateInput(jour);
-                                      const listeRdvs = Array.isArray(planningData) ? planningData : (planningData.rendez_vous || []);
-                                      const listeAbsences = Array.isArray(planningData) ? [] : (planningData.absences || []);
-
-                                      const rdvsDuJourBruts = listeRdvs.filter(rdv => {
-                                          if(!rdv || !rdv.date_heure_debut) return false;
-                                          const rdvDateStr = (rdv.date_heure_debut || '').replace('Z', '').split('T')[0];
-                                          return rdvDateStr === dateStringJour && (filtresEmployes.length === 0 || filtresEmployes.includes(rdv.id_employe));
-                                      });
-                                      const sortedRdvs = rdvsDuJourBruts.map(rdv => {
-                                          const start = new Date((rdv.date_heure_debut || '').replace('Z', ''));
-                                          const end = new Date(start.getTime() + ((rdv.duree_minutes || 30) * 60000));
-                                          return { ...rdv, start, end };
-                                      }).sort((a, b) => a.start - b.start);
-                                      const clusters = []; let currentCluster = []; let clusterEnd = null;
-                                      sortedRdvs.forEach(rdv => {
-                                          if (currentCluster.length === 0) { currentCluster.push(rdv); clusterEnd = rdv.end; } 
-                                          else {
-                                              if (rdv.start < clusterEnd) { currentCluster.push(rdv); if (rdv.end > clusterEnd) clusterEnd = rdv.end; } 
-                                              else { clusters.push([...currentCluster]); currentCluster = [rdv]; clusterEnd = rdv.end; }
-                                          }
-                                      });
-                                      if (currentCluster.length > 0) clusters.push(currentCluster);
-
-                                      const absencesDuJour = listeAbsences.filter(abs => {
-                                          if(!abs || !abs.date_debut || !abs.date_fin) return false;
-                                          const dateD = abs.date_debut.split('T')[0];
-                                          const dateF = abs.date_fin.split('T')[0];
-                                          return dateStringJour >= dateD && dateStringJour <= dateF && (filtresEmployes.length === 0 || filtresEmployes.includes(abs.id_employe));
-                                      });
-
-                                      return (
-                                          <div key={indexJour} className="day-column" style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}>
-                                              {/* ESPACE GÉRANT / SALON : L'Accordéon discret collé en haut */}
-                                              {role !== 'employe' && absencesDuJour.length > 0 && (
-                                                  <div style={{ position: 'sticky', top: '4px', left: '4px', right: '4px', zIndex: 20, margin: '4px' }}>
-                                                      <div onClick={() => setExpandedAbsenceDate(expandedAbsenceDate === dateStringJour ? null : dateStringJour)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: expandedAbsenceDate === dateStringJour ? '6px 6px 0 0' : '6px', padding: '6px 8px', fontSize: '11px', fontWeight: 'bold', color: 'var(--text-main)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)', transition: 'all 0.2s' }}>
-                                                          <span style={{display: 'flex', alignItems: 'center', gap: '4px'}}><span style={{color: 'var(--color-danger)'}}>⚠️</span> {absencesDuJour.length} Absence{absencesDuJour.length > 1 ? 's' : ''}</span>
-                                                          <span style={{color: 'var(--text-secondary)'}}>{expandedAbsenceDate === dateStringJour ? '▲' : '▼'}</span>
-                                                      </div>
-                                                      {expandedAbsenceDate === dateStringJour && (
-                                                          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderTop: 'none', borderRadius: '0 0 6px 6px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '6px', boxShadow: 'var(--shadow-sm)', maxHeight: '200px', overflowY: 'auto' }}>
-                                                              {absencesDuJour.map(abs => {
-                                                                  const isMaladie = abs.type_demande === 'ARRET_MALADIE';
-                                                                  const isAttente = abs.statut === 'EN_ATTENTE';
-                                                                  const bgStyle = isMaladie ? 'var(--bg-danger)' : (isAttente ? 'var(--bg-hover)' : 'var(--bg-info)');
-                                                                  const colorStyle = isMaladie ? 'var(--color-danger)' : (isAttente ? 'var(--text-secondary)' : 'var(--color-info)');
-                                                                  return (
-                                                                      <div key={`abs-mini-${abs.id_absence}`} style={{ fontSize: '11px', padding: '6px', background: bgStyle, color: colorStyle, borderRadius: '4px', display: 'flex', flexDirection: 'column' }}>
-                                                                          <strong style={{color: 'var(--text-main)'}}>{abs.nom_employe}</strong>
-                                                                          <span>{isMaladie ? 'Arrêt Maladie' : (isAttente ? 'Congé (Attente)' : 'Congé Validé')}</span>
-                                                                      </div>
-                                                                  );
-                                                              })}
-                                                          </div>
-                                                      )}
-                                                  </div>
-                                              )}
-
-                                              {/* ESPACE EMPLOYÉ : Le bloc d'origine en overlay */}
-                                              {role === 'employe' && absencesDuJour.map(abs => {
-                                                  const ECHELLE_HEURE = 80;
-                                                  let startH = heureDebutAgenda;
-                                                  let endH = heureFinAgenda;
-                                                  const dDebut = abs.date_debut.split('T')[0];
-                                                  const dFin = abs.date_fin.split('T')[0];
-                                                  
-                                                  if (dateStringJour === dDebut && abs.moment_debut === 'APRES_MIDI') startH = 13;
-                                                  if (dateStringJour === dFin && abs.moment_fin === 'MATIN') endH = 13;
-                                                  
-                                                  startH = Math.max(heureDebutAgenda, startH);
-                                                  endH = Math.min(heureFinAgenda, endH);
-                                                  if (startH >= endH) return null;
-                                                  
-                                                  const topAbs = (startH - heureDebutAgenda) * ECHELLE_HEURE;
-                                                  const hauteurAbs = (endH - startH) * ECHELLE_HEURE;
-                                                  
-                                                  const isMaladie = abs.type_demande === 'ARRET_MALADIE';
-                                                  const isAttente = abs.statut === 'EN_ATTENTE';
-                                                  
-                                                  const bgStyle = isMaladie 
-                                                      ? 'repeating-linear-gradient(45deg, #fee2e2, #fee2e2 10px, #fecaca 10px, #fecaca 20px)'
-                                                      : (isAttente 
-                                                          ? 'repeating-linear-gradient(45deg, #f3f4f6, #f3f4f6 10px, #e5e7eb 10px, #e5e7eb 20px)'
-                                                          : 'repeating-linear-gradient(45deg, #e0f2fe, #e0f2fe 10px, #bae6fd 10px, #bae6fd 20px)');
-                                                  const borderColor = isMaladie ? '#ef4444' : (isAttente ? '#9ca3af' : '#38bdf8');
-                                                  const textColor = isMaladie ? '#991b1b' : (isAttente ? '#4b5563' : '#075985');
-                                                  
-                                                  return (
-                                                      <div key={`abs-${abs.id_absence}`} style={{ position: 'absolute', left: '2px', width: 'calc(100% - 4px)', boxSizing: 'border-box', top: `${topAbs}px`, height: `${hauteurAbs}px`, background: bgStyle, border: `1px solid ${borderColor}`, borderRadius: '6px', padding: '6px', opacity: 0.85, zIndex: 4, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-                                                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: textColor, textShadow: '0 0 3px rgba(255,255,255,0.8)' }}>{isMaladie ? 'Arrêt Maladie' : (isAttente ? 'Congé (Attente)' : 'Congé Validé')}</span>
-                                                          <span style={{ fontSize: '11px', color: textColor, fontWeight: '600', textShadow: '0 0 3px rgba(255,255,255,0.8)' }}>{abs.nom_employe}</span>
-                                                      </div>
-                                                  );
-                                              })}
-                                              {clusters.flatMap((cluster) => {
-                                            
-                                                  const clusterSize = cluster.length;
-                                                  return cluster.map((rdv, indexInCluster) => {
-                                                      const ECHELLE_HEURE = 80; const dureeReelle = rdv.duree_minutes || 30;
-                                                      const topPosition = ((rdv.start.getHours() - heureDebutAgenda) * ECHELLE_HEURE) + (rdv.start.getMinutes() * (ECHELLE_HEURE / 60));
-                                                      const hauteurCard = Math.max((dureeReelle * (ECHELLE_HEURE / 60)), 26);
-                                                      const empIndex = (employesListe || []).findIndex(e => e.id_employe === rdv.id_employe);
-                                                      const backgroundColor = empIndex >= 0 ? COULEURS_EMPLOYES[empIndex % COULEURS_EMPLOYES.length] : '#ccc';
-                                                      const widthPercent = clusterSize === 1 ? 100 : (100 - (clusterSize - 1) * 10);
-                                                      const leftOffset = clusterSize === 1 ? 0 : (indexInCluster * 10);
-                                                      const zIndex = 5 + indexInCluster;
-                                                      return (
-                                                          <div key={rdv.id_rdv} onClick={() => ouvrirRdvSelectionne(rdv)} className="rdv-card-accordeon"
-                                                               style={{ position: 'absolute', left: `calc(2px + ${leftOffset}%)`, width: `calc(${widthPercent}% - 4px)`, boxSizing: 'border-box', top: `${topPosition}px`, height: `${hauteurCard}px`, backgroundColor: backgroundColor, color: '#111827', borderRadius: '6px', padding: '4px 6px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.15)', cursor: 'pointer', zIndex: zIndex }}>
-                                                              <div style={{fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {rdv.nom_client}</div>
-                                                              <div style={{fontSize: '10px', opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{rdv.prestation}</div>
-                                                          </div>
-                                                      );
-                                                  });
-                                              })}
-                                          </div>
-                                      );
-                                  })}
-                              </div>
-                          </div>
-                      </div>
-                  </div>
-
-                  {/* MODAL RDV */}
-                  {showModalRdv && (
-                      <div className="modal-overlay" style={{ zIndex: 9999 }}>
-                          <div className="modal-content">
-                              <div className="modal-header">
-                                  <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Nouveau Rendez-vous</h3>
-                                  <button className="modal-close-btn" onClick={() => setShowModalRdv(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-                              <div style={{ position: 'relative', marginBottom: '12px' }}>
-                                  <input 
-                                      type="text" className="input-fournisseur" placeholder="Nom du Client ou N° de Téléphone" value={formRdv.nom_client} 
-                                      onChange={e => { setFormRdv({...formRdv, nom_client: e.target.value}); setShowDropdownClient(true); }} 
-                                      onFocus={() => setShowDropdownClient(true)} onBlur={() => setTimeout(() => setShowDropdownClient(false), 200)} 
-                                      style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }}
-                                  />
-                                  {showDropdownClient && (
-                                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '6px', marginTop: '4px', zIndex: 10000, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxHeight: '160px', overflowY: 'auto' }}>
-                                          {getClientsSuggeresPourRdv(formRdv.nom_client).map((cli, idx) => (
-                                              <div key={cli.id_client} onClick={() => { setFormRdv({ ...formRdv, nom_client: formatNomClient(cli), telephone_client: cli.telephone || formRdv.telephone_client }); setShowDropdownClient(false); }} className="hover-bg-app" style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}>
-                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}><span style={{fontSize: '14px'}}>👤</span><span style={{color: 'var(--text-main)', fontSize: '13px', fontWeight: '600'}}>{formatNomClient(cli)}</span></div>
-                                                  {cli.telephone && <span style={{color: 'var(--text-secondary)', fontSize: '11px', background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px'}}>{cli.telephone}</span>}
-                                              </div>
-                                          ))}
-                                          {formRdv.nom_client && !getClientsSuggeresPourRdv(formRdv.nom_client).find(c => formatNomClient(c).toLowerCase() === formRdv.nom_client.toLowerCase()) && (
-                                              <div onClick={() => setShowDropdownClient(false)} style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                  <span style={{fontSize: '14px'}}>➕</span> Nouveau client : "{formRdv.nom_client}"
-                                              </div>
-                                          )}
-                                      </div>
-                                  )}
-                              </div>
-                              <input type="text" className="input-fournisseur" placeholder="Téléphone" value={formRdv.telephone_client} onChange={e => setFormRdv({...formRdv, telephone_client: e.target.value})} style={{marginBottom:'12px'}}/>
-                              <select className="input-fournisseur" value={formRdv.id_employe} onChange={e => setFormRdv({...formRdv, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
-                                  <option value="">-- Choisir un collaborateur --</option>
-                                  {(employesListe || [])
-                                      .filter(emp => role !== 'employe' || emp.id_employe === decodeToken(token)?.id_employe)
-                                      .map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                              </select>
-                              <div style={{ position: 'relative', marginBottom: '12px' }}>
-                                  <input type="text" className="input-fournisseur" placeholder="Prestation (ex: Coupe Homme)" value={formRdv.prestation} onChange={e => { setFormRdv({...formRdv, prestation: e.target.value}); setShowDropdownPresta(true); }} onFocus={() => setShowDropdownPresta(true)} onBlur={() => setTimeout(() => setShowDropdownPresta(false), 200)} style={{ width: '100%', boxSizing: 'border-box', marginBottom: 0 }} />
-                                  {showDropdownPresta && (
-                                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '6px', marginTop: '4px', zIndex: 10000, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxHeight: '160px', overflowY: 'auto' }}>
-                                          {getPrestationsSuggerees(formRdv.prestation).map((presta, idx) => {
-                                              const isTop = dashboardData?.top_3_prestations?.find(p => (p.nom || '').toLowerCase() === (presta.nom || '').toLowerCase());
-                                              return (
-                                                  <div key={presta.id_article} onClick={() => { setFormRdv({...formRdv, prestation: presta.nom, duree_minutes: presta.duree_estimee_minutes || 30}); setShowDropdownPresta(false); }} className="hover-bg-app" style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: idx !== 4 ? '1px solid var(--bg-app)' : 'none', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 0.15s' }}>
-                                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                          {isTop && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Top</span>}
-                                                          <span style={{color: 'var(--text-main)', fontWeight: '500'}}>{presta.nom}</span>
-                                                      </div>
-                                                      <span style={{color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600'}}>{presta.prix} €</span>
-                                                  </div>
-                                              )
-                                          })}
-                                          {formRdv.prestation && !getPrestationsSuggerees(formRdv.prestation).find(p => (p.nom || '').toLowerCase() === (formRdv.prestation || '').toLowerCase()) && (
-                                              <div onClick={() => setShowDropdownPresta(false)} style={{ padding: '10px 12px', cursor: 'pointer', background: 'var(--bg-info)', color: 'var(--color-info)', fontSize: '13px', fontStyle: 'italic', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                                  Utiliser "{formRdv.prestation}" (Texte libre)
-                                              </div>
-                                          )}
-                                      </div>
-                                  )}
-                              </div>
-                              <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
-                                  <input type="date" className="input-fournisseur" value={formRdv.date} onChange={e => setFormRdv({...formRdv, date: e.target.value})} />
-                                  <input type="time" className="input-fournisseur" value={formRdv.heure} onChange={e => setFormRdv({...formRdv, heure: e.target.value})} />
-                                  <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{width:'110px'}} value={formRdv.duree_minutes} onChange={e => setFormRdv({...formRdv, duree_minutes: parseInt(e.target.value) || 30})} title="Durée de la prestation (minutes)" />
-                              </div>
-                              <button onClick={() => creerRdvManuel(false)} className="btn-action" style={{width:'100%'}}>Créer le rendez-vous</button>
-                          </div>
-                      </div>
-                  )}
-
-                  {showModalAbsence && (
-                      <div className="modal-overlay" style={{ zIndex: 9999 }}>
-                          <div className="modal-content" style={{ maxWidth: '450px' }}>
-                              <div className="modal-header">
-                                  <h3 style={{margin: 0, fontSize: '18px', color: 'var(--text-main)'}}>Déclarer une absence</h3>
-                                  <button className="modal-close-btn" onClick={() => setShowModalAbsence(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-
-                              <div style={{ display: 'flex', marginBottom: '20px', background: 'var(--bg-app)', padding: '4px', borderRadius: '8px' }}>
-                                  <button onClick={() => setOngletAbsence('CONGES')} style={{ flex: 1, padding: '8px', border: 'none', background: ongletAbsence === 'CONGES' ? 'var(--bg-card)' : 'transparent', color: ongletAbsence === 'CONGES' ? 'var(--text-main)' : 'var(--text-secondary)', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer', boxShadow: ongletAbsence === 'CONGES' ? 'var(--shadow-sm)' : 'none' }}>Congés</button>
-                                  <button onClick={() => setOngletAbsence('ARRET_MALADIE')} style={{ flex: 1, padding: '8px', border: 'none', background: ongletAbsence === 'ARRET_MALADIE' ? 'var(--bg-card)' : 'transparent', color: ongletAbsence === 'ARRET_MALADIE' ? 'var(--color-danger)' : 'var(--text-secondary)', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer', boxShadow: ongletAbsence === 'ARRET_MALADIE' ? 'var(--shadow-sm)' : 'none' }}>Arrêt Maladie</button>
-                              </div>
-
-                              {role === 'gerant' && (
-                                  <select className="input-fournisseur" value={formAbsence.id_employe || ''} onChange={e => setFormAbsence({...formAbsence, id_employe: e.target.value})} style={{marginBottom: '16px'}}>
-                                      <option value="">-- Concerne quel collaborateur ? --</option>
-                                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                  </select>
-                              )}
-
-                              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                                  <div style={{ flex: 1 }}>
-                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Nature</label>
-                                      <select className="input-fournisseur" value={formAbsence.nature_absence} onChange={e => setFormAbsence({...formAbsence, nature_absence: e.target.value})}>
-                                          {ongletAbsence === 'CONGES' ? (
-                                              <>
-                                                  <option value="CP">Congés Payés (CP)</option>
-                                                  <option value="SANS_SOLDE">Congé Sans Solde</option>
-                                                  <option value="RTT">Récupération / RTT</option>
-                                                  <option value="EVENEMENT">Événement Familial</option>
-                                              </>
-                                          ) : (
-                                              <>
-                                                  <option value="MALADIE_ORDINAIRE">Maladie Ordinaire</option>
-                                                  <option value="ACCIDENT_TRAVAIL">Accident du Travail</option>
-                                                  <option value="MATERNITE">Congé Maternité/Paternité</option>
-                                              </>
-                                          )}
-                                      </select>
-                                  </div>
-                                  {ongletAbsence === 'ARRET_MALADIE' && (
-                                      <div style={{ flex: 1 }}>
-                                          <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Type</label>
-                                          <select className="input-fournisseur" value={formAbsence.type_prolongation} onChange={e => setFormAbsence({...formAbsence, type_prolongation: e.target.value})}>
-                                              <option value="INITIAL">Arrêt Initial</option>
-                                              <option value="PROLONGATION">Prolongation</option>
-                                          </select>
-                                      </div>
-                                  )}
-                              </div>
-
-                              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                                  <div style={{ flex: 1 }}>
-                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Date de début</label>
-                                      <input type="date" className="input-fournisseur" value={formAbsence.date_debut} onChange={e => setFormAbsence({...formAbsence, date_debut: e.target.value})} style={{ marginBottom: '4px' }} />
-                                      <select className="input-fournisseur" value={formAbsence.moment_debut} onChange={e => setFormAbsence({...formAbsence, moment_debut: e.target.value})}>
-                                          <option value="MATIN">Matin</option>
-                                          <option value="APRES_MIDI">Après-midi</option>
-                                      </select>
-                                  </div>
-                                  <div style={{ flex: 1 }}>
-                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Date de fin (Inclus)</label>
-                                      <input type="date" className="input-fournisseur" value={formAbsence.date_fin} onChange={e => setFormAbsence({...formAbsence, date_fin: e.target.value})} style={{ marginBottom: '4px' }} />
-                                      <select className="input-fournisseur" value={formAbsence.moment_fin} onChange={e => setFormAbsence({...formAbsence, moment_fin: e.target.value})}>
-                                          <option value="MATIN">Matin</option>
-                                          <option value="APRES_MIDI">Après-midi</option>
-                                      </select>
-                                  </div>
-                              </div>
-
-                              {(ongletAbsence === 'ARRET_MALADIE' || formAbsence.nature_absence === 'EVENEMENT') && (
-                                  <div style={{ marginBottom: '16px', background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', border: '1px dashed var(--border-color)' }}>
-                                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px' }}>Justificatif (Volet 3 ou Document légal)</label>
-                                      <input type="file" accept="image/*,application/pdf" onChange={handleUploadJustificatifAbsence} style={{ fontSize: '12px', color: 'var(--text-main)', width: '100%' }} />
-                                      {formAbsence.nom_fichier && <span style={{ fontSize: '11px', color: 'var(--color-success)', display: 'block', marginTop: '4px' }}>✅ Fichier prêt ({formAbsence.nom_fichier})</span>}
-                                  </div>
-                              )}
-
-                              {ongletAbsence === 'ARRET_MALADIE' && (
-                                  <input type="text" className="input-fournisseur" placeholder="Heures de sorties autorisées (Optionnel)" value={formAbsence.heures_sortie} onChange={e => setFormAbsence({...formAbsence, heures_sortie: e.target.value})} style={{ marginBottom: '16px' }} />
-                              )}
-
-                              <textarea className="input-fournisseur" placeholder="Un commentaire (Optionnel) ?" rows="2" value={formAbsence.commentaire} onChange={e => setFormAbsence({...formAbsence, commentaire: e.target.value})} style={{ marginBottom: '24px' }} />
-
-                              <button onClick={soumettreAbsence} disabled={isSubmittingAbsence} className="btn-action" style={{ width: '100%', background: ongletAbsence === 'ARRET_MALADIE' ? 'var(--color-danger)' : 'var(--btn-primary)' }}>
-                                  {isSubmittingAbsence ? "Envoi en cours..." : (ongletAbsence === 'ARRET_MALADIE' ? "Déclarer l'Arrêt Maladie" : "Envoyer la demande")}
-                              </button>
-                          </div>
-                      </div>
-                  )}
-
-                  {rdvSelectionne && (
-                      <div className="modal-overlay">
-                          <div className="modal-content">
-                              <div className="modal-header">
-                                  <h3 style={{margin: 0, fontSize: '18px'}}>{!isEditingRdv ? "Détails du Rendez-vous" : "Modifier le Rendez-vous"}</h3>
-                                  <button className="modal-close-btn" onClick={() => setRdvSelectionne(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-                              
-                              {!isEditingRdv ? (
-                                  <>
-                                      <div style={{marginBottom: '24px', padding: '16px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)'}}>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Client</span> <strong style={{color: 'var(--text-main)'}}>{rdvSelectionne.nom_client}</strong></div>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Téléphone</span> <strong>{rdvSelectionne.telephone_client}</strong></div>
-                                          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}><span style={{color: 'var(--text-secondary)'}}>Service</span> <strong>{rdvSelectionne.prestation}</strong></div>
-                                          <div style={{display: 'flex', justifyContent: 'space-between'}}><span style={{color: 'var(--text-secondary)'}}>Collaborateur</span> <strong>{rdvSelectionne.nom_employe}</strong></div>
-                                      </div>
-                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                          
-                                          {/* BOUTON VOIR LE PROTOCOLE */}
-                                          {(() => {
-                                              const protoAssocie = (protocolesListe || []).find(p => (p.nom_prestation || '').toLowerCase() === (rdvSelectionne.prestation || '').toLowerCase());
-                                              if (protoAssocie) {
-                                                  return (
-                                                      <button onClick={() => { setRdvSelectionne(null); setProtocoleVisible(protoAssocie); }} style={{background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}}>
-                                                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                                                          Voir le Protocole (Recette)
-                                                      </button>
-                                                  );
-                                              }
-                                              return null;
-                                          })()}
-
-                                          {role === 'gerant' && <button onClick={() => setIsEditingRdv(true)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer', transition: 'all 0.15s'}}>Modifier l'horaire</button>}
-                                          {role === 'gerant' && <button onClick={demanderSuppressionRdv} style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Supprimer le rendez-vous</button>}
-                                      </div>
-                                  </>
-                              ) : (
-                                  <>
-                                      <select className="input-fournisseur" value={editRdvForm.id_employe} onChange={e => setEditRdvForm({...editRdvForm, id_employe: e.target.value})} style={{marginBottom:'12px'}}>
-                                          <option value="">-- Choisir un collaborateur --</option>
-                                          {(employesListe || [])
-                                              .filter(emp => role !== 'employe' || emp.id_employe === decodeToken(token)?.id_employe)
-                                              .map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                      </select>
-                                      <input type="text" className="input-fournisseur" placeholder="Prestation" value={editRdvForm.prestation} onChange={e => setEditRdvForm({...editRdvForm, prestation: e.target.value})} style={{marginBottom:'12px'}}/>
-                                      <div style={{display:'flex', gap:'12px', marginBottom:'24px'}}>
-                                          <input type="date" className="input-fournisseur" value={editRdvForm.date} onChange={e => setEditRdvForm({...editRdvForm, date: e.target.value})} />
-                                          <input type="time" className="input-fournisseur" value={editRdvForm.heure} onChange={e => setEditRdvForm({...editRdvForm, heure: e.target.value})} />
-                                          <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{width:'110px'}} value={editRdvForm.duree_minutes} onChange={e => setEditRdvForm({...editRdvForm, duree_minutes: parseInt(e.target.value) || 30})} />
-                                      </div>
-                                      <div style={{display: 'flex', gap: '12px'}}>
-                                        <button onClick={() => setIsEditingRdv(false)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer'}}>Annuler</button>
-                                        <button onClick={() => sauvegarderModifRdv(false)} className="btn-action" style={{flex: 2}}>Enregistrer</button>
-                                      </div>
-                                  </>
-                              )}
-                          </div>
-                      </div>
-                  )}
-
-                  {/* MODALE AFFICHAGE DU PROTOCOLE POUR L'EMPLOYÉ (AGENDA) */}
-                  {protocoleVisible && (
-                      <div className="modal-overlay">
-                          <div className="modal-content" style={{maxWidth: '600px', height: '80vh', overflowY: 'auto', padding: '24px'}}>
-                              <div className="modal-header" style={{borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '16px'}}>
-                                  <div>
-                                      <h3 style={{margin: '0 0 8px 0', fontSize: '22px', color: 'var(--text-main)'}}>{protocoleVisible.nom_prestation}</h3>
-                                      <div style={{display: 'flex', gap: '8px'}}>
-                                          {(protocoleVisible.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '2px 8px', borderRadius: '12px', border: '1px solid var(--border-color)'}}>{t}</span>)}
-                                      </div>
-                                  </div>
-                                  <button className="modal-close-btn" onClick={() => setProtocoleVisible(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-                              
-                              {/* GALERIE EMPLOYÉ */}
-                              <div style={{display: 'flex', gap: '8px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '8px'}}>
-                                  {['avant', 'pendant', 'apres'].map(type => (
-                                      protocoleVisible.medias && protocoleVisible.medias[type] && (
-                                          <div key={type} style={{flexShrink: 0, width: '140px'}}>
-                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={protocoleVisible.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              <span style={{fontSize: '11px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
-                                          </div>
-                                      )
-                                  ))}
-                              </div>
-                              
-                              <div className="section-titre" style={{fontSize: '14px', marginTop: 0}}>Ingrédients (Préparation Labo)</div>
-                              <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px', border: '1px dashed var(--border-color)'}}>
-                                  {protocoleVisible.ingredients && (protocoleVisible.ingredients || []).length > 0 ? (
-                                      (protocoleVisible.ingredients || []).map((ing, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i !== (protocoleVisible.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '14px', color: 'var(--text-main)', fontWeight: '600'}}>
-                                              <span><span style={{color: 'var(--text-secondary)', marginRight: '8px'}}>🧪</span>{ing.nom}</span>
-                                              <span>{formatPortion(ing.quantite_necessaire)} dose(s)</span>
-                                          </div>
-                                      ))
-                                  ) : <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit à préparer.</span>}
-                              </div>
-
-                              <div className="section-titre" style={{fontSize: '14px'}}>Déroulé de la prestation (To-Do List)</div>
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {protocoleVisible.etapes && (protocoleVisible.etapes || []).length > 0 ? (
-                                      (protocoleVisible.etapes || []).map((etape, index) => (
-                                          <label key={index} style={{display: 'flex', gap: '16px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', cursor: 'pointer', alignItems: 'flex-start'}}>
-                                              <input type="checkbox" style={{width: '20px', height: '20px', marginTop: '2px', accentColor: 'var(--btn-primary)', cursor: 'pointer'}} />
-                                              <div style={{flex: 1}}>
-                                                  <span style={{fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'bold', display: 'block', marginBottom: '4px'}}>Étape {index + 1}</span>
-                                                  <p style={{margin: '0 0 12px 0', fontSize: '14px', color: 'var(--text-main)', lineHeight: '1.5'}}>{etape.texte}</p>
-                                                  {etape.timer_min && (
-                                                      <button onClick={(e) => { e.preventDefault(); showToast(`Minuteur de ${etape.timer_min} min lancé sur votre appareil !`, "info"); }} style={{fontSize: '12px', background: 'var(--btn-primary)', color: 'white', padding: '6px 12px', borderRadius: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'}}>
-                                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                                          Lancer minuteur ({etape.timer_min} min)
-                                                      </button>
-                                                  )}
-                                              </div>
-                                          </label>
-                                      ))
-                                  ) : (
-                                      <div style={{fontSize: '14px', color: 'var(--text-secondary)', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                          {protocoleVisible.description || "Aucune instruction enregistrée."}
-                                      </div>
-                                  )}
-                              </div>
-                          </div>
-                      </div>
-                  )}
-                </div>
-              )}
-
-              {/* VUE : L'ACADÉMIE (PROTOCOLES) */}
-              {(role === 'gerant' || role === 'salon') && activeTab === 'protocoles' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-                  
-                  {/* EN-TÊTE FIXE */}
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div>
-                              <h1 style={{margin: 0}}>L'Académie</h1>
-                              <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
-                          </div>
-                          <div style={{display: 'flex', gap: isMobile ? '8px' : '16px', alignItems: 'center'}}>
-                              <ThemeToggle />
-                              <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
-                              {!modeEditionProtocole && (
-                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false }); setModeEditionProtocole('NEW'); }} className="btn-action" style={{ whiteSpace: 'nowrap', flexShrink: 0, padding: isMobile ? '8px 12px' : '12px 18px', fontSize: isMobile ? '12px' : '14px' }}>
-                                      {isMobile ? 'Créer' : 'Créer une Fiche'}
-                                  </button>
-                              )}
-                          </div>
-                      </div>
-                      {!modeEditionProtocole && (
-                          <input type="text" className="input-fournisseur" placeholder="Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', width: '100%', boxSizing: 'border-box'}}/>
-                      )}
-                  </div>
-
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-
-                  {showAddPrestation && (
-                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                          <h3 style={{marginTop: 0}}>Nouvelle Prestation (Catalogue)</h3>
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                              <input type="text" className="input-fournisseur" placeholder="Nom de la prestation (ex: Coupe Homme)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
-                              <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{width: '110px'}} value={newArticle.duree_estimee_minutes} onChange={(e) => setNewArticle({...newArticle, duree_estimee_minutes: e.target.value, type_article: 'PRESTATION'})} />
-                              <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '90px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
-                          </div>
-                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation</button>
-                      </div>
-                  )}
-
-                  <div className="caisse-split-container" style={{ display: 'block' }}>
-                      {!modeEditionProtocole && (
-                          <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
-                              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
-                                  {(protocolesListe || []).filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
-                                      let stockSuffisant = true;
-                                      (proto.ingredients || []).forEach(ing => {
-                                          const articleDuStock = (catalogueListe || []).find(a => a.id_article === ing.id_article);
-                                          if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
-                                      });
-
-                                      return (
-                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} className="hover-lift" style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}}>
-                                              {proto.medias && proto.medias.apres ? (
-                                                  <div style={{height: '140px', width: '100%', background: 'var(--bg-hover)'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              ) : ( <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div> )}
-                                              
-                                              <div style={{padding: '16px'}}>
-                                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
-                                                      <span style={{fontSize: '15px', fontWeight: 'bold'}}>{proto.nom_prestation}</span>
-                                                      <span style={{width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
-                                                  </div>
-                                                  <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '12px'}}>
-                                                      {(proto.tags || []).map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
-                                                  </div>
-                                              </div>
-                                          </div>
-                                      );
-                                  })}
-                                  {(protocolesListe || []).length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
-                              </div>
-                          </div>
-                      )}
-
-                      {modeEditionProtocole === 'NEW' && (
-                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '24px' }}>
-                              <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
-                              
-                              <div style={{marginBottom: '16px'}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
-                                  <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
-                                      <option value="">-- Choisir une prestation --</option>
-                                      {(catalogueListe || []).filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
-                                  </select>
-                              </div>
-
-                              <div style={{marginBottom: '24px'}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
-                                  <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
-                                      {TAGS_DISPONIBLES.map(tag => (
-                                          <button key={tag} onClick={() => toggleTag(tag)} style={{background: (nouveauProtocole.tags || []).includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: (nouveauProtocole.tags || []).includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
-                                      ))}
-                                  </div>
-                              </div>
-
-                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px dashed var(--border-color)'}}>
-                                  <label style={{display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer'}}>
-                                      <input type="checkbox" checked={nouveauProtocole.a_temps_nettoyage} onChange={e => setNouveauProtocole({...nouveauProtocole, a_temps_nettoyage: e.target.checked, temps_nettoyage_minutes: e.target.checked ? (nouveauProtocole.temps_nettoyage_minutes || 5) : 0})} style={{width: '18px', height: '18px', accentColor: 'var(--btn-primary)'}} />
-                                      <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>Temps de nettoyage automatique à l'agenda</span>
-                                  </label>
-                                  {nouveauProtocole.a_temps_nettoyage && (
-                                      <div style={{marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                          <input type="number" min="0" className="input-fournisseur" style={{width: '80px', padding: '8px'}} value={nouveauProtocole.temps_nettoyage_minutes} onChange={e => setNouveauProtocole({...nouveauProtocole, temps_nettoyage_minutes: parseInt(e.target.value) || 0})} />
-                                          <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>minutes bloquées après chaque prestation</span>
-                                      </div>
-                                  )}
-                              </div>
-
-                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
-                                  <div style={{display: 'flex', gap: '12px'}}>
-                                      {['avant', 'pendant', 'apres'].map(type => (
-                                          <div key={type} style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
-                                              <label style={{fontSize: '11px', textTransform: 'capitalize', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
-                                              <div style={{height: '100px', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
-                                                  {nouveauProtocole.medias[type] ? <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <span style={{fontSize: '20px', color: 'var(--text-muted)'}}>+</span>}
-                                                  <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer'}} />
-                                              </div>
-                                          </div>
-                                      ))}
-                                  </div>
-                              </div>
-
-                              <div style={{marginBottom: '24px'}}>
-                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', marginBottom: '12px'}}>
-                                      <h4 style={{fontSize: '13px', margin: 0}}>Le Pas-à-Pas</h4>
-                                      <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(nouveauProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
-                                  </div>
-                                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
-                                      {(nouveauProtocole.etapes || []).map((etape, index) => (
-                                          <div key={etape.id_etape} draggable onDragStart={(e) => e.dataTransfer.setData("dragIndex", index)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const dragIndex = Number(e.dataTransfer.getData("dragIndex")); const dropIndex = index; const nouvellesEtapes = [...(nouveauProtocole.etapes || [])]; const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1); nouvellesEtapes.splice(dropIndex, 0, draggedEtape); setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes }); }} style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center', cursor: 'grab'}} title="Maintenez cliqué pour déplacer">
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5}}>
-                                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                                              </div>
-                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
-                                              <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
-                                              {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ {etape.timer_min} min</div>}
-                                              <button onClick={() => supprimerEtapeRecette(etape.id_etape)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer'}}>✕</button>
-                                          </div>
-                                      ))}
-                                  </div>
-                                  <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
-                                      <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
-                                      <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
-                                      <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
-                                  </div>
-                              </div>
-
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
-                              <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
-                                  <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
-                                      <option value="">-- Ajouter un produit --</option>
-                                      {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
-                                  </select>
-                                  <select className="input-fournisseur" style={{width: '110px', padding: '11px 8px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})}>
-                                      <option value="">Portion</option>
-                                      <option value="0.13">1/8 dose</option>
-                                      <option value="0.25">1/4 dose</option>
-                                      <option value="0.33">1/3 dose</option>
-                                      <option value="0.5">1/2 dose</option>
-                                      <option value="0.67">2/3 dose</option>
-                                      <option value="0.75">3/4 dose</option>
-                                      <option value="1">1 dose</option>
-                                      <option value="1.5">1.5 dose</option>
-                                      <option value="2">2 doses</option>
-                                      <option value="3">3 doses</option>
-                                  </select>
-                                  <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
-                              </div>
-                              
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
-                                  {(nouveauProtocole.ingredients || []).map(ing => (
-                                      <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
-                                          <span><strong style={{color: 'var(--btn-primary)'}}>{formatPortion(ing.quantite_necessaire)} dose(s)</strong> de {ing.nom}</span>
-                                          <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
-                                      </div>
-                                  ))}
-                              </div>
-
-                              {(() => {
-                                  const prestaChoisie = (catalogueListe || []).find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
-                                  const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
-                                  const coutProduits = (nouveauProtocole.ingredients || []).reduce((acc, ing) => { const art = (catalogueListe || []).find(a => a.id_article === ing.id_article); return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0); }, 0);
-                                  const margeValeur = prixVente - coutProduits;
-                                  const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
-                                  const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
-
-                                  return (nouveauProtocole.nom_prestation && (
-                                      <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                          <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
-                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité</span>
-                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
-                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
-                                          </div>
-                                          <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
-                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                  <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
-                                                  <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
-                                              </div>
-                                          </div>
-                                      </div>
-                                  ));
-                              })()}
-
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <button onClick={() => setModeEditionProtocole(null)} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-input)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer'}}>Annuler</button>
-                                  <button className="btn-action" style={{flex: 2, padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
-                              </div>
-                          </div>
-                      )}
-                      
-                      {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
-                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '24px' }}>
-                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
-                                  <div>
-                                      <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
-                                      <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
-                                      <div style={{display: 'flex', gap: '8px'}}>
-                                          {(modeEditionProtocole.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
-                                      </div>
-                                  </div>
-                                  <div style={{display: 'flex', gap: '8px'}}>
-                                      <button onClick={() => { setNouveauProtocole({...modeEditionProtocole, a_temps_nettoyage: (modeEditionProtocole.temps_nettoyage_minutes > 0), temps_nettoyage_minutes: modeEditionProtocole.temps_nettoyage_minutes || 5}); setModeEditionProtocole('NEW'); }} style={{background: 'var(--btn-primary)', border: 'none', color: 'var(--btn-text)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
-                                          Modifier la fiche
-                                      </button>
-                                      <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
-                                          Supprimer la fiche
-                                      </button>
-                                  </div>
-                              </div>
-
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
-                                  {['avant', 'pendant', 'apres'].map(type => (
-                                      modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
-                                          <div key={type} style={{flex: 1}}>
-                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              <span style={{fontSize: '10px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
-                                          </div>
-                                      )
-                                  ))}
-                              </div>
-
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
-                              <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
-                                  {(modeEditionProtocole.ingredients || []).map((ing, i) => (
-                                      <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== (modeEditionProtocole.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
-                                          <span>{ing.nom}</span><strong style={{color: 'var(--text-main)'}}>{formatPortion(ing.quantite_necessaire)} dose(s)</strong>
-                                      </div>
-                                  ))}
-                                  {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
-                              </div>
-
-                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '12px'}}>
-                                  <h4 style={{fontSize: '13px', margin: 0}}>Étapes de réalisation</h4>
-                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                      <span style={{fontSize: '10px', color: 'var(--text-muted)'}}>Auto-calcul depuis la recette du protocole</span>
-                                      {modeEditionProtocole.temps_nettoyage_minutes > 0 && <span style={{fontSize: '10px', color: 'var(--color-info)', background: 'var(--bg-info)', padding: '2px 6px', borderRadius: '12px'}}>+{modeEditionProtocole.temps_nettoyage_minutes} min nettoyage</span>}
-                                      <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(modeEditionProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
-                                  </div>
-                              </div>
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {(modeEditionProtocole.etapes || []).map((etape, index) => (
-                                      <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                          <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
-                                          <div style={{flex: 1}}>
-                                              <p style={{margin: '0 0 8px 0', fontSize: '14px', lineHeight: '1.5'}}>{etape.texte}</p>
-                                              {etape.timer_min && <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ Minuteur : {etape.timer_min} min</span>}
-                                          </div>
-                                      </div>
-                                  ))}
-                                  {(!modeEditionProtocole.etapes || (modeEditionProtocole.etapes || []).length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
-                              </div>
-                          </div>
-                      )}
-                  </div>
-                  
-                  {!modeEditionProtocole && (
-                      <>
-                          <div className="section-titre" style={{marginTop: '32px'}}>Catalogue des Prestations</div>
-                          <div className="carte scan-carte">
-                              {(catalogueListe || []).filter(art => art.type_article === 'PRESTATION').length === 0 ? (
-                                  <div className="empty-state"><p>Aucune prestation au catalogue.</p></div>
-                              ) : (catalogueListe || []).filter(art => art.type_article === 'PRESTATION').map(art => (
-                                  <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
-                                      <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € </span>
-                                      <div style={{display: 'flex', gap: '16px'}}>
-                                          <button onClick={() => setModifNomDialog({ id_article: art.id_article, nom: art.nom })} style={{background:'none', border:'none', color:'var(--text-secondary)', cursor:'pointer', fontWeight: '500'}}>Renommer</button>
-                                          <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      </>
-                  )}
-
-                  </div> {/* FIN ZONE DÉFILANTE */}
-                </div>
-              )}
-
-              {/* VUE : PRODUITS (STOCKS) */}
-              {(role === 'gerant' || role === 'salon') && activeTab === 'produits' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-                  {/* EN-TÊTE FIXE */}
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
-                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                              <ThemeToggle />
-                              <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
-                          </div>
-                      </div>
-                  </div>
-
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-                  {showAddProduit && (
-                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                          <h3 style={{marginTop: 0}}>Nouveau Produit (Revente/Labo)</h3>
-                          <div style={{display: 'flex', gap: '12px'}}>
-                            <input type="text" className="input-fournisseur" placeholder="Nom du produit (Laissez vide si réassort)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                            <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '100px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                          </div>
-                          <div style={{display: 'flex', gap: '12px', marginTop: '12px', marginBottom: '16px'}}>
-                            <input type="text" className="input-fournisseur" placeholder="Réf." style={{width: '120px'}} value={newArticle.reference} onChange={(e) => setNewArticle({...newArticle, reference: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                            <input type="number" className="input-fournisseur" placeholder="Qté" style={{width: '70px'}} value={newArticle.stock_actuel} onChange={(e) => setNewArticle({...newArticle, stock_actuel: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                            <input type="number" className="input-fournisseur" placeholder="Délai (j)" title="Délai moyen de livraison (jours)" style={{width: '90px'}} value={newArticle.delai_livraison_jours} onChange={(e) => setNewArticle({...newArticle, delai_livraison_jours: e.target.value, type_article: 'PRODUIT_REVENTE'})} />
-                          </div>
-                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRODUIT_REVENTE'}); ajouterArticle(); setShowAddProduit(false); }} disabled={!newArticle.reference} style={{width: '100%'}}>{!newArticle.nom ? 'Mettre à jour le stock' : 'Ajouter au catalogue'}</button>
-                      </div>
-                  )}
-
-                  <div className="carte scan-carte">
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: isStockExpanded ? '16px' : '0'}} onClick={() => setIsStockExpanded(!isStockExpanded)}>
-                          <h3 style={{margin: 0, color: 'var(--text-main)'}}>État des Stocks</h3>
-                          <span style={{fontSize: '20px', color: 'var(--text-secondary)'}}>{isStockExpanded ? '▲' : '▼'}</span>
-                      </div>
-                      
-                      {isStockExpanded && (
-                          <>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
-                                  <input type="text" className="input-fournisseur" placeholder="Chercher un produit..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} style={{flex: 1, minWidth: '200px'}} />
-                                  <select className="input-fournisseur" value={stockSortBy} onChange={e => setStockSortBy(e.target.value)} style={{width: 'auto', minWidth: '150px'}}>
-                                      <option value="nom">Trier par: Nom (A-Z)</option>
-                                      <option value="stock">Trier par: Quantité</option>
-                                  </select>
-                              </div>
-                              <div className="stock-container">
-                                {stocksData
-                                    .filter(p => p.nom.toLowerCase().includes(stockSearch.toLowerCase()))
-                                    .sort((a, b) => {
-                                        if (stockSortBy === 'nom') return a.nom.localeCompare(b.nom);
-                                        if (stockSortBy === 'stock') return a.stock_actuel - b.stock_actuel;
-                                        return 0;
-                                    })
-                                    .map((produit) => {
-                                    const status = getStockStatus(produit.stock_actuel);
-                                    const tendance = getTendanceStock(produit);
-                                    return (
-                                      <div className="stock-item" key={produit.id_article} style={{position: 'relative'}}>
-                                        <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>{tendance && <span className="badge-discret" style={{ backgroundColor: 'var(--bg-info)', color: tendance.couleur }} title={tendance.date ? `Rupture estimée le ${new Date(tendance.date).toLocaleDateString()}` : ''}>{tendance.texte}</span>}</div></div>
-                                        <div className="stock-quantite-container" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                                            <span className="stock-quantite">{produit.stock_actuel}</span>
-                                            <button onClick={(e) => { e.stopPropagation(); setStockMenuOuvert(stockMenuOuvert === produit.id_article ? null : produit.id_article); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1}}>⋮</button>
-                                        </div>
-                                        {stockMenuOuvert === produit.id_article && (
-                                            <>
-                                                <div onClick={() => setStockMenuOuvert(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
-                                                <div className="chat-msg-menu" style={{top: '100%', bottom: 'auto', zIndex: 999, width: '170px'}}>
-                                                    <button onClick={() => { setModifStockDialog({ id_article: produit.id_article, nom: produit.nom, valeur: produit.stock_actuel }); setStockMenuOuvert(null); }}>Modifier la quantité</button>
-                                                    <button onClick={() => { setStockMenuOuvert(null); setConfirmDialog({ titre: "Supprimer le produit", message: `Voulez-vous vraiment supprimer "${produit.nom}" du catalogue ? Cette action est irréversible.`, btnTexte: "Supprimer", action: () => supprimerArticle(produit.id_article) }); }} style={{color: 'var(--color-danger)'}}>Supprimer</button>
-                                                </div>
-                                            </>
-                                        )}
-                                      </div>
-                                    );
-                                })}
-                                {stocksData.length === 0 && <div className="empty-state"><SvgEmptyState /><p>Aucun produit en stock.</p></div>}
-                              </div>
-                          </>
-                      )}
-                  </div>
-                  </div> {/* FIN ZONE DÉFILANTE */}
-                </div>
-              )}
-
-              {/* VUE : RH (ÉQUIPE) */}
-              {role === 'gerant' && activeTab === 'rh' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-                  {/* EN-TÊTE FIXE */}
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
-                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                              <select className="input-fournisseur" style={{marginBottom: 0, width: 'auto', padding: '8px', fontSize: '12px'}} value={rhSortBy} onChange={e => setRhSortBy(e.target.value)}>
-                                  <option value="ca">Tri : CA généré</option>
-                                  <option value="note">Tri : Palmarès (Note client)</option>
-                              </select>
-                              <ThemeToggle />
-                              <button onClick={() => setShowAddEmploye(!showAddEmploye)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Ajouter un équipier">+</button>
-                          </div>
-                      </div>
-                  </div>
-
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-                  
-                  {/* PANNEAU DE CONTRÔLE : DEMANDES DE CONGÉS EN ATTENTE */}
-                  {absencesRH && absencesRH.filter(a => a.statut === 'EN_ATTENTE').length > 0 && (
-                      <div className="carte scan-carte" style={{ marginBottom: '24px', borderColor: 'var(--color-info)', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.15)' }}>
-                          <h3 style={{ marginTop: 0, color: 'var(--text-main)', marginBottom: '16px' }}>⚠️ Absences en attente</h3>
-                          <div className="list-group" style={{ marginBottom: 0 }}>
-                              {absencesRH.filter(a => a.statut === 'EN_ATTENTE').map(abs => (
-                                  <div key={abs.id_absence} className="list-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px', padding: '16px' }}>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                          <div>
-                                              <strong style={{ display: 'block', fontSize: '15px', color: 'var(--text-main)', marginBottom: '4px' }}>{abs.nom_employe}</strong>
-                                              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Du {new Date(abs.date_debut).toLocaleDateString('fr-FR')} au {new Date(abs.date_fin).toLocaleDateString('fr-FR')}</span>
-                                          </div>
-                                          <span className="badge-discret" style={{ background: 'var(--bg-info)', color: 'var(--color-info)' }}>{abs.nature_absence.replace('_', ' ')}</span>
-                                      </div>
-                                      {abs.commentaire && <div style={{ fontSize: '13px', fontStyle: 'italic', color: 'var(--text-secondary)', padding: '8px', background: 'var(--bg-app)', borderRadius: '6px' }}>"{abs.commentaire}"</div>}
-                                      
-                                      <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                                          {abs.fichier_cle_r2 && (
-                                              <button onClick={async () => {
-                                                  try {
-                                                      const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/justificatif`, { headers: getAuthHeaders() });
-                                                      const data = await handleFetchError(res);
-                                                      window.open(data.url, '_blank');
-                                                  } catch(e) { showToast("Justificatif indisponible", "error"); }
-                                              }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Justificatif</button>
-                                          )}
-                                          <button onClick={async () => {
-                                              const motif = prompt("Motif du refus (Optionnel) :");
-                                              if (motif !== null) { // null = l'utilisateur a cliqué sur "Annuler"
-                                                  try {
-                                                      const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) });
-                                                      await handleFetchError(res);
-                                                      showToast("Demande refusée", "success"); 
-                                                      chargerTout(); setRefreshTrigger(prev => prev+1);
-                                                  } catch(e) { showToast(e.message || "Erreur", "error"); }
-                                              }
-                                          }} style={{ flex: 1, padding: '10px 4px', background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}>Refuser</button>
-                                          <button onClick={async () => {
-                                              try {
-                                                  const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE', motif_refus: null }) });
-                                                  const data = await handleFetchError(res);
-                                                  showToast("Absence validée", "success"); 
-                                                  
-                                                  if (data.conflits && data.conflits.length > 0) {
-                                                      const prenomEmp = abs.nom_employe.split(' ')[0];
-                                                      setCancellationRobot({ rdvs: data.conflits, id_employe: abs.id_employe, nom_employe: prenomEmp });
-                                                      setSelectedCancelRdvs(data.conflits.map(r => r.id_rdv));
-                                                      setCancelMessageTemplate(`Bonjour [Prénom], en raison d'une absence exceptionnelle, votre RDV du [Date] avec ${prenomEmp} ne pourra pas être assuré. Cliquez ici pour reprogrammer : [Lien]. L'équipe du Salon.`);
-                                                  } else {
-                                                      chargerTout(); setRefreshTrigger(prev => prev+1);
-                                                  }
-                                              } catch(e) { showToast(e.message || "Erreur", "error"); }
-                                          }} className="btn-action" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }}>Valider</button>
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      </div>
-                  )}
-
-                  {showAddEmploye && (
-                      <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                          <h3 style={{marginTop: 0}}>Nouveau Collaborateur</h3>
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                            <input type="text" className="input-fournisseur" placeholder="Prénom" style={{flex: 1}} value={newEmploye.prenom} onChange={(e) => setNewEmploye({...newEmploye, prenom: e.target.value})} />
-                            <input type="text" className="input-fournisseur" placeholder="Nom de famille" style={{flex: 1}} value={newEmploye.nomFamille} onChange={(e) => setNewEmploye({...newEmploye, nomFamille: e.target.value})} />
-                            <input type="password" maxLength="4" className="input-fournisseur" placeholder="PIN (ex: 1234)" value={newEmploye.code_pin} onChange={(e) => setNewEmploye({...newEmploye, code_pin: e.target.value})} style={{width: '120px'}}/>
-                          </div>
-
-                          <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Photo de profil (Optionnel)</label>
-                          <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', background: 'var(--bg-app)', padding: '8px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
-                              <div className="rh-avatar" style={{width: '40px', height: '40px', flexShrink: 0, border: 'none', background: 'transparent'}}>
-                                  {newEmploye.photo_url ? (
-                                      <img src={newEmploye.photo_url} alt="Aperçu" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
-                                  ) : (
-                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--text-muted)', width: '24px', height: '24px'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                                  )}
-                              </div>
-                              <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleImageUpload} style={{fontSize: '12px', color: 'var(--text-main)'}} />
-                          </div>
-
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                            <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={newEmploye.taux_commission_prestation} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_prestation: e.target.value})} />
-                            <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={newEmploye.taux_commission_produit} onChange={(e) => setNewEmploye({...newEmploye, taux_commission_produit: e.target.value})} />
-                          </div>
-                          <button className="btn-action" onClick={() => {ajouterEmploye(); setShowAddEmploye(false);}} disabled={!newEmploye.prenom || !newEmploye.nomFamille || !newEmploye.code_pin} style={{width: '100%'}}>Enregistrer le collaborateur</button>
-                      </div>
-                  )}
-                  
-                  {(rhData || []).length === 0 ? (
-                      <div className="empty-state"><SvgEmptyState /><p>Aucun employé enregistré.</p></div>
-                  ) : (
-                    <div className="rh-grid">
-                      {[...rhData].sort((a, b) => rhSortBy === 'note' ? (b.note_moyenne || 0) - (a.note_moyenne || 0) : b.performances_actuelles.ca_genere - a.performances_actuelles.ca_genere).map(employe => (
-                        <div className="rh-carte" key={employe.id_employe} style={{position: 'relative', padding: '0', overflow: 'hidden', border: '1px solid var(--border-color)', borderRadius: '12px', background: 'var(--bg-card)', boxShadow: 'var(--shadow-sm)'}}>
-                          
-                          {/* 1. EN-TÊTE : PROFIL & NOTE (Nouveau Design) */}
-                          <div style={{display: 'flex', alignItems: 'flex-start', padding: '20px', borderBottom: '1px solid var(--border-color)'}}>
-                              <div className="rh-avatar" style={{width: '48px', height: '48px', marginRight: '16px'}}>
-                                {employe.photo_url ? ( <img src={employe.photo_url} alt={employe.nom} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> ) : ( <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> )}
-                              </div>
-                              
-                              <div style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '6px'}}>
-                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                      <h3 style={{margin: 0, fontSize: '16px', color: 'var(--text-main)'}}>{employe.nom}</h3>
-                                      <span style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>{employe.role}</span>
-                                  </div>
-                                  
-                                  {employe.note_moyenne ? (
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                          <span style={{color: '#f59e0b', fontSize: '14px', letterSpacing: '1px'}}>{'★'.repeat(Math.round(employe.note_moyenne))}{'☆'.repeat(5 - Math.round(employe.note_moyenne))}</span>
-                                          <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>{employe.note_moyenne}</span>
-                                          <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>({employe.nb_avis} avis)</span>
-                                      </div>
-                                  ) : (
-                                      <span style={{fontSize: '12px', color: 'var(--text-muted)'}}>Aucun avis client</span>
-                                  )}
-                              </div>
-
-                              <button onClick={(e) => { e.stopPropagation(); setEmployeMenuOuvert(employeMenuOuvert === employe.id_employe ? null : employe.id_employe); }} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px 8px', fontSize: '14px', fontWeight: 'bold', transition: 'all 0.15s'}}>⋮</button>
-                              
-                              {employeMenuOuvert === employe.id_employe && (
-                                  <>
-                                      <div onClick={() => setEmployeMenuOuvert(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
-                                      <div className="chat-msg-menu" style={{top: '50px', right: '20px', bottom: 'auto', zIndex: 999, width: '170px'}}>
-                                          <button onClick={() => { setModifEmployeDialog({ id_employe: employe.id_employe, nom: employe.nom, code_pin: '', taux_commission_prestation: employe.taux_commission_prestation ?? '', taux_commission_produit: employe.taux_commission_produit ?? '' }); setEmployeMenuOuvert(null); }}>Modifier</button>
-                                          <button onClick={() => { setEmployeMenuOuvert(null); setConfirmDialog({ titre: "Supprimer l'employé", message: `Voulez-vous vraiment supprimer "${employe.nom}" ? Cette action est irréversible.`, btnTexte: "Supprimer", action: () => supprimerEmploye(employe.id_employe) }); }} style={{color: 'var(--color-danger)'}}>Supprimer</button>
-                                      </div>
-                                  </>
-                              )}
-                          </div>
-
-                          {/* 2. CORPS : STATISTIQUES & PRIMES */}
-                          <div style={{padding: '20px'}}>
-                              <div style={{background: 'var(--bg-app)', borderRadius: '8px', padding: '16px', display: 'flex', justifyContent: 'space-between', marginBottom: '16px', border: '1px solid var(--border-color)'}}>
-                                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, borderRight: '1px solid var(--border-color)'}}>
-                                      <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>{employe.performances_actuelles.clients_coiffes}</span>
-                                      <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px'}}>Clients</span>
-                                  </div>
-                                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, borderRight: '1px solid var(--border-color)'}}>
-                                      <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>{employe.performances_actuelles.produits_vendus}</span>
-                                      <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px'}}>Produits</span>
-                                  </div>
-                                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1}}>
-                                      <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--color-success)'}}>+{((employe.performances_actuelles.ca_genere / (dashboardData?.finances?.chiffre_affaires_total || 1)) * 100).toFixed(0)}%</span>
-                                      <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px'}}>CA Global</span>
-                                  </div>
-                              </div>
-
-                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-hover)', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.2)'}}>
-                                  <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--text-main)'}}>Prime estimée</span>
-                                  <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--color-success)'}}>{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span>
-                              </div>
-                          </div>
-                          
-                          {/* 3. TIROIR DES AVIS (Inchangé sur le design des commentaires) */}
-                          {employe.derniers_avis && employe.derniers_avis.length > 0 && (
-                              <div style={{background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', padding: '12px 20px'}}>
-                                  <button onClick={() => setRhAvisExpanded({...rhAvisExpanded, [employe.id_employe]: !rhAvisExpanded[employe.id_employe]})} style={{background: 'none', border: 'none', width: '100%', textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 'bold', padding: '4px 0'}}>
-                                      {rhAvisExpanded[employe.id_employe] ? 'Masquer les avis ▲' : 'Voir ses derniers avis ▼'}
-                                  </button>
-                                  {rhAvisExpanded[employe.id_employe] && (
-                                      <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px'}}>
-                                          {employe.derniers_avis.map((avis, i) => {
-                                              const isPositif = avis.note >= 4;
-                                              return (
-                                                  <div key={i} style={{background: isPositif ? 'var(--bg-card)' : 'var(--bg-danger)', borderLeft: `3px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`, padding: '10px 12px', borderRadius: '4px', fontSize: '12px', textAlign: 'left', boxShadow: 'var(--shadow-sm)'}}>
-                                                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '6px'}}>
-                                                          <strong style={{color: isPositif ? 'var(--text-main)' : 'var(--color-danger)'}}>{avis.prenom}</strong>
-                                                          <span style={{color: '#f59e0b', fontSize: '13px', letterSpacing: '1px'}}>{'★'.repeat(avis.note)}{'☆'.repeat(5 - avis.note)}</span>
-                                                      </div>
-                                                      <span style={{color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)', fontStyle: 'italic', lineHeight: '1.4', display: 'block'}}>"{avis.commentaire}"</span>
-                                                  </div>
-                                              )
-                                          })}
-                                      </div>
-                                  )}
-                              </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {modifEmployeDialog && (
-                      <div className="modal-overlay">
-                          <div className="modal-content">
-                              <div className="modal-header">
-                                  <h3 style={{margin: 0, fontSize: '18px'}}>Modifier {modifEmployeDialog.nom.split(' ')[0]}</h3>
-                                  <button className="modal-close-btn" onClick={() => setModifEmployeDialog(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                              </div>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <input type="text" className="input-fournisseur" placeholder="Prénom" style={{flex: 1}} value={(modifEmployeDialog.nom || '').split(' ')[0] || ''} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, nom: `${e.target.value} ${(modifEmployeDialog.nom || '').split(' ').slice(1).join(' ')}`.trim()})} />
-                                  <input type="text" className="input-fournisseur" placeholder="Nom de famille" style={{flex: 1}} value={(modifEmployeDialog.nom || '').split(' ').slice(1).join(' ') || ''} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, nom: `${(modifEmployeDialog.nom || '').split(' ')[0] || ''} ${e.target.value}`.trim()})} />
-                              </div>
-                              <input type="password" maxLength="4" className="input-fournisseur" placeholder="Nouveau PIN (laisser vide pour ne pas changer)" value={modifEmployeDialog.code_pin} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, code_pin: e.target.value})} style={{marginBottom: '12px'}} />
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
-                                  <input type="number" className="input-fournisseur" placeholder="% Com. Prestations" value={modifEmployeDialog.taux_commission_prestation} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, taux_commission_prestation: e.target.value})} />
-                                  <input type="number" className="input-fournisseur" placeholder="% Com. Produits" value={modifEmployeDialog.taux_commission_produit} onChange={(e) => setModifEmployeDialog({...modifEmployeDialog, taux_commission_produit: e.target.value})} />
-                              </div>
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <button onClick={() => setModifEmployeDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px', borderRadius: 'var(--radius-input)', fontWeight: '500', cursor: 'pointer'}}>Annuler</button>
-                                  <button onClick={sauvegarderModifEmploye} className="btn-action" style={{flex: 2}} disabled={!modifEmployeDialog.nom}>Enregistrer</button>
-                              </div>
-                          </div>
-                      </div>
-                  )}
-                  </div> {/* FIN ZONE DÉFILANTE */}
-                </div>
-              )}
-
-              {/* VUE : ADMIN COMPTA */}
-              {role === 'salon' && activeTab === 'admin' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Comptabilité</h1><span className="date-subtitle" style={{margin: 0}}>Clôture NF525</span></div>
-                      <ThemeToggle />
-                  </div>
-                  
-                  {/* ENCART PETITE CAISSE (MOUVEMENTS) */}
-                  <div style={{ background: 'var(--bg-card)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', boxShadow: 'var(--shadow-sm)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                          <div>
-                              <h3 style={{ margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px' }}>Petite Caisse (Aujourd'hui)</h3>
-                              <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Dépenses et remises en banque.</span>
-                          </div>
-                          <button onClick={() => { chargerMouvementsCaisse(); setShowMouvementModal(true); }} style={{ background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '10px 16px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                              Ajouter Entrée / Sortie
-                          </button>
-                      </div>
-                      
-                      {mouvementsCaisse.length === 0 ? (
-                          <div className="empty-state" style={{padding: '20px 0', margin: 0, minHeight: 'auto'}}><p style={{margin: 0}}>Aucun mouvement enregistré aujourd'hui.</p></div>
-                      ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {mouvementsCaisse.map(m => (
-                                  <div key={m.id_mouvement} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: m.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-danger)', color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                              {m.type_mouvement === 'ENTREE' ? (
-                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                              ) : (
-                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                              )}
-                                          </div>
-                                          <div>
-                                              <div style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>{m.motif}</div>
-                                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                  {new Date(m.date_creation).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})} • Par {m.nom_employe || 'Gérant'}
-                                              </div>
-                                          </div>
-                                      </div>
-                                      <strong style={{ color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                          {m.type_mouvement === 'ENTREE' ? '+' : '-'}{parseFloat(m.montant).toFixed(2)} €
-                                      </strong>
-                                  </div>
-                              ))}
-                          </div>
-                      )}
-                  </div>
-
-                  <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
-                     <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
-                     <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
-                  </div>
-                </div>
-              )}
-              {role === 'employe' && activeTab === 'admin' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                      <div><h1 style={{margin: 0}}>Ma comptabilité</h1><span className="date-subtitle" style={{margin: 0}}>Historique de mon chiffre d'affaires</span></div>
-                      <ThemeToggle />
-                  </div>
-                  {(historiqueData || []).length === 0 ? (
-                      <div className="empty-state"><SvgEmptyState /><p>Aucune vente enregistrée pour le moment.</p></div>
-                  ) : (
-                      <div className="list-group">
-                          {(historiqueData || []).map((anneeData) => (
-                              <div key={anneeData.annee} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                  <button type="button" onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} className="list-row" style={{ fontWeight: '600', width: '100%' }}>
-                                      <span className="list-row-icon" style={{ transform: expandedYear === anneeData.annee ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
-                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                                      </span>
-                                      <span className="list-row-label" style={{ fontWeight: '600' }}>Année {anneeData.annee}</span>
-                                  </button>
-                                  {expandedYear === anneeData.annee && (
-                                      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
-                                          {(anneeData.mois || []).map((moisData) => (
-                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', overflow: 'hidden', marginTop: '12px' }}>
-                                                  <button type="button" onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', width: '100%', boxSizing: 'border-box', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px', background: 'none', border: 'none', fontFamily: 'inherit' }}>
-                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '600', color: 'var(--text-main)' }}>
-                                                          <span style={{ display: 'flex', width: '14px', height: '14px', color: 'var(--text-secondary)', transform: expandedMonth === moisData.nom ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
-                                                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                                                          </span>
-                                                          {moisData.nom}
-                                                      </div>
-                                                      <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)' }}>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
-                                                  </button>
-                                                  {expandedMonth === moisData.nom && (
-                                                      <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                                          {(moisData.jours || []).map(jour => (
-                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} className="hover-bg-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} title="Cliquez pour télécharger le PDF détaillé">
-                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                                      <span style={{ display: 'flex', width: '17px', height: '17px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
-                                                                      <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
-                                                                  </div>
-                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
-                                                                      <span style={{ display: 'flex', width: '15px', height: '15px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M5 21h14"/></svg></span>
-                                                                  </div>
-                                                              </div>
-                                                          ))}
-                                                      </div>
-                                                  )}
-                                              </div>
-                                          ))}
-                                      </div>
-                                  )}
-                              </div>
-                          ))}
-                      </div>
-                  )}
-                </div>
-              )}
-
-              {role === 'gerant' && activeTab === 'admin' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-                  {/* EN-TÊTE FIXE */}
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div><h1 style={{margin: 0}}>Comptabilité Légale</h1><span className="date-subtitle" style={{margin: 0}}>Historique Comptable & Clôtures NF525</span></div>
-                          <ThemeToggle />
-                      </div>
-                  </div>
-                  
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-                  
-                  {/* ENCART PETITE CAISSE (MOUVEMENTS) */}
-                  <div style={{ background: 'var(--bg-card)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', boxShadow: 'var(--shadow-sm)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                          <div>
-                              <h3 style={{ margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px' }}>Petite Caisse (Aujourd'hui)</h3>
-                              <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Dépenses et remises en banque.</span>
-                          </div>
-                          <button onClick={() => { chargerMouvementsCaisse(); setShowMouvementModal(true); }} style={{ background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '10px 16px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                              Ajouter Entrée / Sortie
-                          </button>
-                      </div>
-                      
-                      {mouvementsCaisse.length === 0 ? (
-                          <div className="empty-state" style={{padding: '20px 0', margin: 0, minHeight: 'auto'}}><p style={{margin: 0}}>Aucun mouvement enregistré aujourd'hui.</p></div>
-                      ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {mouvementsCaisse.map(m => (
-                                  <div key={m.id_mouvement} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: m.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-danger)', color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                              {m.type_mouvement === 'ENTREE' ? (
-                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                              ) : (
-                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                              )}
-                                          </div>
-                                          <div>
-                                              <div style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>{m.motif}</div>
-                                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                  {new Date(m.date_creation).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})} • Par {m.nom_employe || 'Gérant'}
-                                              </div>
-                                          </div>
-                                      </div>
-                                      <strong style={{ color: m.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                          {m.type_mouvement === 'ENTREE' ? '+' : '-'}{parseFloat(m.montant).toFixed(2)} €
-                                      </strong>
-                                  </div>
-                              ))}
-                          </div>
-                      )}
-                  </div>
-
-                  <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
-                     <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
-                     <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
-                  </div>
-              
-                  <div className="carte export-carte"><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Liasse Mensuelle</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Génération PDF & Envoi Email</span></div><button className="btn-export" onClick={declencherExport}>Exporter PDF</button></div>
-                  <div className="carte export-carte" style={{marginTop: '16px'}}><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Fichier FEC (Comptable)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Export .txt normalisé (Partie double)</span></div><button className="btn-export" onClick={declencherExportFEC} style={{background: 'var(--text-main)', color: 'var(--bg-app)', border: 'none'}}>Télécharger FEC</button></div>
-                  <div className="carte export-carte" style={{marginTop: '16px'}}><div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Audit de Conformité (NF525)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Vérification des chaînes cryptographiques</span></div><button className="btn-export" onClick={lancerAuditNF525} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)'}}>Lancer l'audit</button></div>
-                  <div className="section-titre" style={{marginTop: '32px'}}>Historique des bilans comptables</div>
-                  
-                  {(historiqueData || []).length === 0 ? (
-                      <div className="empty-state">
-                          <SvgEmptyState />
-                          <p>Aucune clôture de caisse (Z) effectuée pour le moment.</p>
-                      </div>
-                  ) : (
-                      <div className="list-group">
-                          {(historiqueData || []).map((anneeData) => (
-                              <div key={anneeData.annee} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                  <button type="button" onClick={() => setExpandedYear(expandedYear === anneeData.annee ? null : anneeData.annee)} className="list-row" style={{ fontWeight: '600', width: '100%' }}>
-                                      <span className="list-row-icon" style={{ transform: expandedYear === anneeData.annee ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
-                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                                      </span>
-                                      <span className="list-row-label" style={{ fontWeight: '600' }}>Année {anneeData.annee}</span>
-                                  </button>
-
-                                  {expandedYear === anneeData.annee && (
-                                      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--bg-app)' }}>
-                                          {(anneeData.mois || []).map((moisData) => (
-                                              <div key={moisData.nom} style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', overflow: 'hidden', marginTop: '12px' }}>
-
-                                                  <button type="button" onClick={() => setExpandedMonth(expandedMonth === moisData.nom ? null : moisData.nom)} style={{ display: 'flex', width: '100%', boxSizing: 'border-box', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '12px 16px', background: 'none', border: 'none', fontFamily: 'inherit' }}>
-                                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '600', color: 'var(--text-main)' }}>
-                                                          <span style={{ display: 'flex', width: '14px', height: '14px', color: 'var(--text-secondary)', transform: expandedMonth === moisData.nom ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
-                                                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                                                          </span>
-                                                          {moisData.nom}
-                                                      </div>
-                                                      <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)' }}>
-                                                          {moisData.total_mensuel?.toFixed(2) || '0.00'} €
-                                                      </span>
-                                                  </button>
-
-                                                  {expandedMonth === moisData.nom && (
-                                                      <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                                          <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '10px 12px', borderRadius: 'var(--radius-input)', fontSize: '13px', fontWeight: '600', border: '1px solid var(--border-color)', marginBottom: '8px' }}>
-                                                              <span>Bilan consolidé ({moisData.nom})</span>
-                                                              <span>{moisData.total_mensuel?.toFixed(2) || '0.00'} €</span>
-                                                          </div>
-
-                                                          {(moisData.jours || []).map(jour => (
-                                                              <div key={jour.date_brute} onClick={() => telechargerBilanJour(jour.date_brute)} className="hover-bg-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'background 0.2s' }} title="Cliquez pour télécharger le PDF détaillé">
-                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                                      <span style={{ display: 'flex', width: '17px', height: '17px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
-                                                                      <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>Bilan du {jour.date_formattee}</span>
-                                                                  </div>
-                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                      <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '15px' }}>{jour.total?.toFixed(2) || '0.00'} €</span>
-                                                                      <span style={{ display: 'flex', width: '15px', height: '15px', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M5 21h14"/></svg></span>
-                                                                  </div>
-                                                              </div>
-                                                          ))}
-                                                      </div>
-                                                  )}
-                                              </div>
-                                          ))}
-                                      </div>
-                                  )}
-                              </div>
-                          ))}
-                      </div>
-                  )}
-                  </div> {/* FIN ZONE DÉFILANTE */}
-                </div>
-              )}
-
-              {/* VUE : MESSAGERIE (TEAMS STYLE) */}
-              {activeTab === 'messagerie' && (
-                <div className={isMobile ? "admin-container mobile-chat-container" : "admin-container"} style={!isMobile ? { display: 'flex', flexDirection: 'column', minHeight: '100%' } : {}}>
-                  {/* Sur Desktop, on garde le titre. Sur mobile, on le masque pour gagner de la place */}
-                  {!isMobile && (
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div>
-                              <h1 style={{margin: 0}}>Messagerie</h1>
-                              <span className="date-subtitle" style={{margin: 0}}>Échanges d'équipe sécurisés</span>
-                          </div>
-                          <ThemeToggle />
-                      </div>
-                  )}
-
-                  <div className="chat-wrapper">
-                      <div className="chat-sidebar">
-                          <div className="chat-header">Discussions</div>
-                          <div className="chat-contact-list">
-                              <div className={`chat-contact ${chatActif === 'salon' ? 'active' : ''}`} onClick={() => setChatActif('salon')} style={{position: 'relative'}}>
-                                  {nonLusParConv['salon'] && <span className="badge-ia-rouge"></span>}
-                                  <div style={{width: isMobile ? 48 : 40, height: isMobile ? 48 : 40, borderRadius: '8px', background: 'var(--text-main)', color: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0}}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
-                                  <div className="chat-contact-name" style={{fontWeight: '600'}}>{configSalon.nom_salon || 'Groupe Salon'}</div>
-                              </div>
-                              {contactsTries.map(c => (
-                                  <div key={c.key} className={`chat-contact ${chatActif === c.key ? 'active' : ''}`} onClick={() => setChatActif(c.key)} style={{position: 'relative'}}>
-                                      {nonLusParConv[c.key] && <span className="badge-ia-rouge"></span>}
-                                      {renderAvatar(c.photo_url, c.nom, isMobile ? 48 : 40)}
-                                      <div className="chat-contact-name">{c.nom}</div>
-                                  </div>
-                              ))}
-                          </div>
-                      </div>
-
-                      <div className="chat-main">
-                          <div className="chat-header">
-                              {chatActif === 'salon' ? (configSalon.nom_salon || 'Groupe Salon') : 
-                               chatActif === 'gerant' ? 'Gérant' : 
-                               ((employesListe || []).find(e => e.id_employe === chatActif)?.nom || 'Conversation')}
-                          </div>
-                          
-                          <style>{`
-                              .chat-date-separateur { display: flex; justify-content: center; margin: 8px 0; }
-                              .chat-date-separateur span { font-size: 11px; font-weight: 600; color: var(--text-secondary); background: var(--bg-app); border: 1px solid var(--border-color); border-radius: 12px; padding: 4px 12px; }
-                              .chat-vu-par { position: absolute; bottom: -9px; right: 4px; display: flex; cursor: pointer; z-index: 2; }
-                              .chat-vu-par-bulle { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--bg-card); background: var(--bg-app); overflow: hidden; display: flex; align-items: center; justify-content: center; }
-                              .chat-vu-par-plus { font-size: 8px; font-weight: 700; color: var(--text-secondary); }
-                              .chat-vu-par-liste { position: absolute; bottom: 20px; right: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: var(--shadow-md); padding: 10px; min-width: 160px; z-index: 20; max-height: 150px; overflow-y: auto; }
-                              .chat-vu-par-liste-titre { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; position: sticky; top: 0; background: var(--bg-card); padding-bottom: 4px; z-index: 2; }
-                              .chat-vu-par-liste-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-main); white-space: nowrap; }
-                          `}</style>
-                          <div className="chat-messages" ref={chatMessagesRef}>
-                              {(messagesListe || []).filter(m => {
-                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
-                                  if (chatActif === 'salon') return m.id_destinataire === 0;
-                                  if (chatActif === 'gerant') return (m.id_expediteur === myId && m.id_destinataire === null) || (m.id_expediteur === null && m.id_destinataire === myId);
-                                  return (m.id_expediteur === myId && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === myId);
-                              }).map((msg, idxMsg, tableauMsgsConv) => {
-                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
-                                  const isMine = msg.id_expediteur === myId;
-                                  const myReactId = role === 'employe' ? `emp_${myId}` : (role === 'salon' ? 'salon' : 'gerant');
-                                  const messagePrecedent = tableauMsgsConv[idxMsg - 1];
-                                  const changerDeJour = !messagePrecedent || new Date(msg.date_creation).toDateString() !== new Date(messagePrecedent.date_creation).toDateString();
-
-                                  return (
-                                      <div key={msg.id_message} style={{display: 'contents'}}>
-                                      {changerDeJour && (
-                                          <div className="chat-date-separateur"><span>{formatDateSeparateur(msg.date_creation)}</span></div>
-                                      )}
-                                      <div className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', maxWidth: '100%'}}>
-                                          {!isMine && renderAvatar(msg.photo_expediteur, msg.nom_expediteur, 32)}
-                                          
-                                          <div style={{display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', minWidth: 0}}>
-                                              {!isMine && <span style={{fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', marginLeft: '4px'}}>{msg.nom_expediteur}</span>}
-                                              
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexDirection: isMine ? 'row-reverse' : 'row', maxWidth: '100%', minWidth: 0}}>
-                                                  
-                                                  {editingMsgId === msg.id_message ? (
-                                                      <div style={{display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
-                                                          <textarea value={editMsgContent} onChange={e => setEditMsgContent(e.target.value)} className="chat-input" style={{minHeight: '60px', width: '250px', border: '1px solid var(--border-focus)'}} />
-                                                          <div style={{display: 'flex', gap: '8px'}}>
-                                                              <button onClick={() => validerEdition(msg.id_message)} style={{background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Valider</button>
-                                                              <button onClick={() => setEditingMsgId(null)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Annuler</button>
-                                                          </div>
-                                                      </div>
-                                                  ) : (
-                                                      <div style={{position: 'relative'}}>
-                                                          <div className="chat-bubble">
-                                                              {msg.contenu}
-                                                              {msg.fichier_url && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
-                                                          </div>
-                                                          {isMine && msg.vu_par && msg.vu_par.length > 0 && (
-                                                              <div className="chat-vu-par" onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(vuParOuvertMsgId === msg.id_message ? null : msg.id_message); }}>
-                                                                  {msg.vu_par.slice(0, 3).map((idProfil, i) => {
-                                                                      const dernierEtTropPlein = i === 2 && msg.vu_par.length > 3;
-                                                                      const profil = resoudreProfilVu(idProfil);
-                                                                      return (
-                                                                          <div key={idProfil} className="chat-vu-par-bulle" style={{ marginLeft: i === 0 ? 0 : '-8px' }}>
-                                                                              {dernierEtTropPlein ? <span className="chat-vu-par-plus">+{msg.vu_par.length - 2}</span> : renderAvatar(profil.photo_url, profil.nom, 14)}
-                                                                          </div>
-                                                                      );
-                                                                  })}
-                                                                  {vuParOuvertMsgId === msg.id_message && (
-                                                                      <>
-                                                                          {/* Calque invisible pour fermer l'encart en cliquant n'importe où à côté */}
-                                                                          <div onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(null); }} style={{position: 'fixed', inset: 0, zIndex: 19}}></div>
-                                                                          
-                                                                          <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)} onClick={(e) => e.stopPropagation()}>
-                                                                              <div className="chat-vu-par-liste-titre">Vu par</div>
-                                                                              {msg.vu_par.map(idProfil => {
-                                                                                  const profil = resoudreProfilVu(idProfil);
-                                                                                  return (
-                                                                                      <div key={idProfil} className="chat-vu-par-liste-item">
-                                                                                          {renderAvatar(profil.photo_url, profil.nom, 22)}
-                                                                                          <span>{profil.nom}</span>
-                                                                                      </div>
-                                                                                  );
-                                                                              })}
-                                                                          </div>
-                                                                      </>
-                                                                  )}
-                                                              </div>
-                                                          )}
-                                                      </div>
-                                                  )}
-                                                  
-                                                  {isMine && !editingMsgId && (
-                                                      <div style={{position: 'relative'}}>
-                                                          <button className="chat-msg-actions-btn" onClick={() => setActiveMenuId(activeMenuId === msg.id_message ? null : msg.id_message)}>
-                                                              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-                                                          </button>
-                                                          {activeMenuId === msg.id_message && (
-                                                              <div className="chat-msg-menu">
-                                                                  <button onClick={() => demarrerEdition(msg)}> Modifier</button>
-                                                                  <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}> Supprimer</button>
-                                                              </div>
-                                                          )}
-                                                      </div>
-                                                  )}
-                                                  
-                                                  {!isMine && (
-                                                      <div style={{position: 'relative'}}>
-                                                          <button className="chat-msg-actions-btn" onClick={() => setActiveReactionId(activeReactionId === msg.id_message ? null : msg.id_message)}>
-                                                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm-3-10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm6 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm-3 5.5c2.326 0 4.316-1.42 5.127-3.5H8.873c.81 2.08 2.8 3.5 5.127 3.5z"/></svg>
-                                                          </button>
-                                                          {activeReactionId === msg.id_message && (
-                                                              <div className="chat-reaction-picker" onMouseLeave={() => setActiveReactionId(null)}>
-                                                                  {CHAT_EMOJIS.map(em => (
-                                                                      <button key={em} onClick={() => toggleReaction(msg.id_message, em)}>{em}</button>
-                                                                  ))}
-                                                              </div>
-                                                          )}
-                                                      </div>
-                                                  )}
-                                              </div>
-                                              
-                                              {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px', width: '100%', justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
-                                                      {Object.entries(msg.reactions).map(([em, users]) => {
-                                                          const listeNoms = users.map(id => resoudreProfilVu(id).nom).join(', ');
-                                                          const isReacted = users.includes(myReactId);
-                                                          return (
-                                                              <div key={em} title={listeNoms} onClick={() => toggleReaction(msg.id_message, em)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold', border: `1px solid ${isReacted ? 'var(--color-info)' : 'var(--border-color)'}`, background: isReacted ? 'var(--bg-info)' : 'var(--bg-card)', color: isReacted ? 'var(--color-info)' : 'var(--text-secondary)' }}>
-                                                                  <span>{em}</span> <span>{users.length}</span>
-                                                              </div>
-                                                          );
-                                                      })}
-                                                  </div>
-                                              )}
-                                              
-                                              <div className="chat-meta">
-                                                  <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                              </div>
-                                          </div>
-                                      </div>
-                                      </div>
-                                  );
-                              })}
-                              <div ref={messagesEndRef} />
-                          </div>
-
-                          <div className="chat-input-area">
-                              <button className="chat-btn chat-file-btn" onClick={() => document.getElementById('chat-file-upload').click()}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
-                              <input type="file" id="chat-file-upload" accept="image/*" style={{display:'none'}} onChange={handleChatFileUpload} />
-                              <div style={{flex: 1, position: 'relative'}}>
-                                  {msgFile && <div style={{position: 'absolute', bottom: '100%', left: '16px', marginBottom: '8px', background: 'var(--bg-hover)', padding: '4px 8px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>📷 Image jointe <button onClick={() => setMsgFile(null)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button></div>}
-                                  <textarea className="chat-input" placeholder="Écrire un nouveau message..." value={msgInput} onChange={e => setMsgInput(e.target.value)} onKeyDown={e => {if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }}} />
-                              </div>
-                              <button className="chat-btn" disabled={!msgInput.trim() && !msgFile} onClick={envoyerMessage}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
-                          </div>
-                      </div>
-                  </div>
-                </div>
-              )}
-
-              {/* === GOD MODE (SUPER-ADMIN) === */}
-              {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.email === '2@gmail.com' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : {}}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0, color: '#aa3bff'}}>God Mode</h1><span className="date-subtitle" style={{margin: 0}}>Espace Fondateur STACK</span></div>
-                      <ThemeToggle />
-                  </div>
-                  
-                  {superAdminData ? (
-                      <>
-                          <div className="cartes-financieres">
-                              <div className="carte" style={{border: '1px solid #aa3bff'}}><div className="carte-titre-container"><div className="icon" style={{color: '#aa3bff'}}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3>MRR (Revenu Récurrent)</h3></div><p className="montant" style={{color: '#aa3bff'}}>{superAdminData?.mrr_estime || 0} <span className="devise">€ / mois</span></p></div>
-                              <div className="carte"><div className="carte-titre-container"><div className="icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>Salons Inscrits</h3></div><p className="montant">{superAdminData?.salons_actifs || 0} <span className="devise" style={{fontSize: '14px'}}>actifs sur {superAdminData?.total_salons || 0} au total</span></p></div>
-                          </div>
-                          
-                          <div className="carte export-carte" style={{borderColor: '#aa3bff', marginTop: '-12px'}}>
-                              <div><h3 style={{margin: '0 0 4px 0', color: '#aa3bff', fontSize: '15px'}}>Forcer les Robots (CRON)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Déclenche l'envoi du récapitulatif hebdo et autres tâches.</span></div>
-                              <button className="btn-export" onClick={async () => {
-                                  console.log("🔘 Clic sur le bouton 'Forcer les Robots'");
-                                  try {
-                                      showToast("⏳ Exécution en cours, patientez...", "info");
-                                      
-                                      const res = await fetch('https://api-salon-backend.onrender.com/api/admin/forcer-robot');
-                                      const data = await res.json().catch(() => null);
-                                      
-                                      console.log("📡 Statut HTTP :", res.status);
-                                      console.log("📦 Données reçues :", data);
-                                      
-                                      if (!res.ok) {
-                                          alert(`❌ ERREUR SERVEUR (${res.status})\n\nDétails : ${JSON.stringify(data)}`);
-                                          showToast("Échec de l'exécution", "error");
-                                          return;
-                                      }
-
-                                      alert(`✅ REQUÊTE RÉUSSIE !\n\nRéponse du serveur : ${data?.message || 'OK'}\n\n⚠️ IMPORTANT : Regarde dans ton navigateur (F12 > Console) et surtout dans les "Logs" de Render pour lire ce que le robot a réellement fait !`);
-                                      showToast("Robots terminés", "success");
-                                  } catch (e) { 
-                                      console.error("❌ Crash lors de l'appel :", e);
-                                      alert(`❌ CRASH RESEAU\n\nErreur : ${e.message}`);
-                                      showToast("Erreur de connexion", "error"); 
-                                  }
-                              }} style={{background: '#aa3bff', color: 'white', border: 'none'}}>Exécuter (Test)</button>
-                          </div>
-                      </>
-                  ) : <div className="skeleton-loading" style={{height: '120px', marginBottom: '32px'}}></div>}
-
-                  <div className="section-titre" style={{marginTop: '32px', color: '#aa3bff', borderColor: '#aa3bff'}}>Gestion des Salons (Clients)</div>
-                  <div className="carte scan-carte">
-                      {(superAdminSalons || []).map(salon => (
-                          <div key={salon.id_salon} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid var(--border-color)'}}>
-                              <div>
-                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
-                                      <strong style={{color: 'var(--text-main)', fontSize: '15px'}}>{salon.nom_salon}</strong><span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: 'var(--bg-app)', color: 'var(--text-secondary)'}}>ID: {salon.id_salon}</span>{salon.email === '2@gmail.com' && <span style={{fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#aa3bff', color: 'white'}}>Fondateur</span>}
-                                  </div>
-                                  <span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>{salon.email}</span>
-                              </div>
-                              <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
-                                  <span className="badge-discret" style={{ background: salon.statut_abonnement === 'actif' ? 'var(--bg-success)' : 'var(--bg-danger)', color: salon.statut_abonnement === 'actif' ? 'var(--color-success)' : 'var(--color-danger)' }}>{salon.statut_abonnement === 'actif' ? 'Abonné (Actif)' : 'Inactif / Impayé'}</span>
-                                  {salon.email !== '2@gmail.com' && ( 
-                                      <div style={{display: 'flex', gap: '8px'}}>
-                                          <button onClick={() => basculerStatutSalon(salon.id_salon, salon.statut_abonnement)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>{salon.statut_abonnement === 'actif' ? 'Couper l\'accès' : 'Activer de force'}</button>
-                                          <button onClick={() => supprimerSalonAdmin(salon.id_salon, salon.nom_salon)} style={{background: 'var(--bg-danger)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}} title="Détruire ce salon">Supprimer</button>
-                                      </div>
-                                  )}
-                              </div>
-                          </div>
-                      ))}
-                      {(superAdminSalons || []).length === 0 && <div className="empty-state"><p>Aucun salon chargé.</p></div>}
-                  </div>
-                </div>
-              )}
-            </div>
-      </div>
-      {/* --- MENU OUTILS (BOTTOM SHEET MOBILE) DÉPLACÉ ICI POUR RÉSOUDRE LE FLOU SAFARI --- */}
-      {isMobile && (
-          <>
-              <div className={`outils-bottom-sheet-overlay ${isOutilsMenuOpen ? 'open' : ''}`} onClick={() => setIsOutilsMenuOpen(false)}></div>
-              <div className={`outils-bottom-sheet ${isOutilsMenuOpen ? 'open' : ''}`}>
-                  <h3 style={{margin: '0 0 16px 0', fontSize: '18px', textAlign: 'center'}}>Outils & Gestion</h3>
-                  <div className="outils-grid">
-                      {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('protocoles'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PRO') && <span style={{position:'absolute', top:'-6px', right:'-6px', color:'var(--text-muted)', background:'var(--bg-app)', borderRadius:'50%', padding:'2px', display:'flex'}}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><span className="outil-btn-label">Académie</span>
-                          </button>
-                      )}
-                      {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => {setActiveTab('produits'); setIsOutilsMenuOpen(false);}}>
-                              <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div><span className="outil-btn-label">Stocks</span>
-                          </button>
-                      )}
-                      {role === 'gerant' && (
-                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('rh'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><span className="outil-btn-label">Équipe</span>
-                          </button>
-                      )}
-                      {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('admin'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'-6px', right:'-6px', color:'var(--text-muted)', background:'var(--bg-app)', borderRadius:'50%', padding:'2px', display:'flex'}}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><span className="outil-btn-label">Compta</span>
-                          </button>
-                      )}
-                      {decodeToken(token)?.email === '2@gmail.com' && role === 'gerant' && (
-                          <button className="outil-btn" onClick={() => {setActiveTab('superadmin'); setIsOutilsMenuOpen(false);}}>
-                              <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><span className="outil-btn-label">God Mode</span>
-                          </button>
-                      )}
-                      <button className="outil-btn" onClick={() => {setActiveTab('messagerie'); setIsOutilsMenuOpen(false);}} style={{position: 'relative'}}>
-                          {aDesMessagesNonLus && <span className="badge-ia-rouge" style={{top: '-2px', right: '-2px'}}></span>}
-                          <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div><span className="outil-btn-label">Chat</span>
-                      </button>
-                      <button className="outil-btn" onClick={() => {seDeconnecter(); setIsOutilsMenuOpen(false);}}>
-                          <div className="outil-btn-icon" style={{color:'var(--color-danger)'}}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></div><span className="outil-btn-label" style={{color:'var(--color-danger)'}}>Quitter</span>
-                      </button>
-                  </div>
-              </div>
-          </>
-      )}
-      
-      {/* --- MODALES GLOBALES --- */}
-      
-      {/* MODALE GARDE-FOU (RÉGULARISATION MATINALE OBLIGATOIRE) */}
-      {reguCloture && (
-          <div className="modal-overlay" style={{ zIndex: 999999, background: 'var(--bg-app)' }}>
-              <div className="modal-content" style={{ maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
-                  <div style={{ color: 'var(--color-info)', display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  </div>
-                  <h2 style={{ margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px' }}>Ouverture de Caisse</h2>
-                  <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>
-                      La caisse a été fermée automatiquement hier soir par le système avec un solde théorique estimé à <strong>{parseFloat(reguCloture.total_especes_theorique).toFixed(2)} €</strong>.<br/><br/>
-                      Quel est votre <strong>Fond de Caisse Réel</strong> (espèces physiquement présentes) ce matin ?
-                  </p>
-                  
-                  <div style={{ position: 'relative', marginBottom: '24px' }}>
-                      <input 
-                          type="number" 
-                          placeholder="Ex: 150.00" 
-                          value={reguMontant} 
-                          onChange={(e) => setReguMontant(e.target.value)} 
-                          style={{ width: '100%', padding: '16px 16px 16px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '2px solid var(--btn-primary)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }} 
-                          autoFocus
-                      />
-                      <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }}>€</span>
-                  </div>
-
-                  <button 
-                      onClick={soumettreRegularisation} 
-                      disabled={!reguMontant} 
-                      className="btn-action" 
-                      style={{ width: '100%', padding: '16px', fontSize: '16px' }}
-                  >
-                      Valider et Ouvrir la caisse
-                  </button>
-              </div>
-          </div>
-      )}
-
-      {/* MODALE PETITE CAISSE (ENTRÉE/SORTIE) */}
-      {showMouvementModal && (
-          <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{ maxWidth: '400px', padding: 0, overflow: 'hidden' }}>
-                  <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)' }}>
-                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Mouvement de Caisse</h3>
-                      <button onClick={() => { setShowMouvementModal(false); setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: ''}); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                  </div>
-                  <div style={{ padding: '24px' }}>
-                      
-                      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-                          <button onClick={() => setNewMouvement({...newMouvement, type_mouvement: 'SORTIE'})} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${newMouvement.type_mouvement === 'SORTIE' ? 'var(--color-danger)' : 'var(--border-color)'}`, background: newMouvement.type_mouvement === 'SORTIE' ? 'var(--bg-danger)' : 'var(--bg-app)', color: newMouvement.type_mouvement === 'SORTIE' ? 'var(--color-danger)' : 'var(--text-secondary)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px' }}>
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                              Sortie d'espèces
-                          </button>
-                          <button onClick={() => setNewMouvement({...newMouvement, type_mouvement: 'ENTREE'})} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${newMouvement.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--border-color)'}`, background: newMouvement.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-app)', color: newMouvement.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--text-secondary)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px' }}>
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                              Entrée d'espèces
-                          </button>
-                      </div>
-
-                      {!modeCalculatrice ? (
-                          <div style={{ marginBottom: '16px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '8px' }}>
-                                  <label style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Montant (€)</label>
-                                  <button onClick={() => setModeCalculatrice(true)} style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.8 }}>
-                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" ry="2"/><circle cx="12" cy="12" r="2"/></svg>
-                                      Mode billets
-                                  </button>
-                              </div>
-                              <div style={{ position: 'relative' }}>
-                                  <input type="number" placeholder="0.00" value={newMouvement.montant} onChange={(e) => setNewMouvement({...newMouvement, montant: e.target.value})} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '18px', fontWeight: 'bold' }} />
-                                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '18px', fontWeight: 'bold' }}>€</span>
-                              </div>
-                          </div>
-                      ) : (
-                          <div style={{ marginBottom: '16px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                  <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-card)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                      <button onClick={() => setOngletCalculatrice('MONNAIES')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: ongletCalculatrice === 'MONNAIES' ? 'var(--text-main)' : 'transparent', color: ongletCalculatrice === 'MONNAIES' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}>Monnaies</button>
-                                      <button onClick={() => setOngletCalculatrice('BILLETS')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: ongletCalculatrice === 'BILLETS' ? 'var(--text-main)' : 'transparent', color: ongletCalculatrice === 'BILLETS' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}>Billets</button>
-                                  </div>
-                                  <button onClick={() => { setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: ''}); }} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Annuler</button>
-                              </div>
-
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
-                                  {ongletCalculatrice === 'MONNAIES' ? (
-                                      [ { key: 'p2', label: '2 €' }, { key: 'p1', label: '1 €' }, { key: 'p050', label: '0.50 €' }, { key: 'p020', label: '0.20 €' }, { key: 'p010', label: '0.10 €' }, { key: 'p005', label: '0.05 €' }, { key: 'p002', label: '0.02 €' }, { key: 'p001', label: '0.01 €' } ].map(item => (
-                                          <div key={item.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px 10px' }}>
-                                              <span style={{ width: '45px', fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{item.label}</span>
-                                              <span style={{ color: 'var(--border-color)', margin: '0 6px' }}>×</span>
-                                              <input type="number" min="0" value={detailsMonnaie[item.key]} onChange={e => setDetailsMonnaie({...detailsMonnaie, [item.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '14px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                                          </div>
-                                      ))
-                                  ) : (
-                                      [ { key: 'b500', label: '500 €' }, { key: 'b200', label: '200 €' }, { key: 'b100', label: '100 €' }, { key: 'b50', label: '50 €' }, { key: 'b20', label: '20 €' }, { key: 'b10', label: '10 €' }, { key: 'b5', label: '5 €' } ].map(item => (
-                                          <div key={item.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px 10px' }}>
-                                              <span style={{ width: '45px', fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{item.label}</span>
-                                              <span style={{ color: 'var(--border-color)', margin: '0 6px' }}>×</span>
-                                              <input type="number" min="0" value={detailsMonnaie[item.key]} onChange={e => setDetailsMonnaie({...detailsMonnaie, [item.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '14px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                                          </div>
-                                      ))
-                                  )}
-                              </div>
-                              <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>Total calculé :</span>
-                                  <span style={{ fontSize: '18px', fontWeight: '900', color: 'var(--text-main)' }}>{newMouvement.montant || '0.00'} €</span>
-                              </div>
-                          </div>
-                      )}
-
-                      <div style={{ marginBottom: '16px' }}>
-                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Motif obligatoire</label>
-                          <input type="text" placeholder="Ex: Achat café, rendu monnaie..." value={newMouvement.motif} onChange={(e) => setNewMouvement({...newMouvement, motif: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }} />
-                      </div>
-
-                      <div style={{ marginBottom: '24px' }}>
-                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Collaborateur responsable</label>
-                          <select value={newMouvement.id_employe} onChange={(e) => setNewMouvement({...newMouvement, id_employe: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
-                              <option value="">Moi-même (Gérant)</option>
-                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                          </select>
-                      </div>
-
-                      <button onClick={ajouterMouvementCaisse} className="btn-action" style={{ width: '100%', padding: '14px', borderRadius: '12px', fontSize: '16px' }}>
-                          Valider l'opération
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {zDialogOuvert && (
-          <div className="modal-overlay" style={{ zIndex: 100000, padding: isMobile ? '0' : '16px' }}>
-              <div className="modal-content" style={{ maxWidth: '600px', width: '100%', padding: '0', overflow: 'hidden', height: isMobile ? '100%' : 'auto', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <div style={{ color: 'var(--btn-primary)' }}><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
-                          <div>
-                              <h2 style={{ margin: 0, color: 'var(--text-main)', fontSize: '18px' }}>Clôture de Caisse (Z)</h2>
-                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Comptage physique obligatoire (Loi NF525)</span>
-                          </div>
-                      </div>
-                      <button onClick={() => { setZDialogOuvert(false); setZEmployeSelect(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                  </div>
-                  
-                  <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
-                      {role === 'salon' && (
-                          <div style={{ marginBottom: '24px' }}>
-                              <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Responsable de la fermeture</label>
-                              <select className="input-fournisseur" value={zEmployeSelect} onChange={e => setZEmployeSelect(e.target.value)} style={{ margin: 0 }}>
-                                  <option value="">-- Sélectionnez votre nom --</option>
-                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
-                                  <option value="Gérant">Le Gérant</option>
-                              </select>
-                          </div>
-                      )}
-
-                      <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px dashed var(--border-color)', marginBottom: '24px' }}>
-                          <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)', marginBottom: '8px' }}>
-                              <span>Fond de caisse du matin (Ouverture)</span>
-                          </label>
-                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>Montant en espèces (fonds de roulement) présent à l'ouverture.</p>
-                          <div style={{ position: 'relative' }}>
-                              <input type="number" placeholder="Ex: 150.00" value={fondCaisseMatin} onChange={(e) => setFondCaisseMatin(e.target.value)} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold' }} />
-                              <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '16px', fontWeight: 'bold' }}>€</span>
-                          </div>
-                      </div>
-
-                      <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" ry="2"/><circle cx="12" cy="12" r="2"/></svg>
-                          Billets comptés
-                      </h3>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
-                          {[
-                              { key: 'b500', label: '500 €' }, { key: 'b200', label: '200 €' }, { key: 'b100', label: '100 €' }, 
-                              { key: 'b50', label: '50 €' }, { key: 'b20', label: '20 €' }, { key: 'b10', label: '10 €' }, { key: 'b5', label: '5 €' }
-                          ].map(b => (
-                              <div key={b.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 8px' }}>
-                                  <span style={{ width: '45px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{b.label}</span>
-                                  <span style={{ color: 'var(--border-color)', margin: '0 8px' }}>×</span>
-                                  <input type="number" min="0" value={compteCaisse[b.key]} onChange={e => setCompteCaisse({...compteCaisse, [b.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                              </div>
-                          ))}
-                      </div>
-
-                      <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
-                          Pièces comptées
-                      </h3>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                          {[
-                              { key: 'p2', label: '2 €' }, { key: 'p1', label: '1 €' }, { key: 'p050', label: '0.50 €' }, { key: 'p020', label: '0.20 €' }, 
-                              { key: 'p010', label: '0.10 €' }, { key: 'p005', label: '0.05 €' }, { key: 'p002', label: '0.02 €' }, { key: 'p001', label: '0.01 €' }
-                          ].map(p => (
-                              <div key={p.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 8px' }}>
-                                  <span style={{ width: '45px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{p.label}</span>
-                                  <span style={{ color: 'var(--border-color)', margin: '0 8px' }}>×</span>
-                                  <input type="number" min="0" value={compteCaisse[p.key]} onChange={e => setCompteCaisse({...compteCaisse, [p.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                              </div>
-                          ))}
-                      </div>
-                  </div>
-
-                  <div style={{ padding: '20px', borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                          <span style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--text-main)' }}>Total Compté (Réel) :</span>
-                          <span style={{ fontSize: '24px', fontWeight: '900', color: 'var(--btn-primary)' }}>{calculerTotalCaisseReel().toFixed(2)} €</span>
-                      </div>
-                      
-                      {ecartDetecte !== null && (
-                          <div style={{ background: 'var(--bg-danger)', padding: '16px', borderRadius: '12px', border: '1px solid var(--color-danger)', marginBottom: '16px', textAlign: 'left', animation: 'fadeIn 0.3s ease' }}>
-                              <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold', color: 'var(--color-danger)' }}>
-                                  ⚠️ Écart de caisse détecté : {ecartDetecte > 0 ? '+' : ''}{ecartDetecte.toFixed(2)} €
-                              </p>
-                              <label style={{ display: 'block', fontSize: '12px', color: 'var(--color-danger)', marginBottom: '8px' }}>Pour valider la clôture NF525, une justification est obligatoire :</label>
-                              <textarea 
-                                  className="input-fournisseur" 
-                                  placeholder="Ex: Erreur de rendu de monnaie, ou oubli de saisie d'une petite caisse..."
-                                  rows="3"
-                                  value={justificationEcart}
-                                  onChange={e => setJustificationEcart(e.target.value)}
-                                  style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--color-danger)' }}
-                              />
-                          </div>
-                      )}
-
-                      <button 
-                          onClick={() => executerZDeCaisse(zEmployeSelect)} 
-                          disabled={!zEmployeSelect || !fondCaisseMatin || (ecartDetecte !== null && !justificationEcart.trim())} 
-                          className="btn-action" 
-                          style={{ width: '100%', padding: '16px', fontSize: '16px', background: (ecartDetecte !== null && !justificationEcart.trim()) ? 'var(--text-muted)' : (ecartDetecte !== null ? 'var(--color-danger)' : 'var(--text-main)') }}
-                      >
-                          {ecartDetecte !== null ? "Justifier et Sceller" : "Sceller la caisse"}
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {confirmDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>{confirmDialog.titre}</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>{confirmDialog.message}</p>
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setConfirmDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmDialog.action} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>{confirmDialog.btnTexte}</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {modifStockDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '360px'}}>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Modifier le stock</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px'}}>{modifStockDialog.nom}</p>
-                  <input type="number" min="0" value={modifStockDialog.valeur} onChange={(e) => setModifStockDialog({ ...modifStockDialog, valeur: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '16px', textAlign: 'center'}} autoFocus />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setModifStockDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmerModifStock} style={{flex: 1, background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Enregistrer</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {modifNomDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '360px'}}>
-                  <h2 style={{margin: '0 0 20px 0', color: 'var(--text-main)', fontSize: '20px'}}>Renommer la prestation</h2>
-                  <input type="text" value={modifNomDialog.nom} onChange={(e) => setModifNomDialog({ ...modifNomDialog, nom: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '14px'}} autoFocus />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setModifNomDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmerModifNom} disabled={!modifNomDialog.nom.trim()} style={{flex: 1, background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: modifNomDialog.nom.trim() ? 'pointer' : 'not-allowed', opacity: modifNomDialog.nom.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Enregistrer</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {annulationDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Annuler ce paiement</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>Cette action génère un ticket de compensation (Loi NF525). Vous pouvez annuler le ticket entier ou sélectionner des articles spécifiques.</p>
-                  
-                  {annulationDialog.lignes && annulationDialog.lignes.length > 0 && (
-                      <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '16px', maxHeight: '150px', overflowY: 'auto'}}>
-                          <div style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px'}}>ARTICLES REMBOURSABLES :</div>
-                          {annulationDialog.lignes.map(ligne => {
-                              const inList = annulationDialog.lignes_a_annuler.find(l => l.id_article === ligne.id_article);
-                              const qte = inList ? inList.quantite : 0;
-                              return (
-                                  <div key={ligne.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '13px'}}>
-                                      <div style={{display: 'flex', flexDirection: 'column'}}>
-                                          <span style={{color: 'var(--text-main)', fontWeight: '500'}}>{ligne.nom_article_snapshot}</span>
-                                          <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>{ligne.prix_unitaire_ttc} € / unité (Max: {ligne.quantite_restante})</span>
-                                      </div>
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', padding: '2px'}}>
-                                          <button onClick={() => {
-                                              if (qte === 0) return;
-                                              const newLignes = [...annulationDialog.lignes_a_annuler];
-                                              if (qte === 1) {
-                                                  setAnnulationDialog({...annulationDialog, lignes_a_annuler: newLignes.filter(l => l.id_article !== ligne.id_article)});
-                                              } else {
-                                                  const idx = newLignes.findIndex(l => l.id_article === ligne.id_article);
-                                                  newLignes[idx].quantite -= 1;
-                                                  setAnnulationDialog({...annulationDialog, lignes_a_annuler: newLignes});
-                                              }
-                                          }} style={{background: 'none', border: 'none', padding: '4px 8px', cursor: 'pointer', color: 'var(--text-main)'}}>-</button>
-                                          <span style={{fontWeight: 'bold', minWidth: '16px', textAlign: 'center'}}>{qte}</span>
-                                          <button onClick={() => {
-                                              if (qte >= ligne.quantite_restante) return;
-                                              const newLignes = [...annulationDialog.lignes_a_annuler];
-                                              const idx = newLignes.findIndex(l => l.id_article === ligne.id_article);
-                                              if (idx >= 0) newLignes[idx].quantite += 1;
-                                              else newLignes.push({id_article: ligne.id_article, quantite: 1});
-                                              setAnnulationDialog({...annulationDialog, lignes_a_annuler: newLignes});
-                                          }} style={{background: 'none', border: 'none', padding: '4px 8px', cursor: 'pointer', color: 'var(--text-main)'}}>+</button>
-                                      </div>
-                                  </div>
-                              );
-                          })}
-                          {annulationDialog.lignes_a_annuler.length === 0 && (
-                              <div style={{fontSize: '11px', color: 'var(--color-danger)', marginTop: '8px', fontStyle: 'italic'}}>Aucun article sélectionné = Annulation totale du ticket.</div>
-                          )}
-                      </div>
-                  )}
-
-                  <textarea value={annulationDialog.motif} onChange={(e) => setAnnulationDialog({ ...annulationDialog, motif: e.target.value })} placeholder="Motif de l'annulation (ex : erreur de saisie, geste commercial...)" rows={3} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical'}} autoFocus />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setAnnulationDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Retour</button>
-                      <button onClick={confirmerAnnulationTicket} disabled={!annulationDialog.motif.trim()} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: annulationDialog.motif.trim() ? 'pointer' : 'not-allowed', opacity: annulationDialog.motif.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Confirmer l'annulation</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {cancellationRobot && (
-          <div className="modal-overlay" style={{ zIndex: 10000 }}>
-              <div className="modal-content" style={{textAlign: 'left', maxWidth: '500px', width: '90%'}}>
-                  <div style={{color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                  </div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px', textAlign: 'center'}}>Détection de RDV</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5', textAlign: 'center'}}>
-                      <strong>{cancellationRobot.nom_employe}</strong> a <strong>{cancellationRobot.rdvs.length} RDV</strong> sur cette période. Décochez ceux que vous allez confier à un autre coiffeur, et annulez le reste.
-                  </p>
-
-                  <div style={{marginBottom: '16px'}}>
-                      <label style={{fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px', display: 'block'}}>Message envoyé</label>
-                      <textarea 
-                          value={cancelMessageTemplate} 
-                          onChange={(e) => setCancelMessageTemplate(e.target.value)}
-                          style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: '13px', minHeight: '80px', resize: 'vertical'}}
-                      />
-                      <span style={{fontSize: '10px', color: 'var(--text-muted)'}}>Les balises [Prénom], [Date] et [Lien] s'adapteront à chaque client.</span>
-                  </div>
-
-                  <div style={{maxHeight: '200px', overflowY: 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '8px', marginBottom: '24px'}}>
-                      {cancellationRobot.rdvs.map(rdv => {
-                          const hasPhone = rdv.telephone_client && rdv.telephone_client.trim().length >= 9;
-                          return (
-                              <label key={rdv.id_rdv} style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '10px', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', opacity: selectedCancelRdvs.includes(rdv.id_rdv) ? 1 : 0.6}}>
-                                  <input 
-                                      type="checkbox" 
-                                      checked={selectedCancelRdvs.includes(rdv.id_rdv)} 
-                                      onChange={() => {
-                                          if (selectedCancelRdvs.includes(rdv.id_rdv)) {
-                                              setSelectedCancelRdvs(selectedCancelRdvs.filter(id => id !== rdv.id_rdv));
-                                          } else {
-                                              setSelectedCancelRdvs([...selectedCancelRdvs, rdv.id_rdv]);
-                                          }
-                                      }}
-                                      style={{width: '18px', height: '18px', accentColor: 'var(--btn-primary)'}}
-                                  />
-                                  <div style={{flex: 1}}>
-                                      <div style={{fontWeight: 'bold', fontSize: '14px', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between'}}>
-                                          <span>{rdv.nom_client || 'Client inconnu'}</span>
-                                          <span style={{fontSize: '12px', fontWeight: 'normal'}}>{new Date(rdv.date_heure_debut.replace('Z', '')).toLocaleString('fr-FR', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
-                                      </div>
-                                      <div style={{fontSize: '12px', color: hasPhone ? 'var(--text-secondary)' : 'var(--color-danger)', fontWeight: hasPhone ? 'normal' : 'bold', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px'}}>
-                                          {hasPhone ? `📞 ${rdv.telephone_client} - ${rdv.prestation}` : `⚠️ Aucun numéro - Appel manuel requis`}
-                                      </div>
-                                  </div>
-                              </label>
-                          )
-                      })}
-                  </div>
-
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => { setCancellationRobot(null); chargerTout(); setRefreshTrigger(prev => prev + 1); }} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
-                          Ignorer
-                      </button>
-                      <button onClick={async () => {
-                          try {
-                              if (selectedCancelRdvs.length === 0) {
-                                  showToast("Aucun rendez-vous sélectionné", "info");
-                                  setCancellationRobot(null);
-                                  chargerTout(); setRefreshTrigger(prev => prev + 1);
-                                  return;
-                              }
-                              const res = await fetch('https://api-salon-backend.onrender.com/api/rdv/mass-cancel', {
-                                  method: 'POST', headers: getAuthHeaders(true),
-                                  body: JSON.stringify({ rdv_ids: selectedCancelRdvs, id_employe: cancellationRobot.id_employe, message_personnalise: cancelMessageTemplate })
-                              });
-                              const data = await handleFetchError(res);
-                              showToast(data.message, "success");
-                              setCancellationRobot(null);
-                              chargerTout(); setRefreshTrigger(prev => prev + 1);
-                          } catch (e) { showToast(e.message || "Erreur d'annulation", "error"); }
-                      }} style={{flex: 2, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
-                          Envoyer ({selectedCancelRdvs.length})
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {auditNf525 && (
-          <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '450px'}}>
-                  <div style={{color: auditNf525.conforme ? 'var(--color-success)' : 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      {auditNf525.conforme 
-                          ? <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                          : <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                      }
-                  </div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>
-                      {auditNf525.conforme ? "Base de données intègre" : "Altération détectée"}
-                  </h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>
-                      {auditNf525.conforme 
-                          ? "Le chaînage cryptographique est parfaitement valide. Aucune donnée financière n'a été altérée." 
-                          : "Le système a détecté une rupture dans la chaîne cryptographique !"}
-                  </p>
-                  <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '13px'}}>
-                      <div style={{marginBottom: '8px'}}><strong>Tickets vérifiés :</strong> {auditNf525.total_tickets_verifies}</div>
-                      <div style={{marginBottom: '8px'}}><strong>Clôtures (Z) vérifiées :</strong> {auditNf525.total_z_verifies}</div>
-                      <div><strong>Journaux Techniques (JET) :</strong> {auditNf525.total_jet_verifies}</div>
-                  </div>
-                  
-                  {auditNf525.erreurs && auditNf525.erreurs.length > 0 && (
-                      <div style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '12px', maxHeight: '100px', overflowY: 'auto'}}>
-                          {auditNf525.erreurs.map((err, i) => <div key={i}>• {err}</div>)}
-                      </div>
-                  )}
-                  
-                  {auditNf525.alertes && auditNf525.alertes.length > 0 && (
-                      <div style={{background: 'var(--bg-info)', color: 'var(--color-info)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '12px', maxHeight: '100px', overflowY: 'auto'}}>
-                          {auditNf525.alertes.map((al, i) => <div key={i}>• {al}</div>)}
-                      </div>
-                  )}
-
-                  <button onClick={() => setAuditNf525(null)} className="btn-action" style={{width: '100%'}}>Fermer</button>
-              </div>
-          </div>
-      )}
-
-      {sauvetageClient && (
-          <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{maxWidth: '400px'}}>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '18px'}}>Sauver ce client</h2>
-                  <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px'}}>Envoyez un SMS d'excuse avec une offre pour le faire revenir.</p>
-                  <textarea className="input-fournisseur" rows={4} value={smsSauvetage} onChange={e => setSmsSauvetage(e.target.value)} style={{width: '100%', boxSizing: 'border-box', marginBottom: '16px', fontSize: '13px', resize: 'vertical'}} />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setSauvetageClient(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Annuler</button>
-                      <button onClick={envoyerSmsSauvetage} className="btn-action" style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none'}}>Envoyer le SMS</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {showPricingModal && (
-          <PricingModal 
-              onClose={() => setShowPricingModal(false)}
-              isSoftLock={isSoftLock}
-              isHardLock={isHardLock}
-              joursRestants={joursRestantsEssai}
-              token={token}
-              onSubscribe={async (plan, cycle) => {
-                  try {
-                      const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', { 
-                          method: 'POST', 
-                          headers: getAuthHeaders(true), 
-                          body: JSON.stringify({ plan_choisi: plan, cycle_choisi: cycle }) 
-                      });
-                      
-                      const data = await res.json().catch(() => ({}));
-                      
-                      if (!res.ok) {
-                          // On remplace le toast caché par une alerte native bloquante
-                          alert(`🚨 STRIPE A BLOQUÉ : \n\n${data.erreur || "Erreur serveur"}`);
-                          return;
-                      }
-
-                      if (data.url) {
-                          window.location.href = data.url;
-                      } else if (data.success) {
-                          setShowPricingModal(false);
-                          showToast(data.message, "success");
-                      }
-                  } catch (err) {
-                      alert(`🚨 ERREUR RÉSEAU STRIPE : \n\n${err.message}`);
-                  }
-              }}
-          />
-      )}
-
-            {toast && (
-        <div className={`toast-notification ${toast.type}`}>
-          {toast.message}
-        </div>
-      )}
-    </div>
-    </>
-  );
 }
 
-export default App;
+console.log("Étape 3 : Configuration d'Express et WebSockets...");
+const app = express();
+
+// 🚨 SÉCURITÉ : Restriction stricte des origines + Autorisation des Cookies (credentials)
+const corsOptions = {
+    origin: ['https://app-salon-caiss.onrender.com', 'http://localhost:5173', 'http://localhost:3000'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature'],
+    credentials: true
+};
+app.use(cors(corsOptions));
+
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
+    res.json({ message: "Déconnecté" });
+});
+
+// Générateur de token public (sans signature) exclusif à l'interface React
+function generateUIToken(payload) {
+    return Buffer.from(JSON.stringify({alg: "none"})).toString('base64url') + "." + 
+           Buffer.from(JSON.stringify(payload)).toString('base64url') + ".";
+}
+
+const server = http.createServer(app);
+const io = new Server(server, { cors: corsOptions });
+
+io.on('connection', (socket) => {
+    socket.on('rejoindreSalon', (id_salon) => {
+        const cookieHeader = socket.request.headers.cookie;
+        let token = null;
+        if (cookieHeader) {
+            const cookies = cookieHeader.split(';').map(c => c.trim());
+            const tokenCookie = cookies.find(c => c.startsWith('token='));
+            if (tokenCookie) token = tokenCookie.split('=')[1];
+        }
+        try {
+            const user = jwt.verify(token, process.env.JWT_SECRET);
+            if (String(user.id_salon) !== String(id_salon)) return; 
+            socket.join(id_salon.toString());
+        } catch (e) { /* ignoré silencieusement */ }
+    });
+});
+
+const abonnesSSE = new Map();
+
+function envoyerEvenementSSE(id_salon, nomEvenement, data = {}) {
+    const room = id_salon.toString();
+    const clients = abonnesSSE.get(room);
+    if (!clients || clients.size === 0) return;
+    const payload = `event: ${nomEvenement}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of clients) res.write(payload);
+}
+
+app.get('/api/events/:id_salon', verifierToken, (req, res) => {
+    if (String(req.user.id_salon) !== req.params.id_salon) return res.status(403).end();
+    
+    const room = req.params.id_salon;
+    req.setTimeout(0); res.socket.setTimeout(0); res.socket.setNoDelay(true);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+
+    if (!abonnesSSE.has(room)) abonnesSSE.set(room, new Set());
+    abonnesSSE.get(room).add(res);
+    res.write(`event: connected\ndata: {}\n\n`);
+
+    const heartbeat = setInterval(() => { res.write(`event: heartbeat\ndata: {}\n\n`); }, 15000);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        abonnesSSE.get(room)?.delete(res);
+    });
+});
+
+app.use((req, res, next) => {
+  if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { next(); } 
+  else { express.json({ limit: '10mb' })(req, res, next); }
+});
+
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT
+});
+
+pool.query(`
+    CREATE TABLE IF NOT EXISTS ia_taches_attente (id_tache SERIAL PRIMARY KEY, id_salon INT, type_tache VARCHAR(50), donnees JSONB, statut VARCHAR(20) DEFAULT 'ATTENTE', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS taches_actions (id_tache SERIAL PRIMARY KEY, id_salon INT, titre VARCHAR(255), description TEXT, date_echeance DATE, statut VARCHAR(20) DEFAULT 'A_FAIRE', source VARCHAR(20) DEFAULT 'MANUEL', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS avis_demandes (id_demande SERIAL PRIMARY KEY, id_salon INT, telephone VARCHAR(30), prenom VARCHAR(100), token VARCHAR(64) UNIQUE, id_rdv INT, statut VARCHAR(20) DEFAULT 'EN_ATTENTE', note INT, commentaire TEXT, date_prevue TIMESTAMP DEFAULT NOW(), date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE avis_demandes ADD COLUMN IF NOT EXISTS id_employe INT;
+    ALTER TABLE taches_actions ADD COLUMN IF NOT EXISTS donnees JSONB;
+    CREATE TABLE IF NOT EXISTS sms_opt_out (id_salon INT, telephone VARCHAR(20), date_creation TIMESTAMP DEFAULT NOW(), PRIMARY KEY (id_salon, telephone));
+    CREATE TABLE IF NOT EXISTS protocoles (id_protocole SERIAL PRIMARY KEY, id_salon INT, nom_prestation VARCHAR(255), description TEXT, photo_url TEXT, delai_livraison_jours INT DEFAULT 3, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS etapes JSONB DEFAULT '[]';
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS delai_livraison_jours INT DEFAULT 3;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
+    CREATE TABLE IF NOT EXISTS recettes_articles (id_recette SERIAL PRIMARY KEY, id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE, id_article INT, quantite_necessaire NUMERIC(10,2) DEFAULT 1);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS date_naissance DATE;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS points_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS tampons_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS derniere_visite DATE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_type VARCHAR(20) DEFAULT 'NONE';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_points_seuil INT DEFAULT 100;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_points_valeur VARCHAR(50) DEFAULT '10';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_tampons_seuil INT DEFAULT 10;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_recompense_type VARCHAR(20) DEFAULT 'MONTANT';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_recompense_valeur VARCHAR(50) DEFAULT '10';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_delai_sms INT DEFAULT 60;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recompense_utilisee BOOLEAN DEFAULT FALSE;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS est_gerant BOOLEAN DEFAULT FALSE;
+    ALTER TABLE employes ALTER COLUMN code_pin TYPE VARCHAR(255);
+    
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS telephone_gerant VARCHAR(20);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS alertes_sms_actives BOOLEAN DEFAULT FALSE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email_comptable VARCHAR(255);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS jour_envoi_bilan INT DEFAULT 1;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS derniere_verif_stock DATE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pin_salon VARCHAR(255);
+    ALTER TABLE configuration_salon ALTER COLUMN pin_salon TYPE VARCHAR(255);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_temp_offline VARCHAR(64);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS date_synchro_hors_ligne TIMESTAMP;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_id_temp_offline ON tickets (id_salon, id_temp_offline) WHERE id_temp_offline IS NOT NULL;
+
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type_ticket VARCHAR(20) DEFAULT 'VENTE';
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_ticket_origine INT REFERENCES tickets(id_ticket);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS motif_annulation TEXT;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS est_compense BOOLEAN DEFAULT FALSE;
+
+    ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS nom_article_snapshot VARCHAR(255);
+    ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS taux_tva_snapshot NUMERIC(5,2) DEFAULT 20.00;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS taux_tva NUMERIC(5,2) DEFAULT 20.00;
+
+    CREATE TABLE IF NOT EXISTS jet_logs (id_jet SERIAL PRIMARY KEY, id_salon INT NOT NULL, action VARCHAR(50) NOT NULL, details JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP, hash_precedent VARCHAR(64), hash_jet VARCHAR(64));
+    CREATE INDEX IF NOT EXISTS idx_jet_logs_salon_date ON jet_logs (id_salon, date_creation);
+
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS id_cloture SERIAL;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS date_cloture DATE;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ferme_par VARCHAR(100) DEFAULT 'Non spécifié';
+    
+    -- Nouvelles colonnes pour le Z de caisse complet
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS fond_caisse_matin NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_theorique NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_reel NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ecart_caisse NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS justification_ecart TEXT;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS est_cloture_automatique BOOLEAN DEFAULT FALSE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compteur_tickets INT DEFAULT 0;
+
+    -- NOUVELLE TABLE : Petite caisse et régularisations
+    CREATE TABLE IF NOT EXISTS mouvements_caisse (
+        id_mouvement SERIAL PRIMARY KEY,
+        id_salon INT,
+        id_employe INT,
+        type_mouvement VARCHAR(50) NOT NULL, -- 'ENTREE', 'SORTIE', 'REGULARISATION'
+        montant NUMERIC(10, 2) NOT NULL,
+        motif TEXT NOT NULL,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS siret VARCHAR(50);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS tva_intra VARCHAR(50);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS adresse_salon TEXT;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS frequence_paiement VARCHAR(20) DEFAULT 'MENSUEL';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS date_fin_essai TIMESTAMP;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS sms_envoyes_mois INT DEFAULT 0;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS mois_en_cours VARCHAR(7);
+    ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS _subscription_id VARCHAR(255);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_banque VARCHAR(20) DEFAULT '512000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_caisse VARCHAR(20) DEFAULT '530000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_prestations VARCHAR(20) DEFAULT '706000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_produits VARCHAR(20) DEFAULT '707000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_tva VARCHAR(20) DEFAULT '445710';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pennylane_api_key VARCHAR(255);
+
+    CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+
+    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+
+    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS absences_employes (
+        id_absence SERIAL PRIMARY KEY,
+        id_salon INT NOT NULL,
+        id_employe INT NOT NULL,
+        type_demande VARCHAR(20) NOT NULL, 
+        nature_absence VARCHAR(50) NOT NULL, 
+        type_prolongation VARCHAR(20) DEFAULT 'INITIAL', 
+        date_debut DATE NOT NULL,
+        moment_debut VARCHAR(10) DEFAULT 'MATIN', 
+        date_fin DATE NOT NULL,
+        moment_fin VARCHAR(10) DEFAULT 'APRES_MIDI', 
+        heures_sortie VARCHAR(100), 
+        commentaire TEXT,
+        fichier_cle_r2 TEXT, 
+        statut VARCHAR(20) DEFAULT 'EN_ATTENTE', 
+        motif_refus TEXT,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '{}';
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS vu_par JSONB DEFAULT '[]';
+    
+    CREATE TABLE IF NOT EXISTS push_subscriptions (id_sub SERIAL PRIMARY KEY, id_salon INT, role VARCHAR(20), id_employe INT, endpoint TEXT, keys JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+`).then(async () => {
+    try {
+        await pool.query(`CREATE TABLE IF NOT EXISTS vapid_keys (id INT PRIMARY KEY, public_key TEXT, private_key TEXT)`);
+        const res = await pool.query('SELECT * FROM vapid_keys WHERE id = 1');
+        if (res.rowCount === 0) {
+            const keys = webpush.generateVAPIDKeys();
+            await pool.query('INSERT INTO vapid_keys (id, public_key, private_key) VALUES (1, $1, $2)', [keys.publicKey, keys.privateKey]);
+            vapidPublicKey = keys.publicKey;
+            vapidPrivateKey = keys.privateKey;
+            console.log("✅ Nouvelles clés VAPID générées et sauvegardées en BDD.");
+        } else {
+            vapidPublicKey = res.rows[0].public_key;
+            vapidPrivateKey = res.rows[0].private_key;
+            console.log("✅ Clés VAPID (Push) chargées depuis la BDD.");
+        }
+        webpush.setVapidDetails('mailto:contact@stack.fr', vapidPublicKey, vapidPrivateKey);
+    } catch (e) { console.error("Erreur init VAPID:", e); }
+
+    try {
+        await pool.query(`UPDATE clotures_caisse SET date_cloture = DATE(date_creation) WHERE date_cloture IS NULL;`);
+        await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_DATE;`);
+        await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture); END IF; END $$;`);
+        
+        // 🚨 SÉCURITÉ NF525 : Triggers stricts anti-altération et anti-suppression
+        await pool.query(`
+            CREATE OR REPLACE FUNCTION nf525_prevent_alteration() RETURNS TRIGGER AS $$
+            BEGIN
+                -- 🚨 SUPPRESSION DE LA PORTE DÉROBÉE : L'inaltérabilité NF525 est désormais absolue.
+                -- Aucun compte, pas même le Super-Admin, ne peut contourner ce blocage.
+
+                IF TG_OP = 'DELETE' THEN
+                    RAISE EXCEPTION 'Action bloquée (NF525) : Suppression interdite sur la table %', TG_TABLE_NAME;
+                END IF;
+                
+                IF TG_OP = 'UPDATE' THEN
+                    IF TG_TABLE_NAME = 'tickets' THEN
+                        -- Liste stricte des champs intouchables. 
+                        -- Seuls "hash_ticket" (si NULL à la base) et "est_compense" peuvent être modifiés par le code.
+                        IF OLD.total_ttc IS DISTINCT FROM NEW.total_ttc 
+                           OR OLD.numero_ticket_caisse IS DISTINCT FROM NEW.numero_ticket_caisse 
+                           OR OLD.date_creation IS DISTINCT FROM NEW.date_creation 
+                           OR OLD.methode_paiement IS DISTINCT FROM NEW.methode_paiement
+                           OR OLD.statut IS DISTINCT FROM NEW.statut
+                           OR OLD.type_ticket IS DISTINCT FROM NEW.type_ticket
+                           OR OLD.id_employe IS DISTINCT FROM NEW.id_employe
+                           OR OLD.id_client IS DISTINCT FROM NEW.id_client
+                           OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Altération des données fiscales, de paiement ou de traçabilité interdite.';
+                        END IF;
+                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'clotures_caisse', 'jet_logs', 'mouvements_caisse') THEN
+                        RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table %', TG_TABLE_NAME;
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            DROP TRIGGER IF EXISTS trigger_nf525_tickets ON tickets;
+            CREATE TRIGGER trigger_nf525_tickets BEFORE DELETE OR UPDATE ON tickets FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+            
+            -- Sécurisation des lignes de vente (TVA et Articles) manquante dans la V1
+            DROP TRIGGER IF EXISTS trigger_nf525_lignes ON lignes_ticket;
+            CREATE TRIGGER trigger_nf525_lignes BEFORE DELETE OR UPDATE ON lignes_ticket FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            DROP TRIGGER IF EXISTS trigger_nf525_clotures ON clotures_caisse;
+            CREATE TRIGGER trigger_nf525_clotures BEFORE DELETE OR UPDATE ON clotures_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            DROP TRIGGER IF EXISTS trigger_nf525_jet ON jet_logs;
+            CREATE TRIGGER trigger_nf525_jet BEFORE DELETE OR UPDATE ON jet_logs FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            -- 🚨 Sécurisation NF525 de la nouvelle table de mouvements d'espèces
+            DROP TRIGGER IF EXISTS trigger_nf525_mouvements ON mouvements_caisse;
+            CREATE TRIGGER trigger_nf525_mouvements BEFORE DELETE OR UPDATE ON mouvements_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+        `);
+    } catch (e) { console.error("Erreur Triggers NF525:", e); }
+}).catch((e) => console.error("Erreur Init DB:", e));
+
+async function envoyerNotificationPush(id_salon, cible, payload) {
+    try {
+        let query = 'SELECT endpoint, keys FROM push_subscriptions WHERE id_salon = $1';
+        let params = [id_salon];
+
+        if (cible && cible.type === 'employe') {
+            query += " AND role = 'employe' AND id_employe = $2";
+            params.push(cible.id_employe);
+        } else if (cible === 'gerant') {
+            query += " AND role = 'gerant'";
+        } else if (cible === 'employes') {
+            query += " AND role = 'employe'";
+        }
+        // cible === 'salon' (message de groupe) : aucun filtre, tout le monde est notifié
+
+        const subs = await pool.query(query, params);
+        if (subs.rowCount === 0) return;
+
+        for (let sub of subs.rows) {
+            try {
+                await webpush.sendNotification({
+                    endpoint: sub.endpoint,
+                    keys: sub.keys
+                }, JSON.stringify(payload));
+            } catch (err) {
+                // Si l'abonnement n'est plus valide (ex: utilisateur a retiré la permission)
+                if (err.statusCode === 410 || err.statusCode === 404) {
+                    await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [sub.endpoint]);
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Erreur d'envoi Push :", e);
+    }
+}
+
+function verifierToken(req, res, next) {
+    const cookieHeader = req.headers.cookie;
+    let token = null;
+    if (cookieHeader) {
+        const cookies = cookieHeader.split(';').map(c => c.trim());
+        const tokenCookie = cookies.find(c => c.startsWith('token='));
+        if (tokenCookie) token = tokenCookie.split('=')[1];
+    }
+    
+    // Tolérance : on garde l'en-tête Authorization comme plan B temporaire
+    if (!token) {
+        const authHeader = req.headers['authorization'];
+        token = authHeader && authHeader.split(' ')[1]; 
+    }
+
+    if (!token) return res.status(401).json({ erreur: "Accès refusé." });
+    
+    jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
+        if (err) return res.status(403).json({ erreur: "Token expiré ou invalide." });
+        try {
+            const conf = await pool.query('SELECT plan_actuel, date_fin_essai FROM configuration_salon WHERE id_salon = $1', [user.id_salon]);
+            if (conf.rowCount > 0) {
+                user.plan_actuel = conf.rows[0].plan_actuel;
+                user.date_fin_essai = conf.rows[0].date_fin_essai;
+            }
+
+            if (user.role === 'gerant') {
+                const isTrialing = user.plan_actuel === 'PREMIUM_TRIAL';
+                const result = await pool.query('SELECT statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
+                const statutSub = result.rowCount > 0 ? result.rows[0].statut_abonnement : 'inactif';
+                
+                // On bloque l'accès UNIQUEMENT s'il n'a pas payé ET qu'il n'est plus en essai
+                if (statutSub !== 'actif' && !isTrialing) { 
+                    return res.status(402).json({ erreur: "Paiement requis.", require_payment: true }); 
+                }
+            }
+            req.user = user; 
+            next(); 
+        } catch (e) { return res.status(500).json({ erreur: "Erreur vérification." }); }
+    });
+};
+
+const verifierPlan = (plansAutorises) => {
+    return (req, res, next) => {
+        const plan = req.user.plan_actuel;
+        if (plan === 'PREMIUM_TRIAL' || plansAutorises.includes(plan)) {
+            return next();
+        }
+        return res.status(403).json({ erreur: "Accès refusé. Cette fonctionnalité nécessite un forfait supérieur.", require_upsell: true });
+    };
+};
+
+async function envoyerSMS_Intelligent(id_salon, apiKey, senderName, telephone, contenu) {
+    try {
+        const conf = await pool.query("SELECT plan_actuel, sms_envoyes_mois, mois_en_cours FROM configuration_salon WHERE id_salon = $1", [id_salon]);
+        if (conf.rowCount === 0) return false;
+        
+        const { plan_actuel, sms_envoyes_mois, mois_en_cours } = conf.rows[0];
+        const moisActuel = new Date().toISOString().slice(0, 7);
+        let compteur = mois_en_cours === moisActuel ? sms_envoyes_mois : 0;
+        
+        if (plan_actuel === 'ESSENTIEL' && compteur >= 100) {
+            console.log(`[SMS] Limite atteinte (100) pour le salon ${id_salon}`);
+            return false;
+        }
+
+        const res = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST', headers: { 'accept': 'application/json', 'api-key': apiKey, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (senderName || 'LeSalon').substring(0, 11), recipient: telephone, content: contenu })
+        });
+
+        if (res.ok) {
+            await pool.query("UPDATE configuration_salon SET sms_envoyes_mois = $1, mois_en_cours = $2 WHERE id_salon = $3", [compteur + 1, moisActuel, id_salon]);
+            return true;
+        }
+        return false;
+    } catch (e) {
+        console.error("Erreur Envoi SMS:", e);
+        return false;
+    }
+}
+
+async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
+    try {
+        await dbClient.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+        const dernier = await dbClient.query('SELECT hash_jet FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet DESC LIMIT 1', [id_salon]);
+        const hashPrecedent = dernier.rowCount > 0 ? dernier.rows[0].hash_jet : 'GENESIS_JET';
+        const dateISO = new Date().toISOString();
+        const detailsJSON = JSON.stringify(details || {});
+        const hashJet = crypto.createHash('sha256').update(`${id_salon}-${action}-${detailsJSON}-${dateISO}-${hashPrecedent}`).digest('hex');
+        await dbClient.query('INSERT INTO jet_logs (id_salon, action, details, date_creation, hash_precedent, hash_jet) VALUES ($1, $2, $3, $4, $5, $6)', [id_salon, action, detailsJSON, dateISO, hashPrecedent, hashJet]);
+        return hashJet;
+    } catch (e) { return null; }
+}
+
+const verifierClotureZ = async (req, res, next) => {
+    const id_salon = req.user.id_salon;
+    const idTemp = req.body && req.body._id_temp ? String(req.body._id_temp).slice(0, 64) : null;
+    try {
+        let dateTicket = null; // null = ticket encaissé en direct
+        if (idTemp) {
+            if (req.body.methode_paiement === 'CARTE') return res.status(400).json({ erreur: "Un paiement par carte ne peut pas être enregistré hors-ligne." });
+            // Anti-doublon : ticket déjà synchronisé -> on répond OK sans rien recréer
+            const doublon = await pool.query('SELECT id_ticket FROM tickets WHERE id_salon = $1 AND id_temp_offline = $2', [id_salon, idTemp]);
+            if (doublon.rowCount > 0) return res.json({ message: "Ticket déjà synchronisé.", id_ticket: doublon.rows[0].id_ticket, deja_synchronise: true });
+            // On conserve la vraie date d'encaissement (max 7 jours, pas dans le futur) si son jour n'est pas déjà clôturé
+            const d = new Date(req.body.date_creation);
+            const maintenant = Date.now();
+            if (!isNaN(d) && d.getTime() <= maintenant + 5 * 60 * 1000 && d.getTime() >= maintenant - 7 * 24 * 3600 * 1000) {
+                const ferme = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE($2::timestamp)', [id_salon, d.toISOString()]);
+                if (ferme.rowCount === 0) dateTicket = d.toISOString();
+            }
+        }
+        req.dateTicketEffective = dateTicket;
+        req.idTempOffline = idTemp;
+        const jourBloquant = await pool.query(
+            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < DATE(COALESCE($2::timestamp, NOW())) AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`, [id_salon, dateTicket]
+        );
+        if (jourBloquant.rowCount > 0 && jourBloquant.rows[0].jour) {
+            return res.status(423).json({ erreur: `Clôture (Z) manquante pour le ${new Date(jourBloquant.rows[0].jour).toLocaleDateString()}. Effectuez la clôture avant d'encaisser.`, z_manquant: jourBloquant.rows[0].jour });
+        }
+        next();
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification clôture." }); }
+};
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limite stricte
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        // Isole le compteur par IP, par type de connexion (route) et par cible (ID du salon ou email)
+        const cible = req.body.id_salon || req.body.email || 'global';
+        return `${req.ip}_${req.path}_${cible}`;
+    },
+    message: { erreur: "Trop de tentatives pour ce compte. Veuillez patienter 15 minutes avant de réessayer." }
+});
+
+app.post('/api/register', authLimiter, async (req, res) => {
+    const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const checkEmail = await clientDB.query('SELECT email FROM utilisateurs WHERE email = $1', [email]);
+        if (checkEmail.rowCount > 0) throw new Error('Cet e-mail est déjà utilisé.');
+        const hash = await bcrypt.hash(mot_de_passe, 10);
+        
+        const salonResult = await clientDB.query(
+            "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
+            [nom_salon || 'Nouveau Salon']
+        );
+        const idNouveauSalon = salonResult.rows[0].id_salon;
+        let customerId = null;
+        try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
+        await clientDB.query('INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']); 
+        
+        const defaultPinHash = await bcrypt.hash('0000', 10);
+        await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)", [nom_gerant || 'Patron', idNouveauSalon, defaultPinHash]);
+
+        await clientDB.query('COMMIT');
+        const payload = { id_salon: idNouveauSalon, role: 'gerant', email };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 24 * 60 * 60 * 1000 });
+        
+        // IMPORTANT: Renvoie le vrai token_api nécessaire au module légal juste après
+        res.status(201).json({ message: "Inscription réussie", ui_token: generateUIToken(payload), token_api: token });
+    } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
+});
+
+app.post('/api/login', authLimiter, async (req, res) => {
+    const { email, mot_de_passe } = req.body;
+    try {
+        const result = await pool.query('SELECT id_salon, mot_de_passe_hash, statut_abonnement FROM utilisateurs WHERE email = $1 LIMIT 1', [email]);
+        if (result.rowCount > 0) {
+            const { id_salon, mot_de_passe_hash, statut_abonnement } = result.rows[0];
+            const match = await bcrypt.compare(mot_de_passe, mot_de_passe_hash);
+             if (match) {
+                const payload = { id_salon, role: 'gerant', email };
+                const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+                res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 24 * 60 * 60 * 1000 });
+                await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { email, role: 'gerant' });
+                res.json({ message: "Connexion réussie", ui_token: generateUIToken(payload), token_api: token, statut_abonnement });
+            } else {
+                await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { email, raison: 'mot_de_passe_incorrect' });
+                res.status(401).json({ erreur: "Mot de passe incorrect." });
+            }
+        } else { res.status(401).json({ erreur: "Aucun compte trouvé avec cet e-mail." }); }
+    } catch (error) { res.status(500).json({ erreur: "Erreur serveur." }); }
+});
+
+app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
+    const { id_salon, nom_employe, code_pin } = req.body;
+    try {
+        const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
+        if (result.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable." });
+        const emp = result.rows[0];
+        
+        let pinMatch = false;
+        if (emp.code_pin && emp.code_pin.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(code_pin, emp.code_pin);
+        } else {
+            pinMatch = (emp.code_pin === code_pin); // Fallback pour vos anciens PINs en clair
+        }
+
+        if (!pinMatch) {
+            await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { nom_employe, raison: 'pin_incorrect' });
+            return res.status(401).json({ erreur: "Code PIN invalide." });
+        }
+        const payload = { id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '12h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 12 * 60 * 60 * 1000 });
+        await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { nom_employe: emp.nom, role: 'employe', id_employe: emp.id_employe });
+        res.json({ message: "Accès employé autorisé", ui_token: generateUIToken(payload), token_api: token, employe: { id: emp.id_employe, nom: emp.nom } });
+    } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
+});
+
+app.post('/api/salon/login-pin', authLimiter, async (req, res) => {
+    const { id_salon, pin } = req.body;
+    try {
+        const result = await pool.query('SELECT id_salon, pin_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        if (result.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
+        const salon = result.rows[0];
+        
+        let pinMatch = false;
+        if (salon.pin_salon && salon.pin_salon.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(pin, salon.pin_salon);
+        } else {
+            pinMatch = (salon.pin_salon === pin); // Fallback pour les anciens PINs
+        }
+
+        if (!salon.pin_salon || !pinMatch) {
+            await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { raison: 'pin_salon_incorrect' });
+            return res.status(401).json({ erreur: "Code PIN invalide." });
+        }
+        const payload = { id_salon: salon.id_salon, role: 'salon' };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '18h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 18 * 60 * 60 * 1000 });
+        await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { role: 'salon' });
+        res.json({ message: "Accès salon autorisé", ui_token: generateUIToken(payload), token_api: token });
+    } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
+});
+
+app.post('/api/forgot-password', authLimiter, async (req, res) => {
+    const { email } = req.body;
+    try {
+        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ erreur: "Serveur mail non configuré." });
+        const result = await pool.query('SELECT id_user FROM utilisateurs WHERE email = $1', [email]);
+        if (result.rowCount === 0) return res.json({ message: "Si cet email existe, un lien a été envoyé." });
+        const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '15m' });
+        const resetLink = `https://app-salon-caiss.onrender.com/?resetToken=${resetToken}`;
+        let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+        await transporter.sendMail({ from: `"Support SaaS Caisse" <${process.env.SMTP_USER}>`, to: email, subject: '🔐 Réinitialisation de votre mot de passe', html: `<p>Bonjour,</p><p>Cliquez sur ce lien pour choisir un nouveau mot de passe (valable 15 minutes) :</p><p><a href="${resetLink}">Réinitialiser mon accès</a></p>` });
+        res.json({ message: "Si cet email existe, un lien a été envoyé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'envoi." }); }
+});
+
+app.post('/api/reset-password', authLimiter, async (req, res) => {
+    const { token, nouveau_mot_de_passe } = req.body;
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const hash = await bcrypt.hash(nouveau_mot_de_passe, 10);
+        await pool.query('UPDATE utilisateurs SET mot_de_passe_hash = $1 WHERE email = $2', [hash, decoded.email]);
+        res.json({ message: "Mot de passe mis à jour avec succès !" });
+    } catch (e) { res.status(400).json({ erreur: "Lien expiré, corrompu ou falsifié." }); }
+});
+
+// Module légal : acceptation électronique des documents contractuels (CGV, RGPD, SEPA, NF525, prêt du TPE)
+legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, nodemailer, crypto });
+
+app.post('/api/creer-checkout', async (req, res) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; 
+    const { plan_choisi, cycle_choisi } = req.body || {};
+    
+    if (!token) return res.status(401).json({ erreur: "Accès refusé." });
+    jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
+        if (err) return res.status(403).json({ erreur: "Token invalide." });
+        try {
+            try { await pool.query('ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS _subscription_id VARCHAR(255)'); } catch(e) {}
+
+            const result = await pool.query('SELECT email, _customer_id, _subscription_id, statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
+            if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
+            
+            const docsEnAttente = await legal.documentsEnAttente(pool, user.id_salon);
+            if (docsEnAttente.length > 0) return res.status(403).json({ erreur: "Vous devez d'abord accepter les conditions contractuelles.", require_legal: true });
+            
+            let customerId = result.rows[0]._customer_id;
+            const subId = result.rows[0]._subscription_id;
+            const statutSub = result.rows[0].statut_abonnement;
+
+            if (!customerId) {
+                // Sécurité : on vérifie que l'email est valide pour Stripe, sinon on met un email de secours
+                let emailStripe = result.rows[0].email;
+                if (!emailStripe || !emailStripe.includes('@')) {
+                    emailStripe = `salon${user.id_salon}@stack-app.fr`;
+                }
+                const customer = await stripe.customers.create({ email: emailStripe });
+                customerId = customer.id;
+                await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
+            }
+
+            // On s'assure du bon format (ex: 'ESSENTIEL', 'MOIS' ou 'AN')
+            const planClean = (plan_choisi || 'PREMIUM').toUpperCase();
+            const isAnnuel = cycle_choisi === 'year' || cycle_choisi === 'Annuel' || cycle_choisi === 'ANNUEL';
+            const planKey = `${planClean}_${isAnnuel ? 'AN' : 'MOIS'}`;
+            
+            const stripePrices = {
+                'ESSENTIEL_MOIS': process.env.PRICE_ESSENTIEL_MOIS,
+                'ESSENTIEL_AN': process.env.PRICE_ESSENTIEL_AN,
+                'PRO_MOIS': process.env.PRICE_PRO_MOIS,
+                'PRO_AN': process.env.PRICE_PRO_AN,
+                'PREMIUM_MOIS': process.env.PRICE_PREMIUM_MOIS,
+                'PREMIUM_AN': process.env.PRICE_PREMIUM_AN
+            };
+            
+            const priceId = stripePrices[planKey];
+            
+            // Si la clé manque sur Render, on envoie l'erreur au client pour qu'il la voie
+            if (!priceId) {
+                return res.status(400).json({ erreur: `Le tarif Stripe n'est pas trouvé. Vérifiez que la variable ${planKey} est bien sur Render.` });
+            }
+
+            // ÉVOLUTION D'UN ABONNEMENT EXISTANT (Sans payer aujourd'hui)
+            if (statutSub === 'actif' && subId) {
+                const subscription = await stripe.subscriptions.retrieve(subId);
+                await stripe.subscriptions.update(subId, {
+                    items: [{ id: subscription.items.data[0].id, price: priceId }],
+                    proration_behavior: 'none',
+                    metadata: { id_salon: user.id_salon.toString(), plan_choisi: planClean, frequence: isAnnuel ? 'ANNUEL' : 'MENSUEL' }
+                });
+
+                await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [planClean, isAnnuel ? 'ANNUEL' : 'MENSUEL', user.id_salon]);
+                return res.json({ success: true, message: `Évolution validée vers le forfait ${planClean}.` });
+            }
+
+            // NOUVEL ABONNEMENT
+            const session = await stripe.checkout.sessions.create({
+              customer: customerId, 
+              payment_method_types: process.env.STRIPE_SEPA === 'oui' ? ['card', 'sepa_debit'] : ['card'],
+              line_items: [{ price: priceId, quantity: 1 }], 
+              mode: 'subscription',
+              metadata: { id_salon: user.id_salon.toString(), plan_choisi: planClean, frequence: isAnnuel ? 'ANNUEL' : 'MENSUEL' },
+              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', 
+              cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
+            });
+            res.json({ url: session.url });
+        } catch (e) { 
+            console.error("Erreur Checkout Stripe:", e);
+            res.status(500).json({ erreur: "Erreur interne Stripe : " + e.message }); 
+        }
+    });
+});
+
+// --- ROUTES NOTIFICATIONS PUSH ---
+app.get('/api/push/vapid-key', (req, res) => {
+    res.json({ publicKey: vapidPublicKey });
+});
+
+app.post('/api/push/subscribe', verifierToken, async (req, res) => {
+    const { subscription } = req.body;
+    const { endpoint, keys } = subscription;
+    const id_salon = req.user.id_salon;
+    const role = req.user.role;
+    const id_employe = role === 'employe' ? req.user.id_employe : null;
+
+    try {
+        const exist = await pool.query('SELECT 1 FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+        if (exist.rowCount === 0) {
+            await pool.query(
+                'INSERT INTO push_subscriptions (id_salon, role, id_employe, endpoint, keys) VALUES ($1, $2, $3, $4, $5)',
+                [id_salon, role, id_employe, endpoint, JSON.stringify(keys)]
+            );
+        }
+        res.status(201).json({ message: "Abonnement Push enregistré." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur enregistrement Push." }); }
+});
+
+app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, res) => {
+    const signature = req.headers['stripe-signature'];
+    if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(500).send("Clé secrète manquante.");
+    let event;
+    try { event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET); } 
+    catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
+    
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        const idSalon = session.metadata?.id_salon;
+        const planChoisi = session.metadata?.plan_choisi || 'PREMIUM';
+        const frequence = session.metadata?.frequence || 'MENSUEL';
+        
+        // 1. On active le statut de paiement
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', ['actif', session.subscription, session.customer]);
+        
+        // 2. On met à jour les privilèges du salon (ESSENTIEL/PRO/PREMIUM)
+        if (idSalon) {
+            await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [planChoisi, frequence, idSalon]);
+        }
+    }
+    if (event.type === 'customer.subscription.deleted') {
+        const session = event.data.object;
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', ['inactif', session.id]);
+        
+        // On rétrograde le salon pour éviter qu'il garde l'accès Premium s'il ne paye plus
+        const userQuery = await pool.query('SELECT id_salon FROM utilisateurs WHERE _subscription_id = $1', [session.id]);
+        if (userQuery.rowCount > 0) {
+            await pool.query("UPDATE configuration_salon SET plan_actuel = 'ESSENTIEL' WHERE id_salon = $1", [userQuery.rows[0].id_salon]);
+        }
+    }
+    res.json({received: true});
+});
+
+app.post('/api/settings', verifierToken, async (req, res) => { 
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key } = req.body; 
+    try { 
+        const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
+        if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
+        if (pin_salon && isPinWeak(pin_salon)) return res.status(400).json({ erreur: "Le code PIN du salon est trop simple (évitez 0000, 1234...)." });
+        
+        let finalPinSalon = pin_salon;
+        if (pin_salon && !pin_salon.startsWith('$2')) {
+            finalPinSalon = await bcrypt.hash(pin_salon, 10);
+        }
+
+        const updateQuery = pin_salon !== undefined
+            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23 WHERE id_salon = $16`
+            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23 WHERE id_salon = $16`; 
+        const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
+        if (pin_salon !== undefined) { params.push(finalPinSalon || null); params.push(pennylane_api_key || null); } else { params.push(pennylane_api_key || null); }
+        await pool.query(updateQuery, params);
+        await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
+        res.json({ message: "Paramètres enregistrés avec succès !" }); 
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
+});
+
+app.get('/api/settings', verifierToken, async (req, res) => { 
+    try { 
+        const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); 
+        if (result.rowCount > 0) {
+            let config = result.rows[0];
+            config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email); 
+            res.json(config);
+        } else {
+            res.json({});
+        }
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }
+});
+
+app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
+    const id_client = req.params.id; const id_salon = req.user.id_salon;
+    try {
+        const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
+        if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
+        
+        const achatsRes = await pool.query(`SELECT t.id_ticket, (CASE WHEN t.est_compense THEN 'ANNULE' ELSE 'VALIDE' END) as statut, t.date_creation, COALESCE(lt.nom_article_snapshot, c.nom) as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 AND t.type_ticket != 'ANNULATION' ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
+        const rdvRes = await pool.query(`SELECT date_heure_debut, prestation, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.telephone_client = $1 AND r.id_salon = $2 ORDER BY r.date_heure_debut DESC LIMIT 20`, [clientRes.rows[0].telephone, id_salon]);
+        const gainsRes = await pool.query(`SELECT date_creation, total_ttc FROM tickets WHERE id_client = $1 AND id_salon = $2 AND recompense_utilisee = TRUE AND statut != 'ANNULE' AND est_compense = FALSE ORDER BY date_creation DESC LIMIT 20`, [id_client, id_salon]);
+
+        res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows, gains: gainsRes.rows });
+    } catch (e) { res.status(500).json({ erreur: "Erreur historique." }); }
+});
+
+app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
+    try {
+        await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', [req.body.notes, req.params.id, req.user.id_salon]);
+        res.json({ message: "Notes sauvegardées" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur sauvegarde." }); }
+});
+
+app.post('/api/rdv', verifierToken, async (req, res) => {
+    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes, forcer_ajout } = req.body;
+    try {
+        if (id_employe) {
+            const dateRDV = date_heure_debut.split('T')[0];
+            const absence = await pool.query(`SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`, [req.user.id_salon, id_employe, dateRDV]);
+            if (absence.rowCount > 0) return res.status(400).json({ erreur: "Impossible d'ajouter ce rdv car le collaborateur n'est pas disponible sur cette date." });
+        }
+
+        const dureeReelle = parseInt(duree_minutes) || 30;
+
+        if (id_employe && !forcer_ajout) {
+            const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+            const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+            const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
+
+            const rdvExistants = await pool.query(
+                `SELECT id_rdv FROM rendez_vous 
+                 WHERE id_salon = $1 AND id_employe = $2 
+                 AND (
+                    (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
+                    AND 
+                    (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
+                 )`,
+                [req.user.id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage]
+            );
+
+            if (rdvExistants.rowCount > 0) {
+                return res.status(409).json({ erreur: "Un rendez-vous est déjà prévu sur cette plage horaire pour ce coiffeur. Êtes-vous sûr de vouloir forcer l'ajout ?" });
+            }
+        }
+
+        await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, dureeReelle]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.status(201).json({ message: "RDV ajouté." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur création RDV." }); }
+});
+
+app.put('/api/rdv/:id', verifierToken, async (req, res) => {
+    const { id_employe, prestation, date_heure_debut, duree_minutes, forcer_ajout } = req.body;
+    try {
+        const dureeReelle = parseInt(duree_minutes) || 30;
+
+        if (id_employe) {
+            const dateRDV = date_heure_debut.split('T')[0];
+            const absence = await pool.query(`SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`, [req.user.id_salon, id_employe, dateRDV]);
+            if (absence.rowCount > 0) return res.status(400).json({ erreur: "Impossible de modifier ce rdv car le collaborateur n'est pas disponible sur cette date." });
+        }
+
+        if (id_employe && !forcer_ajout) {
+            const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+            const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+            const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
+
+            const rdvExistants = await pool.query(
+                `SELECT id_rdv FROM rendez_vous 
+                 WHERE id_salon = $1 AND id_employe = $2 AND id_rdv != $6
+                 AND (
+                    (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
+                    AND 
+                    (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
+                 )`,
+                [req.user.id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage, req.params.id]
+            );
+
+            if (rdvExistants.rowCount > 0) {
+                return res.status(409).json({ erreur: "Un rendez-vous est déjà prévu sur cette plage horaire pour ce coiffeur. Êtes-vous sûr de vouloir le modifier quand même ?" });
+            }
+        }
+
+        await pool.query(
+            `UPDATE rendez_vous SET id_employe = $1, prestation = $2, date_heure_debut = $3, duree_minutes = $4 WHERE id_rdv = $5 AND id_salon = $6`, 
+            [id_employe, prestation, date_heure_debut, dureeReelle, req.params.id, req.user.id_salon]
+        );
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous modifié." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur modification RDV." }); }
+});
+
+app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous supprimé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
+});
+
+// =========================================================================
+// --- EXPORT ICAL (SYNCHRONISATION PLANITY / EXTERNE) ---
+// =========================================================================
+app.get('/api/ical/:id_salon/:id_employe.ics', async (req, res) => {
+    const { id_salon, id_employe } = req.params;
+    try {
+        const empRes = await pool.query('SELECT nom FROM employes WHERE id_salon = $1 AND id_employe = $2', [id_salon, id_employe]);
+        if (empRes.rowCount === 0) return res.status(404).send("Employé introuvable");
+
+        const nomEmploye = empRes.rows[0].nom;
+
+        // RDVs futurs et passés récents
+        const rdvs = await pool.query(
+            `SELECT id_rdv, date_heure_debut, duree_minutes 
+             FROM rendez_vous 
+             WHERE id_salon = $1 AND id_employe = $2 AND date_heure_debut >= NOW() - INTERVAL '30 days'`,
+            [id_salon, id_employe]
+        );
+
+        // Absences (Congés, Maladie)
+        const absences = await pool.query(
+            `SELECT id_absence, date_debut, date_fin 
+             FROM absences_employes 
+             WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND date_fin >= CURRENT_DATE - INTERVAL '30 days'`,
+            [id_salon, id_employe]
+        );
+
+        const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+
+        // Fonction de formatage au format iCal (YYYYMMDDThhmmssZ)
+        const formatICSDate = (date) => date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        
+        // Pour les absences (Jours entiers), le format est YYYYMMDD
+        const formatICSAllDay = (dateStr, addDays = 0) => {
+            const d = new Date(dateStr);
+            d.setDate(d.getDate() + addDays);
+            return d.toISOString().split('T')[0].replace(/-/g, '');
+        };
+
+        let icsContent = "BEGIN:VCALENDAR\r\n";
+        icsContent += "VERSION:2.0\r\n";
+        icsContent += `PRODID:-//STACK//Agenda ${nomEmploye}//FR\r\n`;
+        icsContent += "CALSCALE:GREGORIAN\r\n";
+        icsContent += "METHOD:PUBLISH\r\n";
+        icsContent += `X-WR-CALNAME:STACK - ${nomEmploye}\r\n`;
+        icsContent += "X-WR-TIMEZONE:Europe/Paris\r\n";
+
+        // Ajout des Créneaux RDV
+        for (let rdv of rdvs.rows) {
+            const start = new Date(rdv.date_heure_debut);
+            const end = new Date(start.getTime() + ((rdv.duree_minutes + tempsNettoyage) * 60000));
+            
+            icsContent += "BEGIN:VEVENT\r\n";
+            icsContent += `UID:rdv-${rdv.id_rdv}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `DTSTART:${formatICSDate(start)}\r\n`;
+            icsContent += `DTEND:${formatICSDate(end)}\r\n`;
+            icsContent += "SUMMARY:Indisponible (STACK)\r\n";
+            icsContent += "STATUS:CONFIRMED\r\n";
+            icsContent += "END:VEVENT\r\n";
+        }
+
+        // Ajout des Absences
+        for (let abs of absences.rows) {
+            icsContent += "BEGIN:VEVENT\r\n";
+            icsContent += `UID:abs-${abs.id_absence}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `DTSTART;VALUE=DATE:${formatICSAllDay(abs.date_debut, 0)}\r\n`;
+            icsContent += `DTEND;VALUE=DATE:${formatICSAllDay(abs.date_fin, 1)}\r\n`; // Fin exclusive en iCal (+1 jour)
+            icsContent += "SUMMARY:Absence (STACK)\r\n";
+            icsContent += "TRANSP:OPAQUE\r\n";
+            icsContent += "END:VEVENT\r\n";
+        }
+
+        icsContent += "END:VCALENDAR\r\n";
+
+        res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="agenda-${id_employe}.ics"`);
+        res.send(icsContent);
+
+    } catch (err) {
+        res.status(500).send("Erreur génération iCal");
+    }
+});
+
+// --- ROUTE : ROBOT D'ANNULATION DE MASSE SÉLECTIVE ---
+app.post('/api/rdv/mass-cancel', verifierToken, async (req, res) => {
+    const { rdv_ids, id_employe, message_personnalise } = req.body;
+    const id_salon = req.user.id_salon;
+    if (!rdv_ids || rdv_ids.length === 0) return res.json({ message: "Aucun RDV à annuler." });
+
+    try {
+        const salonConfig = await pool.query('SELECT nom_salon, brevo_api_key, lien_google_maps FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = salonConfig.rows[0];
+
+        let countEnvoyes = 0;
+
+        for (let id_rdv of rdv_ids) {
+            const rdvRes = await pool.query('SELECT nom_client, telephone_client, date_heure_debut FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [id_rdv, id_salon]);
+            if (rdvRes.rowCount > 0) {
+                const rdv = rdvRes.rows[0];
+                await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1', [id_rdv]);
+                
+                if (config.brevo_api_key && rdv.telephone_client && rdv.telephone_client.trim().length >= 9) {
+                            // 🚨 SÉCURITÉ & RGPD : Vérification de l'opt-out avant tout envoi
+                            const optOutCheck = await pool.query(
+                                `SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = RIGHT(regexp_replace($2, '\\D', '', 'g'), 9)`, 
+                                [id_salon, rdv.telephone_client]
+                            );
+                            
+                            if (optOutCheck.rowCount === 0) {
+                                const dateRdv = new Date(rdv.date_heure_debut).toLocaleString('fr-FR', {weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit'});
+                                const prenom = rdv.nom_client ? rdv.nom_client.split(' ')[0] : 'Client';
+                                const lien = config.lien_google_maps || 'notre site internet';
+                                
+                                // Remplacement des balises dynamiques
+                                let texteSms = message_personnalise || `Bonjour [Prénom], votre RDV du [Date] est annulé. Reprogrammez ici : [Lien]`;
+                                texteSms = texteSms.replace(/\[Prénom\]/gi, prenom).replace(/\[Date\]/gi, dateRdv).replace(/\[Lien\]/gi, lien);
+                                
+                                try {
+                                    fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                                        method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+                                        body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.nom_salon || 'LeSalon').substring(0, 11), recipient: rdv.telephone_client, content: texteSms })
+                                    }).catch(()=>{}); 
+                                    countEnvoyes++;
+                                } catch (e) { console.error("Erreur SMS mass-cancel:", e); }
+                            }
+                        }
+            }
+        }
+        
+        envoyerNotificationPush(id_salon, { type: 'employe', id_employe }, { title: "Mise à jour Agenda", body: `Tes ${rdv_ids.length} RDV ont été annulés depuis le planning.`, url: '/?tab=agenda' });
+        io.to(id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: `${rdv_ids.length} rendez-vous annulés (${countEnvoyes} SMS envoyés).` });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lors de l'annulation." });
+    }
+});
+app.get('/api/planning', verifierToken, async (req, res) => {
+    const startDate = req.query.startDate; 
+    const endDate = req.query.endDate;
+    
+    try {
+        // 1. Récupérer les rendez-vous normaux
+        let queryRdv = `SELECT r.*, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.id_salon = $1 AND DATE(r.date_heure_debut) >= $2 AND DATE(r.date_heure_debut) <= $3`;
+        const paramsRdv = [req.user.id_salon, startDate, endDate];
+        if (req.user.role === 'employe') { 
+            queryRdv += ` AND r.id_employe = $4`; 
+            paramsRdv.push(req.user.id_employe); 
+        }
+        queryRdv += ` ORDER BY r.date_heure_debut ASC`;
+        const rdvResult = await pool.query(queryRdv, paramsRdv);
+
+        // 2. Récupérer les absences (Congés validés / en attente & Arrêts maladie)
+        let queryAbs = `SELECT a.*, e.nom as nom_employe FROM absences_employes a LEFT JOIN employes e ON a.id_employe = e.id_employe WHERE a.id_salon = $1 AND a.statut != 'REFUSE' AND a.date_fin >= $2 AND a.date_debut <= $3`;
+        const paramsAbs = [req.user.id_salon, startDate, endDate];
+        if (req.user.role === 'employe') { 
+            queryAbs += ` AND a.id_employe = $4`; 
+            paramsAbs.push(req.user.id_employe); 
+        }
+        const absResult = await pool.query(queryAbs, paramsAbs);
+
+        // 3. Renvoyer les deux objets au frontend
+        res.json({
+            rendez_vous: rdvResult.rows,
+            absences: absResult.rows
+        });
+    } catch (e) { 
+        res.status(500).json({ erreur: "Erreur lecture agenda." }); 
+    }
+});
+
+// =========================================================================
+// --- L'ENCAISSEMENT & MÉTHODES DE PAIEMENT (SMART POS) ---
+// =========================================================================
+const limiteurAvisPublic = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erreur: "Trop de tentatives, réessayez plus tard." }
+});
+
+app.get('/api/avis/info/:token', limiteurAvisPublic, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT a.prenom, a.statut, a.note, a.id_salon, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1 AND a.date_creation > NOW() - INTERVAL '30 days'`, [req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou expiré." });
+        const d = r.rows[0];
+        res.json({ prenom: d.prenom, nom_salon: d.nom_salon, etape: d.statut === 'REPONDU' ? 'termine' : (d.note && d.note <= 3 ? 'commentaire' : 'notation') });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.get('/api/avis/stats', verifierToken, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE statut IN ('ENVOYE', 'REPONDU')) as nb_envoyes,
+                COUNT(*) FILTER (WHERE statut = 'REPONDU') as nb_repondus,
+                ROUND(AVG(note) FILTER (WHERE note IS NOT NULL)::numeric, 1) as note_moyenne,
+                COUNT(*) FILTER (WHERE note >= 4) as nb_positifs,
+                COUNT(*) FILTER (WHERE note IS NOT NULL AND note <= 3) as nb_negatifs
+            FROM avis_demandes WHERE id_salon = $1
+        `, [req.user.id_salon]);
+        res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ erreur: "Erreur statistiques avis." }); }
+});
+
+app.post('/api/avis/:token/stop', async (req, res) => {
+    try {
+        const r = await pool.query('SELECT id_salon, telephone FROM avis_demandes WHERE token = $1', [req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide." });
+        const { id_salon, telephone } = r.rows[0];
+        await pool.query('INSERT INTO sms_opt_out (id_salon, telephone) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id_salon, normaliserTelephone(telephone)]);
+        await pool.query(`UPDATE avis_demandes SET statut = 'ANNULE' WHERE id_salon = $1 AND telephone = $2 AND statut = 'EN_ATTENTE'`, [id_salon, telephone]);
+        res.json({ message: "Vous ne recevrez plus ce type de message." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/avis/:token/note', limiteurAvisPublic, async (req, res) => {
+    const note = parseInt(req.body.note);
+    if (!note || note < 1 || note > 5) return res.status(400).json({ erreur: "Note invalide." });
+    try {
+        const r = await pool.query(`UPDATE avis_demandes SET note = $1, statut = CASE WHEN $1 >= 4 THEN 'REPONDU' ELSE statut END WHERE token = $2 AND note IS NULL RETURNING id_salon`, [note, req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà utilisé." });
+        if (note >= 4) {
+            const salonInfo = await pool.query('SELECT lien_google_maps FROM configuration_salon WHERE id_salon = $1', [r.rows[0].id_salon]);
+            return res.json({ besoin_commentaire: false, lien_google_maps: salonInfo.rows[0]?.lien_google_maps || null });
+        }
+        res.json({ besoin_commentaire: true });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/avis/:token/commentaire', limiteurAvisPublic, async (req, res) => {
+    try {
+        const r = await pool.query(`UPDATE avis_demandes SET commentaire = $1, statut = 'REPONDU' WHERE token = $2 AND note <= 3 AND statut != 'REPONDU' RETURNING id_salon, telephone, prenom, note`, [req.body.commentaire || '', req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà traité." });
+        const d = r.rows[0];
+        
+        await pool.query(
+            `INSERT INTO taches_actions (id_salon, titre, description, source, donnees) VALUES ($1, $2, $3, 'AVIS_CLIENT', $4)`,
+            [d.id_salon, `Avis client insatisfait (${d.note}★) à recontacter`, `${d.prenom || 'Un client'} (${d.telephone}) a laissé une note de ${d.note}/5 : "${req.body.commentaire || '(aucun commentaire)'}"`, JSON.stringify({ telephone: d.telephone, prenom: d.prenom })]
+        );
+        
+        envoyerNotificationPush(d.id_salon, 'gerant', { title: "Avis client à traiter", body: `Note de ${d.note}/5 reçue, un commentaire vous attend dans Actions.`, url: '/?tab=actions' });
+        res.json({ message: "Merci pour votre retour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/sms/send', verifierToken, async (req, res) => {
+    const { telephone, message } = req.body;
+    try {
+        const salonConfig = await pool.query('SELECT brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+        const config = salonConfig.rows[0];
+        if (!config || !config.brevo_api_key) return res.status(400).json({ erreur: "SMS non configurés dans vos paramètres." });
+        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: telephone, content: message })
+        });
+        res.json({ message: "SMS de sauvetage envoyé." });
+    } catch(e) { res.status(500).json({ erreur: "Erreur d'envoi." }); }
+});
+app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
+    const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement } = req.body;
+    const id_salon = req.user.id_salon;
+    const methode = methode_paiement || 'CARTE';
+    const clientDB = await pool.connect();
+
+    try {
+            let reader = null;
+            let paymentIntentId = null;
+            let intentStatus = null; // Remonté pour être accessible dans le bloc catch
+
+            if (methode === 'CARTE' && montant > 0) {
+                const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+                const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
+
+                if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
+
+                const paymentIntent = await stripe.paymentIntents.create({
+                  amount: Math.round(montant * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
+                });
+                paymentIntentId = paymentIntent.id;
+                intentStatus = paymentIntent.status;
+                reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
+
+                if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
+                    try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
+                }
+
+                let attempts = 0;
+                
+                while (intentStatus === 'requires_payment_method' && attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+                    intentStatus = checkIntent.status;
+                    attempts++;
+                }
+
+                if (intentStatus !== 'requires_capture') {
+                    try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
+                    try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
+                    throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
+                }
+            }
+
+            await clientDB.query('BEGIN');
+        
+        // 🚨 VERROU TRANSACTIONNEL : On bloque la lecture/écriture du compteur pour ce salon précis
+        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+        
+        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
+        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
+        
+        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', ''); // Ex: 202610
+        const numeroTicket = `TKT-${anneeMois}-${String(seq).padStart(6, '0')}`;
+
+        // Mise à jour du compteur pour le prochain ticket
+        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
+        
+        const ticketResult = await clientDB.query(
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END) RETURNING id_ticket;`, 
+            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null]
+        );
+        const idNouveauTicket = ticketResult.rows[0].id_ticket;
+
+        const employeResult = await clientDB.query('SELECT * FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        const employe = employeResult.rowCount > 0 ? employeResult.rows[0] : null;
+
+        if (lignes && lignes.length > 0) {
+            for (let ligne of lignes) {
+                const total_ligne = ligne.quantite * ligne.prix_unitaire;
+
+                const articleSnapshot = await clientDB.query('SELECT nom, taux_tva FROM catalogue WHERE id_article = $1 AND id_salon = $2', [ligne.id_article, id_salon]);
+                const nomSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].nom : (ligne.nom || 'Article supprimé');
+                const tvaSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].taux_tva : 20.00;
+
+                await clientDB.query(`INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`, 
+                [idNouveauTicket, ligne.id_article, ligne.quantite, ligne.prix_unitaire, total_ligne, id_salon, nomSnapshot, tvaSnapshot]);
+                
+                const updateStockQuery = `UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') RETURNING nom, stock_actuel, type_article;`;
+                const stockResult = await clientDB.query(updateStockQuery, [ligne.quantite, ligne.id_article, id_salon]);
+                let type_article = 'PRESTATION'; 
+                if (stockResult.rowCount > 0) type_article = stockResult.rows[0].type_article;
+                
+                // === DÉSTOCKAGE AUTOMATIQUE DES INGRÉDIENTS (RECETTES) ===
+                if (type_article === 'PRESTATION') {
+                    const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [nomSnapshot, id_salon]);
+                    if (protocoleRes.rowCount > 0) {
+                        const idProto = protocoleRes.rows[0].id_protocole;
+                        const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
+                        for (let ing of ingredients.rows) {
+                            const quantite_a_deduire = ing.quantite_necessaire * ligne.quantite;
+                            await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_deduire, ing.id_article, id_salon]);
+                        }
+                    }
+                }
+
+                if (employe) {
+                    const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
+                    const ht_ligne = total_ligne / (1 + (tvaSnapshot / 100));
+                    const montant_commission = (ht_ligne * (taux / 100)).toFixed(2);
+                    await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon, date_creation) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, NOW()))`, 
+                    [id_employe, idNouveauTicket, total_ligne, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
+                }
+            }
+        }
+
+        const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montant}-${previousHash}`).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
+
+        if (id_client) {
+            await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1`, [id_client]);
+            const configRes = await clientDB.query(`SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1`, [id_salon]);
+            
+            if (configRes.rowCount > 0) {
+                const config = configRes.rows[0];
+                if (recompense_appliquee) {
+                    if (config.fidelite_type === 'POINTS') {
+                        await clientDB.query(`UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1) WHERE id_client = $2`, [config.fidelite_points_seuil, id_client]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = GREATEST(0, tampons_fidelite - $1) WHERE id_client = $2`, [config.fidelite_tampons_seuil, id_client]);
+                    }
+                } else {
+                    if (config.fidelite_type === 'POINTS') {
+                        const pointsToAdd = Math.floor(montant);
+                        await clientDB.query(`UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2`, [pointsToAdd, id_client]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = tampons_fidelite + 1 WHERE id_client = $2`, [id_client]);
+                    }
+                }
+            }
+        }
+
+        // 🚨 SÉCURITÉ : On ne capture l'argent QUE si tout le reste en BDD s'est bien passé
+            if (methode === 'CARTE' && montant > 0 && intentStatus === 'requires_capture') {
+                await stripe.paymentIntents.capture(paymentIntentId);
+            }
+
+            await clientDB.query('COMMIT');
+            
+            let messageFinal = (methode === 'CARTE' && montant > 0) ? `En attente du TPE... (Ticket #${idNouveauTicket})` : `Paiement en ${methode} validé (Ticket #${idNouveauTicket})`;
+            io.to(id_salon.toString()).emit('paiementValide', { message: messageFinal });
+            
+            res.json({ message: messageFinal, reader, id_ticket: idNouveauTicket });
+        } catch (error) {
+            await clientDB.query('ROLLBACK');
+            
+            // 🚨 SÉCURITÉ : Si la BDD a planté, on annule l'empreinte bancaire pour éviter un double débit
+            if (paymentIntentId && intentStatus === 'requires_capture') {
+                try { 
+                    await stripe.paymentIntents.cancel(paymentIntentId); 
+                    console.log(`[STRIPE] Paiement ${paymentIntentId} annulé suite à un crash BDD.`);
+                } catch(e) { 
+                    console.error("[STRIPE] Erreur annulation:", e); 
+                }
+            }
+
+            console.error("Erreur Encaisser:", error); res.status(500).json({ erreur: "Erreur lors de l'encaissement. " + error.message });
+        } finally { clientDB.release(); }
+});
+
+app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
+    const id_ticket = req.params.id;
+    const id_salon = req.user.id_salon;
+    const { motif, lignes_a_annuler } = req.body;
+    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Un motif d'annulation est obligatoire." });
+
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+
+        const ticketRes = await clientDB.query(
+            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION'",
+            [id_ticket, id_salon]
+        );
+        if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable.");
+        const ticket = ticketRes.rows[0];
+
+        const lignesOrigine = await clientDB.query(
+            "SELECT id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, nom_article_snapshot, taux_tva_snapshot FROM lignes_ticket WHERE id_ticket = $1",
+            [id_ticket]
+        );
+
+        // Récupérer ce qui a déjà été annulé pour ce ticket
+        const lignesDejaAnnulees = await clientDB.query("SELECT id_article, SUM(ABS(quantite)) as qte_annulee FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_ticket_origine = $1) GROUP BY id_article", [id_ticket]);
+        let mapDejaAnnule = {};
+        lignesDejaAnnulees.rows.forEach(r => mapDejaAnnule[r.id_article] = parseFloat(r.qte_annulee));
+
+        let lignesToProcess = [];
+        if (lignes_a_annuler && lignes_a_annuler.length > 0) {
+            for (let reqLigne of lignes_a_annuler) {
+                let origLigne = lignesOrigine.rows.find(l => l.id_article == reqLigne.id_article);
+                if (origLigne) {
+                    let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                    let qte = Math.min(reqLigne.quantite, maxAnnulable);
+                    if (qte > 0) {
+                        lignesToProcess.push({
+                            ...origLigne,
+                            quantite: qte,
+                            total_ligne_ttc: qte * parseFloat(origLigne.prix_unitaire_ttc)
+                        });
+                    }
+                }
+            }
+        } else {
+            // Fallback: Annulation totale de ce qui reste
+            for (let origLigne of lignesOrigine.rows) {
+                let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                if (maxAnnulable > 0) {
+                    lignesToProcess.push({
+                        ...origLigne,
+                        quantite: maxAnnulable,
+                        total_ligne_ttc: maxAnnulable * parseFloat(origLigne.prix_unitaire_ttc)
+                    });
+                }
+            }
+        }
+
+        if (lignesToProcess.length === 0) throw new Error("Ce ticket a déjà été entièrement annulé.");
+
+        const montantCompensation = -lignesToProcess.reduce((sum, l) => sum + parseFloat(l.total_ligne_ttc), 0);
+
+        // 🚨 VERROU TRANSACTIONNEL
+        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+
+        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
+        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
+        
+        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', '');
+        const numeroCompensation = `TKT-AN-${anneeMois}-${String(seq).padStart(6, '0')}`;
+
+        // Mise à jour du compteur pour le prochain ticket
+        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
+
+        const compensationResult = await clientDB.query(
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
+             VALUES ($1, $2, $3, $4, $5, FALSE, $6, 'VALIDE', 'ANNULATION', $7, $8) RETURNING id_ticket;`,
+            [numeroCompensation, ticket.id_client, ticket.id_employe, montantCompensation, id_salon, ticket.methode_paiement, id_ticket, motif.trim()]
+        );
+        const idTicketCompensation = compensationResult.rows[0].id_ticket;
+
+        const newHash = crypto.createHash('sha256').update(`${idTicketCompensation}-${numeroCompensation}-${montantCompensation}-${previousHash}`).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idTicketCompensation]);
+
+        // Vérifier si le ticket est désormais entièrement compensé
+        const dejaCompenseRes = await clientDB.query("SELECT COALESCE(SUM(ABS(total_ttc)), 0) as deja_rembourse FROM tickets WHERE id_ticket_origine = $1 AND statut != 'ANNULE'", [id_ticket]);
+        const dejaRembourse = parseFloat(dejaCompenseRes.rows[0].deja_rembourse);
+        if (dejaRembourse >= parseFloat(ticket.total_ttc) - 0.01) {
+            await clientDB.query("UPDATE tickets SET est_compense = TRUE WHERE id_ticket = $1", [id_ticket]);
+        }
+
+        for (const ligne of lignesToProcess) {
+            await clientDB.query(
+                `INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
+                [idTicketCompensation, ligne.id_article, -ligne.quantite, ligne.prix_unitaire_ttc, -ligne.total_ligne_ttc, id_salon, ligne.nom_article_snapshot, ligne.taux_tva_snapshot]
+            );
+            await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [ligne.quantite, ligne.id_article]);
+            
+            // REMISE EN STOCK DES RECETTES SI PRÉSENTES
+            const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [ligne.nom_article_snapshot, id_salon]);
+            if (protocoleRes.rowCount > 0) {
+                const idProto = protocoleRes.rows[0].id_protocole;
+                const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
+                for (let ing of ingredients.rows) {
+                    const quantite_a_restaurer = ing.quantite_necessaire * ligne.quantite;
+                    await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_restaurer, ing.id_article, id_salon]);
+                }
+            }
+        }
+
+        // Commissions : Proratisation basée sur le montant remboursé par rapport au ticket global
+        const commissionsOrigine = await clientDB.query("SELECT * FROM commissions WHERE id_ticket = $1", [id_ticket]);
+        if (commissionsOrigine.rowCount > 0 && parseFloat(ticket.total_ttc) > 0) {
+            const ratio = Math.abs(montantCompensation) / parseFloat(ticket.total_ttc);
+            for (const c of commissionsOrigine.rows) {
+                const commissionAnnulee = -(parseFloat(c.montant_commission) * ratio).toFixed(2);
+                const venteAnnulee = -(parseFloat(c.montant_vente) * ratio).toFixed(2);
+                await clientDB.query(
+                    `INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [c.id_employe, idTicketCompensation, venteAnnulee, commissionAnnulee, c.type_vente, id_salon]
+                );
+            }
+        }
+
+        if (ticket.id_client) {
+            const estAnnulationTotale = Math.abs(montantCompensation) >= parseFloat(ticket.total_ttc) - 0.01;
+            
+            if (!ticket.recompense_utilisee) {
+                // Le ticket avait généré des points/tampons, on les retire au prorata
+                const pointsARetirer = Math.floor(Math.abs(montantCompensation));
+                const tamponsARetirer = estAnnulationTotale ? 1 : 0;
+                await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - $2) WHERE id_client = $3", [pointsARetirer, tamponsARetirer, ticket.id_client]);
+            } else if (estAnnulationTotale) {
+                // Le ticket avait CONSOMMÉ une récompense, on la restitue au client (uniquement si annulation totale)
+                const configRes = await clientDB.query('SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+                if (configRes.rowCount > 0) {
+                    const config = configRes.rows[0];
+                    if (config.fidelite_type === 'POINTS') {
+                        await clientDB.query("UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2", [config.fidelite_points_seuil, ticket.id_client]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query("UPDATE clients SET tampons_fidelite = tampons_fidelite + $1 WHERE id_client = $2", [config.fidelite_tampons_seuil, ticket.id_client]);
+                    }
+                }
+            }
+        }
+
+        await enregistrerJET(id_salon, 'ANNULATION_TICKET', {
+            id_ticket_origine: parseInt(id_ticket),
+            id_ticket_compensation: idTicketCompensation,
+            montant: montantCompensation,
+            lignes_annulees: lignesToProcess.map(l => ({ id_article: l.id_article, quantite: l.quantite })),
+            motif: motif.trim()
+        }, clientDB);
+
+        await clientDB.query('COMMIT');
+        res.json({ message: "Remboursement validé (écriture de compensation générée). Stock et fidélité mis à jour." });
+    } catch (err) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: err.message });
+    } finally { clientDB.release(); }
+});
+
+app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
+    const { id_ticket, email, id_client, methode } = req.body;
+    const id_salon = req.user.id_salon;
+    try {
+        const salonConfig = await pool.query('SELECT nom_salon, email_reception_factures, mot_de_passe_app_email, brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        if (salonConfig.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
+        const config = salonConfig.rows[0];
+
+        const ticketData = await pool.query('SELECT numero_ticket_caisse, total_ttc, date_creation, methode_paiement FROM tickets WHERE id_ticket = $1 AND id_salon = $2', [id_ticket, id_salon]);
+        if (ticketData.rowCount === 0) return res.status(404).json({ erreur: "Ticket introuvable." });
+        const ticket = ticketData.rows[0];
+
+        const textRecap = `Merci pour votre visite chez ${config.nom_salon} !\nTicket n°${ticket.numero_ticket_caisse} du ${new Date(ticket.date_creation).toLocaleDateString()}.\nMontant total : ${parseFloat(ticket.total_ttc).toFixed(2)} € (Réglé par ${ticket.methode_paiement}).\nÀ très bientôt !`;
+
+        if (methode === 'email') {
+            if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
+            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: dechiffrer(config.mot_de_passe_app_email) } });
+            await transporter.sendMail({ from: `"${config.nom_salon}" <${config.email_reception_factures}>`, to: email, subject: `Votre reçu - ${config.nom_salon}`, text: textRecap });
+            if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
+        } else if (methode === 'sms') {
+            if (!config.brevo_api_key) return res.status(400).json({ erreur: "Clé Brevo non configurée." });
+            let telephoneEnvoi;
+            if (id_client) {
+                const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1', [id_client]);
+                if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro." });
+                telephoneEnvoi = client.rows[0].telephone;
+            } else {
+                telephoneEnvoi = (req.body.telephone || '').trim();
+                if (!telephoneEnvoi) return res.status(400).json({ erreur: "Numéro de téléphone requis." });
+            }
+            await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+                body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: telephoneEnvoi, content: textRecap })
+            });
+
+            // Client non identifié dans la base -> on programme l'enquête de satisfaction (1h30 après l'envoi du ticket)
+            if (!id_client) {
+                const telNormalise = normaliserTelephone(telephoneEnvoi);
+                const dejaOptOut = await pool.query('SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = $2', [id_salon, telNormalise]);
+                const clientConnu = await pool.query(`SELECT 1 FROM clients WHERE id_salon = $1 AND RIGHT(regexp_replace(telephone, '\\D', '', 'g'), 9) = $2`, [id_salon, telNormalise]);
+                if (clientConnu.rowCount === 0 && dejaOptOut.rowCount === 0) {
+                    const tokenAvis = crypto.randomBytes(24).toString('hex');
+                    await pool.query(
+                        `INSERT INTO avis_demandes (id_salon, telephone, token, statut, date_prevue) VALUES ($1, $2, $3, 'EN_ATTENTE', NOW() + INTERVAL '1.5 hours')`,
+                        [id_salon, telephoneEnvoi, tokenAvis]
+                    );
+                }
+            }
+        }
+        res.json({ message: "Ticket envoyé." });
+    } catch (error) { res.status(500).json({ erreur: "Erreur envoi ticket." }); }
+});
+
+app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT m.*, e.nom as nom_employe FROM mouvements_caisse m LEFT JOIN employes e ON m.id_employe = e.id_employe WHERE m.id_salon = $1 AND DATE(m.date_creation) = CURRENT_DATE ORDER BY m.date_creation DESC`,
+            [req.user.id_salon]
+        );
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture mouvements." }); }
+});
+
+app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
+    const { type_mouvement, montant, motif, id_employe } = req.body;
+    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
+    if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
+    try {
+        await pool.query(
+            `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif) VALUES ($1, $2, $3, $4, $5)`,
+            [req.user.id_salon, id_employe || null, type_mouvement, parseFloat(montant), motif.trim()]
+        );
+        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { type_mouvement, montant: parseFloat(montant), motif });
+        res.status(201).json({ message: "Mouvement de caisse enregistré." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
+});
+
+app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const { ferme_par, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        
+        await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+
+        const jourRes = await clientDB.query(
+            `SELECT MIN(DATE(t.date_creation)) as jour_non_cloture
+             FROM tickets t
+             WHERE t.id_salon = $1
+               AND NOT EXISTS (
+                   SELECT 1 FROM clotures_caisse c
+                   WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
+               )`,
+            [id_salon]
+        );
+
+        let dateACloturerStr;
+        if (jourRes.rowCount > 0 && jourRes.rows[0].jour_non_cloture) {
+             const d = new Date(jourRes.rows[0].jour_non_cloture);
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        } else {
+             const d = new Date();
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2', [id_salon, dateACloturerStr]);
+        if (dejaCloture.rowCount > 0) throw new Error(`La caisse pour la date du ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')} a déjà été clôturée.`);
+
+        const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+        const totalJour = caResult.rows[0].total;
+
+        const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
+        const grandTotalPerpetuel = grandTotalResult.rows[0].total;
+
+        // --- CALCUL NF525 DE L'ÉCART DE CAISSE (BLIND CLOSE) ---
+        const fCaisseMatin = parseFloat(fond_caisse_matin) || 0;
+        const tEspecesReel = parseFloat(total_especes_reel) || 0;
+
+        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE' AND est_compense = FALSE`, [id_salon, dateACloturerStr]);
+        const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
+
+        const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE 0 END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
+        const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
+
+        const tEspecesTheorique = fCaisseMatin + totalEspecesVentes + totalMouvements;
+        const ecartCaisse = tEspecesReel - tEspecesTheorique;
+
+        // 🚨 SI L'ÉCART EST > 2€ ET QU'ON N'A PAS ENCORE DE JUSTIFICATION, ON BLOQUE !
+        if (Math.abs(ecartCaisse) > 2.00 && (!justification_ecart || justification_ecart.trim() === '')) {
+            await clientDB.query('ROLLBACK');
+            return res.status(400).json({ 
+                erreur: `Un écart de caisse de ${ecartCaisse > 0 ? '+' : ''}${ecartCaisse.toFixed(2)} € a été détecté. Une justification est requise pour la loi NF525.`, 
+                require_justification: true, 
+                ecart: ecartCaisse 
+            });
+        }
+        // --------------------------------------------------------
+
+        const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1', [id_salon]);
+        const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
+        const dateISO = new Date().toISOString();
+        const signature = crypto.createHash('sha256')
+            .update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO}`)
+            .digest('hex');
+
+        await clientDB.query(
+            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant', fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null]
+        );
+
+        await enregistrerJET(id_salon, 'CLOTURE_Z', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
+
+        // --- PHASE 4 : WEBHOOK / POUSSÉE API TEMPS RÉEL (Ex: Pennylane) ---
+        try {
+            const configRes = await clientDB.query('SELECT pennylane_api_key FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+            const apiKey = configRes.rows[0]?.pennylane_api_key;
+            
+            if (apiKey && apiKey.trim() !== '') {
+                // On récupère les écritures FEC de la journée qu'on vient de clôturer
+                const dateCloture = dateACloturerStr;
+                const ecrituresRes = await clientDB.query(`
+                    SELECT t.numero_ticket_caisse, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, c.type_article 
+                    FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article 
+                    WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+                `, [id_salon, dateCloture]);
+
+                if (ecrituresRes.rowCount > 0) {
+                    // Construction du Payload d'Écritures Comptables (Format générique Pennylane / Comptabilité API)
+                    const payloadPennylane = {
+                        journal_code: "VT",
+                        date: dateCloture,
+                        label: `Z de Caisse du ${dateCloture}`,
+                        entries: ecrituresRes.rows.map(row => ({
+                            reference: row.numero_ticket_caisse,
+                            montant_ttc: parseFloat(row.total_ttc),
+                            methode: row.methode_paiement,
+                            lignes: [{ type: row.type_article || 'PRESTATION', ht: Number((row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100)).toFixed(2)), tva: Number((row.total_ligne_ttc - (row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100))).toFixed(2)) }]
+                        }))
+                    };
+
+                    // Poussée vers l'API externe en tâche de fond (on n'attend pas la réponse pour ne pas bloquer le frontend)
+                    fetch('https://app.pennylane.com/api/v1/customer_invoices', { // Endpoint générique modulable
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        body: JSON.stringify(payloadPennylane)
+                    }).then(r => {
+                        if (r.ok) console.log(`[API COMPTA] Z du ${dateCloture} (Salon ${id_salon}) poussé avec succès.`);
+                        else console.error(`[API COMPTA] Erreur API externe :`, r.status);
+                    }).catch(err => console.error(`[API COMPTA] Échec réseau :`, err.message));
+                }
+            }
+        } catch (apiErr) {
+            console.error("Erreur préparation Webhook Compta:", apiErr);
+        }
+        // ------------------------------------------------------------------
+
+        await clientDB.query('COMMIT');
+        res.json({ message: `Caisse clôturée avec succès pour le ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')}.`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message || "Erreur lors de la clôture." });
+    } finally { clientDB.release(); }
+});
+
+app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [req.user.id_salon]);
+        const auto = await pool.query("SELECT TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_auto FROM clotures_caisse WHERE id_salon = $1 AND est_cloture_automatique = TRUE ORDER BY id_cloture DESC LIMIT 1", [req.user.id_salon]);
+        res.json({ 
+            cloture_faite: r.rowCount > 0,
+            derniere_cloture_auto: auto.rowCount > 0 ? auto.rows[0].date_auto : null
+        });
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
+});
+
+app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => {
+    try {
+        // On cherche si la TOUTE DERNIÈRE clôture Z (globale du salon) était automatique et est toujours en attente
+        const auto = await pool.query(
+            "SELECT id_cloture, TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_cloture_fr, total_especes_theorique FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1", 
+            [req.user.id_salon]
+        );
+        
+        if (auto.rowCount > 0 && auto.rows[0].total_especes_theorique !== null) {
+            // Si c'est bien la dernière et qu'elle attend d'être régularisée
+            const derniereEstAuto = await pool.query(
+                "SELECT 1 FROM clotures_caisse WHERE id_cloture = $1 AND est_cloture_automatique = TRUE", 
+                [auto.rows[0].id_cloture]
+            );
+            
+            if (derniereEstAuto.rowCount > 0) {
+                return res.json({ necessite_regularisation: true, cloture: auto.rows[0] });
+            }
+        }
+        res.json({ necessite_regularisation: false });
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification matinale." }); }
+});
+
+app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
+    const { id_cloture, montant_reel, id_employe } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE", [id_cloture, req.user.id_salon]);
+        if (clotureRes.rowCount === 0) throw new Error("Clôture automatique introuvable ou déjà régularisée.");
+        
+        const cloture = clotureRes.rows[0];
+        const theorique = parseFloat(cloture.total_especes_theorique);
+        const reel = parseFloat(montant_reel);
+        const ecart = reel - theorique;
+
+        // Si l'équipe ne trouve pas le même montant que ce que le robot prévoyait, on l'injecte dans le bilan comptable du jour.
+        if (Math.abs(ecart) > 0) {
+            await clientDB.query(
+                `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif) VALUES ($1, $2, $3, $4, $5)`,
+                [req.user.id_salon, id_employe || null, 'REGULARISATION', ecart, `Régularisation ouverture suite fermeture auto`]
+            );
+            await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, theorique, reel, ecart }, clientDB);
+        }
+
+        // On lève le flag pour débloquer le logiciel
+        await clientDB.query("UPDATE clotures_caisse SET est_cloture_automatique = FALSE, ferme_par = 'Robot (Régularisé)' WHERE id_cloture = $1", [id_cloture]);
+        
+        await clientDB.query('COMMIT');
+        res.json({ message: "Caisse régularisée avec succès." });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message || "Erreur de régularisation." });
+    } finally { clientDB.release(); }
+});
+
+app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
+    if (!['gerant', 'salon'].includes(req.user.role)) return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
+    try {
+        await pool.query('UPDATE configuration_salon SET derniere_verif_stock = CURRENT_DATE WHERE id_salon = $1', [req.user.id_salon]);
+        res.json({ message: "Vérification des stocks enregistrée." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'enregistrement." }); }
+});
+
+// =========================================================================
+// --- AUDIT DE CONFORMITÉ NF525 (Vérification Cryptographique) ---
+// =========================================================================
+app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    const id_salon = req.user.id_salon;
+    
+    try {
+        let erreurs = [];
+        let alertes = [];
+        
+        // 1. Audit des TICKETS
+        const tickets = await pool.query('SELECT id_ticket, numero_ticket_caisse, total_ttc, hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC', [id_salon]);
+        let prevHashTicket = 'GENESIS_BLOCK';
+        
+        for (let t of tickets.rows) {
+            if (!t.hash_ticket) {
+                alertes.push(`Ticket #${t.id_ticket} non scellé (possible ticket hors-ligne en attente).`);
+                continue;
+            }
+            const computed = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${t.total_ttc}-${prevHashTicket}`).digest('hex');
+            if (computed !== t.hash_ticket) {
+                erreurs.push(`Rupture cryptographique sur le ticket #${t.id_ticket} (${t.numero_ticket_caisse}).`);
+                break;
+            }
+            prevHashTicket = t.hash_ticket;
+        }
+
+        // 2. Audit des CLÔTURES (Z)
+        const clotures = await pool.query('SELECT id_cloture, signature_hash, hash_precedent, date_cloture FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture ASC', [id_salon]);
+        let prevHashZ = 'GENESIS_Z';
+        for (let c of clotures.rows) {
+            if (c.hash_precedent !== prevHashZ) {
+                erreurs.push(`Rupture de chaînage sur la clôture Z du ${new Date(c.date_cloture).toLocaleDateString('fr-FR')}.`);
+                break;
+            }
+            prevHashZ = c.signature_hash;
+        }
+
+        // 3. Audit du Journal des Événements Techniques (JET)
+        const jetLogs = await pool.query('SELECT id_jet, hash_jet, hash_precedent, action FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet ASC', [id_salon]);
+        let prevHashJet = 'GENESIS_JET';
+        for (let j of jetLogs.rows) {
+            if (j.hash_precedent !== prevHashJet) {
+                erreurs.push(`Rupture de chaînage sur le Journal Technique (Action #${j.id_jet} - ${j.action}).`);
+                break;
+            }
+            prevHashJet = j.hash_jet;
+        }
+
+        // Traçabilité de l'audit lui-même
+        await enregistrerJET(id_salon, 'AUDIT_NF525_EXECUTE', { tickets: tickets.rowCount, clotures: clotures.rowCount, jet: jetLogs.rowCount, conforme: erreurs.length === 0 });
+
+        res.json({ 
+            conforme: erreurs.length === 0, 
+            erreurs,
+            alertes,
+            total_tickets_verifies: tickets.rowCount,
+            total_z_verifies: clotures.rowCount,
+            total_jet_verifies: jetLogs.rowCount
+        });
+    } catch (e) {
+        console.error("Erreur Audit:", e);
+        res.status(500).json({ erreur: "Erreur lors de l'audit NF525." });
+    }
+});
+
+app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const { date_debut, date_fin } = req.query;
+    if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
+
+    try {
+        const ticketsRes = await pool.query(
+            `SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.type_ticket, t.total_ttc, t.methode_paiement, t.statut, t.est_compense, t.id_ticket_origine, t.motif_annulation, t.hash_ticket,
+                    lt.id_article, COALESCE(lt.nom_article_snapshot, 'N/A') as nom_article, lt.quantite, lt.prix_unitaire_ttc, lt.taux_tva_snapshot, lt.total_ligne_ttc
+             FROM tickets t
+             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
+             WHERE t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3
+             ORDER BY t.id_ticket ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
+        const jetRes = await pool.query(
+            `SELECT id_jet, action, details, date_creation, hash_precedent, hash_jet
+             FROM jet_logs WHERE id_salon = $1 AND DATE(date_creation) BETWEEN $2 AND $3
+             ORDER BY id_jet ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
+        const echapper = (val) => {
+            if (val === null || val === undefined) return '';
+            const str = String(val).replace(/"/g, '""');
+            return `"${str}"`;
+        };
+
+        let csv = 'TICKETS\r\n';
+        csv += ['id_ticket','numero_ticket','date_creation','type_ticket','statut','est_compense','id_ticket_origine','motif_annulation','methode_paiement','total_ttc','id_article','nom_article','quantite','prix_unitaire_ttc','taux_tva','total_ligne_ttc','hash_ticket'].join(';') + '\r\n';
+        for (const r of ticketsRes.rows) {
+            csv += [r.id_ticket, r.numero_ticket_caisse, new Date(r.date_creation).toISOString(), r.type_ticket, r.statut, r.est_compense, r.id_ticket_origine || '', r.motif_annulation || '', r.methode_paiement, r.total_ttc, r.id_article || '', r.nom_article, r.quantite, r.prix_unitaire_ttc, r.taux_tva_snapshot, r.total_ligne_ttc, r.hash_ticket]
+                .map(echapper).join(';') + '\r\n';
+        }
+
+        csv += '\r\nJOURNAL_DES_EVENEMENTS_TECHNIQUES\r\n';
+        csv += ['id_jet','action','details','date_creation','hash_precedent','hash_jet'].join(';') + '\r\n';
+        for (const j of jetRes.rows) {
+            csv += [j.id_jet, j.action, JSON.stringify(j.details), new Date(j.date_creation).toISOString(), j.hash_precedent, j.hash_jet]
+                .map(echapper).join(';') + '\r\n';
+        }
+
+        const secret = process.env.ARCHIVE_SIGNING_SECRET || process.env.JWT_SECRET;
+        const signatureArchive = crypto.createHmac('sha256', secret).update(csv).digest('hex');
+        csv += `\r\nSIGNATURE_ARCHIVE;${signatureArchive}\r\n`;
+
+        await enregistrerJET(id_salon, 'EXPORT_ARCHIVE_FISCALE', { date_debut, date_fin, nb_lignes_tickets: ticketsRes.rowCount, nb_lignes_jet: jetRes.rowCount, signature: signatureArchive });
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="archive-fiscale-${id_salon}-${date_debut}_${date_fin}.csv"`);
+        res.send('\uFEFF' + csv);
+    } catch (e) {
+        console.error("❌ Erreur export archive fiscale:", e);
+        res.status(500).json({ erreur: "Erreur lors de la génération de l'archive fiscale." });
+    }
+});
+
+// =========================================================================
+// --- EXPORT FEC (Fichier des Écritures Comptables) ---
+// =========================================================================
+app.get('/api/export-fec', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const { date_debut, date_fin } = req.query;
+    if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
+
+    try {
+        // 1. Récupérer la configuration comptable du salon
+        const configRes = await pool.query('SELECT compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = configRes.rows[0] || {};
+        const CPT_BANQUE = config.compte_banque || '512000';
+        const CPT_CAISSE = config.compte_caisse || '530000';
+        const CPT_PRESTA = config.compte_prestations || '706000';
+        const CPT_PROD = config.compte_produits || '707000';
+        const CPT_TVA = config.compte_tva || '445710';
+
+        // 2. Récupérer les tickets validés (avec leurs lignes) sur la période
+        const ticketsRes = await pool.query(`
+            SELECT 
+                t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc,
+                lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, 'Article') as nom_article,
+                COALESCE(c.type_article, 'PRESTATION') as type_article,
+                cc.date_cloture
+            FROM tickets t
+            JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
+            LEFT JOIN catalogue c ON lt.id_article = c.id_article
+            LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+            ORDER BY t.date_creation ASC, t.id_ticket ASC
+        `, [id_salon, date_debut, date_fin]);
+
+        let totalDebitCents = 0;
+        let totalCreditCents = 0;
+        const lignesFec = [];
+
+        // L'administration exige ce format exact de date (sans tirets)
+        const formatDateFEC = (date) => {
+            if (!date) return '';
+            const d = new Date(date);
+            return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+        };
+        // L'administration exige des virgules pour les décimales
+        const formatMontant = (montant) => Number(montant).toFixed(2).replace('.', ',');
+
+        // Grouper les lignes par ticket pour équilibrer chaque pièce comptable
+        const ticketsMap = {};
+        ticketsRes.rows.forEach(r => {
+            if (!ticketsMap[r.id_ticket]) {
+                ticketsMap[r.id_ticket] = {
+                    id_ticket: r.id_ticket,
+                    numero: r.numero_ticket_caisse,
+                    date: r.date_creation,
+                    date_valid: r.date_cloture || r.date_creation,
+                    methode: r.methode_paiement,
+                    total_ttc: parseFloat(r.total_ttc),
+                    lignes: []
+                };
+            }
+            ticketsMap[r.id_ticket].lignes.push(r);
+        });
+
+        // 3. Génération des écritures (La Partie Double)
+        for (const t of Object.values(ticketsMap)) {
+            const dateEcriture = formatDateFEC(t.date);
+            const dateValid = formatDateFEC(t.date_valid);
+            const pieceRef = t.numero;
+            const ecritureNum = `VT-${t.id_ticket}`;
+            
+            // Ligne de DÉBIT (Paiement)
+            const cptePaiement = (t.methode === 'ESPECES') ? CPT_CAISSE : CPT_BANQUE;
+            const libellePaiement = (t.methode === 'ESPECES') ? 'Caisse' : 'Banque';
+            
+            lignesFec.push({
+                JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                CompteNum: cptePaiement, CompteLib: libellePaiement, CompAuxNum: '', CompAuxLib: '',
+                PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `Encaissement ${pieceRef}`,
+                Debit: formatMontant(t.total_ttc), Credit: '', EcritureLet: '', DateLet: '',
+                ValidDate: dateValid, Montantdevise: '', Idevise: ''
+            });
+            totalDebitCents += Math.round(t.total_ttc * 100);
+
+            // Lignes de CRÉDIT (Produit/Presta + TVA)
+            for (const ligne of t.lignes) {
+                const ligneTTC = parseFloat(ligne.total_ligne_ttc);
+                const tauxTVA = parseFloat(ligne.taux_tva_snapshot) || 20.00;
+                
+                // Calcul strict pour éviter les erreurs d'arrondis comptables
+                const ligneHT = Number((ligneTTC / (1 + tauxTVA / 100)).toFixed(2));
+                const ligneTVA = Number((ligneTTC - ligneHT).toFixed(2));
+
+                const cpteVente = (ligne.type_article === 'PRODUIT_REVENTE') ? CPT_PROD : CPT_PRESTA;
+                const libelleVente = (ligne.type_article === 'PRODUIT_REVENTE') ? 'Vente Produit' : 'Vente Prestation';
+                const nomNettoye = (ligne.nom_article || 'Article').substring(0, 30).replace(/\t/g, ' ').replace(/\n/g, ' ');
+
+                // Crédit CA (HT)
+                if (ligneHT > 0) {
+                    lignesFec.push({
+                        JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                        CompteNum: cpteVente, CompteLib: libelleVente, CompAuxNum: '', CompAuxLib: '',
+                        PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: nomNettoye,
+                        Debit: '', Credit: formatMontant(ligneHT), EcritureLet: '', DateLet: '',
+                        ValidDate: dateValid, Montantdevise: '', Idevise: ''
+                    });
+                    totalCreditCents += Math.round(ligneHT * 100);
+                }
+
+                // Crédit TVA
+                if (ligneTVA > 0) {
+                    lignesFec.push({
+                        JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                        CompteNum: CPT_TVA, CompteLib: `TVA Collectee ${tauxTVA}%`, CompAuxNum: '', CompAuxLib: '',
+                        PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `TVA ${nomNettoye}`.substring(0,30),
+                        Debit: '', Credit: formatMontant(ligneTVA), EcritureLet: '', DateLet: '',
+                        ValidDate: dateValid, Montantdevise: '', Idevise: ''
+                    });
+                    totalCreditCents += Math.round(ligneTVA * 100);
+                }
+            }
+        }
+
+        // 4. L'AUTO-DIAGNOSTIC (Contrôle d'équilibre comptable)
+        if (totalDebitCents !== totalCreditCents) {
+            console.error(`Déséquilibre FEC : Débit=${totalDebitCents/100} Crédit=${totalCreditCents/100}`);
+            return res.status(500).json({ erreur: `Déséquilibre comptable détecté (Débit: ${(totalDebitCents/100).toFixed(2)}€ / Crédit: ${(totalCreditCents/100).toFixed(2)}€). Export bloqué pour protéger votre comptabilité.` });
+        }
+
+        // 5. Assemblage du fichier FEC au format TXT normé (séparateur TAB)
+        const headers = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
+        
+        let fecContent = headers.join('\t') + '\r\n';
+        for (const row of lignesFec) {
+            fecContent += headers.map(h => row[h]).join('\t') + '\r\n';
+        }
+
+        // Traçabilité de l'action dans le journal technique NF525
+        await enregistrerJET(id_salon, 'EXPORT_FEC_GENERE', { date_debut, date_fin, nb_lignes: lignesFec.length, total_equilibre: totalDebitCents / 100 });
+
+        res.setHeader('Content-Type', 'text/plain; charset=windows-1252'); // L'ANSI/Windows-1252 est le standard attendu par les impôts français
+        res.setHeader('Content-Disposition', `attachment; filename="FEC_${id_salon}_${date_debut.replace(/-/g, '')}_${date_fin.replace(/-/g, '')}.txt"`);
+        res.send(fecContent);
+
+    } catch (e) {
+        console.error("❌ Erreur export FEC:", e);
+        res.status(500).json({ erreur: "Erreur lors de la génération du fichier FEC." });
+    }
+});
+
+// =========================================================================
+// --- MESSAGERIE INTERNE ---
+// =========================================================================
+app.get('/api/messages', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT m.*, COALESCE(e.nom, CASE WHEN m.id_expediteur = -1 THEN 'Salon' END) as nom_expediteur, e.photo_url as photo_expediteur FROM messages m LEFT JOIN employes e ON m.id_expediteur = e.id_employe WHERE m.id_salon = $1 ORDER BY m.date_creation ASC`, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur messages." }); }
+});
+
+app.post('/api/messages', verifierToken, async (req, res) => {
+    const { id_destinataire, contenu, fichier_url } = req.body;
+    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
+    try {
+        let nom_expediteur = 'Gérant';
+        let photo_expediteur = null;
+        if (req.user.role === 'employe') {
+            const empRes = await pool.query('SELECT nom, photo_url FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.user.id_employe, req.user.id_salon]);
+            if (empRes.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable." });
+            nom_expediteur = empRes.rows[0].nom;
+            photo_expediteur = empRes.rows[0].photo_url;
+        } else if (req.user.role === 'salon') {
+            nom_expediteur = 'Salon';
+        }
+        const dest = id_destinataire === 'gerant' ? null : (id_destinataire === 'salon' ? 0 : id_destinataire);
+        const result = await pool.query(
+            `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url) VALUES ($1, $2, $3, $4, $5) RETURNING id_message, date_creation`,
+            [req.user.id_salon, id_expediteur, dest, contenu, fichier_url || null]
+        );
+        const newMessage = {
+            id_message: result.rows[0].id_message,
+            id_salon: req.user.id_salon,
+            id_expediteur,
+            id_destinataire: dest,
+            contenu,
+            fichier_url,
+            date_creation: result.rows[0].date_creation,
+            nom_expediteur,
+            photo_expediteur,
+            vu_par: []
+        };
+        io.to(req.user.id_salon.toString()).emit('nouveauMessage', newMessage);
+        
+        // Envoi de la notification Push : uniquement au(x) vrai(s) destinataire(s) du message
+        let cibleNotif;
+        if (dest === 0) {
+            cibleNotif = 'salon'; // message de groupe : tout le monde
+        } else if (dest === null) {
+            cibleNotif = 'gerant'; // message adressé au gérant
+        } else {
+            cibleNotif = { type: 'employe', id_employe: dest }; // message privé à un employé précis
+        }
+        envoyerNotificationPush(req.user.id_salon, cibleNotif, {
+            title: `Nouveau message de ${newMessage.nom_expediteur}`,
+            body: contenu.length > 40 ? contenu.substring(0, 40) + '...' : contenu,
+            url: '/?tab=messagerie'
+        });
+
+        res.status(201).json(newMessage);
+    } catch (e) { res.status(500).json({ erreur: "Erreur envoi message." }); }
+});
+
+app.put('/api/messages/:id', verifierToken, async (req, res) => {
+    const { contenu } = req.body;
+    try {
+        await pool.query('UPDATE messages SET contenu = $1 WHERE id_message = $2 AND id_salon = $3', [contenu, req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('messageModifie', { id_message: parseInt(req.params.id), contenu });
+        res.json({ message: "Message modifié" });
+    } catch(e) { res.status(500).json({erreur: "Erreur lors de la modification"}); }
+});
+
+app.delete('/api/messages/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM messages WHERE id_message = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('messageSupprime', { id_message: parseInt(req.params.id) });
+        res.json({ message: "Message supprimé" });
+    } catch(e) { res.status(500).json({erreur: "Erreur lors de la suppression"}); }
+});
+
+app.post('/api/messages/vu', verifierToken, async (req, res) => {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(id => parseInt(id)).filter(n => !isNaN(n)) : [];
+    if (ids.length === 0) return res.json({ message: "Rien à marquer." });
+    const monId = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
+    const monProfilId = req.user.role === 'employe' ? `emp_${req.user.id_employe}` : (req.user.role === 'salon' ? 'salon' : 'gerant');
+    try {
+        const result = await pool.query(
+            `UPDATE messages SET vu_par = CASE WHEN COALESCE(vu_par, '[]'::jsonb) @> to_jsonb($1::text) THEN vu_par ELSE COALESCE(vu_par, '[]'::jsonb) || to_jsonb($1::text) END
+             WHERE id_message = ANY($2::int[]) AND id_salon = $3 AND id_expediteur IS DISTINCT FROM $4
+             RETURNING id_message, vu_par`,
+            [monProfilId, ids, req.user.id_salon, monId]
+        );
+        result.rows.forEach(row => {
+            io.to(req.user.id_salon.toString()).emit('messageVu', { id_message: row.id_message, vu_par: row.vu_par });
+        });
+        res.json({ message: "Marqué comme vu." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur marquage vu." }); }
+});
+
+app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
+    const { emoji } = req.body;
+    const monProfilId = req.user.role === 'employe' ? `emp_${req.user.id_employe}` : 'gerant';
+    try {
+        const msgRes = await pool.query('SELECT reactions FROM messages WHERE id_message = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        if(msgRes.rowCount === 0) return res.status(404).json({erreur: "Message introuvable"});
+        
+        let reactions = msgRes.rows[0].reactions || {};
+        if (typeof reactions === 'string') reactions = JSON.parse(reactions); 
+        
+        if (!reactions[emoji]) reactions[emoji] = [];
+        
+        if (reactions[emoji].includes(monProfilId)) {
+            reactions[emoji] = reactions[emoji].filter(id => id !== monProfilId);
+            if (reactions[emoji].length === 0) delete reactions[emoji];
+        } else {
+            reactions[emoji].push(monProfilId);
+        }
+        
+        await pool.query('UPDATE messages SET reactions = $1 WHERE id_message = $2', [JSON.stringify(reactions), req.params.id]);
+        io.to(req.user.id_salon.toString()).emit('messageReaction', { id_message: parseInt(req.params.id), reactions });
+        res.json({ message: "Réaction mise à jour" });
+    } catch(e) { res.status(500).json({erreur: "Erreur de réaction"}); }
+});
+
+// =========================================================================
+// --- ROUTES CRUD & STATS ---
+// =========================================================================
+app.get('/api/caisse/tickets/:id', verifierToken, async (req, res) => {
+    try {
+        const lignes = await pool.query("SELECT id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, nom_article_snapshot FROM lignes_ticket WHERE id_ticket = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        const lignesDejaAnnulees = await pool.query("SELECT id_article, SUM(ABS(quantite)) as qte_annulee FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_ticket_origine = $1) GROUP BY id_article", [req.params.id]);
+        
+        let mapAnnule = {};
+        lignesDejaAnnulees.rows.forEach(r => mapAnnule[r.id_article] = parseFloat(r.qte_annulee));
+        
+        const lignesDispos = lignes.rows.map(l => ({
+            ...l,
+            quantite_restante: l.quantite - (mapAnnule[l.id_article] || 0)
+        })).filter(l => l.quantite_restante > 0);
+
+        res.json({ lignes: lignesDispos });
+    } catch(e) { res.status(500).json({ erreur: "Erreur lors de la récupération du ticket." }); }
+});
+
+app.get('/api/clients', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM clients WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur clients."}); }});
+app.post('/api/clients', verifierToken, async (req, res) => { const { prenom, nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (prenom, nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [prenom || '', nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
+app.delete('/api/clients/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }});
+
+app.get('/api/employes', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM employes WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }});
+app.post('/api/employes', verifierToken, async (req, res) => { 
+    const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url } = req.body; 
+    try { 
+        if (!code_pin) return res.status(400).json({ erreur: "Le code PIN est obligatoire." });
+        if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
+        
+        const hashPin = await bcrypt.hash(code_pin, 10);
+        await pool.query('INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7)', [nom, role || 'Employé', taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, photo_url || null, req.user.id_salon]); 
+        res.status(201).json({message: "Employé ajouté"});
+    } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
+});
+app.put('/api/employes/:id', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier un employé." });
+    const { nom, code_pin, taux_commission_prestation, taux_commission_produit } = req.body;
+    try {
+        if (code_pin && code_pin.trim() !== '') {
+            if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
+            const hashPin = await bcrypt.hash(code_pin, 10);
+            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3, code_pin = $4 WHERE id_employe = $5 AND id_salon = $6', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, req.params.id, req.user.id_salon]);
+        } else {
+            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3 WHERE id_employe = $4 AND id_salon = $5', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, req.params.id, req.user.id_salon]);
+        }
+        res.json({message: "Employé modifié"});
+    } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
+});
+app.delete('/api/employes/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }});
+
+app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
+    if (req.user.role !== 'employe' || parseInt(req.params.id) !== req.user.id_employe) return res.status(403).json({ erreur: "Action non autorisée." });
+    try {
+        await pool.query('UPDATE employes SET photo_url = $1 WHERE id_employe = $2 AND id_salon = $3', [req.body.photo_url || null, req.user.id_employe, req.user.id_salon]);
+        res.json({ message: "Photo mise à jour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour photo." }); }
+});
+
+app.get('/api/catalogue', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur catalogue."}); }});
+
+app.post('/api/catalogue', verifierToken, async (req, res) => { 
+    const { nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours } = req.body; 
+    try { 
+        const typeArticleFormatte = type_article || 'PRESTATION'; 
+        const prixFormatte = parseFloat((prix || "0").toString().replace(',', '.')) || 0; 
+        const stockFormatte = parseInt(stock_actuel) || 0; 
+        const refFormattee = reference ? reference.trim() : null; 
+        const tvaFormattee = (taux_tva !== undefined && taux_tva !== null && taux_tva !== '') ? parseFloat(taux_tva.toString().replace(',', '.')) : 20.00; 
+        const delaiFormatte = parseInt(delai_livraison_jours) || 3;
+
+        if (typeArticleFormatte === 'PRODUIT_REVENTE') { 
+            if (!refFormattee || refFormattee.length < 4) { return res.status(400).json({ erreur: "Réf valide requise." }); } 
+        } 
+        
+        const checkQuery = `SELECT * FROM catalogue WHERE (nom ILIKE $1 OR (reference = $2 AND reference IS NOT NULL)) AND id_salon = $3`; 
+        const checkResult = await pool.query(checkQuery, [nom, refFormattee, req.user.id_salon]); 
+        
+        if (checkResult.rowCount > 0) { 
+            const art = checkResult.rows[0]; 
+            if (refFormattee && art.reference === refFormattee && typeArticleFormatte === 'PRODUIT_REVENTE') { 
+                if (!nom || nom.trim() === '') { 
+                    await pool.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2', [stockFormatte, art.id_article]); 
+                    await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: art.id_article, action: 'REAPPRO_STOCK', ajout: stockFormatte }); 
+                    return res.status(200).json({ message: `Stock mis à jour (+${stockFormatte})` }); 
+                } else if (nom.trim().toLowerCase() !== art.nom.toLowerCase()) { 
+                    return res.status(400).json({ erreur: `Référence déjà utilisée.` }); 
+                } 
+            } 
+            if (art.nom.toLowerCase() === nom.trim().toLowerCase()) { 
+                return res.status(400).json({ erreur: `L'article existe déjà.` }); 
+            } 
+        } 
+        
+        const dureeFormattee = parseInt(req.body.duree_estimee_minutes) || 30;
+        const inserted = await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours, duree_estimee_minutes, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id_article', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, tvaFormattee, delaiFormatte, dureeFormattee, req.user.id_salon]);
+        await enregistrerJET(req.user.id_salon, 'CREATION_ARTICLE', { id_article: inserted.rows[0].id_article, nom, type_article: typeArticleFormatte, prix: prixFormatte, taux_tva: tvaFormattee }); 
+        res.status(201).json({ message: "Article ajouté avec succès !" }); 
+    } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }
+});
+
+app.delete('/api/catalogue/:id', verifierToken, async (req, res) => { try { const articleRes = await pool.query('SELECT nom, type_article, prix FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); if (articleRes.rowCount > 0) { await enregistrerJET(req.user.id_salon, 'SUPPRESSION_ARTICLE', { id_article: req.params.id, ...articleRes.rows[0] }); } res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }});
+
+app.put('/api/catalogue/:id/nom', verifierToken, async (req, res) => {
+    const nouveauNom = (req.body.nom || '').trim();
+    if (!nouveauNom) return res.status(400).json({ erreur: "Le nom ne peut pas être vide." });
+    try {
+        const doublon = await pool.query('SELECT 1 FROM catalogue WHERE id_salon = $1 AND id_article != $2 AND nom ILIKE $3', [req.user.id_salon, req.params.id, nouveauNom]);
+        if (doublon.rowCount > 0) return res.status(400).json({ erreur: "Une prestation porte déjà ce nom." });
+        const result = await pool.query('UPDATE catalogue SET nom = $1 WHERE id_article = $2 AND id_salon = $3 RETURNING id_article', [nouveauNom, req.params.id, req.user.id_salon]);
+        if (result.rowCount === 0) return res.status(404).json({ erreur: "Article introuvable." });
+        await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: req.params.id, action: 'RENOMMAGE', nouveau_nom: nouveauNom });
+        res.json({ message: "Nom mis à jour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors du renommage." }); }
+});
+
+app.get('/api/stocks', verifierToken, async (req, res) => {
+    try {
+        const stockResult = await pool.query(`
+            WITH ConsommationDirecte AS (
+                SELECT lt.id_article, SUM(lt.quantite) as qte
+                FROM lignes_ticket lt
+                JOIN tickets t ON t.id_ticket = lt.id_ticket
+                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE
+                  AND t.date_creation >= NOW() - INTERVAL '30 days'
+                GROUP BY lt.id_article
+            ),
+            ConsommationRecettes AS (
+                SELECT ra.id_article, SUM(ra.quantite_necessaire * lt.quantite) as qte
+                FROM lignes_ticket lt
+                JOIN tickets t ON t.id_ticket = lt.id_ticket
+                JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(lt.nom_article_snapshot)
+                JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
+                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE
+                  AND t.date_creation >= NOW() - INTERVAL '30 days'
+                GROUP BY ra.id_article
+            ),
+            ConsommationTotale AS (
+                SELECT id_article, SUM(qte) as total_30j FROM (
+                    SELECT * FROM ConsommationDirecte UNION ALL SELECT * FROM ConsommationRecettes
+                ) x GROUP BY id_article
+            )
+            SELECT c.id_article, c.nom, c.stock_actuel, c.seuil_alerte, c.type_article,
+                   COALESCE(ct.total_30j, 0) as consommation_30j
+            FROM catalogue c
+            LEFT JOIN ConsommationTotale ct ON ct.id_article = c.id_article
+            WHERE c.id_salon = $1 AND c.type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE')
+            ORDER BY c.nom ASC
+        `, [req.user.id_salon]);
+
+        const stocksAvecTendance = stockResult.rows.map(p => {
+            const vitesseJour = parseFloat(p.consommation_30j) / 30;
+            const stockActuel = parseFloat(p.stock_actuel);
+            let joursRestants = null;
+            let dateRuptureProjetee = null;
+            if (vitesseJour > 0) {
+                joursRestants = Math.floor(stockActuel / vitesseJour);
+                const d = new Date();
+                d.setDate(d.getDate() + joursRestants);
+                dateRuptureProjetee = d.toISOString().slice(0, 10);
+            }
+            return { ...p, vitesse_jour: Math.round(vitesseJour * 100) / 100, jours_restants: joursRestants, date_rupture_prevue: dateRuptureProjetee };
+        });
+
+        res.json(stocksAvecTendance);
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }
+});
+
+app.put('/api/stocks/:id', verifierToken, async (req, res) => {
+    const nouveauStock = parseInt(req.body.nouveau_stock);
+    if (isNaN(nouveauStock) || nouveauStock < 0) return res.status(400).json({ erreur: "Quantité invalide." });
+    try {
+        const result = await pool.query('UPDATE catalogue SET stock_actuel = $1 WHERE id_article = $2 AND id_salon = $3 RETURNING id_article', [nouveauStock, req.params.id, req.user.id_salon]);
+        if (result.rowCount === 0) return res.status(404).json({ erreur: "Produit introuvable." });
+        await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: req.params.id, action: 'CORRECTION_STOCK', nouvelle_valeur: nouveauStock });
+        res.json({ message: "Stock mis à jour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour du stock." }); }
+});
+app.get('/api/rh', verifierToken, async (req, res) => { const id_salon = req.user.id_salon; try { const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`; const rhResult = await pool.query(rhQuery, [id_salon]); const employesData = await Promise.all(rhResult.rows.map(async (emp) => { const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`; const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]); let historique = histoResult.rows.map(r => parseFloat(r.total_prime)); while(historique.length < 6) historique.unshift(0); if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0]; const avisEmp = await pool.query(`SELECT note, commentaire, prenom, date_creation FROM avis_demandes WHERE id_salon = $2 AND id_employe = $1 AND statut = 'REPONDU' AND note IS NOT NULL ORDER BY date_creation DESC`, [emp.id_employe, id_salon]); const notes = avisEmp.rows.map(a => a.note); const moyenneNote = notes.length > 0 ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : null; return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6), note_moyenne: moyenneNote, nb_avis: notes.length, derniers_avis: avisEmp.rows.slice(0, 3) }; })); res.json(employesData); } catch (erreur) { res.status(500).json({ erreur: "Erreur requête RH." }); }});
+// =========================================================================
+// --- MODULE RH : CONGÉS ET ARRÊTS MALADIE ---
+// =========================================================================
+
+// 1. L'employé dépose une absence (Congé ou Arrêt)
+app.post('/api/rh/absences', verifierToken, verifierPlan(['PREMIUM']), async (req, res) => {
+    const { type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fichier_base64, nom_fichier, type_mime } = req.body;
+    const id_salon = req.user.id_salon;
+    const id_employe = req.user.role === 'employe' ? req.user.id_employe : req.body.id_employe;
+
+    try {
+        const conflit = await pool.query(
+            `SELECT 1 FROM absences_employes 
+             WHERE id_salon = $1 AND id_employe = $2 AND statut != 'REFUSE' 
+             AND date_debut <= $4 AND date_fin >= $3`,
+            [id_salon, id_employe, date_debut, date_fin]
+        );
+        
+        if (conflit.rowCount > 0) {
+            return res.status(400).json({ erreur: "Une absence ou demande est déjà enregistrée sur ces dates pour ce collaborateur." });
+        }
+
+        let fileKey = null;
+
+        if (fichier_base64 && nom_fichier) {
+            // 🚨 SÉCURITÉ : Liste blanche stricte pour bloquer les Malwares et XSS stockés
+            const allowedMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+            const extension = nom_fichier.split('.').pop().toLowerCase();
+            const allowedExts = ['pdf', 'jpg', 'jpeg', 'png'];
+
+            if (!type_mime || !allowedMimes.includes(type_mime) || !allowedExts.includes(extension)) {
+                return res.status(400).json({ erreur: "Format de fichier non autorisé. Seuls les PDF, JPG et PNG sont acceptés." });
+            }
+
+            fileKey = `salons/${id_salon}/employes/${id_employe}/absences/${Date.now()}.${extension}`;
+            const buffer = Buffer.from(fichier_base64.replace(/^data:.*,/, ''), 'base64');
+            await s3Client.send(new PutObjectCommand({
+                Bucket: process.env.R2_BUCKET_NAME, Key: fileKey, Body: buffer, ContentType: type_mime,
+            }));
+        }
+
+        const statutInitial = type_demande === 'ARRET_MALADIE' ? 'VALIDE' : 'EN_ATTENTE';
+
+        const result = await pool.query(
+            `INSERT INTO absences_employes (id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fichier_cle_r2, statut)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id_absence`,
+            [id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fileKey, statutInitial]
+        );
+
+        const emp = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [id_employe]);
+        const nomEmploye = emp.rows[0].nom;
+
+        // --- DÉTECTION DÉTAILLÉE DES CONFLITS D'AGENDA ---
+        let conflits = [];
+        if (statutInitial === 'VALIDE') {
+            const rdvs = await pool.query(
+                `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
+                 FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 
+                 AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') >= $3 
+                 AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') <= $4
+                 ORDER BY date_heure_debut ASC`,
+                [id_salon, id_employe, date_debut, date_fin]
+            );
+            conflits = rdvs.rows;
+        }
+
+        if (type_demande === 'ARRET_MALADIE') {
+            await pool.query(
+                "INSERT INTO taches_actions (id_salon, titre, description, source) VALUES ($1, $2, $3, 'IA')",
+                [id_salon, `URGENCE : Arrêt maladie de ${nomEmploye}`, `${nomEmploye} a déposé un arrêt maladie du ${date_debut} au ${date_fin}. Vérifiez l'agenda pour déplacer ses rendez-vous.`]
+            );
+            envoyerNotificationPush(id_salon, 'gerant', { title: "Arrêt Maladie", body: `${nomEmploye} est en arrêt maladie jusqu'au ${date_fin}.`, url: '/?tab=actions' });
+            res.json({ message: "Arrêt maladie enregistré.", conflits });
+        } else {
+            envoyerNotificationPush(id_salon, 'gerant', { title: "Demande de congés", body: `${nomEmploye} a posé une demande du ${date_debut} au ${date_fin}.`, url: '/?tab=equipe' });
+            res.json({ message: "Demande envoyée pour validation.", conflits });
+        }
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lors de l'enregistrement de l'absence." });
+    }
+});
+
+
+// 2. Le gérant Valide ou Refuse un congé
+app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    
+    const { statut, motif_refus } = req.body;
+    try {
+        let conflits = [];
+        if (statut === 'VALIDE') {
+            const absenceResInfo = await pool.query("SELECT id_employe, TO_CHAR(date_debut, 'YYYY-MM-DD') as date_debut_str, TO_CHAR(date_fin, 'YYYY-MM-DD') as date_fin_str FROM absences_employes WHERE id_absence = $1", [req.params.id]);
+            if (absenceResInfo.rowCount > 0) {
+                const absInfo = absenceResInfo.rows[0];
+                const rdvs = await pool.query(
+                    `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
+                     FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 
+                     AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') >= $3 
+                     AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') <= $4
+                     ORDER BY date_heure_debut ASC`,
+                    [req.user.id_salon, absInfo.id_employe, absInfo.date_debut_str, absInfo.date_fin_str]
+                );
+                conflits = rdvs.rows;
+            }
+        }
+
+        const absRes = await pool.query(
+            `UPDATE absences_employes SET statut = $1, motif_refus = $2 WHERE id_absence = $3 AND id_salon = $4 RETURNING id_employe, date_debut, date_fin, type_demande`,
+            [statut, motif_refus || null, req.params.id, req.user.id_salon]
+        );
+        
+        if (absRes.rowCount > 0) {
+            const absence = absRes.rows[0];
+            const dDebut = new Date(absence.date_debut).toLocaleDateString('fr-FR');
+            const dFin = new Date(absence.date_fin).toLocaleDateString('fr-FR');
+            const message = statut === 'VALIDE' 
+                ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${dDebut} au ${dFin} ont été validés.` 
+                : (motif_refus ? `Votre demande a été refusée. Motif : ${motif_refus}` : `Votre demande de congés a été refusée.`);
+                
+            envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
+        }
+        res.json({ message: `Demande passée au statut : ${statut}`, conflits });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la décision." }); }
+});
+
+// 3. Lire un justificatif sécurisé (Lien éphémère de 15 minutes)
+app.get('/api/rh/absences/:id/justificatif', verifierToken, async (req, res) => {
+    try {
+        // Seul le gérant ou l'employé concerné peut voir le document
+        const absenceRes = await pool.query(
+            'SELECT fichier_cle_r2 FROM absences_employes WHERE id_absence = $1 AND id_salon = $2',
+            [req.params.id, req.user.id_salon]
+        );
+
+        if (absenceRes.rowCount === 0 || !absenceRes.rows[0].fichier_cle_r2) {
+            return res.status(404).json({ erreur: "Aucun justificatif trouvé." });
+        }
+
+        // Génération d'une URL temporaire
+        const command = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: absenceRes.rows[0].fichier_cle_r2 });
+        const urlTemporaire = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+
+        res.json({ url: urlTemporaire });
+    } catch (e) { res.status(500).json({ erreur: "Erreur génération lien sécurisé." }); }
+});
+
+// 4. Récupérer toutes les absences (pour le tableau de bord RH du gérant)
+app.get('/api/rh/absences', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    try {
+        const result = await pool.query(`
+            SELECT a.*, e.nom as nom_employe 
+            FROM absences_employes a 
+            JOIN employes e ON a.id_employe = e.id_employe 
+            WHERE a.id_salon = $1 
+            ORDER BY CASE WHEN a.statut = 'EN_ATTENTE' THEN 0 ELSE 1 END, a.date_creation DESC
+        `, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture absences." }); }
+});
+
+app.get('/api/dashboard/salon', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    try {
+        const r = await pool.query(`
+            SELECT
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_actuel,
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_precedent
+            FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE
+        `, [id_salon]);
+        const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
+        const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
+        const evolution = nbPrecedent > 0 ? Math.round(((nbActuel - nbPrecedent) / nbPrecedent) * 100) : (nbActuel > 0 ? 100 : 0);
+        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution });
+    } catch (e) { res.status(500).json({ erreur: "Erreur dashboard salon." }); }
+});
+
+app.get('/api/dashboard/employe', verifierToken, async (req, res) => {
+    if (req.user.role !== 'employe') return res.status(403).json({ erreur: "Réservé aux employés." });
+    const id_salon = req.user.id_salon;
+    const id_employe = req.user.id_employe;
+    try {
+        const r = await pool.query(`
+            SELECT
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_actuel,
+                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_precedent
+            FROM tickets WHERE id_salon = $1 AND id_employe = $2 AND statut != 'ANNULE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE
+        `, [id_salon, id_employe]);
+        const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
+        const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
+        const evolution = nbPrecedent > 0 ? Math.round(((nbActuel - nbPrecedent) / nbPrecedent) * 100) : (nbActuel > 0 ? 100 : 0);
+        const cResult = await pool.query(`SELECT COALESCE(SUM(montant_commission), 0) as total FROM commissions WHERE id_employe = $1 AND id_salon = $2 AND date_creation >= date_trunc('month', CURRENT_DATE)`, [id_employe, id_salon]);
+        const pResult = await pool.query(`SELECT COUNT(CASE WHEN type_vente != 'PRESTATION' THEN 1 END) as total FROM commissions WHERE id_employe = $1 AND id_salon = $2 AND date_creation >= date_trunc('month', CURRENT_DATE)`, [id_employe, id_salon]);
+        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution, commission_mois: parseFloat(cResult.rows[0].total), nb_produits_vendus: parseInt(pResult.rows[0].total) || 0 });
+    } catch (e) { res.status(500).json({ erreur: "Erreur dashboard employé." }); }
+});
+
+app.get('/api/dashboard', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon; 
+    try { 
+        const statsResult = await pool.query(`SELECT COUNT(id_ticket) as nb_ventes, COALESCE(SUM(total_ttc), 0) as chiffre_affaires FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]); 
+        const nbVentes = parseInt(statsResult.rows[0].nb_ventes); 
+        const caTotal = parseFloat(statsResult.rows[0].chiffre_affaires); 
+        
+        // LA CORRECTION EST ICI : on s'assure que c.nom est présent dans le GROUP BY si on l'utilise.
+        const topPrestationsResult = await pool.query(`
+            SELECT c.nom, SUM(lt.total_ligne_ttc) as total_genere 
+            FROM lignes_ticket lt 
+            JOIN tickets t ON lt.id_ticket = t.id_ticket 
+            JOIN catalogue c ON lt.id_article = c.id_article 
+            WHERE t.id_salon = $1 AND c.type_article = 'PRESTATION' AND t.statut != 'ANNULE' 
+            GROUP BY c.nom 
+            ORDER BY total_genere DESC 
+            LIMIT 3
+        `, [id_salon]); 
+        
+        const commissionsResult = await pool.query(`SELECT COALESCE(SUM(montant_commission), 0) as total_commissions FROM commissions WHERE id_salon = $1`, [id_salon]); 
+        let googleMarketing = { note_actuelle: 0, total_avis: 0, tendance_6_mois: [0, 0, 0, 0, 0, 0] }; 
+        try { 
+            const configResult = await pool.query('SELECT google_api_key, google_account_id, google_location_id FROM configuration_salon WHERE id_salon = $1', [id_salon]); 
+            if (configResult.rowCount > 0) { 
+                const salonConfig = configResult.rows[0]; 
+                if (salonConfig.google_api_key && salonConfig.google_account_id && salonConfig.google_location_id) { 
+                    const url = `https://mybusiness.googleapis.com/v4/accounts/${salonConfig.google_account_id}/locations/${salonConfig.google_location_id}/reviews?key=${salonConfig.google_api_key}`; 
+                    const gRes = await fetch(url); 
+                    if (gRes.ok) { 
+                        const gData = await gRes.json(); 
+                        if (gData.reviews && gData.reviews.length > 0) { 
+                            googleMarketing.total_avis = gData.reviews.length; 
+                            let totalStars = 0; const ratingMap = { 'ONE': 1, 'TWO': 2, 'THREE': 3, 'FOUR': 4, 'FIVE': 5 }; 
+                            gData.reviews.forEach(review => { totalStars += ratingMap[review.starRating] || 5; }); 
+                            googleMarketing.note_actuelle = parseFloat((totalStars / googleMarketing.total_avis).toFixed(1)); 
+                            googleMarketing.tendance_6_mois = [ googleMarketing.note_actuelle - 0.4, googleMarketing.note_actuelle - 0.3, googleMarketing.note_actuelle - 0.1, googleMarketing.note_actuelle + 0.1, googleMarketing.note_actuelle, googleMarketing.note_actuelle ]; 
+                        } 
+                    } 
+                } 
+            } 
+        } catch (e) { console.error("Avertissement Google API :", e); } 
+        
+        // RECUPERATION DES VERBATIMS
+        const avisResult = await pool.query(`
+            SELECT a.id_demande, a.prenom, a.note, a.commentaire, a.telephone, a.date_creation, e.nom as nom_employe 
+            FROM avis_demandes a LEFT JOIN employes e ON a.id_employe = e.id_employe
+            WHERE a.id_salon = $1 AND a.statut = 'REPONDU' AND a.note IS NOT NULL
+            ORDER BY a.date_creation DESC LIMIT 50
+        `, [id_salon]);
+
+        let nps_score = null;
+        let nb_promoteurs = 0, nb_detracteurs = 0;
+        if (avisResult.rowCount > 0) {
+            avisResult.rows.forEach(a => { if (a.note === 5) nb_promoteurs++; else if (a.note <= 3) nb_detracteurs++; });
+            nps_score = Math.round(((nb_promoteurs / avisResult.rowCount) * 100) - ((nb_detracteurs / avisResult.rowCount) * 100));
+        }
+
+        res.json({ 
+            statut: "Succès", 
+            finances: { 
+                chiffre_affaires_total: caTotal, 
+                panier_moyen: nbVentes > 0 ? (caTotal / nbVentes).toFixed(2) : 0, 
+                commissions_a_payer: parseFloat(commissionsResult.rows[0].total_commissions) 
+            }, 
+            top_3_prestations: topPrestationsResult.rows || [], 
+            marketing: { ...googleMarketing, verbatims: avisResult.rows, nps: nps_score } 
+        }); 
+    } catch (erreur) { 
+        console.error("Erreur Dashboard:", erreur);
+        res.status(500).json({ erreur: "Erreur calcul dashboard." }); 
+    }
+});
+
+// =========================================================================
+// --- L'INTELLIGENCE ARTIFICIELLE (ANALYSE D'EMAILS) ---
+// =========================================================================
+const PROMPT_SYSTEME_IA = `Tu es un assistant IA pour un salon de coiffure. Analyse cet email et extrais les donnees en JSON strict.
+CAS 1 - STOCK : Si le texte parle de livraison, commande, achat, facture ou réassort de produits. -> Renvoie {"type": "STOCK", "donnees": {"nom_produit": "nom du produit", "quantite": entier, "reference": ""}}
+CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe, couleur...", "date_heure": "YYYY-MM-DDTHH:MM", "duree_minutes": 30}} (Cherche une durée en minutes ou déduis-la d'une heure de fin. Sinon mets null)
+CAS 4 - URGENCES / FACTURES : Si le texte est une facture à payer, une relance, ou une action requise (impôts, URSSAF, EDF...). -> Renvoie {"type": "ACTION", "donnees": {"titre": "Payer EDF", "description": "Facture numéro XYZ...", "date_echeance": "YYYY-MM-DD"}}
+CAS 5 - ABSENCES : Si un employé signale qu'il sera absent (arrêt maladie, demande de congé, RTT). -> Renvoie {"type": "ABSENCE", "donnees": {"nom_employe": "prénom ou nom", "type_demande": "ARRET_MALADIE ou CONGES", "date_debut": "YYYY-MM-DD", "date_fin": "YYYY-MM-DD", "commentaire": "raison courte de l'absence"}}
+CAS 3 - AUTRE : Pour tout le reste (pubs, spam, etc.) -> Renvoie {"type": "NONE"}`;
+
+async function analyserEmailAvecIA(sujet, texte) {
+    if (!process.env.GROQ_API_KEY) return [];
+
+    const texteTronque = (texte || '').substring(0, 8000);
+
+    try {
+        const anneeEnCours = new Date().getFullYear();
+        const dateDuJour = new Date().toLocaleDateString('fr-FR');
+        
+        const completion = await groq.chat.completions.create({
+            model: 'qwen/qwen3.8-27b',
+            max_tokens: 250,
+            temperature: 0,
+            response_format: { type: 'json_object' },
+            messages: [
+                { role: 'system', content: `${PROMPT_SYSTEME_IA}\nINFO : La date du jour est le ${dateDuJour}. Si l'e-mail ne précise pas l'année, utilise obligatoirement ${anneeEnCours}.` },
+                { role: 'user', content: `Sujet : ${sujet}\n\nCorps de l'e-mail :\n${texteTronque}` }
+            ]
+        });
+
+        const brut = completion.choices?.[0]?.message?.content;
+        if (!brut) return [];
+
+        let analyse;
+        try {
+            const jsonNettoye = brut.replace(/```json/gi, '').replace(/```/g, '').trim();
+            analyse = JSON.parse(jsonNettoye);
+            console.log("✅ L'IA a compris :", analyse);
+        } catch (erreurParsing) { return []; }
+
+        if (analyse.type === 'STOCK' && analyse.donnees && analyse.donnees.nom_produit) {
+            const quantite = parseInt(analyse.donnees.quantite, 10);
+            if (!quantite || quantite <= 0) return [];
+            return [{
+                type_tache: 'STOCK',
+                donnees: {
+                    nom_produit: String(analyse.donnees.nom_produit).trim().substring(0, 100),
+                    quantite,
+                    reference: analyse.donnees.reference ? String(analyse.donnees.reference).trim().substring(0, 100) : '',
+                    prix: 0
+                }
+            }];
+        }
+
+        if (analyse.type === 'RDV' && analyse.donnees && analyse.donnees.nom_client) {
+            return [{
+                type_tache: 'RDV',
+                donnees: {
+                    nom_client: String(analyse.donnees.nom_client).trim().substring(0, 100),
+                    telephone: analyse.donnees.telephone ? String(analyse.donnees.telephone).replace(/[^\d+]/g, '').substring(0, 20) : '',
+                    prestation: analyse.donnees.prestation ? String(analyse.donnees.prestation).trim().substring(0, 100) : 'Prestation à définir',
+                    date_heure_debut: analyse.donnees.date_heure || '',
+                    duree_minutes: analyse.donnees.duree_minutes ? parseInt(analyse.donnees.duree_minutes) : null,
+                    id_employe: ''
+                }
+            }];
+        }
+
+        if (analyse.type === 'ABSENCE' && analyse.donnees && analyse.donnees.nom_employe) {
+            return [{
+                type_tache: 'ABSENCE',
+                donnees: {
+                    nom_employe: String(analyse.donnees.nom_employe).trim().substring(0, 100),
+                    type_demande: analyse.donnees.type_demande === 'ARRET_MALADIE' ? 'ARRET_MALADIE' : 'CONGES',
+                    date_debut: analyse.donnees.date_debut || '',
+                    date_fin: analyse.donnees.date_fin || analyse.donnees.date_debut || '',
+                    commentaire: analyse.donnees.commentaire ? String(analyse.donnees.commentaire).trim() : ''
+                }
+            }];
+        }
+
+        if (analyse.type === 'ACTION' && analyse.donnees && analyse.donnees.titre) {
+            return [{
+                type_tache: 'ACTION',
+                donnees: {
+                    titre: String(analyse.donnees.titre).trim().substring(0, 200),
+                    description: analyse.donnees.description ? String(analyse.donnees.description).trim() : '',
+                    date_echeance: analyse.donnees.date_echeance || ''
+                }
+            }];
+        }
+
+        return [];
+    } catch (erreurIA) { return []; }
+}
+
+app.get('/api/ia/taches', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM ia_taches_attente WHERE id_salon = $1 AND statut = 'ATTENTE' ORDER BY date_creation DESC", [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur IA" }); }
+});
+
+app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
+    const { id } = req.params;
+    const donnees = req.body;
+    const id_salon = req.user.id_salon;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const tacheRes = await clientDB.query("SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2", [id, id_salon]);
+        if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
+        const type_tache = tacheRes.rows[0].type_tache;
+
+        if (type_tache === 'STOCK') {
+            const check = await clientDB.query("SELECT id_article FROM catalogue WHERE (nom ILIKE $1 OR reference = $2) AND id_salon = $3", [donnees.nom_produit, donnees.reference || null, id_salon]);
+            if (check.rowCount > 0) {
+                await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [donnees.quantite, check.rows[0].id_article]);
+            } else {
+                await clientDB.query("INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, id_salon) VALUES ($1, 'PRODUIT_REVENTE', $2, $3, $4, $5)", [donnees.nom_produit, donnees.prix || 0, donnees.quantite, donnees.reference || null, id_salon]);
+            }
+        } else if (type_tache === 'RDV') {
+            let datetime = new Date().toISOString();
+            if (donnees.date_heure_debut) {
+                datetime = donnees.date_heure_debut;
+                if (datetime.length === 16) datetime += ':00'; 
+            }
+            
+            const rawEmployeId = parseInt(donnees.id_employe);
+            const idEmploye = isNaN(rawEmployeId) ? null : rawEmployeId;
+            const dureeFinale = parseInt(donnees.duree_minutes) || 30;
+            
+            await clientDB.query(
+                `INSERT INTO rendez_vous (id_salon, nom_client, telephone_client, prestation, date_heure_debut, id_employe, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
+                [id_salon, donnees.nom_client, donnees.telephone, donnees.prestation, datetime, idEmploye, dureeFinale]
+            );
+            
+            if (donnees.telephone && donnees.telephone.trim() !== '') {
+                await clientDB.query(
+                    "INSERT INTO clients (nom, telephone, id_salon) SELECT $1::varchar, $2::varchar, $3::int WHERE NOT EXISTS (SELECT 1 FROM clients WHERE telephone = $2 AND id_salon = $3)", 
+                    [donnees.nom_client, donnees.telephone, id_salon]
+                );
+            }
+
+            io.to(id_salon.toString()).emit('nouveauRDV');
+        } 
+        else if (type_tache === 'ABSENCE') {
+            const empRes = await clientDB.query("SELECT id_employe FROM employes WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1", [`%${donnees.nom_employe}%`, id_salon]);
+            if (empRes.rowCount === 0) throw new Error(`Collaborateur introuvable : ${donnees.nom_employe}`);
+            const idEmploye = empRes.rows[0].id_employe;
+
+            // --- Vérification Anti-Doublon / Chevauchement pour l'IA ---
+            const conflit = await clientDB.query(
+                `SELECT 1 FROM absences_employes 
+                 WHERE id_salon = $1 AND id_employe = $2 AND statut != 'REFUSE' 
+                 AND date_debut <= $4 AND date_fin >= $3`,
+                [id_salon, idEmploye, donnees.date_debut, donnees.date_fin]
+            );
+            if (conflit.rowCount > 0) throw new Error("Cet employé a déjà une absence enregistrée sur cette période.");
+            // ------------------------------------------------------------
+
+            const statutInitial = donnees.type_demande === 'ARRET_MALADIE' ? 'VALIDE' : 'EN_ATTENTE';
+            const nature = donnees.type_demande === 'ARRET_MALADIE' ? 'MALADIE_ORDINAIRE' : 'CP';
+
+            await clientDB.query(
+                `INSERT INTO absences_employes (id_salon, id_employe, type_demande, nature_absence, date_debut, moment_debut, date_fin, moment_fin, commentaire, statut)
+                 VALUES ($1, $2, $3, $4, $5, 'MATIN', $6, 'APRES_MIDI', $7, $8)`,
+                [id_salon, idEmploye, donnees.type_demande, nature, donnees.date_debut, donnees.date_fin, donnees.commentaire, statutInitial]
+            );
+
+            if (donnees.type_demande === 'ARRET_MALADIE') {
+                await clientDB.query(
+                    "INSERT INTO taches_actions (id_salon, titre, description, source) VALUES ($1, $2, $3, 'IA')",
+                    [id_salon, `URGENCE : Arrêt maladie de ${donnees.nom_employe}`, `${donnees.nom_employe} a déclaré un arrêt du ${donnees.date_debut} au ${donnees.date_fin} par email. L'agenda a été bloqué automatiquement.`]
+                );
+            }
+            io.to(id_salon.toString()).emit('nouveauRDV');
+        }
+        else if (type_tache === 'ACTION') {
+            let echeance = donnees.date_echeance && donnees.date_echeance !== '' ? donnees.date_echeance : null;
+            await clientDB.query(
+                "INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')",
+                [id_salon, donnees.titre, donnees.description, echeance]
+            );
+        }
+
+        await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
+        await clientDB.query('COMMIT');
+        res.json({ message: "Action IA validée !" });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message });
+    } finally { 
+        clientDB.release(); 
+    }
+});
+
+app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
+    try {
+        await pool.query("UPDATE ia_taches_attente SET statut = 'IGNORE' WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Tâche ignorée." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur" }); }
+});
+
+// =========================================================================
+// --- LECTURE DES MAILS & EXPORT PDF ---
+// =========================================================================
+app.get('/api/factures/historique', verifierToken, async (req, res) => { 
+    try { 
+        const filtreEmploye = req.user.role === 'employe';
+        const query = `
+            SELECT 
+                TO_CHAR(t.date_creation, 'YYYY-MM-DD') as date_brute,
+                TO_CHAR(t.date_creation, 'DD/MM/YYYY') as date_formattee,
+                EXTRACT(YEAR FROM t.date_creation) as annee, 
+                EXTRACT(MONTH FROM t.date_creation) as mois, 
+                SUM(t.total_ttc) as total_jour
+            FROM tickets t 
+            WHERE t.id_salon = $1 AND t.statut != 'ANNULE' ${filtreEmploye ? 'AND t.id_employe = $2' : ''}
+            GROUP BY date_brute, date_formattee, annee, mois
+            ORDER BY date_brute DESC
+        `;
+        const params = filtreEmploye ? [req.user.id_salon, req.user.id_employe] : [req.user.id_salon];
+        const result = await pool.query(query, params);
+
+        const historique = {};
+        const moisNoms = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+
+        result.rows.forEach(row => {
+            const annee = row.annee.toString();
+            const moisNom = moisNoms[parseInt(row.mois) - 1];
+
+            if (!historique[annee]) historique[annee] = {};
+            if (!historique[annee][moisNom]) historique[annee][moisNom] = { total_mensuel: 0, jours: [] };
+
+            historique[annee][moisNom].total_mensuel += parseFloat(row.total_jour);
+            historique[annee][moisNom].jours.push({
+                date_brute: row.date_brute,
+                date_formattee: row.date_formattee,
+                total: parseFloat(row.total_jour)
+            });
+        });
+
+        const formattedData = Object.keys(historique).sort((a, b) => b - a).map(annee => ({
+            annee: annee,
+            mois: Object.keys(historique[annee]).map(mois => ({
+                nom: mois,
+                total_mensuel: historique[annee][mois].total_mensuel,
+                jours: historique[annee][mois].jours
+            }))
+        }));
+
+        res.json(formattedData); 
+    } catch (erreur) { 
+        res.status(500).json({ erreur: "Erreur Historique Compta" }); 
+    }
+});
+
+
+
+
+// =========================================================================
+// --- EXPORT PDF : BILAN JOURNALIER ---
+// =========================================================================
+app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const dateCible = req.params.date;
+    const estEmploye = req.user.role === 'employe';
+    const id_employe = req.user.id_employe;
+    
+    try {
+        const configRes = await pool.query('SELECT nom_salon, siret, adresse_salon, tva_intra FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = configRes.rows[0] || {};
+        
+        const franchiseTVA = !config.tva_intra || config.tva_intra.trim() === '';
+        const mentionTVA = franchiseTVA ? `Franchise en base de TVA (Art. 293 B CGI)` : `N° TVA : ${config.tva_intra}`;
+        
+        const filtreEmploye = estEmploye ? ' AND t.id_employe = $3' : '';
+        const paramsVentes = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
+        
+        // 1. Ventes Détaillées
+        const ventesResult = await pool.query(`
+            SELECT 
+                t.id_ticket, t.numero_ticket_caisse, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
+                COALESCE(e.nom, 'Inconnu') as employe,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'nom', COALESCE(lt.nom_article_snapshot, c.nom, 'Article supprimé'),
+                            'qte', COALESCE(lt.quantite, 0),
+                            'ttc', COALESCE(lt.total_ligne_ttc, 0),
+                            'tva', COALESCE(lt.taux_tva_snapshot, 20)
+                        )
+                    ) FILTER (WHERE lt.id_article IS NOT NULL), '[]'::json
+                ) as lignes
+            FROM tickets t
+            LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
+            LEFT JOIN catalogue c ON lt.id_article = c.id_article
+            LEFT JOIN employes e ON t.id_employe = e.id_employe
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            GROUP BY t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.total_ttc, t.methode_paiement, e.nom
+            ORDER BY t.date_creation ASC
+        `, paramsVentes);
+
+        const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}`, paramsVentes);
+        const caTotal = parseFloat(caResult.rows[0].ca_total) || 0;
+
+        // 3. Clôture Info et Mouvements
+        const clotureRes = await pool.query(`SELECT id_cloture, cumul_perpetuel_ttc, signature_hash, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
+        const clotureData = clotureRes.rowCount > 0 ? clotureRes.rows[0] : null;
+        const cloturePar = clotureData ? clotureData.ferme_par : 'Non spécifié';
+
+        const mouvementsResult = await pool.query(`SELECT COALESCE(SUM(montant), 0) as total_sorties FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2 AND type_mouvement = 'SORTIE'`, [id_salon, dateCible]);
+        const totalSorties = parseFloat(mouvementsResult.rows[0].total_sorties) || 0;
+
+        const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
+        const nomGerant = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Gérant';
+
+        let responsableCloture = cloturePar;
+        if (cloturePar === 'Non spécifié' || cloturePar === 'Gérant') responsableCloture = nomGerant;
+        else if (cloturePar.includes('Robot')) responsableCloture = 'Fermeture Automatique';
+
+        // 4. Stats Commerciales (Annulations, Remises)
+        const statsResult = await pool.query(`SELECT COUNT(DISTINCT id_ticket) as nb_tickets FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}`, paramsVentes);
+        const nbTickets = parseInt(statsResult.rows[0].nb_tickets) || 0;
+        
+        const annulsRes = await pool.query(`SELECT COUNT(*) as nb, COALESCE(SUM(ABS(total_ttc)), 0) as mnt FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND type_ticket = 'ANNULATION'`, [id_salon, dateCible]);
+        const remisesRes = await pool.query(`SELECT COUNT(*) as nb FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND recompense_utilisee = TRUE AND statut = 'VALIDE' AND est_compense = FALSE`, [id_salon, dateCible]);
+
+        // 5. CA par Catégorie
+        const caCategories = await pool.query(`
+            SELECT COALESCE(c.type_article, 'PRESTATION') as type_article, SUM(lt.total_ligne_ttc) as total
+            FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON c.id_article = lt.id_article
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            GROUP BY COALESCE(c.type_article, 'PRESTATION')
+        `, paramsVentes);
+        
+        let totalPrestations = 0, totalRevente = 0;
+        caCategories.rows.forEach(r => {
+            if (r.type_article === 'PRESTATION') totalPrestations += parseFloat(r.total || 0);
+            else totalRevente += parseFloat(r.total || 0);
+        });
+
+        // 6. Détail TVA
+        const tvaDetails = await pool.query(`
+            SELECT lt.taux_tva_snapshot as taux, SUM(lt.total_ligne_ttc) as total_ttc
+            FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            GROUP BY lt.taux_tva_snapshot ORDER BY lt.taux_tva_snapshot DESC
+        `, paramsVentes);
+
+        // 7. Méthodes de Paiement
+        const paiements = await pool.query(`
+            SELECT methode_paiement, SUM(total_ttc) as total
+            FROM tickets t
+            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
+            GROUP BY methode_paiement
+        `, paramsVentes);
+        
+        let totalCB = 0, totalEspeces = 0, totalCheques = 0;
+        paiements.rows.forEach(r => {
+            if (r.methode_paiement === 'CARTE') totalCB += parseFloat(r.total || 0);
+            if (r.methode_paiement === 'ESPECES') totalEspeces += parseFloat(r.total || 0);
+            if (r.methode_paiement === 'CHEQUE') totalCheques += parseFloat(r.total || 0);
+        });
+
+        // 8. Stats par employé (Gérant uniquement - base HT)
+        let employesStats = [];
+        if (!estEmploye) {
+            const empStatsRes = await pool.query(`
+                SELECT e.nom, e.est_gerant,
+                       COALESCE(SUM(t.total_ttc), 0) as ca_genere,
+                       (SELECT COALESCE(SUM(c.montant_commission), 0) FROM commissions c WHERE c.id_employe = e.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) = $2) as prime_due
+                FROM employes e
+                LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
+                WHERE e.id_salon = $1
+                GROUP BY e.id_employe, e.nom, e.est_gerant
+                ORDER BY e.est_gerant DESC, e.nom ASC
+            `, [id_salon, dateCible]);
+            employesStats = empStatsRes.rows;
+        }
+
+        // ================== CRÉATION DU PDF ==================
+        const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Bilan_Journalier_${dateCible}.pdf"`);
+        doc.pipe(res);
+
+        let currentY = 40;
+
+        // --- EN-TÊTE ET MENTIONS LÉGALES ---
+        const typeDocument = clotureData ? "DUPLICATA - BILAN JOURNALIER" : "BILAN JOURNALIER PROVISOIRE";
+        
+        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text(`${typeDocument} ${estEmploye ? '(EMPLOYÉ)' : ''}`, 40, currentY);
+        currentY += 25;
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(config.nom_salon || 'Salon', 40, currentY);
+        currentY += 15;
+        doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`SIRET: ${config.siret || 'N/A'} | ${mentionTVA} | Adresse: ${config.adresse_salon || 'N/A'}`, 40, currentY);
+        currentY += 15;
+        doc.text(`Date d'activité : ${new Date(dateCible).toLocaleDateString('fr-FR')} | Date d'impression : ${new Date().toLocaleString('fr-FR')}`, 40, currentY);
+        currentY += 20;
+
+        if (clotureData) {
+            doc.font('Helvetica-Bold').fillColor('#16a34a').text(`STATUT : CLÔTURÉ (Z n°${clotureData.id_cloture})`, 40, currentY);
+            currentY += 15;
+            doc.font('Helvetica').fillColor('#4b5563').text(`Clôturé par : ${responsableCloture}`, 40, currentY);
+            currentY += 15;
+            doc.text(`Cumul perpétuel TTC : ${parseFloat(clotureData.cumul_perpetuel_ttc || 0).toFixed(2).replace('.', ',')} €`, 40, currentY);
+            currentY += 15;
+            doc.font('Courier').fontSize(7).text(`Hash de ce Z : ${clotureData.signature_hash || 'N/A'}`, 40, currentY);
+            currentY += 10;
+            doc.text(`Hash chaîné (précédent) : ${clotureData.hash_precedent || 'GENESIS_Z'}`, 40, currentY);
+            currentY += 15;
+        } else {
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`STATUT : PROVISOIRE (Caisse non clôturée)`, 40, currentY);
+            currentY += 15;
+            doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`Opérateur édition : ${responsableCloture}`, 40, currentY);
+            currentY += 20;
+        }
+
+        // --- MOTEUR DE DESSIN ---
+        const drawTableTitle = (title) => {
+            if (currentY > 750) { doc.addPage(); currentY = 40; }
+            doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(title, 40, currentY);
+            currentY += 18;
+        };
+
+        const drawRow = (cols, isHeader = false, isBold = false) => {
+            if (currentY > 780) { doc.addPage(); currentY = 40; }
+            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
+            doc.fillColor(isHeader ? '#6b7280' : '#111827');
+            
+            const startX = 40;
+            if (cols.length === 2) {
+                doc.text(cols[0], startX, currentY);
+                doc.text(cols[1], startX + 350, currentY, { width: 165, align: 'right' });
+            } else if (cols.length === 3) {
+                doc.text(cols[0], startX, currentY);
+                doc.text(cols[1], startX + 250, currentY, { width: 130, align: 'right' });
+                doc.text(cols[2], startX + 380, currentY, { width: 135, align: 'right' });
+            }
+            
+            currentY += 12;
+            doc.moveTo(startX, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? '#111827' : '#e5e7eb').stroke();
+            currentY += 6;
+        };
+
+        // --- 1. CHIFFRE D'AFFAIRES ---
+        drawTableTitle("1. CHIFFRE D'AFFAIRES (TTC)");
+        drawRow(['Catégorie', 'Montant TTC'], true);
+        drawRow(['Total Prestations', `${totalPrestations.toFixed(2).replace('.', ',')} €`]);
+        drawRow(['Total Revente', `${totalRevente.toFixed(2).replace('.', ',')} €`]);
+        drawRow(["CHIFFRE D'AFFAIRES TOTAL", `${caTotal.toFixed(2).replace('.', ',')} €`], false, true);
+        currentY += 15;
+
+        // --- 2. DETAIL TVA ---
+        drawTableTitle("2. DÉTAIL TVA");
+        drawRow(['Base HT', 'TVA Collectée', 'Total TTC'], true);
+        tvaDetails.rows.forEach(t => {
+            const ttc = parseFloat(t.total_ttc);
+            let ht = ttc, tva = 0, taux = 0;
+            if (!franchiseTVA) {
+                taux = parseFloat(t.taux) || 20;
+                ht = ttc / (1 + taux/100);
+                tva = ttc - ht;
+            }
+            drawRow([`${ht.toFixed(2).replace('.', ',')} €`, `${tva.toFixed(2).replace('.', ',')} €`, `${ttc.toFixed(2).replace('.', ',')} €`]);
+        });
+        if (tvaDetails.rowCount === 0) drawRow(['0,00 €', '0,00 €', '0,00 €']);
+        if (franchiseTVA) {
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text("* TVA non applicable, art. 293 B du CGI.", 40, currentY); currentY += 12;
+        }
+        currentY += 10;
+
+        // --- 3. ENCAISSEMENTS ---
+        drawTableTitle("3. ENCAISSEMENTS");
+        drawRow(['Mode de paiement', 'Montant'], true);
+        drawRow(['Carte bancaire', `${totalCB.toFixed(2).replace('.', ',')} €`]);
+        drawRow(['Espèces', `${totalEspeces.toFixed(2).replace('.', ',')} €`]);
+        drawRow(['Chèques', `${totalCheques.toFixed(2).replace('.', ',')} €`]);
+        drawRow(["TOTAL ENCAISSÉ", `${caTotal.toFixed(2).replace('.', ',')} €`], false, true);
+        currentY += 15;
+
+        // --- 4. CONTROLE DE LA CAISSE (Gérant uniquement) ---
+        if (!estEmploye) {
+            drawTableTitle("4. CONTRÔLE DE LA CAISSE (Espèces)");
+            drawRow(['Mouvement', 'Montant'], true);
+            
+            const fMatin = clotureData ? parseFloat(clotureData.fond_caisse_matin || 0) : 0;
+            const tTheorique = clotureData ? parseFloat(clotureData.total_especes_theorique || 0) : totalEspeces;
+            const tReel = clotureData ? parseFloat(clotureData.total_especes_reel || 0) : 0;
+            const ecart = clotureData ? parseFloat(clotureData.ecart_caisse || 0) : 0;
+
+            drawRow(['Fond de caisse matin (Laissé la veille)', `${fMatin.toFixed(2).replace('.', ',')} €`]);
+            drawRow(['Espèces encaissées clients', `${totalEspeces.toFixed(2).replace('.', ',')} €`]);
+            drawRow(['Total Théorique (Caisse du soir attendue)', `${tTheorique.toFixed(2).replace('.', ',')} €`], false, true);
+            
+            const texteReel = cloturePar.includes('Robot') ? 'Non compté (Fermeture Auto)' : `${tReel.toFixed(2).replace('.', ',')} €`;
+            drawRow(['Total Réel Compté (Caisse du soir physique)', texteReel], false, true); 
+            drawRow(['ÉCART DE CAISSE CONSTATÉ', `${ecart > 0 ? '+' : ''}${ecart.toFixed(2).replace('.', ',')} €`], false, true);
+
+            drawRow(['Retraits ou remises en banque (Sorties)', `${totalSorties === 0 ? '0,00' : '-' + totalSorties.toFixed(2).replace('.', ',')} €`]);
+            
+            const fondConserve = tReel - totalSorties;
+            drawRow(['FOND DE CAISSE CONSERVÉ (Pour demain)', `${fondConserve.toFixed(2).replace('.', ',')} €`], false, true);
+
+            if (clotureData && clotureData.justification_ecart) {
+                currentY += 5;
+                doc.font('Helvetica-Oblique').fontSize(8).fillColor('#ef4444');
+                doc.text(`Justification de l'écart : "${clotureData.justification_ecart}"`, 40, currentY);
+                currentY += 15;
+            } else {
+                currentY += 15;
+            }
+        }
+
+        // --- 5. INDICATEURS COMMERCIAUX ---
+        drawTableTitle("5. INDICATEURS COMMERCIAUX");
+        drawRow(['Indicateur', 'Valeur'], true);
+        drawRow(['Nombre de tickets encaissés', `${nbTickets}`]);
+        drawRow(['Nombre de tickets annulés', `${annulsRes.rows[0].nb} (${parseFloat(annulsRes.rows[0].mnt).toFixed(2).replace('.', ',')} €)`]);
+        drawRow(['Tickets avec remise/fidélité', `${remisesRes.rows[0].nb}`]);
+        const ticketMoyen = nbTickets > 0 ? caTotal / nbTickets : 0;
+        drawRow(['Ticket moyen', `${ticketMoyen.toFixed(2).replace('.', ',')} €`]);
+        
+        if (!estEmploye) {
+            employesStats.forEach(emp => { 
+                drawRow([`CA ${emp.nom} ${emp.est_gerant ? '(Gérant)' : ''}`, `${parseFloat(emp.ca_genere || 0).toFixed(2).replace('.', ',')} €`]); 
+            });
+            employesStats.forEach(emp => { 
+                if (emp.est_gerant) {
+                    drawRow([`Prime due ${emp.nom} (Base HT)`, `- (Non Salarié)`]); 
+                } else {
+                    drawRow([`Prime due ${emp.nom} (Base HT)`, `${parseFloat(emp.prime_due || 0).toFixed(2).replace('.', ',')} €`]); 
+                }
+            });
+        }
+        currentY += 15;
+
+        // --- 6. DÉTAIL DES VENTES ---
+        drawTableTitle("6. DÉTAIL DES VENTES");
+        if (currentY > 750) { doc.addPage(); currentY = 40; }
+        
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#6b7280');
+        doc.text('Heure', 40, currentY, { width: 40 });
+        doc.text('Ticket', 85, currentY, { width: 90 });
+        doc.text('Détail Lignes (Qté x Prestation/Produit)', 180, currentY, { width: 200 });
+        doc.text('HT / TVA', 385, currentY, { width: 80, align: 'right' });
+        doc.text('TTC', 470, currentY, { width: 85, align: 'right' });
+        currentY += 12;
+        doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
+        currentY += 8;
+
+        if (ventesResult.rowCount === 0) {
+            doc.font('Helvetica').fontSize(9).fillColor('#111827').text('Aucune transaction enregistrée.', 40, currentY);
+        } else {
+            ventesResult.rows.forEach(v => {
+                let lignesStr = '';
+                let htTvaStr = '';
+                
+                (v.lignes || []).forEach(l => {
+                    if (!l.nom) return; 
+                    const ttc = parseFloat(l.ttc || 0);
+                    let ht = ttc, tva = 0, taux = 0;
+                    if (!franchiseTVA) {
+                        taux = parseFloat(l.tva || 20);
+                        ht = ttc / (1 + taux/100);
+                        tva = ttc - ht;
+                    }
+                    lignesStr += `${l.qte || 0}x ${l.nom || 'Inconnu'}\n`;
+                    htTvaStr += `${ht.toFixed(2)} / ${tva.toFixed(2)} (${taux}%)\n`;
+                });
+                
+                const extraInfo = `Paiement: ${v.methode_paiement} | Par: ${v.employe}`;
+                const fullText = lignesStr + extraInfo;
+                
+                const textHeight = Math.max(
+                    doc.heightOfString(fullText, { width: 200, fontSize: 8 }),
+                    doc.heightOfString(v.numero_ticket_caisse || 'TKT', { width: 90, fontSize: 8 })
+                );
+
+                if (currentY + textHeight > 780) { doc.addPage(); currentY = 40; }
+                
+                doc.font('Helvetica').fontSize(8).fillColor('#111827');
+                doc.text(v.heure || '', 40, currentY, { width: 40 });
+                doc.text(v.numero_ticket_caisse || '', 85, currentY, { width: 90 });
+                doc.text(fullText, 180, currentY, { width: 200 });
+                doc.text(htTvaStr, 385, currentY, { width: 80, align: 'right' });
+                doc.text(`${parseFloat(v.total_ttc || 0).toFixed(2).replace('.', ',')} €`, 470, currentY, { width: 85, align: 'right' });
+                
+                currentY += textHeight + 6;
+                doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
+                currentY += 8;
+            });
+        }
+        
+        currentY += 30;
+        if (currentY > 720) { doc.addPage(); currentY = 40; }
+        
+       if (clotureData) {
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#111827').text(`Clôturé et validé par : ${responsableCloture}`, 40, currentY);
+            doc.font('Helvetica').fontSize(9).text(`Date de clôture : ${new Date(dateCible).toLocaleDateString('fr-FR')}`, 40, currentY + 14);
+            doc.rect(40, currentY + 30, 200, 50).stroke('#e5e7eb');
+        }
+
+        doc.end();
+    } catch (erreur) { 
+        console.error("Erreur PDF Journalier :", erreur);
+        res.status(500).send("Erreur lors de la génération du PDF journalier."); 
+    }
+});
+
+// =========================================================================
+// --- EXPORT PDF : LIASSE MENSUELLE COMPTABLE & LÉGALE (NF525) ---
+// =========================================================================
+app.get('/api/export-pdf', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    try {
+        const today = new Date();
+        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        
+        const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const dateDebutStr = formatYMD(firstDayOfMonth);
+        const dateFinStr = formatYMD(lastDayOfMonth);
+
+        // --- STATUT ET LÉGALITÉ ---
+        const estMoisCloture = today > lastDayOfMonth;
+        const statutDocument = estMoisCloture ? "DÉFINITIF (CLÔTURÉ)" : "BROUILLON PROVISOIRE";
+        
+        let signatureArchive = '';
+        let numeroArchive = 'NON-APPLICABLE-MOIS-EN-COURS';
+        if (estMoisCloture) {
+            signatureArchive = crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${Date.now()}`).digest('hex').substring(0, 16).toUpperCase();
+            numeroArchive = `ARCH-${id_salon}-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}-${signatureArchive}`;
+        }
+
+        const configResult = await pool.query('SELECT nom_salon, email_reception_factures, mot_de_passe_app_email, siret, tva_intra, adresse_salon, telephone_gerant FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : {};
+        const nomDuSalon = salonConfig.nom_salon || 'Salon Inconnu';
+        
+        // 🚨 BLOCAGE STRICT : SIRET ET ADRESSE OBLIGATOIRES
+        if (!salonConfig.siret || !salonConfig.adresse_salon || salonConfig.siret.trim() === '') {
+            return res.status(400).json({ erreur: "Édition bloquée : Le SIRET et l'Adresse du salon sont obligatoires pour générer une liasse légale. Veuillez les remplir dans vos paramètres." });
+        }
+
+        const franchiseTVA = !salonConfig.tva_intra || salonConfig.tva_intra.trim() === '';
+        const mentionTVA = franchiseTVA ? `Franchise en base de TVA (Art. 293 B CGI)` : `N° TVA : ${salonConfig.tva_intra}`;
+
+        const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
+        const nomGerant = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Gérant';
+
+        // 1. REQUÊTE : Chiffre d'Affaires détaillé
+        const caDetailRes = await pool.query(`
+            SELECT 
+                COALESCE(c.type_article, 'PRESTATION') as type_article,
+                lt.taux_tva_snapshot as taux_tva,
+                SUM(lt.total_ligne_ttc) as total_ttc,
+                SUM(lt.total_ligne_ttc / (1 + (lt.taux_tva_snapshot / 100))) as total_ht
+            FROM lignes_ticket lt
+            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            LEFT JOIN catalogue c ON c.id_article = lt.id_article
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+            GROUP BY COALESCE(c.type_article, 'PRESTATION'), lt.taux_tva_snapshot
+        `, [id_salon, dateDebutStr, dateFinStr]);
+
+        // 2. REQUÊTE : Paiements et Mouvements
+        const paiementsRes = await pool.query(`SELECT methode_paiement, COUNT(id_ticket) as nb, SUM(total_ttc) as total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
+        const statsRes = await pool.query(`SELECT COUNT(DISTINCT id_ticket) as nb_tickets, COUNT(DISTINCT id_client) as nb_clients, COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+        
+        const caisseRes = await pool.query(`
+            SELECT 
+                (SELECT COALESCE(SUM(fond_caisse_matin), 0) FROM clotures_caisse WHERE id_salon = $1 AND date_cloture BETWEEN $2 AND $3) as fonds,
+                (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND date_cloture BETWEEN $2 AND $3) 
+                + 
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $3) as ecarts,
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $3) as sorties
+        `, [id_salon, dateDebutStr, dateFinStr]);
+
+        // 3. REQUÊTE : Dépenses
+        const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
+
+        // 4. REQUÊTE : Commissions Employés
+        const rhRes = await pool.query(`
+            SELECT e.nom, e.est_gerant,
+                   MAX(e.taux_commission_prestation) as taux_presta,
+                   SUM(CASE WHEN c.type_vente = 'PRESTATION' THEN c.montant_vente / 1.20 ELSE 0 END) as base_presta_ht,
+                   SUM(CASE WHEN c.type_vente != 'PRESTATION' THEN c.montant_vente / 1.20 ELSE 0 END) as base_produit_ht,
+                   SUM(c.montant_commission) as total_prime
+            FROM employes e 
+            LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3
+            WHERE e.id_salon = $1 
+            GROUP BY e.id_employe, e.nom, e.est_gerant 
+            ORDER BY e.est_gerant DESC, e.nom ASC
+        `, [id_salon, dateDebutStr, dateFinStr]);
+
+        // 5. REQUÊTE : Absences
+        const absencesRes = await pool.query(`
+            SELECT DISTINCT e.nom as nom_employe, a.type_demande, a.nature_absence, a.date_debut, a.date_fin
+            FROM absences_employes a
+            JOIN employes e ON a.id_employe = e.id_employe
+            WHERE a.id_salon = $1 AND a.statut = 'VALIDE' AND a.date_debut <= $3 AND a.date_fin >= $2
+            ORDER BY e.nom ASC, a.date_debut ASC
+        `, [id_salon, dateDebutStr, dateFinStr]);
+
+        // --- GÉNÉRATION DU PDF ---
+        const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
+        let buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+        
+        doc.on('end', async () => {
+            const pdfData = Buffer.concat(buffers); 
+            if (estMoisCloture && salonConfig.email_reception_factures && salonConfig.mot_de_passe_app_email) {
+                try {
+                    let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: dechiffrer(salonConfig.mot_de_passe_app_email) } });
+                    await transporter.sendMail({
+                        from: `"${nomDuSalon}" <${salonConfig.email_reception_factures}>`, 
+                        to: salonConfig.email_reception_factures, 
+                        subject: `📊 Liasse Mensuelle DÉFINITIVE - ${nomDuSalon}`, 
+                        text: `Bonjour,\nVeuillez trouver en pièce jointe la liasse comptable du mois.\nRéf. Archive NF525 : ${numeroArchive}`,
+                        attachments: [{ filename: `Liasse_${numeroArchive}.pdf`, content: pdfData }]
+                    });
+                } catch (e) {} 
+            }
+        });
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Liasse_${numeroArchive}.pdf"`);
+        doc.pipe(res);
+
+        let currentY = 40;
+        const MAIN_COLOR = '#111827'; const SEC_COLOR = '#4b5563'; const BORDER_COLOR = '#e5e7eb';
+
+        // --- EN-TÊTE LÉGAL ---
+        doc.font('Helvetica-Bold').fontSize(16).fillColor(MAIN_COLOR).text(`LIASSE COMPTABLE MENSUELLE`, 40, currentY);
+        currentY += 20;
+        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(nomDuSalon, 40, currentY);
+        currentY += 14;
+        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`SIRET: ${salonConfig.siret} | ${mentionTVA} | NAF: 96.02A | IDCC: 2596 (Coiffure)`, 40, currentY);
+        currentY += 15;
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
+        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 250, currentY);
+        doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
+        currentY += 15;
+        if (estMoisCloture) doc.text(`Réf. Archive NF525 : ${numeroArchive}`, 40, currentY);
+        currentY += 25;
+
+        const drawRow = (cols, isHeader = false, isBold = false) => {
+            if (currentY > 780) { doc.addPage(); currentY = 40; }
+            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(isHeader ? 8 : 9).fillColor(isHeader ? SEC_COLOR : MAIN_COLOR);
+            let xPos = 40;
+            cols.forEach(col => {
+                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left' });
+                xPos += col.w + 10;
+            });
+            currentY += 12;
+            doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? MAIN_COLOR : BORDER_COLOR).stroke();
+            currentY += 6;
+        };
+
+        const drawTableTitle = (title) => {
+            if (currentY > 750) { doc.addPage(); currentY = 40; }
+            currentY += 10;
+            doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(title, 40, currentY);
+            currentY += 16;
+        };
+
+        const fMnt = (mnt) => (parseFloat(mnt) || 0).toFixed(2).replace('.', ',') + ' €';
+
+        // --- 1. CHIFFRE D'AFFAIRES ---
+        drawTableTitle("1. CHIFFRE D'AFFAIRES");
+        drawRow([{text: 'Catégorie & Taux TVA', w: 180}, {text: 'Base HT', w: 100, align: 'right'}, {text: 'TVA Collectée', w: 100, align: 'right'}, {text: 'Total TTC', w: 105, align: 'right'}], true);
+        let totalHT = 0, totalTVA = 0, globalTTC = 0;
+        caDetailRes.rows.forEach(r => {
+            let ht = parseFloat(r.total_ht), ttc = parseFloat(r.total_ttc), tva = ttc - ht;
+            if (franchiseTVA) { ht = ttc; tva = 0; } // En franchise, HT = TTC
+            const label = `${r.type_article === 'PRESTATION' ? 'Prestations de services' : 'Vente de produits'} (${franchiseTVA ? '0%' : parseFloat(r.taux_tva) + '%'})`;
+            
+            totalHT += ht; totalTVA += tva; globalTTC += ttc;
+            drawRow([{text: label, w: 180}, {text: fMnt(ht), w: 100, align: 'right'}, {text: fMnt(tva), w: 100, align: 'right'}, {text: fMnt(ttc), w: 105, align: 'right'}]);
+        });
+        if (caDetailRes.rowCount === 0) drawRow([{text: 'Aucune transaction', w: 180}, {text: '-', w: 100, align: 'right'}, {text: '-', w: 100, align: 'right'}, {text: '-', w: 105, align: 'right'}]);
+        drawRow([{text: 'TOTAL GÉNÉRAL', w: 180}, {text: fMnt(totalHT), w: 100, align: 'right'}, {text: fMnt(totalTVA), w: 100, align: 'right'}, {text: fMnt(globalTTC), w: 105, align: 'right'}], false, true);
+        if (franchiseTVA) {
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* TVA non applicable, art. 293 B du CGI.", 40, currentY); currentY += 12;
+        }
+
+        // --- 2. RAPPROCHEMENT BANCAIRE ---
+        drawTableTitle("2. RAPPROCHEMENT BANCAIRE ET CAISSE");
+        drawRow([{text: 'Méthode de paiement', w: 200}, {text: 'Nb Trans.', w: 60, align: 'center'}, {text: 'Montant Encaissé TTC', w: 225, align: 'right'}], true);
+        
+        const methodes = ['CARTE', 'ESPECES', 'CHEQUE', 'VIREMENT', 'BONS CADEAUX'];
+        let mapPaiements = {}; paiementsRes.rows.forEach(m => mapPaiements[m.methode_paiement] = m);
+        methodes.forEach(m => {
+            const row = mapPaiements[m] || { nb: 0, total: 0 };
+            drawRow([{text: m, w: 200}, {text: row.nb, w: 60, align: 'center'}, {text: fMnt(row.total), w: 225, align: 'right'}]);
+        });
+        
+        const panierMoyen = statsRes.rows[0].nb_tickets > 0 ? (globalTTC / statsRes.rows[0].nb_tickets) : 0;
+        drawRow([{text: `Total Encaissements (${statsRes.rows[0].nb_tickets} tickets, Panier Moyen : ${fMnt(panierMoyen)})`, w: 260}, {text: '', w: 0}, {text: fMnt(globalTTC), w: 225, align: 'right'}], false, true);
+        
+        currentY += 10;
+        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
+        
+        drawRow([{text: 'Dépenses / Sorties de caisse (Espèces)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].sorties), w: 225, align: 'right'}]);
+        drawRow([{text: 'Régularisations d\'écarts de caisse', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].ecarts), w: 225, align: 'right'}]);
+
+        // --- 3. DÉPENSES ---
+        drawTableTitle("3. DÉPENSES ET ACHATS");
+        drawRow([{text: 'Fournisseur / Ligne', w: 140}, {text: 'Date', w: 60, align: 'center'}, {text: 'HT', w: 70, align: 'right'}, {text: 'TVA', w: 70, align: 'right'}, {text: 'TTC', w: 90, align: 'right'}], true);
+        let sumDepenses = 0;
+        facturesRes.rows.forEach(f => {
+            sumDepenses += parseFloat(f.montant_ttc);
+            const ht = franchiseTVA ? parseFloat(f.montant_ttc) : parseFloat(f.montant_ht);
+            const tva = franchiseTVA ? 0 : parseFloat(f.montant_tva);
+            drawRow([{text: f.nom_fournisseur.substring(0,25), w: 140}, {text: f.date_facture, w: 60, align: 'center'}, {text: fMnt(ht), w: 70, align: 'right'}, {text: fMnt(tva), w: 70, align: 'right'}, {text: fMnt(f.montant_ttc), w: 90, align: 'right'}]);
+        });
+        drawRow([{text: 'Charges fixes non numérisées (Loyer, URSSAF...)', w: 140}, {text: 'N/A', w: 60, align: 'center'}, {text: '-', w: 70, align: 'right'}, {text: '-', w: 70, align: 'right'}, {text: 'Voir Banque', w: 90, align: 'right'}]);
+        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 280}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 0}, {text: fMnt(sumDepenses), w: 90, align: 'right'}], false, true);
+
+        // --- 4. VARIABLES DE PAIE ---
+        drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
+        drawRow([{text: 'Employé', w: 100}, {text: 'Statut', w: 70}, {text: 'Hrs/HS/Pourb.', w: 80}, {text: 'Base HT', w: 80, align: 'right'}, {text: 'Prime Brute', w: 95, align: 'right'}], true);
+        let globalPrimes = 0;
+        rhRes.rows.forEach(e => {
+            if (e.est_gerant) {
+                drawRow([{text: e.nom, w: 100}, {text: 'Gérant (Non sal.)', w: 70}, {text: 'N/A', w: 80}, {text: '-', w: 80, align: 'right'}, {text: '-', w: 95, align: 'right'}]);
+            } else {
+                globalPrimes += (parseFloat(e.total_prime) || 0);
+                const baseHT = parseFloat(e.base_presta_ht) + parseFloat(e.base_produit_ht);
+                drawRow([{text: e.nom, w: 100}, {text: 'Salarié', w: 70}, {text: 'À déclarer', w: 80}, {text: fMnt(baseHT), w: 80, align: 'right'}, {text: fMnt(e.total_prime), w: 95, align: 'right'}]);
+            }
+        });
+        if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 100}, {text: '-', w: 70}, {text: '-', w: 80}, {text: '-', w: 80, align: 'right'}, {text: '-', w: 95, align: 'right'}]);
+        drawRow([{text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 270}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: fMnt(globalPrimes), w: 95, align: 'right'}], false, true);
+
+        doc.addPage();
+        doc.font('Helvetica-Bold').fontSize(20).fillColor(MAIN_COLOR).text('Variables de Paie & Absences (Suite)', 40, 40);
+        doc.font('Helvetica').fontSize(10).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} - ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 40, 70);
+        currentY = 100;
+
+        // --- 5. ABSENCES ---
+        drawTableTitle("5. REGISTRE DES ABSENCES ET CONGÉS");
+        drawRow([{text: 'Employé', w: 100}, {text: 'Motif (Masquage RGPD)', w: 130}, {text: 'Période', w: 140}, {text: 'Jours', w: 40, align: 'center'}, {text: 'Infos Compl.', w: 75}], true);
+        if (absencesRes.rowCount === 0) {
+            drawRow([{text: 'Aucune absence sur la période.', w: 100}, {text: '-', w: 130}, {text: '-', w: 140}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 75}]);
+        } else {
+            absencesRes.rows.forEach(a => {
+                const estMaladie = a.type_demande === 'ARRET_MALADIE' || ['MALADIE_ORDINAIRE', 'ACCIDENT_TRAVAIL'].includes(a.nature_absence);
+                const motifAffiche = estMaladie ? 'Arrêt de travail (Maladie/AT)' : (a.type_demande === 'CONGES' ? `Congé payé (${a.nature_absence})` : a.type_demande);
+                const dDeb = new Date(a.date_debut); const dFin = new Date(a.date_fin);
+                
+                let joursOuvres = 0;
+                for (let d = new Date(dDeb); d <= dFin; d.setDate(d.getDate() + 1)) { if (d.getDay() !== 0) joursOuvres++; }
+                
+                drawRow([
+                    {text: a.nom_employe, w: 100}, 
+                    {text: motifAffiche, w: 130}, 
+                    {text: `Du ${dDeb.toLocaleDateString('fr-FR')} au ${dFin.toLocaleDateString('fr-FR')}`, w: 140}, 
+                    {text: `${joursOuvres} j.`, w: 40, align: 'center'},
+                    {text: estMaladie ? 'Attente CPAM' : 'Solde CP: -', w: 75}
+                ]);
+            });
+        }
+
+        // --- 6. MENTIONS LÉGALES & VALIDATION ---
+        currentY += 40;
+        
+        doc.rect(40, currentY, 515, 85).fillAndStroke('#f9fafb', BORDER_COLOR);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances)', 50, currentY + 10);
+        doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+            "• Ce document est généré par le système d'encaissement STACK assurant l'inaltérabilité et la traçabilité des données (CGI, art. 286, I-3° bis).\n" +
+            "• Conservation : Les pièces fiscales doivent être conservées 6 ans, et les documents comptables 10 ans.\n" +
+            "• RGPD : Les motifs médicaux exacts des arrêts de travail ont été masqués sur ce document de transmission comptable.\n" +
+            "• Dépenses : Je confirme l'exactitude des frais déclarés et m'engage à fournir les justificatifs non-scannés à mon comptable.",
+            50, currentY + 25, { width: 495, lineGap: 2 }
+        );
+
+        // Signature du gérant
+        currentY += 120;
+        
+        if (estMoisCloture) {
+            doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("Gérant de la société : " + nomGerant, 350, currentY);
+            doc.font('Helvetica').fontSize(9).text(`Fait le ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 350, currentY + 14);
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("(Signature valant certification des données d'encaissement)", 350, currentY + 30);
+        } else {
+            doc.font('Helvetica-Bold').fontSize(14).fillColor('#ea580c').text("DOCUMENT PROVISOIRE - NON SIGNÉ", 250, currentY);
+        }
+
+        doc.end();
+    } catch (erreur) { 
+        console.error("Erreur PDF Mensuel :", erreur);
+        res.status(500).send("Erreur lors de la génération du PDF mensuel."); 
+    }
+});
+
+let isRobotRunning = false;
+
+async function executerRobotComptable() {
+    if (isRobotRunning) return;
+    isRobotRunning = true;
+
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query(`
+            CREATE TABLE IF NOT EXISTS robot_memoire_emails (
+                message_id VARCHAR(255),
+                id_salon INT,
+                date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (message_id, id_salon)
+            )
+        `);
+
+        await clientDB.query(`DELETE FROM robot_memoire_emails WHERE date_traitement < NOW() - INTERVAL '7 days'`);
+
+        const salonsResult = await clientDB.query('SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL');
+        for (let salon of salonsResult.rows) {
+            const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) }, logger: false });
+            try {
+                await imapClient.connect();
+                let lock = await imapClient.getMailboxLock('INBOX');
+                try {
+                    const dateLimite = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                    
+                    for await (let message of imapClient.fetch({ since: dateLimite }, { source: true, uid: true })) {
+                        const mailParsi = await simpleParser(message.source);
+                        const idUnique = mailParsi.messageId || message.uid.toString();
+                        
+                        const dejaTraite = await clientDB.query('SELECT message_id FROM robot_memoire_emails WHERE message_id = $1 AND id_salon = $2', [idUnique, salon.id_salon]);
+                        if (dejaTraite.rows.length > 0) continue;
+
+                        await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
+
+                        const texteEmail = mailParsi.text || mailParsi.html || ""; 
+                        const sujetEmail = mailParsi.subject || "Sans Sujet";
+                        
+                        console.log(`\n=========================================`);
+                        console.log(`📧 EMAIL DÉTECTÉ (Salon ${salon.id_salon}) : "${sujetEmail}"`);
+                        
+                        const matchTTC = texteEmail.match(/TTC[\s:a-zA-Z]*([\d.,]+)/i);
+                        if (matchTTC) {
+                            const ttc = parseFloat(matchTTC[1].replace(',', '.'));
+                            const matchTVA = texteEmail.match(/TVA[\s:a-zA-Z]*([\d.,]+)/i);
+                            const tva = matchTVA ? parseFloat(matchTVA[1].replace(',', '.')) : parseFloat((ttc * 0.20).toFixed(2));
+                            const ht = parseFloat((ttc - tva).toFixed(2));
+                            await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [sujetEmail, ht, tva, ttc, salon.id_salon]);
+                        }
+
+                        const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail);
+                        for (let t of tachesTrouvees) {
+                            await clientDB.query(
+                                `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
+                                [salon.id_salon, t.type_tache || t.type, t.donnees] 
+                            );
+                            envoyerEvenementSSE(salon.id_salon, 'nouvelleTacheIA');
+                            
+                            envoyerNotificationPush(salon.id_salon, 'gerant', {
+                                title: "🤖 STACK IA a détecté une info !",
+                                body: `L'IA a lu un e-mail et vous a préparé une action : ${t.type_tache || t.type}.`,
+                                url: '/?tab=agenda'
+                            });
+                        }
+                    }
+                } finally { lock.release(); }
+                await imapClient.logout();
+            } catch (errConnect) {
+                console.log(`Erreur IMAP Salon ${salon.id_salon} :`, errConnect.message);
+            }
+        }
+    } catch (erreur) {
+        console.log("Erreur globale robot :", erreur.message);
+    } finally { 
+        clientDB.release(); 
+        isRobotRunning = false; 
+    }
+}
+cron.schedule('*/10 8-19 * * *', () => { executerRobotComptable(); });
+cron.schedule('0 2 * * *', () => { executerRobotComptable(); });
+
+// =========================================================================
+// --- CENTRE D'ACTION (TÂCHES & URGENCES) ---
+// =========================================================================
+app.get('/api/taches', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT * FROM taches_actions WHERE id_salon = $1 ORDER BY statut ASC, date_echeance ASC NULLS LAST`, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture tâches." }); }
+});
+
+app.post('/api/taches', verifierToken, async (req, res) => {
+    const { titre, description, date_echeance } = req.body;
+    try {
+        await pool.query(
+            "INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'MANUEL')", 
+            [req.user.id_salon, titre, description, date_echeance || null]
+        );
+        res.status(201).json({ message: "Action ajoutée !" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur ajout tâche." }); }
+});
+
+app.put('/api/taches/:id/statut', verifierToken, async (req, res) => {
+    try {
+        await pool.query("UPDATE taches_actions SET statut = CASE WHEN statut = 'A_FAIRE' THEN 'FAIT' ELSE 'A_FAIRE' END WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Statut mis à jour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur modification." }); }
+});
+
+app.delete('/api/taches/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query("DELETE FROM taches_actions WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Tâche supprimée." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression." }); }
+});
+
+
+// =========================================================================
+// --- PROTOCOLES & RECETTES ---
+// =========================================================================
+app.get('/api/protocoles', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT p.*, 
+                   COALESCE(json_agg(json_build_object('id_article', r.id_article, 'quantite_necessaire', r.quantite_necessaire, 'nom', c.nom)) FILTER (WHERE r.id_article IS NOT NULL), '[]') as ingredients
+            FROM protocoles p
+            LEFT JOIN recettes_articles r ON p.id_protocole = r.id_protocole
+            LEFT JOIN catalogue c ON r.id_article = c.id_article
+            WHERE p.id_salon = $1
+            GROUP BY p.id_protocole
+            ORDER BY p.nom_prestation ASC
+        `, [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture protocoles." }); }
+});
+
+app.post('/api/protocoles', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
+    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const protoRes = await clientDB.query(
+            `INSERT INTO protocoles (id_salon, nom_prestation, etapes, medias, tags, delai_livraison_jours, temps_nettoyage_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_protocole`,
+            [req.user.id_salon, nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, temps_nettoyage_minutes || 0]
+        );
+        const idProto = protoRes.rows[0].id_protocole;
+
+        if (ingredients && ingredients.length > 0) {
+            for (let ing of ingredients) {
+                await clientDB.query(
+                    `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire) VALUES ($1, $2, $3)`,
+                    [idProto, ing.id_article, ing.quantite_necessaire]
+                );
+            }
+        }
+        await clientDB.query('COMMIT');
+        res.status(201).json({ message: "Protocole ajouté avec succès !" });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: "Erreur création protocole." });
+    } finally { clientDB.release(); }
+});
+
+app.put('/api/protocoles/:id', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
+    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        
+        // 1. Mise à jour de la fiche (AVEC VÉRIFICATION DES DROITS)
+        const updateRes = await clientDB.query(
+            `UPDATE protocoles SET nom_prestation = $1, etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8 WHERE id_protocole = $6 AND id_salon = $7 RETURNING id_protocole`,
+            [nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, req.params.id, req.user.id_salon, temps_nettoyage_minutes || 0]
+        );
+
+        // 🚨 SÉCURITÉ (IDOR) : Si l'update ne touche aucune ligne, le protocole n'existe pas ou appartient à un autre salon.
+        if (updateRes.rowCount === 0) {
+            await clientDB.query('ROLLBACK');
+            return res.status(404).json({ erreur: "Protocole introuvable ou accès refusé." });
+        }
+
+        // 2. Remplacement des ingrédients de la recette (Sécurisé car la propriété est confirmée au-dessus)
+        await clientDB.query(`DELETE FROM recettes_articles WHERE id_protocole = $1`, [req.params.id]);
+        if (ingredients && ingredients.length > 0) {
+            for (let ing of ingredients) {
+                await clientDB.query(
+                    `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire) VALUES ($1, $2, $3)`,
+                    [req.params.id, ing.id_article, ing.quantite_necessaire]
+                );
+            }
+        }
+        
+        await clientDB.query('COMMIT');
+        res.json({ message: "Protocole modifié avec succès !" });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: "Erreur modification protocole." });
+    } finally { clientDB.release(); }
+});
+
+app.delete('/api/protocoles/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query("DELETE FROM protocoles WHERE id_protocole = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        res.json({ message: "Protocole supprimé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression protocole." }); }
+});
+
+
+// =========================================================================
+// --- ROBOT MARKETING (CRON JOB) - FIDÉLITÉ & ANNIVERSAIRES & PRÉDICTIONS ---
+// =========================================================================
+// Compare deux numéros en ne gardant que les 9 derniers chiffres : 0612345678, +33612345678 et 0033612345678 deviennent identiques
+const normaliserTelephone = (tel) => String(tel || '').replace(/\D/g, '').slice(-9);
+
+async function executerRobotAvisSatisfaction() {
+    let salons;
+    try {
+        salons = (await pool.query("SELECT * FROM configuration_salon WHERE brevo_api_key IS NOT NULL AND brevo_api_key != ''")).rows;
+    } catch (e) { console.error("[ROBOT-AVIS] Impossible de charger les salons :", e); return; }
+
+    for (let salon of salons) {
+        try {
+            // --- Détection : RDV terminés depuis 1 à 2h, jamais venus auparavant (comparaison sur les 9 derniers chiffres du numéro) ---
+            const rdvTermines = await pool.query(`
+                SELECT r.id_rdv, r.nom_client, r.telephone_client, r.id_employe
+                FROM rendez_vous r
+                WHERE r.id_salon = $1
+                  AND r.telephone_client IS NOT NULL AND r.telephone_client != ''
+                  AND (r.date_heure_debut + (r.duree_minutes || ' minutes')::interval) BETWEEN NOW() - INTERVAL '2 hours' AND NOW() - INTERVAL '1 hour'
+                  AND NOT EXISTS (SELECT 1 FROM avis_demandes a WHERE a.id_rdv = r.id_rdv)
+                  AND NOT EXISTS (SELECT 1 FROM sms_opt_out o WHERE o.id_salon = $1 AND o.telephone = RIGHT(regexp_replace(r.telephone_client, '\\D', '', 'g'), 9))
+                  AND NOT EXISTS (
+                      SELECT 1 FROM tickets t JOIN clients c ON t.id_client = c.id_client
+                      WHERE t.id_salon = $1 AND t.statut = 'VALIDE'
+                        AND RIGHT(regexp_replace(c.telephone, '\\D', '', 'g'), 9) = RIGHT(regexp_replace(r.telephone_client, '\\D', '', 'g'), 9)
+                  )
+            `, [salon.id_salon]);
+
+            for (let rdv of rdvTermines.rows) {
+                try {
+                    const tokenAvis = crypto.randomBytes(24).toString('hex');
+                    await pool.query(
+                        `INSERT INTO avis_demandes (id_salon, telephone, prenom, token, id_rdv, id_employe, statut, date_prevue) VALUES ($1, $2, $3, $4, $5, $6, 'EN_ATTENTE', NOW())`,
+                        [salon.id_salon, rdv.telephone_client, (rdv.nom_client || '').split(' ')[0], tokenAvis, rdv.id_rdv, rdv.id_employe]
+                    );
+                } catch (e) { console.error(`[ROBOT-AVIS] Échec enregistrement RDV ${rdv.id_rdv} (salon ${salon.id_salon}) :`, e); }
+            }
+
+            // --- Envoi : demandes (RDV ou caisse) arrivées à échéance, et expirées au-delà de 30 jours ---
+            const avisAEnvoyer = await pool.query(`SELECT * FROM avis_demandes WHERE id_salon = $1 AND statut = 'EN_ATTENTE' AND date_prevue <= NOW() AND date_creation > NOW() - INTERVAL '30 days'`, [salon.id_salon]);
+            for (let demande of avisAEnvoyer.rows) {
+                try {
+                    const dejaOptOut = await pool.query('SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = $2', [salon.id_salon, normaliserTelephone(demande.telephone)]);
+                    if (dejaOptOut.rowCount > 0) { await pool.query(`UPDATE avis_demandes SET statut = 'ANNULE' WHERE id_demande = $1`, [demande.id_demande]); continue; }
+
+                    const lienAvis = `https://app-salon-caiss.onrender.com/avis/${demande.token}`;
+                    const texteAvis = `Bonjour ${demande.prenom || ''}, merci pour votre première visite chez ${salon.nom_salon} ! Qu'avez-vous pensé de votre prestation ? Donnez votre avis ici : ${lienAvis}`;
+                    await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, demande.telephone, texteAvis);
+                    await pool.query(`UPDATE avis_demandes SET statut = 'ENVOYE' WHERE id_demande = $1`, [demande.id_demande]);
+                } catch (e) { console.error(`[ROBOT-AVIS] Échec envoi demande ${demande.id_demande} (salon ${salon.id_salon}) :`, e); }
+            }
+        } catch (e) { console.error(`[ROBOT-AVIS] Échec traitement salon ${salon.id_salon} :`, e); }
+    }
+}
+
+async function executerRobotMarketingEtPredictif() {
+    try {
+        // CORRECTION 1 : On récupère TOUS les salons (même ceux qui n'ont pas configuré les SMS)
+        const salons = await pool.query("SELECT * FROM configuration_salon");
+        
+        for (let salon of salons.rows) {
+            try {
+                const hasBrevo = salon.brevo_api_key && salon.brevo_api_key.trim() !== '';
+                const delaiFixe = salon.fidelite_delai_sms && salon.fidelite_delai_sms > 0 ? salon.fidelite_delai_sms : 60;
+
+                // --- 1. GESTION DES SMS (S'exécute uniquement si Brevo est configuré) ---
+                if (hasBrevo) {
+                    const queryClients = `
+                        WITH Visites AS (
+                            SELECT id_client, DATE(date_creation) as date_visite
+                            FROM tickets
+                            WHERE id_salon = $1 AND statut != 'ANNULE' AND est_compense = FALSE
+                            GROUP BY id_client, DATE(date_creation)
+                        ),
+                        Ecarts AS (
+                            SELECT id_client,
+                                   date_visite - LAG(date_visite) OVER (PARTITION BY id_client ORDER BY date_visite) as jours_ecart
+                            FROM Visites
+                        ),
+                        Moyennes AS (
+                            SELECT id_client, AVG(jours_ecart) as moyenne_jours, COUNT(jours_ecart) as nb_ecarts
+                            FROM Ecarts
+                            WHERE jours_ecart IS NOT NULL
+                            GROUP BY id_client
+                        )
+                        SELECT c.*,
+                               COALESCE(m.moyenne_jours, 0) as moyenne_jours,
+                               COALESCE(m.nb_ecarts, 0) as nb_ecarts
+                        FROM clients c
+                        LEFT JOIN Moyennes m ON c.id_client = m.id_client
+                        LEFT JOIN rendez_vous r ON r.telephone_client = c.telephone AND r.date_heure_debut >= NOW()
+                        WHERE c.id_salon = $1
+                          AND r.id_rdv IS NULL
+                          AND c.telephone IS NOT NULL
+                          AND c.derniere_visite IS NOT NULL
+                    `;
+                    const clientsResult = await pool.query(queryClients, [salon.id_salon]);
+                    const now = new Date();
+
+                    for (let client of clientsResult.rows) {
+                        const derniereVisite = new Date(client.derniere_visite);
+                        const joursDepuisVisite = (now - derniereVisite) / (1000 * 60 * 60 * 24);
+
+                        let seuilRelance = (client.nb_ecarts > 0 && client.moyenne_jours > 0) ? parseFloat(client.moyenne_jours) * 1.2 : delaiFixe;
+
+                        if (joursDepuisVisite >= seuilRelance && joursDepuisVisite < (seuilRelance + 1)) {
+                            let message = "";
+                            if (salon.fidelite_type === 'TAMPONS') {
+                                const restants = salon.fidelite_tampons_seuil - (client.tampons_fidelite || 0);
+                                message = `Hey ${client.prenom || client.nom} ! Cela fait un moment qu'on ne t'a pas vu chez ${salon.sms_sender_name}. Plus que ${restants} passage(s) avant ta récompense ! Prends vite rendez-vous : ${salon.lien_google_maps}`;
+                            } else if (salon.fidelite_type === 'POINTS') {
+                                message = `Bonjour ${client.prenom || client.nom}, votre fidélité paie ! Vous avez ${client.points_fidelite || 0} points. Venez en profiter chez ${salon.sms_sender_name}. RDV: ${salon.lien_google_maps}`;
+                            } else {
+                                message = `Bonjour ${client.prenom || client.nom}, ça fait longtemps ! Pensez à prendre soin de vous chez ${salon.sms_sender_name}. Prenez rendez-vous ici : ${salon.lien_google_maps}`;
+                            }
+                            if (message !== "") await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, message);
+                        }
+                    }
+
+                                    const anniversaires = await pool.query(`
+                        SELECT * FROM clients 
+                        WHERE id_salon = $1 
+                        AND EXTRACT(MONTH FROM date_naissance) = EXTRACT(MONTH FROM NOW()) 
+                        AND EXTRACT(DAY FROM date_naissance) = EXTRACT(DAY FROM NOW())
+                    `, [salon.id_salon]);
+
+                    for (let client of anniversaires.rows) {
+                        if (client.telephone) {
+                            await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name, client.telephone, `Joyeux anniversaire ${client.prenom || client.nom} ! 🎉 Venez fêter ça chez nous cette semaine. Prenez RDV : ${salon.lien_google_maps}`);
+                        }
+                    }
+                }
+                // =================================================================
+                // --- 2. MOTEUR PRÉDICTIF D'INVENTAIRE GLOBAL (SMART AGGREGATION) ---
+                // =================================================================
+                
+                // Cette requête SQL intelligente calcule la somme totale requise par produit 
+                // pour TOUS les RDV des 14 prochains jours, et ne sort que les articles en déficit.
+                const rupturesPredictives = await pool.query(`
+                    SELECT 
+                        c.id_article,
+                        c.nom,
+                        c.stock_actuel,
+                        c.delai_livraison_jours,
+                        SUM(ra.quantite_necessaire) as total_besoin,
+                        MIN(r.date_heure_debut) as date_premier_besoin
+                    FROM rendez_vous r
+                    JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(r.prestation)
+                    JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
+                    JOIN catalogue c ON c.id_article = ra.id_article
+                    WHERE r.id_salon = $1 
+                      AND r.date_heure_debut BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+                    GROUP BY c.id_article, c.nom, c.stock_actuel, c.delai_livraison_jours
+                    HAVING c.stock_actuel < SUM(ra.quantite_necessaire)
+                `, [salon.id_salon]);
+
+                console.log(`[ROBOT-STOCK] Salon #${salon.id_salon} : ${rupturesPredictives.rowCount} produit(s) en rupture prédictive globale.`);
+
+                for (let rupture of rupturesPredictives.rows) {
+                    const stockActuel = parseFloat(rupture.stock_actuel);
+                    const besoinTotal = parseFloat(rupture.total_besoin);
+                    const quantiteACommander = besoinTotal - stockActuel;
+                    
+                    // Calcul du délai : Date du PREMIER rdv impacté - Délai livraison - 1 jour marge
+                    const dateAlerte = new Date(rupture.date_premier_besoin);
+                    dateAlerte.setDate(dateAlerte.getDate() - (rupture.delai_livraison_jours || 3) - 1);
+
+                    // Formatage exact demandé
+                    const titreAlerte = `Commander ${quantiteACommander}x ${rupture.nom}`;
+                    const descAlerte = `Rupture prédictive : Il faut un total de ${besoinTotal} unité(s) pour assurer l'ensemble des RDV des 14 prochains jours, mais vous n'avez que ${stockActuel} en stock. Échéance calculée avec le délai fournisseur (${rupture.delai_livraison_jours || 3}j) + 1j de marge.`;
+
+                    // On évite d'inonder le gérant si la tâche existe déjà pour CE produit en mode A_FAIRE
+                    const exist = await pool.query(`SELECT 1 FROM taches_actions WHERE id_salon = $1 AND titre = $2 AND statut = 'A_FAIRE'`, [salon.id_salon, titreAlerte]);
+                    
+                    if (exist.rowCount === 0) {
+                        await pool.query(
+                            `INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'IA')`, 
+                            [salon.id_salon, titreAlerte, descAlerte, dateAlerte]
+                        );
+                        console.log(`[ROBOT-STOCK] ✅ Alerte insérée : "${titreAlerte}" (échéance ${dateAlerte.toISOString().slice(0,10)})`);
+                    }
+                }
+
+                // --- 3. Alertes Tâches Urgentes (Centre d'Action) ---
+                const tachesUrgentes = await pool.query(`SELECT titre, date_echeance FROM taches_actions WHERE id_salon = $1 AND statut = 'A_FAIRE' AND date_echeance <= NOW() + INTERVAL '2 days'`, [salon.id_salon]);
+                if (tachesUrgentes.rowCount > 0) {
+                    
+                    envoyerNotificationPush(salon.id_salon, 'gerant', {
+                        title: " Actions Urgentes",
+                        body: `Vous avez ${tachesUrgentes.rowCount} tâche(s) arrivant à échéance (ex: ${tachesUrgentes.rows[0].titre}).`,
+                        url: '/?tab=actions'
+                    });
+                    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+                        const gerant = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [salon.id_salon]);
+                        if (gerant.rowCount > 0) {
+                            let texteEmail = `Bonjour,\n\nVous avez ${tachesUrgentes.rowCount} tâche(s) urgente(s) nécessitant votre attention :\n\n`;
+                            tachesUrgentes.rows.forEach(t => texteEmail += `🔴 ${t.titre} (Échéance: ${new Date(t.date_echeance).toLocaleDateString()})\n`);
+                            texteEmail += `\nConnectez-vous à STACK pour les traiter.`;
+                            try {
+                                let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+                                await transporter.sendMail({ from: `"Alertes STACK" <${process.env.SMTP_USER}>`, to: gerant.rows[0].email, subject: `⚠️ ${tachesUrgentes.rowCount} Action(s) Urgente(s) (URSSAF, Factures, Stocks...)`, text: texteEmail });
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (salon.alertes_sms_actives && salon.telephone_gerant && salon.telephone_gerant.trim() !== '' && hasBrevo) {
+                        const smsTexte = `⚠️ STACK : Vous avez ${tachesUrgentes.rowCount} action(s) urgente(s) en attente (ex: ${tachesUrgentes.rows[0].titre}). Connectez-vous pour les traiter !`;
+                        await envoyerSMS(salon.brevo_api_key, salon.sms_sender_name || 'STACK', salon.telephone_gerant, smsTexte);
+                    }
+                }
+            } catch (salonErr) {
+                console.error(`[ROBOT-MARKETING] Erreur isolée pour le salon ${salon.id_salon}:`, salonErr);
+            }
+        } 
+    } catch (err) {
+        console.error("Erreur globale Robot Marketing/Prédictif:", err);
+    }
+}
+
+// =========================================================================
+// --- ROBOT D'ENVOI AU COMPTABLE (CRON JOB) ---
+// =========================================================================
+async function executerEnvoiComptable() {
+    try {
+        const salons = await pool.query("SELECT id_salon, nom_salon, email_comptable, jour_envoi_bilan, email_reception_factures, mot_de_passe_app_email, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva FROM configuration_salon WHERE email_comptable IS NOT NULL AND email_comptable != ''");
+        const today = new Date();
+        const currentDay = today.getDate();
+        const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+
+        for (let salon of salons.rows) {
+            try {
+                const jourCible = salon.jour_envoi_bilan || 1;
+                const shouldSend = currentDay === jourCible || (jourCible > lastDayOfMonth && currentDay === lastDayOfMonth);
+                
+                if (shouldSend && salon.email_reception_factures && salon.mot_de_passe_app_email) {
+                    const id_salon = salon.id_salon;
+                    
+                    const firstDayPrevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                    const lastDayPrevMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+                    
+                    const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    const dateDebutStr = formatYMD(firstDayPrevMonth);
+                    const dateFinStr = formatYMD(lastDayPrevMonth);
+
+                    const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+                    const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+                    const caParMethodeResult = await pool.query(`SELECT methode_paiement, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
+                    const rhResult = await pool.query(`SELECT e.nom, COALESCE(SUM(c.montant_commission), 0) as total_prime FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3 WHERE e.id_salon = $1 GROUP BY e.nom`, [id_salon, dateDebutStr, dateFinStr]);
+                    
+                    // La requête qui manquait ou était fragile :
+                    const absencesResult = await pool.query(`SELECT a.type_demande, a.nature_absence, a.date_debut, a.date_fin, a.fichier_cle_r2, e.nom as nom_employe FROM absences_employes a JOIN employes e ON a.id_employe = e.id_employe WHERE a.id_salon = $1 AND a.statut = 'VALIDE' AND a.date_debut <= $3 AND a.date_fin >= $2 ORDER BY e.nom ASC, a.date_debut ASC`, [id_salon, dateDebutStr, dateFinStr]);
+
+                    const caTotal = parseFloat(caResult.rows[0].ca_total);
+
+                    // --- GÉNÉRATION DU FEC EN ARRIÈRE-PLAN ---
+                    let fecContent = null;
+                    try {
+                        const ticketsFecRes = await pool.query(`
+                            SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, 'Article') as nom_article, COALESCE(c.type_article, 'PRESTATION') as type_article, cc.date_cloture
+                            FROM tickets t
+                            JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
+                            LEFT JOIN catalogue c ON lt.id_article = c.id_article
+                            LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
+                            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+                            ORDER BY t.date_creation ASC, t.id_ticket ASC
+                        `, [id_salon, dateDebutStr, dateFinStr]);
+
+                        let totalDebit = 0, totalCredit = 0;
+                        const lignesFec = [];
+                        const ticketsMap = {};
+
+                        ticketsFecRes.rows.forEach(r => {
+                            if (!ticketsMap[r.id_ticket]) ticketsMap[r.id_ticket] = { id_ticket: r.id_ticket, numero: r.numero_ticket_caisse, date: r.date_creation, date_valid: r.date_cloture || r.date_creation, methode: r.methode_paiement, total_ttc: parseFloat(r.total_ttc), lignes: [] };
+                            ticketsMap[r.id_ticket].lignes.push(r);
+                        });
+
+                        const formatDateFEC = (date) => { const d = new Date(date); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
+                        const formatMnt = (mnt) => Number(mnt).toFixed(2).replace('.', ',');
+
+                        for (const t of Object.values(ticketsMap)) {
+                            const dEcr = formatDateFEC(t.date), dVal = formatDateFEC(t.date_valid), pRef = t.numero, eNum = `VT-${t.id_ticket}`;
+                            const cPaiement = t.methode === 'ESPECES' ? (salon.compte_caisse || '530000') : (salon.compte_banque || '512000');
+                            const lPaiement = t.methode === 'ESPECES' ? 'Caisse' : 'Banque';
+
+                            lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cPaiement, CompteLib: lPaiement, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `Encaissement ${pRef}`, Debit: formatMnt(t.total_ttc), Credit: '', EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' });
+                            totalDebit += Math.round(t.total_ttc * 100);
+
+                            for (const l of t.lignes) {
+                                const lTTC = parseFloat(l.total_ligne_ttc), tTVA = parseFloat(l.taux_tva_snapshot) || 20.00;
+                                const lHT = Number((lTTC / (1 + tTVA / 100)).toFixed(2)), lTVA = Number((lTTC - lHT).toFixed(2));
+                                const cVente = l.type_article === 'PRODUIT_REVENTE' ? (salon.compte_produits || '707000') : (salon.compte_prestations || '706000');
+                                const lVente = l.type_article === 'PRODUIT_REVENTE' ? 'Vente Produit' : 'Vente Prestation';
+                                const nNet = (l.nom_article || 'Article').substring(0, 30).replace(/\t/g, ' ').replace(/\n/g, ' ');
+
+                                if (lHT > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cVente, CompteLib: lVente, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: nNet, Debit: '', Credit: formatMnt(lHT), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lHT * 100); }
+                                if (lTVA > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: (salon.compte_tva || '445710'), CompteLib: `TVA Collectee ${tTVA}%`, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `TVA ${nNet}`.substring(0,30), Debit: '', Credit: formatMnt(lTVA), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lTVA * 100); }
+                            }
+                        }
+
+                        if (totalDebit === totalCredit && lignesFec.length > 0) {
+                            const h = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
+                            fecContent = h.join('\t') + '\r\n' + lignesFec.map(row => h.map(col => row[col]).join('\t')).join('\r\n') + '\r\n';
+                        }
+                    } catch(e) { console.error(`Erreur génération FEC Robot pour le salon ${salon.id_salon}:`, e); }
+
+                    // --- GÉNÉRATION DU PDF ET ENVOI ---
+                    const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
+                    let buffers = [];
+                    doc.on('data', buffers.push.bind(buffers));
+                    
+                    doc.on('end', async () => {
+                        const pdfData = Buffer.concat(buffers); 
+                        try {
+                            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) } });
+                            const moisAnnee = firstDayPrevMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+                            
+                            const attachments = [
+                                { filename: `Liasse_Comptable_${salon.nom_salon}_${moisAnnee.replace(' ', '_')}.pdf`, content: pdfData }
+                            ];
+                            
+                            if (fecContent) {
+                                attachments.push({
+                                    filename: `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`,
+                                    content: fecContent,
+                                    contentType: 'text/plain; charset=windows-1252'
+                                });
+                            }
+
+                            let textBody = `Bonjour,\n\nVeuillez trouver en pièce jointe la liasse comptable de ${salon.nom_salon} pour la période du ${firstDayPrevMonth.toLocaleDateString('fr-FR')} au ${lastDayPrevMonth.toLocaleDateString('fr-FR')}.\n\n`;
+                            if (fecContent) textBody += `Le fichier FEC (Fichier des Écritures Comptables) est également joint, prêt à être importé dans votre logiciel (format TXT, partie double équilibrée).\n\n`;
+                            textBody += `Cordialement,`;
+
+                            await transporter.sendMail({
+                                from: `"${salon.nom_salon}" <${salon.email_reception_factures}>`, 
+                                to: salon.email_comptable, 
+                                subject: `📊 Liasse Comptable Mensuelle - ${salon.nom_salon} (${moisAnnee})`, 
+                                text: textBody,
+                                attachments: attachments
+                            });
+                            console.log(`[CRON] Bilan mensuel & FEC envoyés au comptable pour le salon ${id_salon}`);
+                        } catch (emailError) { console.error(`Erreur envoi email comptable pour le salon ${salon.id_salon}:`, emailError); } 
+                    });
+
+                    const THEME_COLOR = '#00B4D8'; const TEXT_DARK = '#1f2937'; const TEXT_LIGHT = '#6b7280'; const LINE_COLOR = '#e5e7eb';
+                    try { doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 }); } catch(e) { doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' }); }
+
+                    doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
+                    doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 95);
+                    doc.moveDown(4);
+
+                    const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
+                        const y = doc.y;
+                        doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col1, 50, y);
+                        doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col2, 450, y, { width: 95, align: 'right' });
+                        if (!isHeader && !isTotal) { doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke(); }
+                        doc.y += 18;
+                    };
+
+                    const drawSectionHeader = (title) => {
+                        doc.moveDown(1.5);
+                        doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
+                        doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
+                        doc.moveDown(0.5);
+                    };
+
+                    drawSectionHeader('Chiffre d\'Affaires & Encaissements');
+                    drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
+                    caParMethodeResult.rows.forEach(m => drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`));
+                    doc.moveDown(0.5); drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
+
+                    drawSectionHeader('Dépenses (Factures Fournisseurs)');
+                    drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
+                    let totalDepenses = 0;
+                    if (facturesResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois.', 50, doc.y); doc.moveDown(1); } 
+                    else { facturesResult.rows.forEach(f => { drawTableRow(`${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`); totalDepenses += parseFloat(f.montant_ttc); }); }
+                    doc.moveDown(0.5); drawTableRow('Total Dépenses', `${totalDepenses.toFixed(2)} €`, false, true);
+
+                    drawSectionHeader('Commissions Employés');
+                    drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
+                    let totalPrimes = 0;
+                    if (rhResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y); } 
+                    else { rhResult.rows.forEach(c => { drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`); totalPrimes += parseFloat(c.total_prime); }); }
+                    doc.moveDown(0.5); drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
+
+                    doc.addPage();
+                    doc.font('Helvetica-Bold').fontSize(24).fillColor(THEME_COLOR).text('Variables de Paie & Absences', 50, 50);
+                    doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 80);
+                    doc.moveDown(3);
+
+                    drawSectionHeader('Registre des Absences Validées');
+                    if (!absencesResult || absencesResult.rowCount === 0) { 
+                        doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune absence enregistrée sur cette période.', 50, doc.y); 
+                    } 
+                    else {
+                        drawTableRow('EMPLOYÉ & NATURE', 'DATES', true);
+                        absencesResult.rows.forEach(abs => {
+                            const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence || ''})` : `Congé (${abs.nature_absence || ''})`;
+                            let dateD = ''; let dateF = '';
+                            try { dateD = new Date(abs.date_debut).toLocaleDateString('fr-FR'); } catch(e){}
+                            try { dateF = new Date(abs.date_fin).toLocaleDateString('fr-FR'); } catch(e){}
+                            drawTableRow(`${abs.nom_employe || ''} - ${natureStr.replace('_', ' ')}${abs.fichier_cle_r2 ? " (Justificatif fourni)" : ""}`, `Du ${dateD} au ${dateF}`);
+                        });
+                    }
+
+                    const pages = doc.bufferedPageRange();
+                    for (let i = 0; i < pages.count; i++) { doc.switchToPage(i); doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR); }
+                    doc.end();
+                }
+            } catch (salonErr) {
+                console.error(`[ROBOT-COMPTABLE] Erreur isolée pour le salon ${salon.id_salon}:`, salonErr);
+            }
+        }
+    } catch (err) { console.error("Erreur globale Robot Comptable Automatique:", err); }
+}
+
+async function executerClotureFantome() {
+    const clientDB = await pool.connect();
+    try {
+        const salons = await clientDB.query("SELECT id_salon FROM configuration_salon");
+        for (let s of salons.rows) {
+            const id_salon = s.id_salon;
+            
+            // On cherche tous les jours (avant aujourd'hui) ayant des tickets mais aucune clôture correspondante
+            const joursNonClotures = await clientDB.query(`
+                SELECT DISTINCT DATE(t.date_creation) as jour
+                FROM tickets t
+                WHERE t.id_salon = $1 
+                  AND DATE(t.date_creation) < CURRENT_DATE
+                  AND NOT EXISTS (
+                      SELECT 1 FROM clotures_caisse c
+                      WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
+                  )
+                ORDER BY jour ASC
+            `, [id_salon]);
+
+            for (let j of joursNonClotures.rows) {
+                const dateACloturerStr = new Date(j.jour).toISOString().split('T')[0];
+                
+                try {
+                    await clientDB.query('BEGIN');
+                    const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+                    const totalJour = caResult.rows[0].total;
+
+                    const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) <= $2`, [id_salon, dateACloturerStr]);
+                    const grandTotalPerpetuel = grandTotalResult.rows[0].total;
+
+                    // --- CALCUL DU THÉORIQUE POUR LE ROBOT ---
+                    const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE' AND est_compense = FALSE`, [id_salon, dateACloturerStr]);
+                    const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
+
+                    const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE 0 END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
+                    const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
+
+                    const lastCloseRes = await clientDB.query('SELECT total_especes_reel FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
+                    const fCaisseMatin = lastCloseRes.rowCount > 0 ? parseFloat(lastCloseRes.rows[0].total_especes_reel) : 0;
+
+                    const tEspecesTheorique = fCaisseMatin + totalEspecesVentes + totalMouvements;
+                    // Le robot force le total_reel au total_theorique (écart = 0) pour valider mathématiquement la journée
+                    // -----------------------------------------
+
+                    const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
+                    const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
+                    const dateISO = new Date(j.jour); 
+                    dateISO.setHours(23, 59, 59); // On scelle le robot à 23:59:59 de la veille
+                    
+                    const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
+
+                    await clientDB.query(
+                        `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique) 
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                        [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, 'Fermeture Automatique (En attente)', fCaisseMatin, tEspecesTheorique, tEspecesTheorique, 0, 'Clôture générée par le système', true]
+                    );
+
+                    await enregistrerJET(id_salon, 'CLOTURE_Z_AUTOMATIQUE', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: 0, signature }, clientDB);
+                    await clientDB.query('COMMIT');
+                    console.log(`[ROBOT] Clôture fantôme réussie pour le salon ${id_salon} (Date: ${dateACloturerStr})`);
+                } catch (e) {
+                    await clientDB.query('ROLLBACK');
+                    console.error(`[ROBOT] Erreur clôture fantôme salon ${id_salon}:`, e);
+                }
+            }
+        }
+    } catch (err) { console.error("Erreur Globale Robot Clôture:", err); } 
+    finally { clientDB.release(); }
+}
+
+// =========================================================================
+// --- ROBOT ANALYTICS (CRON JOB) - RAPPORT HEBDO GÉRANT ---
+// =========================================================================
+async function executerRapportHebdoGerant() {
+    console.log("\n🚀 [ROBOT-HEBDO] Démarrage du robot...");
+    const clientDB = await pool.connect();
+    try {
+        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+            console.log("❌ [ROBOT-HEBDO] ARRÊT : Variables SMTP_USER ou SMTP_PASS introuvables.");
+            return;
+        }
+        console.log(`📧 [ROBOT-HEBDO] Connexion SMTP configurée avec : ${process.env.SMTP_USER}`);
+        
+        // Utilisation du Port 587 (Standard Cloud) avec STARTTLS
+        const transporter = nodemailer.createTransport({ 
+            host: 'smtp.gmail.com', 
+            port: 587, 
+            secure: false, // Doit obligatoirement être "false" pour le port 587
+            requireTLS: true, // Force le chiffrement moderne
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+            logger: true,
+            debug: true
+        });
+
+        const salons = await clientDB.query("SELECT id_salon, nom_salon FROM configuration_salon");
+        console.log(`🔍 [ROBOT-HEBDO] ${salons.rowCount} salon(s) trouvé(s) en base.`);
+        
+        for (let s of salons.rows) {
+            try {
+                const id_salon = s.id_salon;
+                console.log(`\n➡️ Analyse du salon #${id_salon} (${s.nom_salon})...`);
+
+                // 1. Récupération de l'email du gérant
+                const gerantRes = await clientDB.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [id_salon]);
+                if (gerantRes.rowCount === 0 || !gerantRes.rows[0].email) {
+                    console.log(`⚠️ [ROBOT-HEBDO] Ignoré : Aucun compte 'gerant' avec un email trouvé pour ce salon.`);
+                    continue;
+                }
+                const emailGerant = gerantRes.rows[0].email;
+                console.log(`👤 [ROBOT-HEBDO] Gérant ciblé : ${emailGerant}`);
+
+                // 2. Requête d'agrégation intelligente
+                const statsQuery = `
+                    WITH Hebdo AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca, COUNT(id_ticket) as tickets FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= CURRENT_DATE - INTERVAL '7 days' AND date_creation < CURRENT_DATE
+                    ),
+                    HebdoPrec AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca, COUNT(id_ticket) as tickets FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= CURRENT_DATE - INTERVAL '14 days' AND date_creation < CURRENT_DATE - INTERVAL '7 days'
+                    ),
+                    Mensuel AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= date_trunc('month', CURRENT_DATE)
+                    ),
+                    MensuelPrec AS (
+                        SELECT COALESCE(SUM(total_ttc), 0) as ca FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE)
+                    )
+                    SELECT 
+                        (SELECT ca FROM Hebdo) as ca_hebdo, (SELECT tickets FROM Hebdo) as tickets_hebdo,
+                        (SELECT ca FROM HebdoPrec) as ca_hebdo_prec,
+                        (SELECT ca FROM Mensuel) as ca_mensuel,
+                        (SELECT ca FROM MensuelPrec) as ca_mensuel_prec
+                `;
+                const stats = await clientDB.query(statsQuery, [id_salon]);
+                if(stats.rowCount === 0) continue;
+                const d = stats.rows[0];
+
+                console.log(`💰 [ROBOT-HEBDO] CA 7j : ${d.ca_hebdo}€ | CA Prec : ${d.ca_hebdo_prec}€ | Tickets : ${d.tickets_hebdo}`);
+
+                if (parseFloat(d.ca_hebdo) === 0 && parseFloat(d.ca_hebdo_prec) === 0) {
+                    console.log(`🛑 [ROBOT-HEBDO] Annulation : Pas d'activité détectée sur les 14 derniers jours.`);
+                    continue; 
+                }
+
+                // 3. Calculs des variations (Période sur Période)
+                const caHebdo = parseFloat(d.ca_hebdo).toFixed(2);
+                const caHebdoPrec = parseFloat(d.ca_hebdo_prec).toFixed(2);
+                const evoHebdoRaw = caHebdoPrec > 0 ? ((caHebdo - caHebdoPrec) / caHebdoPrec * 100) : (caHebdo > 0 ? 100 : 0);
+                const evoHebdo = Math.abs(evoHebdoRaw).toFixed(1);
+                const signeHebdo = evoHebdoRaw >= 0 ? '+' : '-';
+                const colorHebdo = evoHebdoRaw >= 0 ? '#166534' : '#99251b';
+                const bgHebdo = evoHebdoRaw >= 0 ? '#e7f6ec' : '#fbeae8';
+
+                const caMensuel = parseFloat(d.ca_mensuel).toFixed(2);
+                const caMensuelPrec = parseFloat(d.ca_mensuel_prec).toFixed(2);
+                const evoMensuelRaw = caMensuelPrec > 0 ? ((caMensuel - caMensuelPrec) / caMensuelPrec * 100) : (caMensuel > 0 ? 100 : 0);
+                const evoMensuel = Math.abs(evoMensuelRaw).toFixed(1);
+                const signeMensuel = evoMensuelRaw >= 0 ? '+' : '-';
+                const colorMensuel = evoMensuelRaw >= 0 ? '#166534' : '#99251b';
+                const bgMensuel = evoMensuelRaw >= 0 ? '#e7f6ec' : '#fbeae8';
+
+                const panierMoyen = d.tickets_hebdo > 0 ? (caHebdo / d.tickets_hebdo).toFixed(2) : '0.00';
+
+                // 4. Classement Hebdo (Top 3)
+                const topPrestas = await clientDB.query(`
+                    SELECT c.nom, SUM(lt.total_ligne_ttc) as total FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND t.date_creation >= CURRENT_DATE - INTERVAL '7 days' AND c.type_article = 'PRESTATION' GROUP BY c.nom ORDER BY total DESC LIMIT 3
+                `, [id_salon]);
+
+                let topPrestasHTML = '';
+                if (topPrestas.rowCount > 0) {
+                    topPrestasHTML = `<div style="background: #ffffff; padding: 15px; border-radius: 12px; border: 1px solid #ececee; margin-bottom: 20px;">
+                        <h3 style="margin-top: 0; color: #14141a; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">🏆 Top Prestations (7 Jours)</h3>
+                        <ul style="padding-left: 20px; margin: 0; color: #14141a; font-size: 14px;">`;
+                    topPrestas.rows.forEach(p => { topPrestasHTML += `<li style="margin-bottom: 6px;"><strong>${p.nom}</strong> : ${parseFloat(p.total).toFixed(2)} €</li>`; });
+                    topPrestasHTML += `</ul></div>`;
+                }
+
+                // 5. Structure de l'e-mail
+                const htmlBody = `
+                <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; background: #ffffff; border: 1px solid #ececee; border-radius: 16px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h2 style="color: #14141a; margin: 0; font-size: 22px;">Bilan Hebdomadaire</h2>
+                        <p style="color: #77777f; margin: 4px 0 0 0; font-size: 14px;">Performances de <strong>${s.nom_salon}</strong></p>
+                    </div>
+                    
+                    <div style="background: #fbfbfc; padding: 20px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #ececee;">
+                        <h3 style="margin-top: 0; color: #77777f; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">7 Derniers Jours</h3>
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span style="font-size: 32px; font-weight: 800; color: #14141a; letter-spacing: -0.02em;">${caHebdo} €</span>
+                            <span style="font-size: 14px; font-weight: 700; color: ${colorHebdo}; background: ${bgHebdo}; padding: 4px 10px; border-radius: 12px;">${signeHebdo}${evoHebdo}%</span>
+                        </div>
+                        <p style="color: #77777f; font-size: 13px; margin: 8px 0 0 0;">vs ${caHebdoPrec} € la semaine précédente</p>
+                    </div>
+
+                    <div style="background: #fbfbfc; padding: 20px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #ececee;">
+                        <h3 style="margin-top: 0; color: #77777f; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Mois en cours</h3>
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span style="font-size: 24px; font-weight: 700; color: #14141a; letter-spacing: -0.02em;">${caMensuel} €</span>
+                            <span style="font-size: 13px; font-weight: 700; color: ${colorMensuel}; background: ${bgMensuel}; padding: 4px 8px; border-radius: 12px;">${signeMensuel}${evoMensuel}%</span>
+                        </div>
+                        <p style="color: #77777f; font-size: 13px; margin: 8px 0 0 0;">vs ${caMensuelPrec} € le mois dernier</p>
+                    </div>
+                    
+                    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 24px;">
+                        <tr>
+                            <td width="48%" style="background: #fbfbfc; padding: 16px; border-radius: 12px; border: 1px solid #ececee; text-align: center;">
+                                <span style="font-size: 11px; color: #77777f; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Clients (7j)</span>
+                                <p style="font-size: 22px; font-weight: 800; color: #14141a; margin: 8px 0 0 0;">${d.tickets_hebdo}</p>
+                            </td>
+                            <td width="4%"></td>
+                            <td width="48%" style="background: #fbfbfc; padding: 16px; border-radius: 12px; border: 1px solid #ececee; text-align: center;">
+                                <span style="font-size: 11px; color: #77777f; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Panier Moyen (7j)</span>
+                                <p style="font-size: 22px; font-weight: 800; color: #14141a; margin: 8px 0 0 0;">${panierMoyen} €</p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    ${topPrestasHTML}
+
+                    <hr style="border: none; border-top: 1px dashed #ececee; margin: 24px 0;" />
+                    <p style="font-size: 12px; color: #a9a9b0; text-align: center; margin: 0;">STACK Analytics<br/>Le tableau de bord vient à vous.</p>
+                </div>`;
+
+                console.log(`📨 [ROBOT-HEBDO] Envoi de l'email en cours vers : ${emailGerant}...`);
+                await transporter.sendMail({
+                    from: `"STACK Analytics" <${process.env.SMTP_USER}>`,
+                    to: emailGerant,
+                    subject: `📊 Bilan STACK : ${caHebdo}€ cette semaine (${signeHebdo}${evoHebdo}%)`,
+                    html: htmlBody
+                });
+                console.log(`✅ [ROBOT-HEBDO] Email envoyé avec succès !`);
+
+            } catch (eSalon) { console.error(`❌ [ROBOT-HEBDO] Erreur Salon ${s.id_salon}:`, eSalon); }
+        }
+        console.log("🏁 [ROBOT-HEBDO] Fin de l'exécution.\n");
+    } catch (err) { console.error("❌ [ROBOT-HEBDO] Erreur globale:", err); }
+    finally { clientDB.release(); }
+}
+
+// Planification automatique
+cron.schedule('0 8 * * 1', () => { executerRapportHebdoGerant(); }); // Tous les lundis à 08h00
+cron.schedule('0 3 * * *', () => { executerClotureFantome(); }); // Le filet de sécurité à 3h00 du matin !
+cron.schedule('0 8 * * *', () => { executerEnvoiComptable(); }); 
+cron.schedule('0 9 * * *', () => { executerRobotMarketingEtPredictif(); }); 
+cron.schedule('*/10 9-19 * * *', () => { executerRobotAvisSatisfaction(); }); 
+cron.schedule('0 4 * * *', () => { executerRobotAvisSatisfaction(); }); 
+
+app.get('/api/admin/forcer-robot', async (req, res) => { 
+    try {
+        console.log("=========================================");
+        console.log("=== DÉCLENCHEMENT MANUEL DES ROBOTS ===");
+        console.log("=========================================");
+        
+        // 1. On AWAIT spécifiquement le rapport hebdo pour que la requête attende sa fin
+        await executerRapportHebdoGerant();
+        
+        // 2. Les autres tournent en arrière-plan sans bloquer
+        executerRobotComptable(); 
+        executerClotureFantome();
+        executerRobotMarketingEtPredictif();
+        executerEnvoiComptable();
+        
+        res.json({ message: "Le cycle du robot hebdomadaire est terminé ! Les autres robots tournent en fond." }); 
+    } catch (e) {
+        console.error("❌ ERREUR CRITIQUE DANS LA ROUTE FORCER-ROBOT :", e);
+        res.status(500).json({ erreur: e.message, stack: e.stack });
+    }
+});
+
+// --- CHEAT CODE : VOYAGE DANS LE TEMPS (TESTS UNIQUEMENT) ---
+app.get('/api/admin/time-travel/:id_salon', async (req, res) => {
+    try {
+        // On recule la date de fin d'essai à il y a 5 jours
+        await pool.query(
+            "UPDATE configuration_salon SET date_fin_essai = NOW() - INTERVAL '5 days' WHERE id_salon = $1", 
+            [req.params.id_salon]
+        );
+        res.json({ message: `⏳ Voyage dans le temps réussi ! L'essai du salon #${req.params.id_salon} est maintenant expiré.` });
+    } catch (e) { 
+        res.status(500).json({ erreur: e.message }); 
+    }
+});
+
+// --- CHEAT CODE : INJECTION SIRET POUR TEST PDF ---
+app.get('/api/admin/fix-siret-38', async (req, res) => {
+    try {
+        await pool.query(
+            "UPDATE configuration_salon SET siret = '12345678901234', siret_salon = '12345678901234', adresse_salon = '123 Rue de Test, 75000 Paris' WHERE id_salon = 38"
+        );
+        res.json({ message: "✅ SIRET (12345678901234) et Adresse injectés avec succès pour le salon 38 !" });
+    } catch (e) { 
+        res.status(500).json({ erreur: e.message }); 
+    }
+});
+
+// =========================================================================
+// --- GOD MODE (SUPER-ADMIN) ---
+// =========================================================================
+const verifierSuperAdmin = async (req, res, next) => {
+    try {
+        const userRes = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [req.user.id_salon]);
+        if (userRes.rowCount === 0 || userRes.rows[0].email !== '2@gmail.com') {
+            return res.status(403).json({ erreur: "Accès refusé. God mode uniquement." });
+        }
+        next();
+    } catch (e) {
+        return res.status(500).json({ erreur: "Erreur de vérification des droits admin." });
+    }
+};
+
+app.get('/api/superadmin/stats', verifierToken, verifierSuperAdmin, async (req, res) => {
+    try {
+        const totalSalons = await pool.query("SELECT COUNT(*) as count FROM configuration_salon");
+        const activeSalons = await pool.query("SELECT COUNT(*) as count FROM utilisateurs WHERE statut_abonnement = 'actif' AND role = 'gerant'");
+        const mrr = parseInt(activeSalons.rows[0].count) * 49;
+        
+        res.json({ 
+            total_salons: totalSalons.rows[0].count, 
+            salons_actifs: activeSalons.rows[0].count, 
+            mrr_estime: mrr 
+        });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture stats admin." }); }
+});
+
+app.get('/api/superadmin/salons', verifierToken, verifierSuperAdmin, async (req, res) => {
+    try {
+        const query = `
+            SELECT c.id_salon, c.nom_salon, u.email, u.statut_abonnement 
+            FROM configuration_salon c
+            JOIN utilisateurs u ON c.id_salon = u.id_salon
+            WHERE u.role = 'gerant'
+            ORDER BY c.id_salon DESC
+        `;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture liste salons." }); }
+});
+
+app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, async (req, res) => {
+    try {
+        const { statut } = req.body;
+        await pool.query("UPDATE utilisateurs SET statut_abonnement = $1 WHERE id_salon = $2 AND role = 'gerant'", [statut, req.params.id]);
+        res.json({ message: `Le salon #${req.params.id} est maintenant ${statut}.` });
+    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
+});
+
+app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, async (req, res) => {
+    const id = req.params.id;
+    if (parseInt(id) === req.user.id_salon) return res.status(403).json({ erreur: "Impossible de supprimer votre propre salon fondateur." });
+    
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        
+        // 🚨 CONFORMITÉ NF525 : On NE supprime PLUS JAMAIS les données fiscales (6 ans de conservation).
+        // On conserve indéfiniment en lecture seule : jet_logs, tickets, lignes_ticket, commissions, clotures_caisse.
+        // Seules les données opérationnelles et personnelles (pour la conformité RGPD) du salon sont purgées.
+
+        // Ordre de suppression calculé pour purger le SaaS tout en gardant l'archive fiscale intacte
+        await clientDB.query('DELETE FROM rendez_vous WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM absences_employes WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM recettes_articles WHERE id_protocole IN (SELECT id_protocole FROM protocoles WHERE id_salon = $1)', [id]);
+        await clientDB.query('DELETE FROM protocoles WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM catalogue WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM employes WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM clients WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM avis_demandes WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM taches_actions WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM ia_taches_attente WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM factures_fournisseurs WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM push_subscriptions WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM sms_opt_out WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM messages WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM utilisateurs WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM configuration_salon WHERE id_salon = $1', [id]);
+
+        await clientDB.query('COMMIT');
+        res.json({ message: `Le salon #${id} et toutes ses données ont été supprimés.` });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: "Erreur lors de la destruction du salon : " + e.message });
+    } finally {
+        clientDB.release();
+    }
+});
+
+
+// Sentry v10 : On utilise la nouvelle fonction dédiée
+if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+}
+
+const PORT = process.env.PORT || 3000; 
+server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
