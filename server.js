@@ -3434,6 +3434,19 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             GROUP BY c.id_cloture, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc
             ORDER BY c.date_cloture ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
+        // NOUVEAU : On récupère les sommes EXACTES arrêtées à la date du dernier Z
+        const lastZRes = await pool.query(`SELECT MAX(DATE(date_cloture)) as date_max, TO_CHAR(MAX(date_cloture), 'DD/MM/YYYY') as date_max_str FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+        const lastZDate = lastZRes.rows[0].date_max || lastDayOfMonth;
+        const lastZDateStr = lastZRes.rows[0].date_max_str || 'N/A';
+
+        // CORRECTION DU CRASH 42P18 : Paramètres $1, $2, $3 parfaitement alignés sans trous
+        const controleRes = await pool.query(`
+            SELECT 
+                (SELECT COALESCE(SUM(total_ttc), 0) FROM tickets WHERE id_salon = $1 AND methode_paiement = 'ESPECES' AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3) as especes_z,
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'ENTREE' AND DATE(date_creation) BETWEEN $2 AND $3) as entrees_z,
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $3) as sorties_z,
+                (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3) + (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $3) as ecarts_z
+        `, [id_salon, dateDebutStr, lastZDate]);
 
         // 3. REQUÊTE : Dépenses
         const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
@@ -3607,19 +3620,6 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
-
-        // NOUVEAU : On récupère les sommes EXACTES arrêtées à la date du dernier Z pour comparer des pommes avec des pommes
-        const lastZRes = await pool.query(`SELECT MAX(DATE(date_cloture)) as date_max, TO_CHAR(MAX(date_cloture), 'DD/MM/YYYY') as date_max_str FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
-        const lastZDate = lastZRes.rows[0].date_max || lastDayOfMonth;
-        const lastZDateStr = lastZRes.rows[0].date_max_str || 'N/A';
-
-        const controleRes = await pool.query(`
-            SELECT 
-                (SELECT COALESCE(SUM(total_ttc), 0) FROM tickets WHERE id_salon = $1 AND methode_paiement = 'ESPECES' AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $4) as especes_z,
-                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'ENTREE' AND DATE(date_creation) BETWEEN $2 AND $4) as entrees_z,
-                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $4) as sorties_z,
-                (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $4) + (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $4) as ecarts_z
-        `, [id_salon, dateDebutStr, dateFinStr, lastZDate]);
 
         // Lignes à remplir manuellement par le comptable
         drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
