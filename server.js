@@ -3379,11 +3379,20 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         
         const caisseRes = await pool.query(`
             SELECT 
-                (SELECT COALESCE(SUM(fond_caisse_matin), 0) FROM clotures_caisse WHERE id_salon = $1 AND date_cloture BETWEEN $2 AND $3) as fonds,
-                (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND date_cloture BETWEEN $2 AND $3) 
+                (SELECT COALESCE(fond_caisse_matin, 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3 ORDER BY date_cloture ASC LIMIT 1) as fond_debut_mois,
+                (SELECT COALESCE(total_especes_reel, 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3 ORDER BY date_cloture DESC LIMIT 1) as fond_fin_mois,
+                (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3) 
                 + 
                 (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $3) as ecarts,
-                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $3) as sorties
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $3) as sorties,
+                (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'ENTREE' AND DATE(date_creation) BETWEEN $2 AND $3) as entrees
+        `, [id_salon, dateDebutStr, dateFinStr]);
+
+        const mouvementsRes = await pool.query(`
+            SELECT type_mouvement, montant, motif, TO_CHAR(date_creation, 'DD/MM/YYYY') as date_mvt 
+            FROM mouvements_caisse 
+            WHERE id_salon = $1 AND type_mouvement IN ('ENTREE', 'SORTIE') AND DATE(date_creation) BETWEEN $2 AND $3 
+            ORDER BY date_creation ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
 
         // 3. REQUÊTE : Dépenses
@@ -3512,12 +3521,42 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
         
-        drawRow([{text: 'Fond de caisse (Ouverture matin)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].fonds), w: 225, align: 'right'}]);
-        drawRow([{text: 'Fond de caisse (Clôture soir / Espèces)', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
-        drawRow([{text: 'Apport de caisse (+) : ........................', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
-        drawRow([{text: 'Retrait de caisse (-) : ........................', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
-        drawRow([{text: 'Dépenses / Sorties de caisse (Espèces)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].sorties), w: 225, align: 'right'}]);
-        drawRow([{text: 'Régularisations d\'écarts de caisse', w: 260}, {text: '', w: 0}, {text: fMnt(caisseRes.rows[0].ecarts), w: 225, align: 'right'}]);
+        const especesEncaissees = mapPaiements['ESPECES'] ? parseFloat(mapPaiements['ESPECES'].total) : 0;
+        const fondDebut = parseFloat(caisseRes.rows[0].fond_debut_mois) || 0;
+        const fondFin = parseFloat(caisseRes.rows[0].fond_fin_mois) || 0;
+        const apports = parseFloat(caisseRes.rows[0].entrees) || 0;
+        const retraits = parseFloat(caisseRes.rows[0].sorties) || 0;
+        const ecarts = parseFloat(caisseRes.rows[0].ecarts) || 0;
+        
+        // Formule de contrôle stricte
+        const caisseCalculee = fondDebut + especesEncaissees + apports - retraits + ecarts;
+        
+        currentY += 5;
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("CONTRÔLE DE CAISSE (ESPÈCES)", 40, currentY); currentY += 14;
+        
+        drawRow([{text: 'Fond de caisse au 1er du mois (Ouverture)', w: 260}, {text: '', w: 0}, {text: fMnt(fondDebut), w: 225, align: 'right'}]);
+        drawRow([{text: `Espèces encaissées (+)`, w: 260}, {text: '', w: 0}, {text: fMnt(especesEncaissees), w: 225, align: 'right'}]);
+        drawRow([{text: 'Apports de caisse (+)', w: 260}, {text: '', w: 0}, {text: fMnt(apports), w: 225, align: 'right'}]);
+        drawRow([{text: 'Retraits et Dépenses en espèces (-)', w: 260}, {text: '', w: 0}, {text: fMnt(retraits), w: 225, align: 'right'}]);
+        drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 260}, {text: '', w: 0}, {text: fMnt(ecarts), w: 225, align: 'right'}]);
+        
+        drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseCalculee), w: 225, align: 'right'}], false, true);
+        drawRow([{text: 'ESPÈCES COMPTÉES (Au dernier jour)', w: 260}, {text: '', w: 0}, {text: fMnt(fondFin), w: 225, align: 'right'}], false, true);
+        
+        // Détail des mouvements de caisse (Apports/Retraits)
+        if (mouvementsRes.rowCount > 0) {
+            currentY += 5;
+            doc.font('Helvetica-Bold').fontSize(9).fillColor(SEC_COLOR).text("Détail des Apports et Retraits du mois :", 40, currentY); currentY += 14;
+            mouvementsRes.rows.forEach(mvt => {
+                const typeMvt = mvt.type_mouvement === 'ENTREE' ? 'Apport (+)' : 'Retrait/Dép. (-)';
+                drawRow([
+                    {text: mvt.date_mvt, w: 65, align: 'center'}, 
+                    {text: typeMvt, w: 90}, 
+                    {text: mvt.motif || 'Non renseigné', w: 215}, 
+                    {text: fMnt(mvt.montant), w: 115, align: 'right'}
+                ]);
+            });
+        }
 
         // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
