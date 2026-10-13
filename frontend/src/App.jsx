@@ -1170,7 +1170,12 @@ function App() {
           showToast("Action de l'IA confirmée !", "success");
           setModalIA(null);
           setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-          setRefreshTrigger(prev => prev + 1); 
+        setRefreshTrigger(prev => prev + 1);
+        
+        // --- NOUVEAU : On force le rechargement immédiat du catalogue et des stats ---
+        if (typeof chargerTout === 'function') {
+            chargerTout();
+        }
       } catch (e) { 
           showToast(`Erreur : ${e.message}`, "error"); 
       }
