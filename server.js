@@ -2977,7 +2977,54 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
         if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
         const type_tache = tacheRes.rows[0].type_tache;
 
-        if (type_tache === 'STOCK') {
+        // --- NOUVEAU CAS : VALIDATION FACTURE FOURNISSEUR (DOUBLE ACTION) ---
+        if (type_tache === 'FACTURE_ACHAT') {
+            
+            // 1. ACTION COMPTA : Insertion de la dépense dans factures_fournisseurs
+            const ht = parseFloat(donnees.montant_ht) || 0;
+            const tva = parseFloat(donnees.montant_tva) || 0;
+            const ttc = parseFloat(donnees.montant_ttc) || 0;
+            let dateFacture = donnees.date_facture ? new Date(donnees.date_facture) : new Date();
+            if (isNaN(dateFacture)) dateFacture = new Date();
+
+            await clientDB.query(
+                `INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon, date_traitement) VALUES ($1, $2, $3, $4, $5, $6)`,
+                [donnees.fournisseur || 'Fournisseur Inconnu', ht, tva, ttc, id_salon, dateFacture.toISOString()]
+            );
+
+            // 2. ACTION STOCK : Ajout automatique des quantités validées
+            if (donnees.produits && Array.isArray(donnees.produits)) {
+                for (let p of donnees.produits) {
+                    const qte = parseInt(p.quantite) || 0;
+                    if (qte <= 0 || !p.nom) continue;
+
+                    const typeArticle = p.type_destine === 'REVENTE' ? 'PRODUIT_REVENTE' : 'CONSOMMABLE';
+
+                    // On cherche si le produit existe déjà par son nom exact
+                    const check = await clientDB.query(
+                        "SELECT id_article FROM catalogue WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1",
+                        [p.nom, id_salon]
+                    );
+
+                    if (check.rowCount > 0) {
+                        // Mise à jour : on additionne le stock
+                        await clientDB.query(
+                            "UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2",
+                            [qte, check.rows[0].id_article]
+                        );
+                    } else {
+                        // Création automatique du produit s'il est nouveau
+                        await clientDB.query(
+                            "INSERT INTO catalogue (nom, type_article, prix, stock_actuel, id_salon) VALUES ($1, $2, $3, $4, $5)",
+                            [p.nom, typeArticle, 0, qte, id_salon] 
+                        );
+                    }
+                }
+            }
+        }
+        // --- FIN NOUVEAU CAS ---
+
+        else if (type_tache === 'STOCK') {
             const check = await clientDB.query("SELECT id_article FROM catalogue WHERE (nom ILIKE $1 OR reference = $2) AND id_salon = $3", [donnees.nom_produit, donnees.reference || null, id_salon]);
             if (check.rowCount > 0) {
                 await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [donnees.quantite, check.rows[0].id_article]);
