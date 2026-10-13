@@ -233,6 +233,7 @@ function App() {
   const [showAddEmploye, setShowAddEmploye] = useState(false);
   // --- ÉTATS : POINTEUSE NUMÉRIQUE ---
   const [pointeuse, setPointeuse] = useState({ open: false, step: 1, employe: null, pin: '' });
+  const [buttonsDisabled, setButtonsDisabled] = useState(false);
 
   // 1. Mise à jour de l'affichage du PIN instantanément et de façon sécurisée
   const handlePointeusePin = (digit) => {
@@ -248,14 +249,23 @@ function App() {
           const verifierCode = async () => {
               try {
                   const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: pointeuse.pin, is_pointeuse: true })
-                        });
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: pointeuse.pin })
+                  });
                   if (!resAuth.ok) throw new Error("Code PIN incorrect");
                   
-                  // PIN validé, on passe à l'écran des boutons d'action
+                  // PIN validé : on bloque temporairement les boutons
+                  setButtonsDisabled(true);
+                  
+                  // on passe à l'écran des boutons d'action
                   setPointeuse(prev => ({ ...prev, step: 3 }));
+                  
+                  // On débloque les boutons après 300ms
+                  setTimeout(() => {
+                      setButtonsDisabled(false);
+                  }, 300);
+                  
               } catch (e) {
                   showToast("Code PIN incorrect", "error");
                   setPointeuse(prev => ({ ...prev, pin: '' })); // On efface pour recommencer
@@ -5481,6 +5491,7 @@ function App() {
                 )}
 
                 {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
+                {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
                 {pointeuse.step === 3 && (
                     <>
                         <div style={{color: 'var(--text-secondary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
@@ -5491,8 +5502,9 @@ function App() {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
                             <button 
                                 onClick={() => enregistrerPointage('ENTREE')} 
+                                disabled={buttonsDisabled}
                                 className="hover-bg-card"
-                                style={{ background: 'var(--bg-app)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
                             >
                                 <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
                                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
@@ -5506,16 +5518,18 @@ function App() {
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                                 <button 
                                     onClick={() => enregistrerPointage('PAUSE_DEBUT')} 
+                                    disabled={buttonsDisabled}
                                     className="hover-bg-hover"
-                                    style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                    style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
                                 >
                                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>
                                     Départ Pause
                                 </button>
                                 <button 
                                     onClick={() => enregistrerPointage('PAUSE_FIN')} 
+                                    disabled={buttonsDisabled}
                                     className="hover-bg-hover"
-                                    style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                    style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
                                 >
                                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                                     Retour Pause
@@ -5524,8 +5538,9 @@ function App() {
                             
                             <button 
                                 onClick={() => enregistrerPointage('SORTIE')} 
+                                disabled={buttonsDisabled}
                                 className="hover-bg-card"
-                                style={{ background: 'var(--bg-app)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
                             >
                                 <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
                                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
