@@ -248,10 +248,10 @@ function App() {
           const verifierCode = async () => {
               try {
                   const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: pointeuse.pin })
-                  });
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: pointeuse.pin, is_pointeuse: true })
+                        });
                   if (!resAuth.ok) throw new Error("Code PIN incorrect");
                   
                   // PIN validé, on passe à l'écran des boutons d'action
@@ -274,7 +274,7 @@ function App() {
           });
           if (!res.ok) throw new Error("Erreur de pointage");
           
-          // Dégrise instantanément le collaborateur sur l'interface
+          // Dégrise instantanément le collaborateur sur l'interface SANS recharger la page et SANS déconnexion
           if (action === 'ENTREE') {
               setEmployesListe(prev => (prev || []).map(emp => 
                   emp.id_employe === pointeuse.employe.id_employe ? { ...emp, a_pointe_aujourdhui: true } : emp
@@ -283,7 +283,6 @@ function App() {
           
           showToast(`Pointage (${action}) validé !`, "success");
           setPointeuse({ open: false, step: 1, employe: null, pin: '' });
-          chargerTout(); // Synchronisation générale en arrière-plan
       } catch (e) {
           showToast(e.message, "error");
       }
