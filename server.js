@@ -3073,9 +3073,17 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
-        const tacheRes = await clientDB.query("SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2", [id, id_salon]);
-        if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
-        const type_tache = tacheRes.rows[0].type_tache;
+        
+        let type_tache = '';
+
+        // --- GESTION DES UPLOADS MANUELS VS TÂCHES AUTOMATIQUES ---
+        if (String(id).startsWith('UPLOAD_MANUEL_')) {
+            type_tache = 'FACTURE_ACHAT'; // On force le type pour un upload manuel
+        } else {
+            const tacheRes = await clientDB.query("SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2", [id, id_salon]);
+            if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
+            type_tache = tacheRes.rows[0].type_tache;
+        }
 
         // --- NOUVEAU CAS : VALIDATION FACTURE FOURNISSEUR (DOUBLE ACTION) ---
         if (type_tache === 'FACTURE_ACHAT') {
@@ -3196,7 +3204,9 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             );
         }
 
-        await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
+        if (!String(id).startsWith('UPLOAD_MANUEL_')) {
+            await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
+        }
         await clientDB.query('COMMIT');
         res.json({ message: "Action IA validée !" });
     } catch (e) {
