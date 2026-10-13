@@ -2989,15 +2989,22 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
         const extension = isImage ? (mime_type.includes('png') ? 'png' : 'jpg') : 'pdf';
 
         // 1. Sauvegarde sur Cloudflare R2 (pour l'affichage futur dans le Split-Screen)
-        const nomFichierUnique = `factures/${id_salon}/${Date.now()}_upload_manuel.${extension}`;
-        await s3Client.send(new PutObjectCommand({
-            Bucket: process.env.R2_BUCKET_NAME,
-            Key: nomFichierUnique,
-            Body: buffer,
-            ContentType: mime_type || 'application/pdf'
-        }));
-        const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
-        const urlCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
+        let urlCloudflare = null;
+        try {
+            const nomFichierUnique = `factures/${id_salon}/${Date.now()}_upload_manuel.${extension}`;
+            await s3Client.send(new PutObjectCommand({
+                Bucket: process.env.R2_BUCKET_NAME,
+                Key: nomFichierUnique,
+                Body: buffer,
+                ContentType: mime_type || 'application/pdf'
+            }));
+            const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
+            urlCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
+        } catch (erreurR2) {
+            console.error("⚠️ Erreur Cloudflare R2 (L'IA prend le relais localement) :", erreurR2.message);
+            // Filet de sécurité : Si R2 échoue, on injecte directement le fichier en Base64 au frontend !
+            urlCloudflare = `data:${mime_type || 'application/pdf'};base64,${fichier_base64}`;
+        }
 
         let analyse;
         const anneeEnCours = new Date().getFullYear();
