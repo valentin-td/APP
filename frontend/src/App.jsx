@@ -5470,14 +5470,58 @@ function App() {
                 {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
                 {pointeuse.step === 3 && (
                     <>
-                        <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Que souhaitez-vous faire ?</h2>
+                        <div style={{color: 'var(--text-secondary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
+                            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </div>
+                        <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Prêt, {(pointeuse.employe?.nom || '').split(' ')[0]} ?</h2>
+                        
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
-                            <button onClick={() => enregistrerPointage('ENTREE')} style={{ padding: '16px', borderRadius: '8px', background: '#10b981', color: 'white', border: 'none', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>👋 Arrivée (Début de service)</button>
+                            <button 
+                                onClick={() => enregistrerPointage('ENTREE')} 
+                                className="hover-bg-card"
+                                style={{ background: 'var(--bg-app)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                            >
+                                <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                                </div>
+                                <div style={{textAlign: 'left'}}>
+                                    <span style={{display: 'block', fontSize: '15px'}}>Arrivée (Début de service)</span>
+                                    <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure d'arrivée</span>
+                                </div>
+                            </button>
+                            
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                                <button onClick={() => enregistrerPointage('PAUSE_DEBUT')} style={{ padding: '16px', borderRadius: '8px', background: 'var(--bg-hover)', color: 'var(--text-main)', border: '1px solid var(--border-color)', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer' }}>☕ Départ Pause</button>
-                                <button onClick={() => enregistrerPointage('PAUSE_FIN')} style={{ padding: '16px', borderRadius: '8px', background: 'var(--bg-hover)', color: 'var(--text-main)', border: '1px solid var(--border-color)', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer' }}>🔙 Retour Pause</button>
+                                <button 
+                                    onClick={() => enregistrerPointage('PAUSE_DEBUT')} 
+                                    className="hover-bg-hover"
+                                    style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                >
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+                                    Départ Pause
+                                </button>
+                                <button 
+                                    onClick={() => enregistrerPointage('PAUSE_FIN')} 
+                                    className="hover-bg-hover"
+                                    style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                >
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                    Retour Pause
+                                </button>
                             </div>
-                            <button onClick={() => enregistrerPointage('SORTIE')} style={{ padding: '16px', borderRadius: '8px', background: '#ef4444', color: 'white', border: 'none', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>🏠 Départ (Fin de service)</button>
+                            
+                            <button 
+                                onClick={() => enregistrerPointage('SORTIE')} 
+                                className="hover-bg-card"
+                                style={{ background: 'var(--bg-app)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                            >
+                                <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                                </div>
+                                <div style={{textAlign: 'left'}}>
+                                    <span style={{display: 'block', fontSize: '15px'}}>Départ (Fin de service)</span>
+                                    <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure de départ</span>
+                                </div>
+                            </button>
                         </div>
                     </>
                 )}
