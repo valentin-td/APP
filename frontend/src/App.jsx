@@ -234,6 +234,7 @@ function App() {
   // --- ÉTATS : POINTEUSE NUMÉRIQUE ---
   const [pointeuse, setPointeuse] = useState({ open: false, step: 1, employe: null, pin: '' });
   const [buttonsDisabled, setButtonsDisabled] = useState(false);
+  const [statutsEquipe, setStatutsEquipe] = useState({}); // Mémorise qui est en pause ou non
 
   // 1. Mise à jour de l'affichage du PIN instantanément et de façon sécurisée
   const handlePointeusePin = (digit) => {
