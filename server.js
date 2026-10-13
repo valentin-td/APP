@@ -650,32 +650,9 @@ app.get('/api/rh/statut-pointages', verifierToken, async (req, res) => {
             ORDER BY id_employe, heure_action DESC
         `, [req.user.id_salon]);
         
-        // On transforme ça en un dictionnaire { id_employe: 'TYPE_ACTION' } pour le React
+        // On transforme ça en un dictionnaire { action, heure } pour le chronomètre
         const mapStatuts = {};
-        statuts.rows.forEach(r => { mapStatuts[r.id_employe] = r.type_action; });
-        
-        res.json(mapStatuts);
-    } catch (e) { 
-        res.status(500).json({ erreur: "Erreur lecture statuts" }); 
-    }
-});
-
-// --- GESTION DE LA POINTEUSE NUMÉRIQUE (MODE PREMIUM) ---
-
-// Nouvelle route : Récupérer le statut actuel des employés
-app.get('/api/rh/statut-pointages', verifierToken, async (req, res) => {
-    try {
-        // Récupère la dernière action de la journée pour chaque employé du salon
-        const statuts = await pool.query(`
-            SELECT DISTINCT ON (id_employe) id_employe, type_action, heure_action 
-            FROM pointages 
-            WHERE id_salon = $1 AND date_jour = CURRENT_DATE 
-            ORDER BY id_employe, heure_action DESC
-        `, [req.user.id_salon]);
-        
-        // On transforme ça en un dictionnaire { id_employe: 'TYPE_ACTION' } pour le React
-        const mapStatuts = {};
-        statuts.rows.forEach(r => { mapStatuts[r.id_employe] = r.type_action; });
+        statuts.rows.forEach(r => { mapStatuts[r.id_employe] = { action: r.type_action, heure: r.heure_action }; });
         
         res.json(mapStatuts);
     } catch (e) { 
@@ -692,8 +669,8 @@ app.post('/api/rh/pointage', verifierToken, async (req, res) => {
             [id_employe, id_salon, type_action]
         );
         
-        // NOTIFICATION TEMPS RÉEL (WebSockets) : Informe instantanément tous les écrans du salon
-        io.to(id_salon.toString()).emit('statutPointageUpdate', { id_employe, type_action });
+        // NOTIFICATION TEMPS RÉEL (WebSockets) avec l'heure exacte
+        io.to(id_salon.toString()).emit('statutPointageUpdate', { id_employe, type_action, heure: new Date().toISOString() });
         
         res.json({ message: "Pointage enregistré" });
     } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
