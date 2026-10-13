@@ -1548,6 +1548,21 @@ function App() {
 
   const sousTotalCaisse = (panierCaisse || []).reduce((acc, item) => acc + ((item.prix_unitaire || 0) * (item.quantite || 0)), 0);
   let totalCaisse = sousTotalCaisse;
+  // --- VÉRIFICATION DU STATUT DE L'EMPLOYÉ (POUR LA CAISSE) ---
+  const employeCaisseSelectionne = (employesListe || []).find(e => e.id_employe === posEmploye);
+  const isPointeuseActive = configSalon.mode_suivi_heures === 'POINTEUSE';
+  const statutActuelEmploye = posEmploye ? statutsEquipe[posEmploye] : null;
+  
+  // L'employé est bloqué s'il n'est pas gérant ET que la pointeuse est active ET qu'il est en pause (ou n'a pas commencé / a terminé)
+  const isEmployeCaisseBloque = posEmploye && !employeCaisseSelectionne?.est_gerant && isPointeuseActive && 
+      (!statutActuelEmploye || statutActuelEmploye === 'PAUSE_DEBUT' || statutActuelEmploye === 'SORTIE');
+
+  let messageBlocageCaisse = null;
+  if (isEmployeCaisseBloque) {
+      if (!statutActuelEmploye) messageBlocageCaisse = `${employeCaisseSelectionne?.prenom || 'Ce collaborateur'} n'a pas encore pointé son arrivée aujourd'hui.`;
+      else if (statutActuelEmploye === 'PAUSE_DEBUT') messageBlocageCaisse = `${employeCaisseSelectionne?.prenom || 'Ce collaborateur'} est actuellement en pause.`;
+      else if (statutActuelEmploye === 'SORTIE') messageBlocageCaisse = `Le service de ${employeCaisseSelectionne?.prenom || 'ce collaborateur'} est terminé.`;
+  }
   
   if (remiseAppliquee) {
       if (configSalon.fidelite_type === 'POINTS') {
@@ -2955,6 +2970,19 @@ function App() {
                                 </div>
 
                                 <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
+                                    {/* BANDEAU DE BLOCAGE POINTEUSE */}
+                                    {isEmployeCaisseBloque && (
+                                        <div style={{background: 'var(--bg-danger)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid var(--color-danger)'}}>
+                                            <div style={{display: 'flex', gap: '8px', alignItems: 'flex-start'}}>
+                                                <span style={{fontSize: '16px'}}>⚠️</span>
+                                                <div>
+                                                    <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--color-danger)', display: 'block'}}>{messageBlocageCaisse}</span>
+                                                    <span style={{fontSize: '12px', color: 'var(--color-danger)'}}>Un pointage est requis pour encaisser sur ce profil.</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {isEligibleFidelite && (
                                         <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
                                             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
@@ -2965,7 +2993,7 @@ function App() {
                                                 {!remiseAppliquee ? (
                                                     <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
                                                 ) : (
-                                                    <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>✅ Appliquée</span>
+                                                    <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)'}}>Appliquée</span>
                                                 )}
                                             </div>
                                         </div>
@@ -3028,7 +3056,7 @@ function App() {
 
                                     {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
                                     
-                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye}>
+                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye || isEmployeCaisseBloque}>
                                         {notificationCaisse && notificationCaisse.includes('⏳') ? "En attente du TPE..." : `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`}
                                     </button>
                                 </div>
