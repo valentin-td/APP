@@ -292,6 +292,9 @@ function App() {
               ));
           }
           
+          // 1. MISE À JOUR LOCALE IMMÉDIATE (Plus besoin de refresh)
+          setStatutsEquipe(prev => ({ ...prev, [pointeuse.employe.id_employe]: { action: action, heure: new Date().toISOString() } }));
+
           // On passe à l'étape 4 pour l'animation de succès au lieu de fermer direct
           setPointeuse(prev => ({ ...prev, step: 4, derniereAction: action }));
           
@@ -1049,6 +1052,13 @@ function App() {
               newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => m.id_message !== data.id_message)); });
               newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, reactions: data.reactions } : m)); });
               newSocket.on('messageVu', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, vu_par: data.vu_par } : m)); });
+              
+              // 2. ÉCOUTE TEMPS RÉEL (Pour que tous les écrans se mettent à jour sans refresh)
+              newSocket.on('statutPointageUpdate', (data) => {
+                  setStatutsEquipe(prev => ({ ...prev, [data.id_employe]: { action: data.type_action, heure: data.heure } }));
+              });
+              
+              newSocket.on('connect_error', () => {});
               
               // NOUVEAU : Écoute des pointages en temps réel pour éviter le rafraîchissement manuel
               newSocket.on('statutPointageUpdate', (data) => {
@@ -5620,7 +5630,8 @@ function App() {
                         <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Qui êtes-vous ?</h2>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             {employesListe.map(emp => {
-                                const statut = statutsEquipe[emp.id_employe];
+                                const statutData = statutsEquipe[emp.id_employe];
+                                const statut = statutData ? statutData.action : null;
                                 let ringColor = 'transparent';
                                 let badgeBg = 'var(--bg-app)';
                                 let badgeColor = 'var(--text-muted)';
@@ -5660,34 +5671,35 @@ function App() {
                     </>
                 )}
 
-                {/* ÉTAPE 2 : PAVÉ NUMÉRIQUE (CODE PIN) */}
+                {/* ÉTAPE 2 : CODE PIN */}
                 {pointeuse.step === 2 && (
-                    <>
-                        <h2 style={{ fontSize: '20px', marginBottom: '8px', color: 'var(--text-main)' }}>Bonjour {pointeuse.employe?.nom.split(' ')[0]}</h2>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '24px' }}>Saisissez votre code PIN</p>
-                        
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginBottom: '32px' }}>
-                            {[...Array(4)].map((_, i) => (
-                                <div key={i} style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid var(--btn-primary)', background: i < pointeuse.pin.length ? 'var(--btn-primary)' : 'transparent', transition: '0.2s' }}></div>
+                    <div style={{ animation: 'fadeIn 0.3s ease' }}>
+                        <div style={{display: 'flex', alignItems: 'center', marginBottom: '24px', gap: '12px'}}>
+                            <button onClick={() => setPointeuse({ ...pointeuse, step: 1, pin: '' })} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-main)'}}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+                            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-main)' }}>Code de {pointeuse.employe.nom.split(' ')[0]}</h2>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '32px' }}>
+                            {[0, 1, 2, 3].map(i => (
+                                <div key={i} style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid var(--text-main)', background: pointeuse.pin.length > i ? 'var(--text-main)' : 'transparent', transition: 'all 0.2s ease' }} />
                             ))}
                         </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', maxWidth: '250px', margin: '0 auto' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', maxWidth: '280px', margin: '0 auto' }}>
                             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-                                <button key={num} onClick={() => handlePointeusePin(num.toString())} style={{ height: '60px', borderRadius: '50%', border: '1px solid var(--border-color)', background: 'var(--bg-app)', fontSize: '24px', color: 'var(--text-main)', cursor: 'pointer' }}>{num}</button>
+                                <button key={num} onClick={() => handlePointeusePin(num.toString())} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: 'pointer', boxShadow: 'var(--shadow-sm)' }}>{num}</button>
                             ))}
                             <div />
-                            <button onClick={() => handlePointeusePin('0')} style={{ height: '60px', borderRadius: '50%', border: '1px solid var(--border-color)', background: 'var(--bg-app)', fontSize: '24px', color: 'var(--text-main)', cursor: 'pointer' }}>0</button>
-                            <button onClick={() => setPointeuse({ ...pointeuse, pin: pointeuse.pin.slice(0, -1) })} style={{ height: '60px', borderRadius: '50%', border: 'none', background: 'transparent', fontSize: '24px', color: 'var(--text-secondary)', cursor: 'pointer' }}>⌫</button>
+                            <button onClick={() => handlePointeusePin('0')} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: 'pointer', boxShadow: 'var(--shadow-sm)' }}>0</button>
+                            <button onClick={() => setPointeuse(prev => ({ ...prev, pin: prev.pin.slice(0, -1) }))} className="hover-lift" style={{ padding: '16px', fontSize: '20px', fontWeight: 'bold', borderRadius: '12px', border: 'none', background: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer' }}>⌫</button>
                         </div>
-                    </>
+                    </div>
                 )}
 
-                
-                {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
+                {/* ÉTAPE 3 : CHOIX DE L'ACTION (Logique Intelligente + Statut) */}
                 {pointeuse.step === 3 && (() => {
                     const statutData = statutsEquipe[pointeuse.employe?.id_employe];
                     const statutActuel = statutData ? statutData.action : null;
+                    
+                    // RÈGLES MÉTIER IMPLACABLES :
                     const peutArriver = !statutActuel || statutActuel === 'SORTIE';
                     const peutPause = statutActuel === 'ENTREE' || statutActuel === 'PAUSE_FIN';
                     const peutRetourPause = statutActuel === 'PAUSE_DEBUT';
@@ -5719,7 +5731,7 @@ function App() {
                                 </div>
                                 <h2 style={{ fontSize: '20px', margin: '0 0 4px 0', color: 'var(--text-main)' }}>Prêt, {(pointeuse.employe?.nom || '').split(' ')[0]} ?</h2>
                                 <span style={{ fontSize: '13px', fontWeight: 'bold', color: statutColor, background: 'var(--bg-app)', padding: '4px 12px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                                    Statut : {statutText}
+                                    Statut actuel : {statutText}
                                 </span>
                             </div>
                             
