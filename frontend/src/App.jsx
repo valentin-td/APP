@@ -2782,12 +2782,30 @@ function App() {
                                     <div className="empty-state"><p>Aucun collaborateur enregistré.</p></div>
                                 ) : (
                                     <div className="grid-collaborateurs">
-                                        {(employesListe || []).map((emp, index) => (
-                                            <div key={emp.id_employe} onClick={() => handleSelectEmployeCaisse(emp.id_employe)} className="hover-lift"
-                                                style={{ backgroundColor: COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], color: '#111827', padding: '24px 12px', borderRadius: 'var(--radius-card)', fontSize: '16px', fontWeight: '600', textAlign: 'center', cursor: 'pointer', boxShadow: 'var(--shadow-sm)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' }}>
-                                                {(emp.nom || 'Inconnu').split(' ')[0]}
-                                            </div>
-                                        ))}
+                                        {(employesListe || []).map((emp, index) => {
+                                            const bloque = configSalon.mode_suivi_heures === 'POINTEUSE' && !emp.a_pointe_aujourdhui;
+                                            return (
+                                                <div key={emp.id_employe} 
+                                                    onClick={() => bloque ? showToast("Veuillez pointer avant de pouvoir encaisser", "error") : handleSelectEmployeCaisse(emp.id_employe)} 
+                                                    className={bloque ? "" : "hover-lift"}
+                                                    style={{ 
+                                                        background: bloque ? 'repeating-linear-gradient(45deg, var(--bg-hover), var(--bg-hover) 10px, var(--border-color) 10px, var(--border-color) 20px)' : COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], 
+                                                        color: bloque ? 'var(--text-secondary)' : '#111827', 
+                                                        padding: '24px 12px', 
+                                                        borderRadius: 'var(--radius-card)', 
+                                                        fontSize: '16px', 
+                                                        fontWeight: '600', 
+                                                        textAlign: 'center', 
+                                                        cursor: bloque ? 'not-allowed' : 'pointer', 
+                                                        boxShadow: bloque ? 'none' : 'var(--shadow-sm)', 
+                                                        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                                                        opacity: bloque ? 0.8 : 1,
+                                                        textDecoration: bloque ? 'line-through' : 'none'
+                                                    }}>
+                                                    {(emp.nom || 'Inconnu').split(' ')[0]}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>
