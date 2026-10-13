@@ -3880,13 +3880,13 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
         drawRow([
-            {text: 'Fournisseur', w: 110}, 
-            {text: 'Date', w: 50, align: 'center'}, 
-            {text: 'Compte Comptable', w: 90, align: 'center'}, 
-            {text: 'Justificatif', w: 60, align: 'center'},
-            {text: 'HT', w: 50, align: 'right'}, 
+            {text: 'Fournisseur', w: 105}, 
+            {text: 'Date', w: 45, align: 'center'}, 
+            {text: 'Compte', w: 75, align: 'center'}, 
+            {text: 'Justificatif', w: 85, align: 'center'},
+            {text: 'HT', w: 45, align: 'right'}, 
             {text: 'TVA', w: 40, align: 'right'}, 
-            {text: 'TTC', w: 65, align: 'right'}
+            {text: 'TTC', w: 70, align: 'right'}
         ], true);
         
         let sumDepenses = 0;
@@ -3895,27 +3895,28 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             const ht = franchiseTVA ? parseFloat(f.montant_ttc) : parseFloat(f.montant_ht);
             const tva = franchiseTVA ? 0 : parseFloat(f.montant_tva);
             
-            let compte = '604 - Achats divers';
+            let compte = '604 - Achats';
             const nomLower = (f.nom_fournisseur || '').toLowerCase();
             if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) {
                 compte = '607 - Achat M/ses';
             }
 
             drawRow([
-                {text: f.nom_fournisseur.substring(0,20), w: 110}, 
-                {text: f.date_facture, w: 50, align: 'center'}, 
-                {text: compte, w: 90, align: 'center'},
-                {text: 'Dans l\'App', w: 60, align: 'center'},
-                {text: fMnt(ht), w: 50, align: 'right'}, 
+                {text: f.nom_fournisseur.substring(0,20), w: 105}, 
+                {text: f.date_facture, w: 45, align: 'center'}, 
+                {text: compte, w: 75, align: 'center'},
+                {text: '✓ Numérisé (IA)', w: 85, align: 'center'},
+                {text: fMnt(ht), w: 45, align: 'right'}, 
                 {text: fMnt(tva), w: 40, align: 'right'}, 
-                {text: fMnt(f.montant_ttc), w: 65, align: 'right'}
+                {text: fMnt(f.montant_ttc), w: 70, align: 'right'}
             ]);
         });
-        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '613 / 645', w: 90, align: 'center'}, {text: 'À joindre', w: 60, align: 'center'}, {text: '-', w: 50, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 65, align: 'right'}]);
-        drawRow([{text: 'Achats M/ses (Produits revente)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '607', w: 90, align: 'center'}, {text: 'À joindre', w: 60, align: 'center'}, {text: '-', w: 50, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 65, align: 'right'}]);
-        drawRow([{text: 'Variation de stock (Produits)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '6037', w: 90, align: 'center'}, {text: 'Inventaire', w: 60, align: 'center'}, {text: '-', w: 50, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'À calculer', w: 65, align: 'right'}]);
         
-        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 270}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 50}, {text: '', w: 40}, {text: fMnt(sumDepenses), w: 65, align: 'right'}], false, true);
+        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 105}, {text: 'N/A', w: 45, align: 'center'}, {text: '613 / 645', w: 75, align: 'center'}, {text: 'À joindre', w: 85, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 70, align: 'right'}]);
+        drawRow([{text: 'Achats M/ses (Produits revente)', w: 105}, {text: 'N/A', w: 45, align: 'center'}, {text: '607', w: 75, align: 'center'}, {text: 'À joindre', w: 85, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 70, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 105}, {text: 'N/A', w: 45, align: 'center'}, {text: '6037', w: 75, align: 'center'}, {text: 'Inventaire', w: 85, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'À calculer', w: 70, align: 'right'}]);
+        
+        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 225}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 85}, {text: '', w: 45}, {text: '', w: 40}, {text: fMnt(sumDepenses), w: 70, align: 'right'}], false, true);
         
         currentY += 25; // Saut de ligne renforcé pour empêcher le chevauchement !
 
@@ -4789,12 +4790,12 @@ async function executerEnvoiComptable() {
                     caParMethodeResult.rows.forEach(m => drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`));
                     doc.moveDown(0.5); drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
 
-                    drawSectionHeader('Dépenses (Factures Fournisseurs)');
+                    drawSectionHeader('Dépenses (Traitées par IA)');
                     drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
                     let totalDepenses = 0;
                     if (facturesResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois.', 50, doc.y); doc.moveDown(1); } 
-                    else { facturesResult.rows.forEach(f => { drawTableRow(`${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`); totalDepenses += parseFloat(f.montant_ttc); }); }
-                    doc.moveDown(0.5); drawTableRow('Total Dépenses', `${totalDepenses.toFixed(2)} €`, false, true);
+                    else { facturesResult.rows.forEach(f => { drawTableRow(`✓ ${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`); totalDepenses += parseFloat(f.montant_ttc); }); }
+                    doc.moveDown(0.5); drawTableRow('Total Dépenses Numérisées', `${totalDepenses.toFixed(2)} €`, false, true);
 
                     drawSectionHeader('Commissions Employés');
                     drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
