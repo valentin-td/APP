@@ -638,6 +638,28 @@ app.post('/api/rh/ajustements', verifierToken, async (req, res) => {
 });
 
 // --- GESTION DE LA POINTEUSE NUMÉRIQUE (MODE PREMIUM) ---
+
+// Nouvelle route : Récupérer le statut actuel des employés
+app.get('/api/rh/statut-pointages', verifierToken, async (req, res) => {
+    try {
+        // Récupère la dernière action de la journée pour chaque employé du salon
+        const statuts = await pool.query(`
+            SELECT DISTINCT ON (id_employe) id_employe, type_action, heure_action 
+            FROM pointages 
+            WHERE id_salon = $1 AND date_jour = CURRENT_DATE 
+            ORDER BY id_employe, heure_action DESC
+        `, [req.user.id_salon]);
+        
+        // On transforme ça en un dictionnaire { id_employe: 'TYPE_ACTION' } pour le React
+        const mapStatuts = {};
+        statuts.rows.forEach(r => { mapStatuts[r.id_employe] = r.type_action; });
+        
+        res.json(mapStatuts);
+    } catch (e) { 
+        res.status(500).json({ erreur: "Erreur lecture statuts" }); 
+    }
+});
+
 app.post('/api/rh/pointage', verifierToken, async (req, res) => {
     const { id_employe, type_action } = req.body; // 'ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'
     const id_salon = req.user.id_salon;
