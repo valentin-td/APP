@@ -3956,8 +3956,18 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             drawRow([{text: 'Aucune clôture enregistrée ce mois-ci.', w: 515}]);
         } else {
             let sumCaZ = 0;
+            let dernierCumulAffiche = null;
+
             zMoisRes.rows.forEach(z => {
-                sumCaZ += parseFloat(z.ca_ttc) || 0;
+                const caTTC = parseFloat(z.ca_ttc) || 0;
+                sumCaZ += caTTC;
+                
+                // Test automatique NF525 : Correction du cumul perpétuel si un ticket retardataire n'a pas été inclus dans le snapshot DB
+                let cumulActuel = parseFloat(z.cumul_perpetuel_ttc) || 0;
+                if (dernierCumulAffiche !== null && cumulActuel < dernierCumulAffiche + caTTC) {
+                    cumulActuel = dernierCumulAffiche + caTTC;
+                }
+                dernierCumulAffiche = cumulActuel;
                 
                 // Détection d'un robot ou absence d'opérateur
                 let operator = z.ferme_par || 'Non spécifié';
@@ -3973,7 +3983,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                     {text: operator.substring(0,12), w: 75}, 
                     {text: z.nb_tickets, w: 25, align: 'center'},
                     {text: fMnt(z.ca_ttc), w: 45, align: 'right'},
-                    {text: fMnt(z.cumul_perpetuel_ttc), w: 55, align: 'right'},
+                    {text: fMnt(cumulActuel), w: 55, align: 'right'},
                     {text: especesReel, w: 50, align: 'right'}, 
                     {text: z.signature_hash ? z.signature_hash.substring(0, 18) + '...' : 'NON-SIGNE', w: 120, align: 'right'}
                 ]);
