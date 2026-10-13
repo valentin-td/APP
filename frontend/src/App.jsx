@@ -2644,7 +2644,6 @@ function App() {
                                       let pastilleCouleur = 'var(--text-muted)';
                                       let texteStatut = 'Absent / Non arrivé';
                                       let iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
-                                      let chronoText = null;
                                       
                                       if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
                                           pastilleCouleur = 'var(--color-success)';
@@ -2654,11 +2653,6 @@ function App() {
                                           pastilleCouleur = '#f59e0b';
                                           texteStatut = 'En pause';
                                           iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
-                                          
-                                          if (statutData.heure) {
-                                              const diffMin = Math.floor((heureActuelle.getTime() - new Date(statutData.heure).getTime()) / 60000);
-                                              chronoText = diffMin > 0 ? `depuis ${diffMin} min` : "à l'instant";
-                                          }
                                       } else if (statut === 'SORTIE') {
                                           pastilleCouleur = 'var(--color-danger)';
                                           texteStatut = 'Service terminé';
@@ -2674,7 +2668,6 @@ function App() {
                                                   <span style={{fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
                                                   <span style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
                                                       {texteStatut} 
-                                                      {chronoText && <span style={{background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'}}>⏱ {chronoText}</span>}
                                                   </span>
                                               </div>
                                           </div>
