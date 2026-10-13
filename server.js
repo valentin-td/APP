@@ -3627,13 +3627,13 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         currentY += 20;
         
         const formeJuridique = salonConfig.forme_juridique ? ` - ${salonConfig.forme_juridique}` : '';
-        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Raison sociale : ${nomDuSalon}${formeJuridique}`, 40, currentY);
+        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Société : ${nomDuSalon}${formeJuridique}`, 40, currentY);
         currentY += 14;
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${salonConfig.adresse_salon}`, 40, currentY);
         currentY += 12;
         doc.text(`SIRET: ${salonConfig.siret} | ${mentionTVA} | NAF: 96.02A | IDCC: 2596 (Coiffure)`, 40, currentY);
         currentY += 12;
-        doc.text(`Gérant(e) : ${nomGerant}`, 40, currentY);
+        doc.text(`Exploitant : ${nomGerant}`, 40, currentY);
         currentY += 15;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 250, currentY);
