@@ -3031,7 +3031,7 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
         } else {
             // Traitement Image avec le modèle Vision Haute Performance
             const completion = await groq.chat.completions.create({
-            model: 'llama-3.2-90b-vision-preview',
+            model: 'qwen/qwen3.8-27b',
                 max_tokens: 800,
                 temperature: 0,
                 response_format: { type: 'json_object' },
