@@ -691,6 +691,10 @@ app.post('/api/rh/pointage', verifierToken, async (req, res) => {
             `INSERT INTO pointages (id_employe, id_salon, date_jour, type_action) VALUES ($1, $2, CURRENT_DATE, $3)`,
             [id_employe, id_salon, type_action]
         );
+        
+        // NOTIFICATION TEMPS RÉEL (WebSockets) : Informe instantanément tous les écrans du salon
+        io.to(id_salon.toString()).emit('statutPointageUpdate', { id_employe, type_action });
+        
         res.json({ message: "Pointage enregistré" });
     } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
 });
