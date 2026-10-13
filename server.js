@@ -3832,6 +3832,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             ]);
         });
         drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '613 / 645', w: 90, align: 'center'}, {text: 'À joindre', w: 60, align: 'center'}, {text: '-', w: 50, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 65, align: 'right'}]);
+        drawRow([{text: 'Achats M/ses (Produits revente)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '607', w: 90, align: 'center'}, {text: 'À joindre', w: 60, align: 'center'}, {text: '-', w: 50, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 65, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 110}, {text: 'N/A', w: 50, align: 'center'}, {text: '6037', w: 90, align: 'center'}, {text: 'Inventaire', w: 60, align: 'center'}, {text: '-', w: 50, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'À calculer', w: 65, align: 'right'}]);
         
         drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 270}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 60}, {text: '', w: 50}, {text: '', w: 40}, {text: fMnt(sumDepenses), w: 65, align: 'right'}], false, true);
         
