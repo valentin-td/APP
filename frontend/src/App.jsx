@@ -977,7 +977,16 @@ function App() {
           const res = await fetch('https://api-salon-backend.onrender.com/api/rh/statut-pointages', { headers: getAuthHeaders() });
           if (res.ok) {
               const data = await res.json();
-              setStatutsEquipe(data);
+              // Sécurité : On s'assure que le format est toujours un objet complexe pour éviter l'état "Absent"
+              const formattedData = {};
+              for (let id in data) {
+                  if (typeof data[id] === 'string') {
+                      formattedData[id] = { action: data[id], heure: new Date().toISOString() };
+                  } else {
+                      formattedData[id] = data[id];
+                  }
+              }
+              setStatutsEquipe(formattedData);
           }
       } catch (e) { console.error("Erreur statuts pointages", e); }
   };
@@ -1053,16 +1062,9 @@ function App() {
               newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, reactions: data.reactions } : m)); });
               newSocket.on('messageVu', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, vu_par: data.vu_par } : m)); });
               
-              // 2. ÉCOUTE TEMPS RÉEL (Pour que tous les écrans se mettent à jour sans refresh)
+              // ÉCOUTE TEMPS RÉEL (Synchronisation instantanée des statuts et du chronomètre)
               newSocket.on('statutPointageUpdate', (data) => {
                   setStatutsEquipe(prev => ({ ...prev, [data.id_employe]: { action: data.type_action, heure: data.heure } }));
-              });
-              
-              newSocket.on('connect_error', () => {});
-              
-              // NOUVEAU : Écoute des pointages en temps réel pour éviter le rafraîchissement manuel
-              newSocket.on('statutPointageUpdate', (data) => {
-                  setStatutsEquipe(prev => ({ ...prev, [data.id_employe]: data.type_action }));
               });
               
               newSocket.on('connect_error', () => {});
