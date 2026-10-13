@@ -383,7 +383,7 @@ case 'tpe': return (<>
                   STACK pré-remplit les heures de vos collaborateurs sur la liasse mensuelle. Choisissez votre méthode de suivi.
               </p>
               
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
                   <label style={{ display: 'flex', gap: '12px', padding: '16px', background: configSalon.mode_suivi_heures !== 'POINTEUSE' ? 'var(--bg-hover)' : 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', cursor: 'pointer' }}>
                       <input type="radio" name="mode_suivi" checked={configSalon.mode_suivi_heures !== 'POINTEUSE'} onChange={() => setConfigSalon({...configSalon, mode_suivi_heures: 'MANUEL'})} style={{ accentColor: 'var(--btn-primary)', marginTop: '4px' }} />
                       <div>
@@ -400,8 +400,8 @@ case 'tpe': return (<>
                       </div>
                   </label>
               </div>
+              <button type="button" className="btn-action" style={{ width: '100%' }} onClick={(e) => { e.preventDefault(); onSave(); }}>Enregistrer la configuration</button>
           </div>
-        {carteSauvegarde}
       </>);
       
       case 'cgu': return (
