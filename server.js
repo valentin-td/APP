@@ -924,11 +924,14 @@ app.post('/api/settings', verifierToken, async (req, res) => {
             : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, tva_intra = $28, forme_juridique = $29 WHERE id_salon = $16`; 
             
         const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
+        
         if (pin_salon !== undefined) { 
-            params.push(finalPinSalon || null); params.push(pennylane_api_key || null); 
+            params.push(finalPinSalon || null); 
+            params.push(pennylane_api_key || null); 
         } else { 
             params.push(pennylane_api_key || null); 
         }
+        
         params.push(mode_suivi_heures || 'MANUEL');
         params.push(nom_salon || null);
         params.push(siret || null);
@@ -937,27 +940,11 @@ app.post('/api/settings', verifierToken, async (req, res) => {
         params.push(forme_juridique || null);
         
         await pool.query(updateQuery, params);
-    try { 
-        const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
-        if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
-        if (pin_salon && isPinWeak(pin_salon)) return res.status(400).json({ erreur: "Le code PIN du salon est trop simple (évitez 0000, 1234...)." });
-        
-        let finalPinSalon = pin_salon;
-        if (pin_salon && !pin_salon.startsWith('$2')) {
-            finalPinSalon = await bcrypt.hash(pin_salon, 10);
-        }
-
-        const updateQuery = pin_salon !== undefined
-            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23, mode_suivi_heures = $25 WHERE id_salon = $16`
-            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24 WHERE id_salon = $16`; 
-        const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
-        if (pin_salon !== undefined) { params.push(finalPinSalon || null); params.push(pennylane_api_key || null); } else { params.push(pennylane_api_key || null); }
-        params.push(mode_suivi_heures || 'MANUEL');
-        
-        await pool.query(updateQuery, params);
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
-    } catch (erreur) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
+    } catch (erreur) { 
+        res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); 
+    }
 });
 
 app.get('/api/settings', verifierToken, async (req, res) => { 
