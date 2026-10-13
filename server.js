@@ -3942,13 +3942,13 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // --- 5 BIS. ARCHIVE DES CLÔTURES (Z) ---
         drawTableTitle("5 BIS. HISTORIQUE DES CLÔTURES DE CAISSE (Z)");
         drawRow([
-            {text: 'N° Z', w: 30}, 
-            {text: 'Date', w: 45, align: 'center'}, 
+            {text: 'N° Z', w: 25}, 
+            {text: 'Date', w: 50, align: 'center'}, 
             {text: 'Opérateur', w: 75}, 
-            {text: 'Tkts', w: 25, align: 'center'},
+            {text: 'Tkts', w: 20, align: 'center'},
             {text: 'CA TTC', w: 45, align: 'right'},
             {text: 'Cumul P.', w: 55, align: 'right'},
-            {text: 'Espèces', w: 50, align: 'right'}, 
+            {text: 'Espèces', w: 55, align: 'right'}, 
             {text: 'Hash NF525', w: 120, align: 'right'}
         ], true);
         
@@ -3966,13 +3966,13 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 if (expectedId !== null && currentId > expectedId) {
                     for (let i = expectedId; i < currentId; i++) {
                         drawRow([
-                            {text: `Z-${i}`, w: 30}, 
-                            {text: 'N/A', w: 45, align: 'center'}, 
-                            {text: 'Saut d\'ID (Système)', w: 75}, 
-                            {text: '-', w: 25, align: 'center'},
+                            {text: `Z-${i}`, w: 25}, 
+                            {text: 'N/A', w: 50, align: 'center'}, 
+                            {text: 'Saut d\'ID', w: 75}, 
+                            {text: '-', w: 20, align: 'center'},
                             {text: '-', w: 45, align: 'right'},
                             {text: '-', w: 55, align: 'right'},
-                            {text: '-', w: 50, align: 'right'}, 
+                            {text: '-', w: 55, align: 'right'}, 
                             {text: 'Transaction annulée ou multi-salons', w: 120, align: 'right'}
                         ]);
                     }
@@ -3992,19 +3992,26 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 // Détection d'un robot ou absence d'opérateur
                 let operator = z.ferme_par || 'Non spécifié';
                 let isAuto = operator.toLowerCase().includes('robot') || operator.toLowerCase().includes('auto') || operator === 'Non spécifié';
-                if (operator === 'Non spécifié') operator = 'Système (Auto)';
+                
+                // Harmonisation du libellé automatique
+                if (isAuto) {
+                    operator = 'Clôture Auto.';
+                } else {
+                    // Si c'est un humain, on limite proprement la taille sans casser les mots
+                    operator = operator.substring(0, 15);
+                }
                 
                 // Un robot ne compte pas la caisse
                 let especesReel = isAuto ? 'Non compté' : fMnt(z.total_especes_reel);
                 
                 drawRow([
-                    {text: `Z-${z.id_cloture}`, w: 30}, 
-                    {text: z.date_z, w: 45, align: 'center'}, 
-                    {text: operator.substring(0,12), w: 75}, 
-                    {text: z.nb_tickets, w: 25, align: 'center'},
+                    {text: `Z-${z.id_cloture}`, w: 25}, 
+                    {text: z.date_z, w: 50, align: 'center'}, 
+                    {text: operator, w: 75}, 
+                    {text: z.nb_tickets, w: 20, align: 'center'},
                     {text: fMnt(z.ca_ttc), w: 45, align: 'right'},
                     {text: fMnt(cumulActuel), w: 55, align: 'right'},
-                    {text: especesReel, w: 50, align: 'right'}, 
+                    {text: especesReel, w: 55, align: 'right'}, 
                     {text: z.signature_hash ? z.signature_hash.substring(0, 18) + '...' : 'NON-SIGNE', w: 120, align: 'right'}
                 ]);
             });
