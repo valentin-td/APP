@@ -291,8 +291,13 @@ function App() {
               ));
           }
           
-          showToast(`Pointage (${action}) validé !`, "success");
-          setPointeuse({ open: false, step: 1, employe: null, pin: '' });
+          // On passe à l'étape 4 pour l'animation de succès au lieu de fermer direct
+          setPointeuse(prev => ({ ...prev, step: 4, derniereAction: action }));
+          
+          // Fermeture automatique après 2,5 secondes
+          setTimeout(() => {
+              setPointeuse({ open: false, step: 1, employe: null, pin: '', derniereAction: null });
+          }, 2500);
       } catch (e) {
           showToast(e.message, "error");
       }
@@ -5552,6 +5557,27 @@ function App() {
                             </button>
                         </div>
                     </>
+                )}
+
+                {/* ÉTAPE 4 : CONFIRMATION VISUELLE (SUCCÈS) */}
+                {pointeuse.step === 4 && (
+                    <div style={{ padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', animation: 'fadeIn 0.4s ease' }}>
+                        <div style={{ color: 'var(--color-success)', marginBottom: '24px', animation: 'scaleIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
+                            <svg viewBox="0 0 24 24" width="72" height="72" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                <polyline points="22 4 12 14.01 9 11.01" />
+                            </svg>
+                        </div>
+                        <h2 style={{ fontSize: '24px', margin: '0 0 12px 0', color: 'var(--text-main)' }}>
+                            {pointeuse.derniereAction === 'ENTREE' ? 'Bonne journée !' :
+                             pointeuse.derniereAction === 'PAUSE_DEBUT' ? 'Bonne pause !' :
+                             pointeuse.derniereAction === 'PAUSE_FIN' ? 'Bon retour !' :
+                             'Fin de service'}
+                        </h2>
+                        <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: 0 }}>
+                            Pointage enregistré à {new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                    </div>
                 )}
             </div>
         </div>
