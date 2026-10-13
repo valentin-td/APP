@@ -234,30 +234,36 @@ function App() {
   // --- ÉTATS : POINTEUSE NUMÉRIQUE ---
   const [pointeuse, setPointeuse] = useState({ open: false, step: 1, employe: null, pin: '' });
 
-  const handlePointeusePin = async (digit) => {
-      if (pointeuse.pin.length < 4) {
-          const newPin = pointeuse.pin + digit;
-          setPointeuse({ ...pointeuse, pin: newPin });
-          
-          if (newPin.length === 4) {
+  // 1. Mise à jour de l'affichage du PIN instantanément et de façon sécurisée
+  const handlePointeusePin = (digit) => {
+      setPointeuse(prev => {
+          if (prev.pin.length >= 4) return prev; // Sécurité : on empêche de taper plus de 4 chiffres
+          return { ...prev, pin: prev.pin + digit };
+      });
+  };
+
+  // 2. Vérification réseau automatique (déclenchée dès que le 4ème chiffre est tapé)
+  useEffect(() => {
+      if (pointeuse.open && pointeuse.step === 2 && pointeuse.pin.length === 4) {
+          const verifierCode = async () => {
               try {
-                  // 1. Vérification du PIN 
                   const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: newPin })
+                      body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: pointeuse.pin })
                   });
                   if (!resAuth.ok) throw new Error("Code PIN incorrect");
                   
-                  // 2. PIN validé, on passe à l'écran des boutons d'action
-                  setPointeuse(prev => ({ ...prev, pin: newPin, step: 3 }));
+                  // PIN validé, on passe à l'écran des boutons d'action
+                  setPointeuse(prev => ({ ...prev, step: 3 }));
               } catch (e) {
                   showToast("Code PIN incorrect", "error");
                   setPointeuse(prev => ({ ...prev, pin: '' })); // On efface pour recommencer
               }
-          }
+          };
+          verifierCode();
       }
-  };
+  }, [pointeuse.pin, pointeuse.open, pointeuse.step, token]);
 
   const enregistrerPointage = async (action) => {
       try {
