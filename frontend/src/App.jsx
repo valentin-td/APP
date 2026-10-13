@@ -967,8 +967,23 @@ function App() {
   // On n'utilise QUE des valeurs numériques et strings. Fini le windowWidth qui fluctue avec les barres de défilement !
   }, [planningStartTs, planningEndTs, activeTab, refreshTrigger, token, isAbonnementInactif]);
 
+  // --- RÉCUPÉRATION DES STATUTS DE POINTAGE ---
+  const chargerStatutsPointage = async () => {
+      if (!token) return;
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/statut-pointages', { headers: getAuthHeaders() });
+          if (res.ok) {
+              const data = await res.json();
+              setStatutsEquipe(data);
+          }
+      } catch (e) { console.error("Erreur statuts pointages", e); }
+  };
+
   const chargerTout = () => {
     const role = decodeToken(token)?.role;
+
+    // Appel direct de notre nouvelle fonction pour que la caisse connaisse les statuts !
+    chargerStatutsPointage();
 
     fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
     fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
