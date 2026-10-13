@@ -3656,13 +3656,17 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
         currentY += 15;
         if (estMoisCloture) {
-            doc.font('Helvetica-Bold').fillColor(MAIN_COLOR).text(`Clôture Mensuelle N° ${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}`, 40, currentY);
+            // Encadré officiel de certification NF525
+            doc.rect(40, currentY - 5, 515, 65).fillAndStroke('#f0fdf4', '#16a34a');
+            currentY += 5;
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#16a34a').text(`✓ CLÔTURE MENSUELLE N° ${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}`, 50, currentY);
+            currentY += 14;
+            doc.font('Courier').fontSize(8).fillColor('#111827').text(`Hash de validation : ${signatureArchive}`, 50, currentY);
             currentY += 12;
-            doc.font('Helvetica').fontSize(9).text(`Hash de validation : ${signatureArchive}`, 40, currentY);
+            doc.font('Helvetica').fontSize(8).text(`Réf. Archive : ${numeroArchive}`, 50, currentY);
             currentY += 12;
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text(`Logiciel STACK v1.0 - Certificat NF525 (CGI, art. 286, I-3° bis)`, 40, currentY);
-            currentY += 12;
-            doc.text(`Réf. Archive : ${numeroArchive}`, 40, currentY);
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text(`Logiciel STACK v1.0 - Certificat d'inaltérabilité NF525 (CGI, art. 286, I-3° bis)`, 50, currentY);
+            currentY += 15;
         }
         currentY += 25;
 
@@ -3752,8 +3756,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
 
         // Lignes à remplir manuellement par le comptable
-        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
-        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
+        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: '................................................... €', w: 225, align: 'right'}]);
+        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 260}, {text: '', w: 0}, {text: '................................................... €', w: 225, align: 'right'}]);
         
         const fondDebut = parseFloat(caisseRes.rows[0].fond_debut_mois) || 0;
         const fondFin = parseFloat(caisseRes.rows[0].fond_fin_mois) || 0;
