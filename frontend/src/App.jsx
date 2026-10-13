@@ -2605,17 +2605,72 @@ function App() {
                       <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
                           <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1-1-1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
                           </button>
                       </div>
                   </div>
-                  <div className="carte" style={{padding: '28px', textAlign: 'center'}}>
-                      <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Clients ce mois-ci</span>
-                      <div style={{fontSize: '48px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{salonDashboardData?.nb_clients_mois ?? '—'}</div>
-                      {salonDashboardData && (
-                          <span style={{fontSize: '14px', fontWeight: '600', color: salonDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
-                              {salonDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(salonDashboardData.evolution_pourcentage)}% vs mois dernier
-                          </span>
+                  
+                  <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap'}}>
+                      <div className="carte" style={{padding: '28px', textAlign: 'center', flex: 1, minWidth: '300px'}}>
+                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Clients ce mois-ci</span>
+                          <div style={{fontSize: '48px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{salonDashboardData?.nb_clients_mois ?? '—'}</div>
+                          {salonDashboardData && (
+                              <span style={{fontSize: '14px', fontWeight: '600', color: salonDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
+                                  {salonDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(salonDashboardData.evolution_pourcentage)}% vs mois dernier
+                              </span>
+                          )}
+                      </div>
+
+                      {/* WIDGET : L'ÉQUIPE EN DIRECT (POUR LE RÔLE SALON) */}
+                      {configSalon.mode_suivi_heures === 'POINTEUSE' && (
+                          <div className="carte" style={{flex: 1, minWidth: '300px', alignSelf: 'flex-start'}}>
+                              <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>L'Équipe en direct</h3>
+                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                  {(employesListe || []).map(emp => {
+                                      const statutData = statutsEquipe[emp.id_employe];
+                                      const statut = statutData ? statutData.action : null;
+                                      let pastilleCouleur = 'var(--text-muted)';
+                                      let texteStatut = 'Absent / Non arrivé';
+                                      let iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+                                      let chronoText = null;
+                                      
+                                      if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
+                                          pastilleCouleur = 'var(--color-success)';
+                                          texteStatut = 'En service';
+                                          iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+                                      } else if (statut === 'PAUSE_DEBUT') {
+                                          pastilleCouleur = '#f59e0b';
+                                          texteStatut = 'En pause';
+                                          iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
+                                          
+                                          if (statutData.heure) {
+                                              const diffMin = Math.floor((heureActuelle.getTime() - new Date(statutData.heure).getTime()) / 60000);
+                                              chronoText = diffMin > 0 ? `depuis ${diffMin} min` : "à l'instant";
+                                          }
+                                      } else if (statut === 'SORTIE') {
+                                          pastilleCouleur = 'var(--color-danger)';
+                                          texteStatut = 'Service terminé';
+                                          iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+                                      }
+
+                                      return (
+                                          <div key={emp.id_employe} style={{display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
+                                              <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-card)', color: pastilleCouleur, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px solid ${pastilleCouleur}`}}>
+                                                  {iconSVG}
+                                              </div>
+                                              <div style={{flex: 1}}>
+                                                  <span style={{fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
+                                                  <span style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                                      {texteStatut} 
+                                                      {chronoText && <span style={{background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'}}>⏱ {chronoText}</span>}
+                                                  </span>
+                                              </div>
+                                          </div>
+                                      )
+                                  })}
+                                  {(employesListe || []).length === 0 && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun employé dans l'équipe.</span>}
+                              </div>
+                          </div>
                       )}
                   </div>
                 </div>
@@ -2787,33 +2842,50 @@ function App() {
                                   ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres pour afficher les avis.</p>}
                               </div>
 
-                              {/* WIDGET : QUI EST AU SALON ? */}
+                              {/* WIDGET : L'ÉQUIPE EN DIRECT (POUR LE GÉRANT) */}
                               {configSalon.mode_suivi_heures === 'POINTEUSE' && (
                                   <div className="carte" style={{flex: 1, minWidth: '300px', alignSelf: 'flex-start'}}>
                                       <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>L'Équipe en direct</h3>
                                       <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                                           {(employesListe || []).map(emp => {
-                                              const statut = statutsEquipe[emp.id_employe];
+                                              const statutData = statutsEquipe[emp.id_employe];
+                                              const statut = statutData ? statutData.action : null;
                                               let pastilleCouleur = 'var(--text-muted)';
                                               let texteStatut = 'Absent / Non arrivé';
+                                              let iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+                                              let chronoText = null;
                                               
                                               if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
                                                   pastilleCouleur = 'var(--color-success)';
                                                   texteStatut = 'En service';
+                                                  iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
                                               } else if (statut === 'PAUSE_DEBUT') {
                                                   pastilleCouleur = '#f59e0b';
                                                   texteStatut = 'En pause';
+                                                  iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
+                                                  
+                                                  // Pause Chronométrée
+                                                  if (statutData.heure) {
+                                                      const diffMin = Math.floor((heureActuelle.getTime() - new Date(statutData.heure).getTime()) / 60000);
+                                                      chronoText = diffMin > 0 ? `depuis ${diffMin} min` : "à l'instant";
+                                                  }
                                               } else if (statut === 'SORTIE') {
                                                   pastilleCouleur = 'var(--color-danger)';
                                                   texteStatut = 'Service terminé';
+                                                  iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
                                               }
 
                                               return (
-                                                  <div key={emp.id_employe} style={{display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                                      <div style={{width: '10px', height: '10px', borderRadius: '50%', background: pastilleCouleur}}></div>
+                                                  <div key={emp.id_employe} style={{display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
+                                                      <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-card)', color: pastilleCouleur, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px solid ${pastilleCouleur}`}}>
+                                                          {iconSVG}
+                                                      </div>
                                                       <div style={{flex: 1}}>
-                                                          <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
-                                                          <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>{texteStatut}</span>
+                                                          <span style={{fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
+                                                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                                              {texteStatut} 
+                                                              {chronoText && <span style={{background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'}}>⏱ {chronoText}</span>}
+                                                          </span>
                                                       </div>
                                                   </div>
                                               )
@@ -5611,11 +5683,11 @@ function App() {
                     </>
                 )}
 
-                {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
                 
                 {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
                 {pointeuse.step === 3 && (() => {
-                    const statutActuel = statutsEquipe[pointeuse.employe?.id_employe];
+                    const statutData = statutsEquipe[pointeuse.employe?.id_employe];
+                    const statutActuel = statutData ? statutData.action : null;
                     const peutArriver = !statutActuel || statutActuel === 'SORTIE';
                     const peutPause = statutActuel === 'ENTREE' || statutActuel === 'PAUSE_FIN';
                     const peutRetourPause = statutActuel === 'PAUSE_DEBUT';
