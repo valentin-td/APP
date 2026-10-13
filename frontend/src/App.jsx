@@ -5541,14 +5541,43 @@ function App() {
                     <>
                         <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Qui êtes-vous ?</h2>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                            {employesListe.map(emp => (
-                                <button key={emp.id_employe} onClick={() => setPointeuse({ ...pointeuse, step: 2, employe: emp })} style={{ background: 'var(--bg-hover)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: '0.2s' }}>
-                                    <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--btn-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold' }}>
-                                        {emp.photo_url ? <img src={emp.photo_url} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}/> : emp.nom.substring(0, 2).toUpperCase()}
+                            {employesListe.map(emp => {
+                                const statut = statutsEquipe[emp.id_employe];
+                                let ringColor = 'transparent';
+                                let badgeBg = 'var(--bg-app)';
+                                let badgeColor = 'var(--text-muted)';
+                                let badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+
+                                if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
+                                    ringColor = 'var(--color-success)';
+                                    badgeBg = 'var(--bg-success)';
+                                    badgeColor = 'var(--color-success)';
+                                    badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+                                } else if (statut === 'PAUSE_DEBUT') {
+                                    ringColor = '#f59e0b';
+                                    badgeBg = '#fef3c7';
+                                    badgeColor = '#f59e0b';
+                                    badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
+                                } else if (statut === 'SORTIE') {
+                                    ringColor = 'var(--color-danger)';
+                                    badgeBg = 'var(--bg-danger)';
+                                    badgeColor = 'var(--color-danger)';
+                                    badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+                                }
+
+                                return (
+                                <button key={emp.id_employe} onClick={() => setPointeuse({ ...pointeuse, step: 2, employe: emp })} style={{ background: 'var(--bg-app)', border: `1px solid ${ringColor !== 'transparent' ? ringColor : 'var(--border-color)'}`, borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}>
+                                    <div style={{ position: 'relative' }}>
+                                        <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--btn-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold', border: `2px solid ${ringColor !== 'transparent' ? ringColor : 'transparent'}` }}>
+                                            {emp.photo_url ? <img src={emp.photo_url} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}/> : emp.nom.substring(0, 2).toUpperCase()}
+                                        </div>
+                                        <div style={{ position: 'absolute', bottom: '-4px', right: '-4px', background: badgeBg, color: badgeColor, border: '2px solid var(--bg-app)', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            {badgeIcon}
+                                        </div>
                                     </div>
-                                    <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px' }}>{emp.nom.split(' ')[0]}</span>
+                                    <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px', marginTop: '4px' }}>{emp.nom.split(' ')[0]}</span>
                                 </button>
-                            ))}
+                            )})}
                         </div>
                     </>
                 )}
@@ -5577,68 +5606,100 @@ function App() {
                 )}
 
                 {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
+                
                 {/* ÉTAPE 3 : CHOIX DE L'ACTION */}
-                {pointeuse.step === 3 && (
-                    <>
-                        <div style={{color: 'var(--text-secondary)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                        </div>
-                        <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Prêt, {(pointeuse.employe?.nom || '').split(' ')[0]} ?</h2>
-                        
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
-                            <button 
-                                onClick={() => enregistrerPointage('ENTREE')} 
-                                disabled={buttonsDisabled}
-                                className="hover-bg-card"
-                                style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                            >
-                                <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                {pointeuse.step === 3 && (() => {
+                    const statutActuel = statutsEquipe[pointeuse.employe?.id_employe];
+                    const peutArriver = !statutActuel || statutActuel === 'SORTIE';
+                    const peutPause = statutActuel === 'ENTREE' || statutActuel === 'PAUSE_FIN';
+                    const peutRetourPause = statutActuel === 'PAUSE_DEBUT';
+                    const peutPartir = statutActuel === 'ENTREE' || statutActuel === 'PAUSE_DEBUT' || statutActuel === 'PAUSE_FIN';
+
+                    let statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+                    let statutText = "Non arrivé";
+                    let statutColor = "var(--text-muted)";
+
+                    if (statutActuel === 'ENTREE' || statutActuel === 'PAUSE_FIN') {
+                        statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+                        statutText = "En service";
+                        statutColor = "var(--color-success)";
+                    } else if (statutActuel === 'PAUSE_DEBUT') {
+                        statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
+                        statutText = "En pause";
+                        statutColor = "#f59e0b";
+                    } else if (statutActuel === 'SORTIE') {
+                        statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+                        statutText = "Service terminé";
+                        statutColor = "var(--color-danger)";
+                    }
+
+                    return (
+                        <>
+                            <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '24px'}}>
+                                <div style={{ color: statutColor, display: 'flex', justifyContent: 'center', marginBottom: '8px', padding: '12px', background: 'var(--bg-app)', borderRadius: '50%', border: `1px solid ${statutColor}30` }}>
+                                    {statutIcon}
                                 </div>
-                                <div style={{textAlign: 'left'}}>
-                                    <span style={{display: 'block', fontSize: '15px'}}>Arrivée (Début de service)</span>
-                                    <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure d'arrivée</span>
-                                </div>
-                            </button>
-                            
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                                <button 
-                                    onClick={() => enregistrerPointage('PAUSE_DEBUT')} 
-                                    disabled={buttonsDisabled}
-                                    className="hover-bg-hover"
-                                    style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                                >
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>
-                                    Départ Pause
-                                </button>
-                                <button 
-                                    onClick={() => enregistrerPointage('PAUSE_FIN')} 
-                                    disabled={buttonsDisabled}
-                                    className="hover-bg-hover"
-                                    style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                                >
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                                    Retour Pause
-                                </button>
+                                <h2 style={{ fontSize: '20px', margin: '0 0 4px 0', color: 'var(--text-main)' }}>Prêt, {(pointeuse.employe?.nom || '').split(' ')[0]} ?</h2>
+                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: statutColor, background: 'var(--bg-app)', padding: '4px 12px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                                    Statut : {statutText}
+                                </span>
                             </div>
                             
-                            <button 
-                                onClick={() => enregistrerPointage('SORTIE')} 
-                                disabled={buttonsDisabled}
-                                className="hover-bg-card"
-                                style={{ opacity: buttonsDisabled ? 0.5 : 1, pointerEvents: buttonsDisabled ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                            >
-                                <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+                                <button 
+                                    onClick={() => enregistrerPointage('ENTREE')} 
+                                    disabled={buttonsDisabled || !peutArriver}
+                                    className={peutArriver ? "hover-bg-card" : ""}
+                                    style={{ opacity: (buttonsDisabled || !peutArriver) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutArriver) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: peutArriver ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                >
+                                    <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                                    </div>
+                                    <div style={{textAlign: 'left'}}>
+                                        <span style={{display: 'block', fontSize: '15px'}}>Arrivée (Début de service)</span>
+                                        <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure d'arrivée</span>
+                                    </div>
+                                </button>
+                                
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                    <button 
+                                        onClick={() => enregistrerPointage('PAUSE_DEBUT')} 
+                                        disabled={buttonsDisabled || !peutPause}
+                                        className={peutPause ? "hover-bg-hover" : ""}
+                                        style={{ opacity: (buttonsDisabled || !peutPause) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutPause) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: peutPause ? 'pointer' : 'not-allowed', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                    >
+                                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+                                        Départ Pause
+                                    </button>
+                                    <button 
+                                        onClick={() => enregistrerPointage('PAUSE_FIN')} 
+                                        disabled={buttonsDisabled || !peutRetourPause}
+                                        className={peutRetourPause ? "hover-bg-hover" : ""}
+                                        style={{ opacity: (buttonsDisabled || !peutRetourPause) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutRetourPause) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: peutRetourPause ? 'pointer' : 'not-allowed', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                    >
+                                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                        Retour Pause
+                                    </button>
                                 </div>
-                                <div style={{textAlign: 'left'}}>
-                                    <span style={{display: 'block', fontSize: '15px'}}>Départ (Fin de service)</span>
-                                    <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure de départ</span>
-                                </div>
-                            </button>
-                        </div>
-                    </>
-                )}
+                                
+                                <button 
+                                    onClick={() => enregistrerPointage('SORTIE')} 
+                                    disabled={buttonsDisabled || !peutPartir}
+                                    className={peutPartir ? "hover-bg-card" : ""}
+                                    style={{ opacity: (buttonsDisabled || !peutPartir) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutPartir) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: peutPartir ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
+                                >
+                                    <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                                    </div>
+                                    <div style={{textAlign: 'left'}}>
+                                        <span style={{display: 'block', fontSize: '15px'}}>Départ (Fin de service)</span>
+                                        <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure de départ</span>
+                                    </div>
+                                </button>
+                            </div>
+                        </>
+                    );
+                })()}
 
                 {/* ÉTAPE 4 : CONFIRMATION VISUELLE (SUCCÈS) */}
                 {pointeuse.step === 4 && (
