@@ -2785,14 +2785,16 @@ function App() {
                                         {(employesListe || []).map((emp, index) => {
                                             const bloque = configSalon.mode_suivi_heures === 'POINTEUSE' && !emp.a_pointe_aujourdhui && !emp.est_gerant;
                                             return (
-                                                <button key={emp.id_employe} type="button"
+                                                <div key={emp.id_employe} 
                                                     onClick={(e) => {
-                                                        e.preventDefault();
                                                         if (bloque) {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            alert("Accès refusé : Veuillez pointer dans l'onglet Agenda avant de pouvoir encaisser un client.");
                                                             showToast("Veuillez pointer avant de pouvoir encaisser", "error");
-                                                        } else {
-                                                            handleSelectEmployeCaisse(emp.id_employe);
+                                                            return;
                                                         }
+                                                        handleSelectEmployeCaisse(emp.id_employe);
                                                     }} 
                                                     className={bloque ? "" : "hover-lift"}
                                                     style={{ 
@@ -2803,18 +2805,16 @@ function App() {
                                                         fontSize: '16px', 
                                                         fontWeight: '600', 
                                                         textAlign: 'center', 
-                                                        cursor: bloque ? 'not-allowed' : 'pointer', 
+                                                        cursor: 'pointer', 
                                                         boxShadow: bloque ? 'none' : 'var(--shadow-sm)', 
                                                         transition: 'transform 0.15s ease, box-shadow 0.15s ease',
                                                         opacity: bloque ? 0.8 : 1,
                                                         textDecoration: bloque ? 'line-through' : 'none',
-                                                        border: 'none',
-                                                        fontFamily: 'inherit',
                                                         userSelect: 'none',
                                                         WebkitUserSelect: 'none'
                                                     }}>
                                                     {(emp.nom || 'Inconnu').split(' ')[0]}
-                                                </button>
+                                                </div>
                                             );
                                         })}
                                     </div>
