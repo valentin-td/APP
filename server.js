@@ -2966,6 +2966,98 @@ app.get('/api/ia/taches', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur IA" }); }
 });
 
+// --- UPLOAD MANUEL DE FACTURE (PDF OU IMAGE) VERS L'IA ---
+app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
+    try {
+        const { fichier_base64, mime_type } = req.body;
+        if (!fichier_base64) return res.status(400).json({ erreur: "Fichier manquant." });
+
+        const buffer = Buffer.from(fichier_base64, 'base64');
+        const id_salon = req.user.id_salon;
+        
+        // Détection du format (Image ou PDF)
+        const isImage = mime_type && mime_type.startsWith('image/');
+        const extension = isImage ? (mime_type.includes('png') ? 'png' : 'jpg') : 'pdf';
+
+        // 1. Sauvegarde sur Cloudflare R2 (pour l'affichage futur dans le Split-Screen)
+        const nomFichierUnique = `factures/${id_salon}/${Date.now()}_upload_manuel.${extension}`;
+        await s3Client.send(new PutObjectCommand({
+            Bucket: process.env.R2_BUCKET_NAME,
+            Key: nomFichierUnique,
+            Body: buffer,
+            ContentType: mime_type || 'application/pdf'
+        }));
+        const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
+        const urlCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
+
+        let analyse;
+        const anneeEnCours = new Date().getFullYear();
+        const dateDuJour = new Date().toLocaleDateString('fr-FR');
+        const promptContext = `${PROMPT_SYSTEME_IA}\nINFO : La date du jour est le ${dateDuJour}. Si l'année n'est pas précisée, utilise obligatoirement ${anneeEnCours}. Retourne uniquement un JSON strict.`;
+
+        // 2. Extraction & Appel IA selon le format du document
+        if (!isImage) {
+            // Traitement PDF classique
+            const dataPdf = await pdfParse(buffer);
+            const textePdf = (dataPdf.text || '').substring(0, 15000);
+            
+            const completion = await groq.chat.completions.create({
+                model: 'qwen/qwen3.8-27b',
+                max_tokens: 800,
+                temperature: 0,
+                response_format: { type: 'json_object' },
+                messages: [
+                    { role: 'system', content: promptContext },
+                    { role: 'user', content: `Sujet : Upload Manuel\n\nContenu :\n${textePdf}` }
+                ]
+            });
+            analyse = JSON.parse(completion.choices[0].message.content.replace(/```json/gi, '').replace(/```/g, '').trim());
+        } else {
+            // Traitement Image avec le modèle Vision Haute Performance
+            const completion = await groq.chat.completions.create({
+                model: 'llama-3.2-11b-vision-preview',
+                max_tokens: 800,
+                temperature: 0,
+                response_format: { type: 'json_object' },
+                messages: [
+                    { role: 'system', content: promptContext },
+                    { role: 'user', content: [
+                        { type: "text", text: "Extrais les données comptables et l'inventaire de cette facture/ticket de caisse." },
+                        { type: "image_url", image_url: { url: `data:${mime_type};base64,${fichier_base64}` } }
+                    ]}
+                ]
+            });
+            analyse = JSON.parse(completion.choices[0].message.content.replace(/```json/gi, '').replace(/```/g, '').trim());
+        }
+
+        // 3. Formatage et renvoi immédiat au frontend (Sans passage par la base de données)
+        if (analyse.type === 'FACTURE_ACHAT' && analyse.donnees) {
+            const tachePreRemplie = {
+                id_tache: 'UPLOAD_MANUEL_' + Date.now(), // Identifiant spécifique pour contourner l'attente
+                type_tache: 'FACTURE_ACHAT',
+                donnees: {
+                    fournisseur: String(analyse.donnees.fournisseur || 'Fournisseur Inconnu').trim(),
+                    date_facture: analyse.donnees.date_facture || dateDuJour,
+                    montant_ht: parseFloat(analyse.donnees.montant_ht) || 0,
+                    montant_tva: parseFloat(analyse.donnees.montant_tva) || 0,
+                    montant_ttc: parseFloat(analyse.donnees.montant_ttc) || 0,
+                    produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
+                    pdf_url: urlCloudflare,
+                    mime_type: mime_type || 'application/pdf'
+                }
+            };
+            
+            return res.json({ message: "Analyse IA terminée avec succès.", tache: tachePreRemplie });
+        } else {
+            return res.status(400).json({ erreur: "L'IA n'a pas reconnu de facture valide dans ce document." });
+        }
+
+    } catch (e) {
+        console.error("Erreur Upload Manuel :", e);
+        res.status(500).json({ erreur: "Erreur lors de l'analyse du document par l'IA." });
+    }
+});
+
 app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
     const { id } = req.params;
     const donnees = req.body;
