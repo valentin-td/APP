@@ -1331,9 +1331,30 @@ app.post('/api/sms/send', verifierToken, async (req, res) => {
     } catch(e) { res.status(500).json({ erreur: "Erreur d'envoi." }); }
 });
 app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
-    const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement } = req.body;
+    const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement, pourboire, _id_temp, date_creation } = req.body;
     const id_salon = req.user.id_salon;
     const methode = methode_paiement || 'CARTE';
+    
+    // --- SÉCURITÉ ANTI-FRAUDE : VÉRIFICATION DU POINTAGE ---
+    // Si la pointeuse est activée dans ce salon, on vérifie le statut du collaborateur
+    const configData = await pool.query('SELECT mode_suivi_heures FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+    if (configData.rows.length > 0 && configData.rows[0].mode_suivi_heures === 'POINTEUSE') {
+        const empData = await pool.query('SELECT role FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        if (empData.rows.length > 0 && empData.rows[0].role !== 'Gérant') {
+            const pointageData = await pool.query(`
+                SELECT type_action FROM pointages 
+                WHERE id_salon = $1 AND id_employe = $2 AND date_jour = CURRENT_DATE 
+                ORDER BY heure_action DESC LIMIT 1
+            `, [id_salon, id_employe]);
+            
+            const actionActuelle = pointageData.rows.length > 0 ? pointageData.rows[0].type_action : null;
+            if (!actionActuelle || actionActuelle === 'PAUSE_DEBUT' || actionActuelle === 'SORTIE') {
+                return res.status(403).json({ erreur: "Action refusée (Sécurité Serveur) : L'employé sélectionné n'a pas pointé son arrivée ou est en pause." });
+            }
+        }
+    }
+    // -----------------------------------------------------
+
     const clientDB = await pool.connect();
 
     try {
