@@ -241,11 +241,11 @@ function App() {
           
           if (newPin.length === 4) {
               try {
-                  // 1. Vérification du PIN via ta route existante
+                  // 1. Vérification du PIN 
                   const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ id_salon: salonId, nom_employe: pointeuse.employe.nom, code_pin: newPin })
+                      body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: newPin })
                   });
                   if (!resAuth.ok) throw new Error("Code PIN incorrect");
                   
