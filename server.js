@@ -651,7 +651,7 @@ app.post('/api/rh/pointage', verifierToken, async (req, res) => {
 });
 
 app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
-    const { id_salon, nom_employe, code_pin } = req.body;
+    const { id_salon, nom_employe, code_pin, is_pointeuse } = req.body;
     try {
         const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
         if (result.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable." });
@@ -668,6 +668,12 @@ app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
             await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { nom_employe, raison: 'pin_incorrect' });
             return res.status(401).json({ erreur: "Code PIN invalide." });
         }
+
+        // NOUVEAU: Si c'est juste la pointeuse qui vérifie le PIN, on s'arrête ici sans écraser le cookie
+        if (is_pointeuse) {
+            return res.json({ message: "PIN valide", employe: { id: emp.id_employe, nom: emp.nom } });
+        }
+
         const payload = { id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe };
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '12h' });
         res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 12 * 60 * 60 * 1000 });
