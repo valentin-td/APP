@@ -583,9 +583,17 @@ app.post('/api/register', authLimiter, async (req, res) => {
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
-        const checkEmail = await clientDB.query('SELECT email FROM utilisateurs WHERE email = $1', [email]);
-        if (checkEmail.rowCount > 0) throw new Error('Cet e-mail est déjà utilisé.');
-        const hash = await bcrypt.hash(mot_de_passe, 10);
+        
+        let type_tache = '';
+
+        // --- GESTION DES UPLOADS MANUELS VS TÂCHES AUTOMATIQUES ---
+        if (String(id).startsWith('UPLOAD_MANUEL_')) {
+            type_tache = 'FACTURE_ACHAT'; // On force le type pour un upload manuel
+        } else {
+            const tacheRes = await clientDB.query("SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2", [id, id_salon]);
+            if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
+            type_tache = tacheRes.rows[0].type_tache;
+        }
         
         const salonResult = await clientDB.query(
             "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
