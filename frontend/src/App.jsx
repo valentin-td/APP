@@ -2783,10 +2783,17 @@ function App() {
                                 ) : (
                                     <div className="grid-collaborateurs">
                                         {(employesListe || []).map((emp, index) => {
-                                            const bloque = configSalon.mode_suivi_heures === 'POINTEUSE' && !emp.a_pointe_aujourdhui && emp.role !== 'Gérant';
+                                            const bloque = configSalon.mode_suivi_heures === 'POINTEUSE' && !emp.a_pointe_aujourdhui && !emp.est_gerant;
                                             return (
-                                                <div key={emp.id_employe} 
-                                                    onClick={() => bloque ? showToast("Veuillez pointer avant de pouvoir encaisser", "error") : handleSelectEmployeCaisse(emp.id_employe)} 
+                                                <button key={emp.id_employe} type="button"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        if (bloque) {
+                                                            showToast("Veuillez pointer avant de pouvoir encaisser", "error");
+                                                        } else {
+                                                            handleSelectEmployeCaisse(emp.id_employe);
+                                                        }
+                                                    }} 
                                                     className={bloque ? "" : "hover-lift"}
                                                     style={{ 
                                                         background: bloque ? 'repeating-linear-gradient(45deg, var(--bg-hover), var(--bg-hover) 10px, var(--border-color) 10px, var(--border-color) 20px)' : COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], 
@@ -2796,14 +2803,18 @@ function App() {
                                                         fontSize: '16px', 
                                                         fontWeight: '600', 
                                                         textAlign: 'center', 
-                                                        cursor: 'pointer', 
+                                                        cursor: bloque ? 'not-allowed' : 'pointer', 
                                                         boxShadow: bloque ? 'none' : 'var(--shadow-sm)', 
                                                         transition: 'transform 0.15s ease, box-shadow 0.15s ease',
                                                         opacity: bloque ? 0.8 : 1,
-                                                        textDecoration: bloque ? 'line-through' : 'none'
+                                                        textDecoration: bloque ? 'line-through' : 'none',
+                                                        border: 'none',
+                                                        fontFamily: 'inherit',
+                                                        userSelect: 'none',
+                                                        WebkitUserSelect: 'none'
                                                     }}>
                                                     {(emp.nom || 'Inconnu').split(' ')[0]}
-                                                </div>
+                                                </button>
                                             );
                                         })}
                                     </div>
