@@ -122,8 +122,28 @@ const groupesBas = [
           <div className="carte scan-carte">
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px' }}>Ces informations sont obligatoires pour générer votre Liasse Comptable Légale (NF525).</span>
               
-              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nom du salon</label>
-              <input type="text" className="input-fournisseur" value={configSalon.nom_salon || ''} onChange={e => setConfigSalon({...configSalon, nom_salon: e.target.value})} style={{ marginBottom: '12px' }} />
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                  <div style={{ flex: 2 }}>
+                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Raison sociale / Nom</label>
+                      <input type="text" className="input-fournisseur" value={configSalon.nom_salon || ''} onChange={e => setConfigSalon({...configSalon, nom_salon: e.target.value})} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Forme juridique</label>
+                      <select className="input-fournisseur" value={configSalon.forme_juridique || ''} onChange={e => setConfigSalon({...configSalon, forme_juridique: e.target.value})}>
+                          <option value="">Sélectionner</option>
+                          <option value="SARL">SARL</option>
+                          <option value="EURL">EURL</option>
+                          <option value="SAS">SAS</option>
+                          <option value="SASU">SASU</option>
+                          <option value="Auto-entrepreneur">Auto-entrepreneur</option>
+                          <option value="EI">EI</option>
+                          <option value="EIRL">EIRL</option>
+                          <option value="SNC">SNC</option>
+                          <option value="SA">SA</option>
+                          <option value="Association">Association</option>
+                      </select>
+                  </div>
+              </div>
 
               <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Adresse complète</label>
               <input type="text" className="input-fournisseur" value={configSalon.adresse_salon || ''} onChange={e => setConfigSalon({...configSalon, adresse_salon: e.target.value})} style={{ marginBottom: '12px' }} />
