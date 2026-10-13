@@ -2780,6 +2780,43 @@ function App() {
                                       </div>
                                   ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres pour afficher les avis.</p>}
                               </div>
+
+                              {/* WIDGET : QUI EST AU SALON ? */}
+                              {configSalon.mode_suivi_heures === 'POINTEUSE' && (
+                                  <div className="carte" style={{flex: 1, minWidth: '300px', alignSelf: 'flex-start'}}>
+                                      <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>L'Équipe en direct</h3>
+                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                          {(employesListe || []).map(emp => {
+                                              const statut = statutsEquipe[emp.id_employe];
+                                              let pastilleCouleur = 'var(--text-muted)';
+                                              let texteStatut = 'Absent / Non arrivé';
+                                              
+                                              if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
+                                                  pastilleCouleur = 'var(--color-success)';
+                                                  texteStatut = 'En service';
+                                              } else if (statut === 'PAUSE_DEBUT') {
+                                                  pastilleCouleur = '#f59e0b';
+                                                  texteStatut = 'En pause';
+                                              } else if (statut === 'SORTIE') {
+                                                  pastilleCouleur = 'var(--color-danger)';
+                                                  texteStatut = 'Service terminé';
+                                              }
+
+                                              return (
+                                                  <div key={emp.id_employe} style={{display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                                      <div style={{width: '10px', height: '10px', borderRadius: '50%', background: pastilleCouleur}}></div>
+                                                      <div style={{flex: 1}}>
+                                                          <span style={{fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
+                                                          <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>{texteStatut}</span>
+                                                      </div>
+                                                  </div>
+                                              )
+                                          })}
+                                          {(employesListe || []).length === 0 && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun employé dans l'équipe.</span>}
+                                      </div>
+                                  </div>
+                              )}
+
                           </div>
                       </>
                   )}
