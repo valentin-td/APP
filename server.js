@@ -3957,8 +3957,28 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         } else {
             let sumCaZ = 0;
             let dernierCumulAffiche = null;
+            let expectedId = null;
 
             zMoisRes.rows.forEach(z => {
+                const currentId = parseInt(z.id_cloture);
+                
+                // --- DÉTECTION DES SAUTS DE NUMÉROTATION (Z MANQUANTS) ---
+                if (expectedId !== null && currentId > expectedId) {
+                    for (let i = expectedId; i < currentId; i++) {
+                        drawRow([
+                            {text: `Z-${i}`, w: 30}, 
+                            {text: 'N/A', w: 45, align: 'center'}, 
+                            {text: 'Saut d\'ID (Système)', w: 75}, 
+                            {text: '-', w: 25, align: 'center'},
+                            {text: '-', w: 45, align: 'right'},
+                            {text: '-', w: 55, align: 'right'},
+                            {text: '-', w: 50, align: 'right'}, 
+                            {text: 'Transaction annulée ou multi-salons', w: 120, align: 'right'}
+                        ]);
+                    }
+                }
+                expectedId = currentId + 1;
+
                 const caTTC = parseFloat(z.ca_ttc) || 0;
                 sumCaZ += caTTC;
                 
