@@ -3824,7 +3824,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             {text: 'Employé(e)', w: 60}, 
             {text: 'Statut', w: 45, align: 'center'},
             {text: 'Heures', w: 35, align: 'center'},
-            {text: 'H.S.', w: 35, align: 'center'},
+            {text: 'HS/HC', w: 35, align: 'center'},
             {text: 'Pourboire', w: 45, align: 'center'},
             {text: 'CA Rél.', w: 50, align: 'right'}, 
             {text: 'Base HT (Prs/Prd)', w: 75, align: 'right'}, 
@@ -3843,8 +3843,8 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             const baseProduitHT = parseFloat(e.base_produit_ht || 0);
             
             // NOUVEAU : Logique d'affichage automatisée des heures et pourboires
-            let heuresAffichees = '.......';
-            let hsAffichees = '.......';
+            let heuresAffichees = 'À saisir';
+            let hsAffichees = '0h';
             let pourboireAffiche = parseFloat(e.total_pourboire) > 0 ? fMnt(e.total_pourboire) : '-';
 
             if (e.est_gerant) {
@@ -3852,19 +3852,18 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 hsAffichees = 'N/A';
                 pourboireAffiche = 'N/A';
             } else if (salonConfig.mode_suivi_heures === 'POINTEUSE') {
-                heuresAffichees = 'Extrait Log';
-                hsAffichees = 'Extrait Log';
+                heuresAffichees = 'À saisir';
+                hsAffichees = 'À saisir';
             } else {
                 const baseContrat = parseFloat(e.heures_mensuelles_base || 151.67);
                 const heuresAjust = mapAjustements[e.id_employe] || 0;
                 
                 heuresAffichees = `${baseContrat.toFixed(0)}h`;
                 
-                // Différence légale de terminologie entre Temps Partiel (HC) et Temps Plein (HS)
-                if (e.type_contrat === 'PARTIEL') {
-                    hsAffichees = heuresAjust !== 0 ? (heuresAjust > 0 ? `+${heuresAjust}h HC` : `${heuresAjust}h`) : '-';
+                if (heuresAjust !== 0) {
+                    hsAffichees = heuresAjust > 0 ? `+${heuresAjust}h` : `${heuresAjust}h`;
                 } else {
-                    hsAffichees = heuresAjust !== 0 ? (heuresAjust > 0 ? `+${heuresAjust}h HS` : `${heuresAjust}h`) : '-';
+                    hsAffichees = '0h';
                 }
             }
 
