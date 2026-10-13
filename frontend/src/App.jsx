@@ -1177,6 +1177,10 @@ function App() {
   };
 
   const ignorerTacheIA = async (tache) => {
+    if (String(tache.id_tache).startsWith('UPLOAD_MANUEL_')) {
+        setModalIA(null);
+        return;
+    }
       try {
           await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
               method: 'POST',
