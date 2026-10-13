@@ -400,8 +400,8 @@ case 'tpe': return (<>
                       </div>
                   </label>
               </div>
-              <button type="button" className="btn-action" style={{ width: '100%' }} onClick={(e) => { e.preventDefault(); onSave(); }}>Enregistrer la configuration</button>
           </div>
+        {carteSauvegarde}
       </>);
       
       case 'cgu': return (
