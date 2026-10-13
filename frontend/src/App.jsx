@@ -2889,7 +2889,15 @@ function App() {
                                                           <span style={{fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
                                                           <span style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
                                                               {texteStatut} 
-                                                              {chronoText && <span style={{background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'}}>⏱ {chronoText}</span>}
+                                                              {chronoText && (
+                                                                  <span style={{background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px'}}>
+                                                                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                          <circle cx="12" cy="12" r="10"/>
+                                                                          <polyline points="12 6 12 12 15 15"/>
+                                                                      </svg>
+                                                                      {chronoText}
+                                                                  </span>
+                                                              )}
                                                           </span>
                                                       </div>
                                                   </div>
