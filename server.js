@@ -18,6 +18,7 @@ const legal = require('./legal');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
+const pdfParse = require('pdf-parse');
 const Sentry = require('@sentry/node');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
@@ -2833,17 +2834,33 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 // =========================================================================
 // --- L'INTELLIGENCE ARTIFICIELLE (ANALYSE D'EMAILS) ---
 // =========================================================================
-const PROMPT_SYSTEME_IA = `Tu es un assistant IA pour un salon de coiffure. Analyse cet email et extrais les donnees en JSON strict.
-CAS 1 - STOCK : Si le texte parle de livraison, commande, achat, facture ou réassort de produits. -> Renvoie {"type": "STOCK", "donnees": {"nom_produit": "nom du produit", "quantite": entier, "reference": ""}}
-CAS 2 - RDV : Si le texte indique qu'un client veut prendre un rendez-vous. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe, couleur...", "date_heure": "YYYY-MM-DDTHH:MM", "duree_minutes": 30}} (Cherche une durée en minutes ou déduis-la d'une heure de fin. Sinon mets null)
-CAS 4 - URGENCES / FACTURES : Si le texte est une facture à payer, une relance, ou une action requise (impôts, URSSAF, EDF...). -> Renvoie {"type": "ACTION", "donnees": {"titre": "Payer EDF", "description": "Facture numéro XYZ...", "date_echeance": "YYYY-MM-DD"}}
-CAS 5 - ABSENCES : Si un employé signale qu'il sera absent (arrêt maladie, demande de congé, RTT). -> Renvoie {"type": "ABSENCE", "donnees": {"nom_employe": "prénom ou nom", "type_demande": "ARRET_MALADIE ou CONGES", "date_debut": "YYYY-MM-DD", "date_fin": "YYYY-MM-DD", "commentaire": "raison courte de l'absence"}}
-CAS 3 - AUTRE : Pour tout le reste (pubs, spam, etc.) -> Renvoie {"type": "NONE"}`;
+const PROMPT_SYSTEME_IA = `Tu es l'assistant pré-comptable d'un salon de coiffure. Analyse le contenu (email ou PDF) et retourne un JSON strict.
 
-async function analyserEmailAvecIA(sujet, texte) {
+CAS 1 - FACTURE FOURNISSEUR (L'Oréal, Wella, Matériel, etc.) : Si c'est une facture d'achat de produits/matériel.
+-> Renvoie EXACTEMENT ce format :
+{"type": "FACTURE_ACHAT", "donnees": {
+  "fournisseur": "Nom du fournisseur",
+  "date_facture": "YYYY-MM-DD",
+  "montant_ht": 100.50,
+  "montant_tva": 20.10,
+  "montant_ttc": 120.60,
+  "produits": [
+    {"nom": "Shampooing ABC", "quantite": 5, "prix_unitaire_ht": 10.00, "reference": "REF123", "type_destine": "REVENTE"},
+    {"nom": "Tube Coloration XYZ", "quantite": 10, "prix_unitaire_ht": 5.00, "reference": "REF456", "type_destine": "CONSOMMABLE"}
+  ]
+}}
+IMPORTANT: Devine si le produit est destiné à la "REVENTE" (shampooing grand public, soins beauté) ou si c'est un "CONSOMMABLE" technique (coloration, oxydant, décoloration, produit bac).
+
+CAS 2 - RDV : Réservation de client. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe...", "date_heure_debut": "YYYY-MM-DDTHH:MM", "duree_minutes": 30}}
+CAS 3 - ABSENCE : Un employé sera absent. -> Renvoie {"type": "ABSENCE", "donnees": {"nom_employe": "nom", "type_demande": "ARRET_MALADIE ou CONGES", "date_debut": "YYYY-MM-DD", "date_fin": "YYYY-MM-DD"}}
+CAS 4 - ACTION : Facture générale (EDF, Urssaf) ou urgence. -> Renvoie {"type": "ACTION", "donnees": {"titre": "Urssaf", "description": "...", "date_echeance": "YYYY-MM-DD"}}
+CAS 5 - AUTRE : -> Renvoie {"type": "NONE"}`;
+
+async function analyserEmailAvecIA(sujet, texte, pdfUrl = null) {
     if (!process.env.GROQ_API_KEY) return [];
 
-    const texteTronque = (texte || '').substring(0, 8000);
+    // On augmente la limite pour pouvoir traiter le texte extrait des PDF (souvent assez long)
+    const texteTronque = (texte || '').substring(0, 15000); 
 
     try {
         const anneeEnCours = new Date().getFullYear();
@@ -2851,12 +2868,12 @@ async function analyserEmailAvecIA(sujet, texte) {
         
         const completion = await groq.chat.completions.create({
             model: 'qwen/qwen3.8-27b',
-            max_tokens: 250,
+            max_tokens: 800, // Augmenté pour les longues listes de produits d'une facture
             temperature: 0,
             response_format: { type: 'json_object' },
             messages: [
                 { role: 'system', content: `${PROMPT_SYSTEME_IA}\nINFO : La date du jour est le ${dateDuJour}. Si l'e-mail ne précise pas l'année, utilise obligatoirement ${anneeEnCours}.` },
-                { role: 'user', content: `Sujet : ${sujet}\n\nCorps de l'e-mail :\n${texteTronque}` }
+                { role: 'user', content: `Sujet : ${sujet}\n\nContenu :\n${texteTronque}` }
             ]
         });
 
@@ -2867,8 +2884,24 @@ async function analyserEmailAvecIA(sujet, texte) {
         try {
             const jsonNettoye = brut.replace(/```json/gi, '').replace(/```/g, '').trim();
             analyse = JSON.parse(jsonNettoye);
-            console.log("✅ L'IA a compris :", analyse);
+            console.log("✅ L'IA a compris :", analyse.type);
         } catch (erreurParsing) { return []; }
+
+        // --- NOUVEAU CAS : FACTURE FOURNISSEUR PRÉ-COMPTABLE ---
+        if (analyse.type === 'FACTURE_ACHAT' && analyse.donnees && analyse.donnees.fournisseur) {
+            return [{
+                type_tache: 'FACTURE_ACHAT',
+                donnees: {
+                    fournisseur: String(analyse.donnees.fournisseur).trim(),
+                    date_facture: analyse.donnees.date_facture || dateDuJour,
+                    montant_ht: parseFloat(analyse.donnees.montant_ht) || 0,
+                    montant_tva: parseFloat(analyse.donnees.montant_tva) || 0,
+                    montant_ttc: parseFloat(analyse.donnees.montant_ttc) || 0,
+                    produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
+                    pdf_url: pdfUrl // On attache le lien du PDF pour le Split-Screen
+                }
+            }];
+        }
 
         if (analyse.type === 'STOCK' && analyse.donnees && analyse.donnees.nom_produit) {
             const quantite = parseInt(analyse.donnees.quantite, 10);
@@ -4144,21 +4177,43 @@ async function executerRobotComptable() {
                         await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
 
                         const texteEmail = mailParsi.text || mailParsi.html || ""; 
+                        let texteEmail = mailParsi.text || mailParsi.html || ""; 
                         const sujetEmail = mailParsi.subject || "Sans Sujet";
+                        let urlPdfCloudflare = null;
                         
                         console.log(`\n=========================================`);
                         console.log(`📧 EMAIL DÉTECTÉ (Salon ${salon.id_salon}) : "${sujetEmail}"`);
                         
-                        const matchTTC = texteEmail.match(/TTC[\s:a-zA-Z]*([\d.,]+)/i);
-                        if (matchTTC) {
-                            const ttc = parseFloat(matchTTC[1].replace(',', '.'));
-                            const matchTVA = texteEmail.match(/TVA[\s:a-zA-Z]*([\d.,]+)/i);
-                            const tva = matchTVA ? parseFloat(matchTVA[1].replace(',', '.')) : parseFloat((ttc * 0.20).toFixed(2));
-                            const ht = parseFloat((ttc - tva).toFixed(2));
-                            await clientDB.query(`INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon) VALUES ($1, $2, $3, $4, $5)`, [sujetEmail, ht, tva, ttc, salon.id_salon]);
+                        // --- NOUVEAU : EXTRACTION DE PIÈCE JOINTE PDF ---
+                        if (mailParsi.attachments && mailParsi.attachments.length > 0) {
+                            const pieceJointePdf = mailParsi.attachments.find(a => a.contentType === 'application/pdf');
+                            if (pieceJointePdf && pieceJointePdf.content) {
+                                try {
+                                    // 1. On lit le texte brut à l'intérieur du PDF pour aider l'IA
+                                    const dataPdf = await pdfParse(pieceJointePdf.content);
+                                    texteEmail += `\n\n--- CONTENU DU PDF JOINT ---\n${dataPdf.text}`;
+                                    
+                                    // 2. On sauvegarde le PDF sur le Cloud R2 (Amazon S3) pour l'afficher au Gérant
+                                    const nomFichierUnique = `factures/${salon.id_salon}/${Date.now()}_facture.pdf`;
+                                    await s3Client.send(new PutObjectCommand({
+                                        Bucket: process.env.R2_BUCKET_NAME,
+                                        Key: nomFichierUnique,
+                                        Body: pieceJointePdf.content,
+                                        ContentType: 'application/pdf'
+                                    }));
+                                    
+                                    // 3. On génère le lien de lecture (Valable 7 jours)
+                                    const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
+                                    urlPdfCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
+                                    console.log(`📎 PDF Facture sauvegardé et analysé !`);
+                                } catch (e) {
+                                    console.error("Erreur parsing/upload PDF :", e);
+                                }
+                            }
                         }
-
-                        const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail);
+                        
+                        // 🚨 L'ancienne insertion "aveugle" (matchTTC) est retirée car c'est désormais l'IA qui pré-valide la facture
+                        const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail, urlPdfCloudflare);
                         for (let t of tachesTrouvees) {
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
