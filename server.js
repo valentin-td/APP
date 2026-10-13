@@ -4176,7 +4176,6 @@ async function executerRobotComptable() {
 
                         await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
 
-                        const texteEmail = mailParsi.text || mailParsi.html || ""; 
                         let texteEmail = mailParsi.text || mailParsi.html || ""; 
                         const sujetEmail = mailParsi.subject || "Sans Sujet";
                         let urlPdfCloudflare = null;
