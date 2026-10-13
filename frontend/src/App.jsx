@@ -2783,7 +2783,7 @@ function App() {
                                 ) : (
                                     <div className="grid-collaborateurs">
                                         {(employesListe || []).map((emp, index) => {
-                                            const bloque = configSalon.mode_suivi_heures === 'POINTEUSE' && !emp.a_pointe_aujourdhui;
+                                            const bloque = configSalon.mode_suivi_heures === 'POINTEUSE' && !emp.a_pointe_aujourdhui && emp.role !== 'Gérant';
                                             return (
                                                 <div key={emp.id_employe} 
                                                     onClick={() => bloque ? showToast("Veuillez pointer avant de pouvoir encaisser", "error") : handleSelectEmployeCaisse(emp.id_employe)} 
@@ -2796,7 +2796,7 @@ function App() {
                                                         fontSize: '16px', 
                                                         fontWeight: '600', 
                                                         textAlign: 'center', 
-                                                        cursor: bloque ? 'not-allowed' : 'pointer', 
+                                                        cursor: 'pointer', 
                                                         boxShadow: bloque ? 'none' : 'var(--shadow-sm)', 
                                                         transition: 'transform 0.15s ease, box-shadow 0.15s ease',
                                                         opacity: bloque ? 0.8 : 1,
