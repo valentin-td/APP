@@ -1049,6 +1049,12 @@ function App() {
               newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => m.id_message !== data.id_message)); });
               newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, reactions: data.reactions } : m)); });
               newSocket.on('messageVu', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, vu_par: data.vu_par } : m)); });
+              
+              // NOUVEAU : Écoute des pointages en temps réel pour éviter le rafraîchissement manuel
+              newSocket.on('statutPointageUpdate', (data) => {
+                  setStatutsEquipe(prev => ({ ...prev, [data.id_employe]: data.type_action }));
+              });
+              
               newSocket.on('connect_error', () => {});
               setSocket(newSocket);
               return () => newSocket.disconnect();
