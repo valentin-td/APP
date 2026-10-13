@@ -2395,10 +2395,17 @@ function App() {
 
       {modalIA && (
           <div className="modal-overlay">
-              <div className="modal-content" style={{maxWidth: '420px'}}>
+              <div className="modal-content" style={{ 
+                  maxWidth: modalIA.type_tache === 'FACTURE_ACHAT' ? '1000px' : '420px', 
+                  width: modalIA.type_tache === 'FACTURE_ACHAT' ? '95vw' : 'auto',
+                  padding: modalIA.type_tache === 'FACTURE_ACHAT' ? '24px' : '20px',
+                  transition: 'all 0.3s ease'
+              }}>
                   <div style={{display: 'flex', alignItems: 'flex-start', gap: '14px', marginBottom: '20px'}}>
                       <div style={{width: '42px', height: '42px', borderRadius: '12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--text-main)'}}>
-                          {modalIA.type_tache === 'STOCK' ? (
+                          {modalIA.type_tache === 'FACTURE_ACHAT' ? (
+                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                          ) : modalIA.type_tache === 'STOCK' ? (
                               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
                           ) : modalIA.type_tache === 'RDV' ? (
                               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -2409,123 +2416,250 @@ function App() {
                           )}
                       </div>
                       <div style={{flex: 1, minWidth: 0}}>
-                          <span className="badge-discret" style={{background: 'var(--bg-app)', color: 'var(--text-secondary)', marginBottom: '6px'}}>Détection automatique</span>
+                          <span className="badge-discret" style={{background: 'var(--bg-app)', color: 'var(--text-secondary)', marginBottom: '6px'}}>Détection automatique IA</span>
                           <h2 style={{margin: '2px 0 2px 0', color: 'var(--text-main)', fontSize: '17px'}}>
-                              {modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : modalIA.type_tache === 'ABSENCE' ? "Absence détectée" : "Nouvelle action détectée"}
+                              {modalIA.type_tache === 'FACTURE_ACHAT' ? "Facture fournisseur détectée" : modalIA.type_tache === 'STOCK' ? "Nouvelle commande détectée" : modalIA.type_tache === 'RDV' ? "Nouveau RDV détecté" : modalIA.type_tache === 'ABSENCE' ? "Absence détectée" : "Nouvelle action détectée"}
                           </h2>
                           <p style={{fontSize: '13px', color: 'var(--text-secondary)', margin: 0}}>
-                              {modalIA.type_tache === 'STOCK' ? "Extrait d'une facture reçue par e-mail" : modalIA.type_tache === 'RDV' ? "Extrait d'un e-mail de réservation" : modalIA.type_tache === 'ABSENCE' ? "Un collaborateur a signalé une absence" : "Extrait d'un e-mail entrant"}
+                              {modalIA.type_tache === 'FACTURE_ACHAT' ? "Contrôle pré-comptable et mise à jour de l'inventaire" : modalIA.type_tache === 'STOCK' ? "Extrait d'une facture reçue par e-mail" : modalIA.type_tache === 'RDV' ? "Extrait d'un e-mail de réservation" : modalIA.type_tache === 'ABSENCE' ? "Un collaborateur a signalé une absence" : "Extrait d'un e-mail entrant"}
                           </p>
                       </div>
                   </div>
 
-                  <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px'}}>
-                      {modalIA.type_tache === 'STOCK' && (
-                          <>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Article commandé</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.nom_produit || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
-                              
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité</label>
-                                      <input type="number" className="input-fournisseur" value={modalIA.donnees?.quantite || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Référence</label>
-                                      <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees?.reference || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
-                                  </div>
-                              </div>
-                          </>
-                      )}
-                      
-                      {modalIA.type_tache === 'RDV' && (
-                          <>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Client</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees?.nom_client || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_client: e.target.value}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees?.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
-                                  </div>
-                              </div>
-                              
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Prestation demandée</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.prestation || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, prestation: e.target.value}})} />
+                  {modalIA.type_tache === 'FACTURE_ACHAT' ? (
+                      /* --- INTERFACE SPLIT-SCREEN POUR FACTURE --- */
+                      (() => {
+                          const ht = parseFloat(modalIA.donnees?.montant_ht) || 0;
+                          const tva = parseFloat(modalIA.donnees?.montant_tva) || 0;
+                          const ttc = parseFloat(modalIA.donnees?.montant_ttc) || 0;
+                          const ecart = Math.abs((ht + tva) - ttc);
+                          const hasEcart = ecart > 0.05;
 
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <div style={{flex: 2}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Date et Heure</label>
-                                      <input type="datetime-local" className="input-fournisseur" value={modalIA.donnees?.date_heure_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_heure_debut: e.target.value}})} />
+                          return (
+                              <div style={{display: 'flex', gap: '24px', flexDirection: window.innerWidth < 768 ? 'column' : 'row', marginBottom: '24px'}}>
+                                  {/* Partie Gauche : PDF */}
+                                  <div style={{flex: 1, minWidth: '40%', background: 'var(--bg-app)', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column'}}>
+                                      <div style={{padding: '12px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                          <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>Document original (PDF)</span>
+                                          <a href={modalIA.donnees?.pdf_url} target="_blank" rel="noreferrer" style={{fontSize: '11px', color: 'var(--btn-primary)', textDecoration: 'none'}}>Ouvrir en grand</a>
+                                      </div>
+                                      {modalIA.donnees?.pdf_url ? (
+                                          <iframe src={modalIA.donnees.pdf_url} style={{width: '100%', height: window.innerWidth < 768 ? '400px' : '500px', border: 'none'}} title="Facture PDF" />
+                                      ) : (
+                                          <div style={{padding: '40px', textAlign: 'center', color: 'var(--text-muted)'}}>Aucun justificatif PDF attaché.</div>
+                                      )}
                                   </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Durée (min)</label>
-                                      <input type="number" className="input-fournisseur" value={modalIA.donnees?.duree_minutes || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, duree_minutes: parseInt(e.target.value)}})} />
-                                  </div>
-                                  <div style={{flex: 2}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Coiffeur</label>
-                                      <select className="input-fournisseur" value={modalIA.donnees?.id_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, id_employe: e.target.value}})}>
-                                          <option value="">-- Choisir --</option>
-                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                      </select>
-                                  </div>
-                              </div>
-                          </>
-                      )}
 
-                      {modalIA.type_tache === 'ABSENCE' && (
-                          <>
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Employé concerné</label>
-                                      <input className="input-fournisseur" value={modalIA.donnees?.nom_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_employe: e.target.value}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Type</label>
-                                      <select className="input-fournisseur" value={modalIA.donnees?.type_demande || 'CONGES'} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, type_demande: e.target.value}})}>
-                                          <option value="CONGES">Congés (À valider)</option>
-                                          <option value="ARRET_MALADIE">Arrêt Maladie (Imposé)</option>
-                                      </select>
-                                  </div>
-                              </div>
-                              
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Du</label>
-                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_debut: e.target.value}})} />
-                                  </div>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Au</label>
-                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_fin || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_fin: e.target.value}})} />
-                                  </div>
-                              </div>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Commentaire extrait</label>
-                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.commentaire || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, commentaire: e.target.value}})} />
-                          </>
-                      )}
+                                  {/* Partie Droite : Formulaire de Contrôle */}
+                                  <div style={{flex: 1, minWidth: '40%', display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: window.innerWidth < 768 ? 'auto' : '530px', overflowY: 'auto', paddingRight: '8px'}}>
+                                      
+                                      <div style={{display: 'flex', gap: '12px'}}>
+                                          <div style={{flex: 2}}>
+                                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Fournisseur</label>
+                                              <input className="input-fournisseur" value={modalIA.donnees?.fournisseur || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, fournisseur: e.target.value}})} style={{marginBottom: 0}} />
+                                          </div>
+                                          <div style={{flex: 1}}>
+                                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Date</label>
+                                              <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_facture || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_facture: e.target.value}})} style={{marginBottom: 0}} />
+                                          </div>
+                                      </div>
 
-                      {modalIA.type_tache === 'ACTION' && (
-                          <>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Action requise détectée</label>
-                              <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.titre || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, titre: e.target.value}})} />
-                              
-                              <div style={{display: 'flex', gap: '12px'}}>
-                                  <div style={{flex: 1}}>
-                                      <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Échéance</label>
-                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_echeance || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_echeance: e.target.value}})} />
+                                      <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: hasEcart ? '1px solid var(--color-danger)' : '1px solid var(--border-color)'}}>
+                                          <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px'}}>
+                                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                                              <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>Comptabilité (Liasse Mensuelle)</span>
+                                          </div>
+                                          <div style={{display: 'flex', gap: '12px', alignItems: 'flex-end'}}>
+                                              <div style={{flex: 1}}>
+                                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Total HT</label>
+                                                  <input type="number" step="0.01" className="input-fournisseur" value={modalIA.donnees?.montant_ht || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, montant_ht: e.target.value}})} style={{marginBottom: 0}} />
+                                              </div>
+                                              <span style={{paddingBottom: '12px', color: 'var(--text-muted)'}}>+</span>
+                                              <div style={{flex: 1}}>
+                                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>TVA</label>
+                                                  <input type="number" step="0.01" className="input-fournisseur" value={modalIA.donnees?.montant_tva || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, montant_tva: e.target.value}})} style={{marginBottom: 0}} />
+                                              </div>
+                                              <span style={{paddingBottom: '12px', color: 'var(--text-muted)'}}>=</span>
+                                              <div style={{flex: 1}}>
+                                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Total TTC</label>
+                                                  <input type="number" step="0.01" className="input-fournisseur" value={modalIA.donnees?.montant_ttc || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, montant_ttc: e.target.value}})} style={{marginBottom: 0, fontWeight: 'bold', color: 'var(--text-main)', background: hasEcart ? '#fee2e2' : 'var(--bg-card)'}} />
+                                              </div>
+                                          </div>
+                                          {hasEcart && (
+                                              <div style={{marginTop: '12px', padding: '8px 12px', background: 'var(--bg-danger)', color: 'var(--color-danger)', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                                  <span>Attention : Le calcul HT + TVA ne correspond pas au TTC (Écart : {ecart.toFixed(2)}€)</span>
+                                              </div>
+                                          )}
+                                      </div>
+
+                                      <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px'}}>
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                                                  <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>Mise à jour des Stocks</span>
+                                              </div>
+                                              <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>{(modalIA.donnees?.produits || []).length} articles</span>
+                                          </div>
+                                          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                              {(!modalIA.donnees?.produits || modalIA.donnees.produits.length === 0) ? (
+                                                  <p style={{fontSize: '13px', color: 'var(--text-secondary)', margin: 0, fontStyle: 'italic'}}>Aucun produit détaillé extrait de la facture.</p>
+                                              ) : (
+                                                  modalIA.donnees.produits.map((prod, idx) => (
+                                                      <div key={idx} style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '12px'}}>
+                                                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                                                              <input className="input-fournisseur" value={prod.nom} onChange={e => {
+                                                                  const newProds = [...modalIA.donnees.produits];
+                                                                  newProds[idx].nom = e.target.value;
+                                                                  setModalIA({...modalIA, donnees: {...modalIA.donnees, produits: newProds}});
+                                                              }} style={{marginBottom: 0, flex: 1, marginRight: '8px', padding: '6px 8px', fontSize: '13px'}} />
+                                                              <button onClick={() => {
+                                                                  const newProds = modalIA.donnees.produits.filter((_, i) => i !== idx);
+                                                                  setModalIA({...modalIA, donnees: {...modalIA.donnees, produits: newProds}});
+                                                              }} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '6px'}} title="Retirer ce produit"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                                          </div>
+                                                          <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                                                              <div style={{display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px'}}>
+                                                                  <span style={{fontSize: '11px', color: 'var(--text-secondary)', paddingLeft: '6px'}}>Qté</span>
+                                                                  <input type="number" className="input-fournisseur" value={prod.quantite} onChange={e => {
+                                                                      const newProds = [...modalIA.donnees.produits];
+                                                                      newProds[idx].quantite = parseInt(e.target.value) || 0;
+                                                                      setModalIA({...modalIA, donnees: {...modalIA.donnees, produits: newProds}});
+                                                                  }} style={{marginBottom: 0, padding: '4px', width: '45px', border: 'none', background: 'transparent', textAlign: 'center', fontWeight: 'bold'}} />
+                                                              </div>
+                                                              <div style={{flex: 1, display: 'flex', background: 'var(--bg-app)', borderRadius: '4px', overflow: 'hidden', border: '1px solid var(--border-color)'}}>
+                                                                  <button onClick={() => {
+                                                                      const newProds = [...modalIA.donnees.produits];
+                                                                      newProds[idx].type_destine = 'REVENTE';
+                                                                      setModalIA({...modalIA, donnees: {...modalIA.donnees, produits: newProds}});
+                                                                  }} style={{flex: 1, padding: '6px', fontSize: '11px', border: 'none', cursor: 'pointer', fontWeight: 'bold', background: prod.type_destine === 'REVENTE' ? 'var(--btn-primary)' : 'transparent', color: prod.type_destine === 'REVENTE' ? 'white' : 'var(--text-secondary)', transition: '0.2s'}}>Revente</button>
+                                                                  <button onClick={() => {
+                                                                      const newProds = [...modalIA.donnees.produits];
+                                                                      newProds[idx].type_destine = 'CONSOMMABLE';
+                                                                      setModalIA({...modalIA, donnees: {...modalIA.donnees, produits: newProds}});
+                                                                  }} style={{flex: 1, padding: '6px', fontSize: '11px', border: 'none', cursor: 'pointer', fontWeight: 'bold', background: prod.type_destine === 'CONSOMMABLE' ? 'var(--btn-primary)' : 'transparent', color: prod.type_destine === 'CONSOMMABLE' ? 'white' : 'var(--text-secondary)', transition: '0.2s'}}>Labo/Conso</button>
+                                                              </div>
+                                                          </div>
+                                                      </div>
+                                                  ))
+                                              )}
+                                          </div>
+                                      </div>
                                   </div>
                               </div>
-                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', marginTop: '12px', display: 'block'}}>Détails extraits</label>
-                              <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.description || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, description: e.target.value}})} />
-                          </>
-                      )}
-                  </div>
+                          );
+                      })()
+                  ) : (
+                      /* --- ANCIENNE INTERFACE POUR LES AUTRES TÂCHES IA --- */
+                      <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px'}}>
+                          {modalIA.type_tache === 'STOCK' && (
+                              <>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Article commandé</label>
+                                  <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.nom_produit || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_produit: e.target.value}})} />
+                                  
+                                  <div style={{display: 'flex', gap: '12px'}}>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Quantité</label>
+                                          <input type="number" className="input-fournisseur" value={modalIA.donnees?.quantite || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, quantite: parseInt(e.target.value)}})} />
+                                      </div>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Référence</label>
+                                          <input className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees?.reference || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, reference: e.target.value}})} />
+                                      </div>
+                                  </div>
+                              </>
+                          )}
+                          
+                          {modalIA.type_tache === 'RDV' && (
+                              <>
+                                  <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Client</label>
+                                          <input className="input-fournisseur" value={modalIA.donnees?.nom_client || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_client: e.target.value}})} />
+                                      </div>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Téléphone</label>
+                                          <input className="input-fournisseur" value={modalIA.donnees?.telephone || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, telephone: e.target.value}})} />
+                                      </div>
+                                  </div>
+                                  
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Prestation demandée</label>
+                                  <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.prestation || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, prestation: e.target.value}})} />
+
+                                  <div style={{display: 'flex', gap: '12px'}}>
+                                      <div style={{flex: 2}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Date et Heure</label>
+                                          <input type="datetime-local" className="input-fournisseur" value={modalIA.donnees?.date_heure_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_heure_debut: e.target.value}})} />
+                                      </div>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Durée (min)</label>
+                                          <input type="number" className="input-fournisseur" value={modalIA.donnees?.duree_minutes || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, duree_minutes: parseInt(e.target.value)}})} />
+                                      </div>
+                                      <div style={{flex: 2}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Coiffeur</label>
+                                          <select className="input-fournisseur" value={modalIA.donnees?.id_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, id_employe: e.target.value}})}>
+                                              <option value="">-- Choisir --</option>
+                                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                          </select>
+                                      </div>
+                                  </div>
+                              </>
+                          )}
+
+                          {modalIA.type_tache === 'ABSENCE' && (
+                              <>
+                                  <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Employé concerné</label>
+                                          <input className="input-fournisseur" value={modalIA.donnees?.nom_employe || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, nom_employe: e.target.value}})} />
+                                      </div>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Type</label>
+                                          <select className="input-fournisseur" value={modalIA.donnees?.type_demande || 'CONGES'} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, type_demande: e.target.value}})}>
+                                              <option value="CONGES">Congés (À valider)</option>
+                                              <option value="ARRET_MALADIE">Arrêt Maladie (Imposé)</option>
+                                          </select>
+                                      </div>
+                                  </div>
+                                  
+                                  <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Du</label>
+                                          <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_debut || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_debut: e.target.value}})} />
+                                      </div>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Au</label>
+                                          <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_fin || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_fin: e.target.value}})} />
+                                      </div>
+                                  </div>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Commentaire extrait</label>
+                                  <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.commentaire || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, commentaire: e.target.value}})} />
+                              </>
+                          )}
+
+                          {modalIA.type_tache === 'ACTION' && (
+                              <>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Action requise détectée</label>
+                                  <input className="input-fournisseur" style={{marginBottom: '12px'}} value={modalIA.donnees?.titre || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, titre: e.target.value}})} />
+                                  
+                                  <div style={{display: 'flex', gap: '12px'}}>
+                                      <div style={{flex: 1}}>
+                                          <label style={{fontSize: '11px', color: 'var(--text-secondary)'}}>Échéance</label>
+                                          <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_echeance || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_echeance: e.target.value}})} />
+                                      </div>
+                                  </div>
+                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', marginTop: '12px', display: 'block'}}>Détails extraits</label>
+                                  <textarea className="input-fournisseur" rows="2" value={modalIA.donnees?.description || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, description: e.target.value}})} />
+                              </>
+                          )}
+                      </div>
+                  )}
                   
+                  {/* BOUTONS D'ACTION (Communs) */}
                   <div style={{display: 'flex', gap: '12px'}}>
                       <button onClick={() => ignorerTacheIA(modalIA)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Ignorer</button>
                       <button onClick={() => validerTacheIA(modalIA)} className="btn-action" style={{flex: 2}}>
-                          {modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : modalIA.type_tache === 'RDV' ? "Ajouter à l'Agenda" : modalIA.type_tache === 'ABSENCE' ? "Enregistrer l'absence" : "Ajouter au Centre d'Action"}
+                          {modalIA.type_tache === 'FACTURE_ACHAT' ? "Valider Facture & Stocks" : modalIA.type_tache === 'STOCK' ? "Ajouter au stock" : modalIA.type_tache === 'RDV' ? "Ajouter à l'Agenda" : modalIA.type_tache === 'ABSENCE' ? "Enregistrer l'absence" : "Ajouter au Centre d'Action"}
                       </button>
                   </div>
               </div>
