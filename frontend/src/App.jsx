@@ -274,8 +274,16 @@ function App() {
           });
           if (!res.ok) throw new Error("Erreur de pointage");
           
+          // Dégrise instantanément le collaborateur sur l'interface
+          if (action === 'ENTREE') {
+              setEmployesListe(prev => (prev || []).map(emp => 
+                  emp.id_employe === pointeuse.employe.id_employe ? { ...emp, a_pointe_aujourdhui: true } : emp
+              ));
+          }
+          
           showToast(`Pointage (${action}) validé !`, "success");
           setPointeuse({ open: false, step: 1, employe: null, pin: '' });
+          chargerTout(); // Synchronisation générale en arrière-plan
       } catch (e) {
           showToast(e.message, "error");
       }
