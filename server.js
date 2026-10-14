@@ -3117,10 +3117,31 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             let dateFacture = donnees.date_facture ? new Date(donnees.date_facture) : new Date();
             if (isNaN(dateFacture)) dateFacture = new Date();
 
+            const numFacture = donnees.numero_facture || null;
+            const modePaiement = donnees.mode_paiement || 'NON_SPECIFIE';
+            const justifUrl = donnees.pdf_url || null;
+            const compteComptable = donnees.compte_comptable || null;
+            const fournisseur = donnees.fournisseur || 'Fournisseur Inconnu';
+
             await clientDB.query(
-                `INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon, date_traitement) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [donnees.fournisseur || 'Fournisseur Inconnu', ht, tva, ttc, id_salon, dateFacture.toISOString()]
+                `INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon, date_traitement, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'VALIDE', $9, $10)`,
+                [fournisseur, ht, tva, ttc, id_salon, dateFacture.toISOString(), numFacture, modePaiement, justifUrl, compteComptable]
             );
+
+            // 1 Bis. SYNCHRONISATION CAISSE (NF525) : Sortie d'espèces automatique
+            if (modePaiement.toUpperCase() === 'ESPECES' && ttc > 0) {
+                const motifSortie = numFacture 
+                    ? `Paiement Facture ${numFacture} - ${fournisseur}` 
+                    : `Paiement Facture - ${fournisseur}`;
+                
+                await clientDB.query(
+                    `INSERT INTO mouvements_caisse (id_salon, type_mouvement, montant, motif) VALUES ($1, 'SORTIE', $2, $3)`,
+                    [id_salon, ttc, motifSortie]
+                );
+                
+                // On trace l'événement dans le journal technique pour l'inaltérabilité
+                await enregistrerJET(id_salon, 'MOUVEMENT_CAISSE', { type_mouvement: 'SORTIE', montant: ttc, motif: motifSortie }, clientDB);
+            }
 
             // 2. ACTION STOCK : Ajout automatique des quantités validées
             if (donnees.produits && Array.isArray(donnees.produits)) {
