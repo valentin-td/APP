@@ -5057,7 +5057,7 @@ app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
             pinMatch = (gerant.code_pin === code_pin);
         }
 
-        if (!pinMatch) return res.status(401).json({ erreur: "Code PIN incorrect. Signature refusée." });
+        if (!pinMatch) return res.status(400).json({ erreur: "Code PIN incorrect. Signature refusée." });
 
         await pool.query(
             "INSERT INTO liasses_mensuelles_validees (id_salon, mois_annee, valide_par) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
