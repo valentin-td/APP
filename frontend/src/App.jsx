@@ -1167,8 +1167,9 @@ function App() {
 
   const validerTacheIA = async (tache) => {
       try {
-          // L'ID contient '_' uniquement pour les batch locaux, on l'enlève pour l'API
-          const baseId = String(tache.id_tache).split('_')[0]; 
+          // On retire proprement UNIQUEMENT le suffixe "_0", "_1" du batch, 
+          // sans casser les identifiants comme "UPLOAD_MANUEL_1234"
+          const baseId = String(tache.id_tache).replace(/_\d+$/, ''); 
           
           const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/valider`, {
               method: 'POST',
