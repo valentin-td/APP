@@ -2600,16 +2600,54 @@ function App() {
                                           </div>
                                       )}
                                   
-                                      <div style={{display: 'flex', gap: '12px'}}>
+                                      <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
                                           <div style={{flex: 2}}>
                                               <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Fournisseur</label>
                                               <input className="input-fournisseur" value={modalIA.donnees?.fournisseur || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, fournisseur: e.target.value}})} style={{marginBottom: 0}} />
                                           </div>
                                           <div style={{flex: 1}}>
+                                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>N° Facture</label>
+                                              <input type="text" className="input-fournisseur" placeholder="Optionnel" value={modalIA.donnees?.numero_facture || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, numero_facture: e.target.value}})} style={{marginBottom: 0}} />
+                                          </div>
+                                      </div>
+
+                                      <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
+                                          <div style={{flex: 1}}>
                                               <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Date</label>
                                               <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_facture || ''} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, date_facture: e.target.value}})} style={{marginBottom: 0}} />
                                           </div>
+                                          <div style={{flex: 1}}>
+                                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Paiement</label>
+                                              <select className="input-fournisseur" value={modalIA.donnees?.mode_paiement || 'NON_SPECIFIE'} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, mode_paiement: e.target.value}})} style={{marginBottom: 0, background: modalIA.donnees?.mode_paiement === 'ESPECES' ? 'rgba(245, 158, 11, 0.1)' : 'var(--bg-card)', color: modalIA.donnees?.mode_paiement === 'ESPECES' ? '#b45309' : 'inherit', fontWeight: modalIA.donnees?.mode_paiement === 'ESPECES' ? 'bold' : 'normal', border: modalIA.donnees?.mode_paiement === 'ESPECES' ? '1px solid #fcd34d' : '1px solid var(--border-color)'}}>
+                                                  <option value="NON_SPECIFIE">À définir</option>
+                                                  <option value="CARTE">Carte / TPE</option>
+                                                  <option value="PRELEVEMENT">Prélèvement</option>
+                                                  <option value="VIREMENT">Virement</option>
+                                                  <option value="ESPECES">Espèces (Caisse)</option>
+                                                  <option value="CHEQUE">Chèque</option>
+                                              </select>
+                                          </div>
+                                          <div style={{flex: 1}}>
+                                              <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Cpte (Liasse)</label>
+                                              <select className="input-fournisseur" value={modalIA.donnees?.compte_comptable || '604'} onChange={e => setModalIA({...modalIA, donnees: {...modalIA.donnees, compte_comptable: e.target.value}})} style={{marginBottom: 0}}>
+                                                  <option value="607">607 - Revente</option>
+                                                  <option value="604">604 - Prestations</option>
+                                                  <option value="6028">6028 - Conso/Labo</option>
+                                                  <option value="613">613 - Loyer/Charges</option>
+                                                  <option value="6061">6061 - Énergie</option>
+                                              </select>
+                                          </div>
                                       </div>
+
+                                      {modalIA.donnees?.mode_paiement === 'ESPECES' && (
+                                          <div style={{padding: '10px 12px', background: 'rgba(245, 158, 11, 0.1)', color: '#b45309', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', border: '1px solid #fde68a'}}>
+                                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                                              <div>
+                                                  <span style={{display: 'block', fontWeight: 'bold'}}>Déduction automatique activée</span>
+                                                  <span style={{fontSize: '11px', fontWeight: 'normal'}}>Ce montant sera soustrait de votre caisse espèces (Z) ce soir.</span>
+                                              </div>
+                                          </div>
+                                      )}
 
                                       <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: hasEcart ? '1px solid var(--color-danger)' : '1px solid var(--border-color)'}}>
                                           <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px'}}>
