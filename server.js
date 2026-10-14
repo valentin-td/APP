@@ -3706,6 +3706,17 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         const salonConfig = configResult.rowCount > 0 ? configResult.rows[0] : {};
         const nomDuSalon = salonConfig.nom_salon || 'Salon Inconnu';
         
+        // Déduction automatique du titre du dirigeant selon la forme juridique
+        const getTitreDirigeant = (forme) => {
+            if (!forme) return "Représentant Légal";
+            const f = forme.toUpperCase().trim();
+            if (['SARL', 'EURL', 'SNC'].includes(f)) return "Gérant(e)";
+            if (['SAS', 'SASU', 'SA', 'ASSOCIATION'].includes(f)) return "Président(e)";
+            if (['EI', 'EIRL', 'AUTO-ENTREPRENEUR', 'MICRO-ENTREPRISE'].includes(f)) return "Exploitant(e)";
+            return "Représentant Légal";
+        };
+        const titreDirigeant = getTitreDirigeant(salonConfig.forme_juridique);
+        
         // 🚨 BLOCAGE STRICT : SIRET ET ADRESSE OBLIGATOIRES
         if (!salonConfig.siret || !salonConfig.adresse_salon || salonConfig.siret.trim() === '') {
             return res.status(400).json({ erreur: "Édition bloquée : Le SIRET et l'Adresse du salon sont obligatoires pour générer une liasse légale. Veuillez les remplir dans vos paramètres." });
@@ -3882,7 +3893,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         currentY += 12;
         doc.text(`SIRET: ${salonConfig.siret} | ${mentionTVA} | NAF: 96.02A | IDCC: 2596 (Coiffure)`, 40, currentY);
         currentY += 12;
-        doc.text(`Exploitant : ${nomGerant}`, 40, currentY);
+        doc.text(`${titreDirigeant} : ${nomGerant}`, 40, currentY);
         currentY += 15;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 250, currentY);
@@ -4333,7 +4344,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text("BON POUR TRANSMISSION COMPTABLE", 50, currentY + 10);
         
         if (estMoisCloture) {
-            doc.font('Helvetica').fontSize(10).text(`Nom du Gérant : ${nomGerant}`, 50, currentY + 30);
+            doc.font('Helvetica').fontSize(10).text(`Nom du ${titreDirigeant} : ${nomGerant}`, 50, currentY + 30);
             doc.text(`Date : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 50, currentY + 45);
             
             doc.font('Helvetica-Bold').text(`Signature :`, 350, currentY + 30);
