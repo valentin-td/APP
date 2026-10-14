@@ -1167,7 +1167,10 @@ function App() {
 
   const validerTacheIA = async (tache) => {
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/valider`, {
+          // L'ID contient '_' uniquement pour les batch locaux, on l'enlève pour l'API
+          const baseId = String(tache.id_tache).split('_')[0]; 
+          
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/valider`, {
               method: 'POST',
               headers: getAuthHeaders(true),
               body: JSON.stringify(tache.donnees)
@@ -1180,47 +1183,33 @@ function App() {
           
           showToast("Action de l'IA confirmée !", "success");
           setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-            setRefreshTrigger(prev => prev + 1);
-            if (typeof chargerTout === 'function') {
-                chargerTout();
-            }
-            passerAuDocumentSuivant(tache.id_tache);
-        } catch (e) {
-            showToast(`Erreur : ${e.message}`, "error");
-        }
-    };
+          setRefreshTrigger(prev => prev + 1);
+          if (typeof chargerTout === 'function') {
+              chargerTout();
+          }
+          passerAuDocumentSuivant(tache.id_tache);
+      } catch (e) {
+          showToast(`Erreur : ${e.message}`, "error");
+      }
+  };
 
-    const ignorerTacheIA = async (tache) => {
+  const ignorerTacheIA = async (tache) => {
       if (String(tache.id_tache).startsWith('UPLOAD_MANUEL_') || String(tache.id_tache).includes('_')) {
-        passerAuDocumentSuivant(tache.id_tache);
-        return;
+          passerAuDocumentSuivant(tache.id_tache);
+          return;
       }
-        try {
-            await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
-                method: 'POST',
-                headers: getAuthHeaders()
-            });
-            showToast("Tâche ignorée", "info");
-            setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-            passerAuDocumentSuivant(tache.id_tache);
-        } catch (e) { showToast("Erreur serveur.", "error"); }
-    };
-
-    const ignorerTacheIA = async (tache) => {
-      if (String(tache.id_tache).startsWith('UPLOAD_MANUEL_')) {
-        setModalIA(null);
-        return;
+      try {
+          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
+              method: 'POST',
+              headers: getAuthHeaders()
+          });
+          showToast("Tâche ignorée", "info");
+          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
+          passerAuDocumentSuivant(tache.id_tache);
+      } catch (e) { 
+          showToast("Erreur serveur.", "error"); 
       }
-        try {
-            await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
-                method: 'POST',
-                headers: getAuthHeaders()
-            });
-            showToast("Tâche ignorée", "info");
-            setModalIA(null);
-            setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-        } catch (e) { showToast("Erreur serveur.", "error"); }
-    };
+  };
 
   const sInscrire = async () => {
     if (!isLoginMode) {
