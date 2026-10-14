@@ -3798,7 +3798,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         `, [id_salon, dateDebutStr, lastZDate]);
 
         // 3. REQUÊTE : Dépenses
-        const facturesRes = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
+        const facturesRes = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
 
         // 4. REQUÊTE : Commissions Employés & Contrats (Recalcul exact + Heures + Pourboires)
         const rhRes = await pool.query(`
@@ -3908,7 +3908,9 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(isHeader ? 8 : 9).fillColor(isHeader ? SEC_COLOR : MAIN_COLOR);
             let xPos = 40;
             cols.forEach(col => {
-                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left' });
+                if (col.color) doc.fillColor(col.color);
+                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left', link: col.link || null, underline: !!col.link });
+                if (col.color) doc.fillColor(isHeader ? SEC_COLOR : MAIN_COLOR); // Reset de la couleur
                 xPos += col.w + 10;
             });
             currentY += 12;
@@ -4032,45 +4034,71 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
+        
         drawRow([
-            {text: 'Fournisseur', w: 105}, 
-            {text: 'Date', w: 45, align: 'center'}, 
-            {text: 'Compte', w: 75, align: 'center'}, 
-            {text: 'Justificatif', w: 85, align: 'center'},
-            {text: 'HT', w: 45, align: 'right'}, 
-            {text: 'TVA', w: 40, align: 'right'}, 
-            {text: 'TTC', w: 70, align: 'right'}
+            {text: 'Fournisseur', w: 80},
+            {text: 'N° Fact.', w: 55},
+            {text: 'Date', w: 45, align: 'center'},
+            {text: 'Paiem.', w: 45, align: 'center'},
+            {text: 'Statut', w: 45, align: 'center'},
+            {text: 'Cpte', w: 30, align: 'center'},
+            {text: 'HT', w: 40, align: 'right'},
+            {text: 'TVA', w: 35, align: 'right'},
+            {text: 'TTC', w: 50, align: 'right'}
         ], true);
         
-        let sumDepenses = 0;
+        let sumDepensesBanque = 0;
+        let sumDepensesEspeces = 0;
+        
         facturesRes.rows.forEach(f => {
-            sumDepenses += parseFloat(f.montant_ttc);
-            // On conserve les montants HT et TVA réels de la facture, même en franchise (anticipation de dépassement de seuil)
+            const ttc = parseFloat(f.montant_ttc);
             const ht = parseFloat(f.montant_ht);
             const tva = parseFloat(f.montant_tva);
             
-            let compte = '604 - Achats';
-            const nomLower = (f.nom_fournisseur || '').toLowerCase();
-            if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) {
-                compte = '607 - Achat M/ses';
+            if (f.mode_paiement === 'ESPECES') {
+                sumDepensesEspeces += ttc;
+            } else {
+                sumDepensesBanque += ttc;
+            }
+            
+            let compte = f.compte_comptable || '604';
+            if (!f.compte_comptable) {
+                const nomLower = (f.nom_fournisseur || '').toLowerCase();
+                if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) {
+                    compte = '607';
+                } else if (nomLower.includes('edf') || nomLower.includes('eau') || nomLower.includes('orange') || nomLower.includes('urssaf') || nomLower.includes('loyer')) {
+                    compte = '613';
+                }
             }
 
+            const isValide = f.statut_verification === 'VALIDE';
+            const statutColor = isValide ? '#16a34a' : '#ea580c';
+            const statutText = isValide ? 'Validé' : 'À valider';
+
+            // Lien court PDF cliquable (l'expert n'a plus qu'à cliquer)
+            let shortRef = f.numero_facture ? f.numero_facture.substring(0, 8) : 'Doc IA';
+            const refDoc = f.justificatif_url ? { text: shortRef, link: f.justificatif_url, color: '#0ea5e9' } : { text: shortRef };
+            
+            const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
+
             drawRow([
-                {text: f.nom_fournisseur.substring(0,20), w: 105}, 
-                {text: f.date_facture, w: 45, align: 'center'}, 
-                {text: compte, w: 75, align: 'center'},
-                {text: '✓ Numérisé (IA)', w: 85, align: 'center'},
-                {text: fMnt(ht), w: 45, align: 'right'}, 
-                {text: fMnt(tva), w: 40, align: 'right'}, 
-                {text: fMnt(f.montant_ttc), w: 70, align: 'right'}
+                {text: f.nom_fournisseur.substring(0, 14), w: 80},
+                {...refDoc, w: 55},
+                {text: f.date_facture, w: 45, align: 'center'},
+                {text: modePaiementCourt, w: 45, align: 'center'},
+                {text: statutText, w: 45, align: 'center', color: statutColor},
+                {text: compte, w: 30, align: 'center'},
+                {text: fMnt(ht), w: 40, align: 'right'},
+                {text: fMnt(tva), w: 35, align: 'right'},
+                {text: fMnt(ttc), w: 50, align: 'right'}
             ]);
         });
         
-        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 105}, {text: 'N/A', w: 45, align: 'center'}, {text: '613 / 645', w: 75, align: 'center'}, {text: 'À joindre', w: 85, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 70, align: 'right'}]);
-        drawRow([{text: 'Achats M/ses (Produits revente)', w: 105}, {text: 'N/A', w: 45, align: 'center'}, {text: '607', w: 75, align: 'center'}, {text: 'À joindre', w: 85, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Voir Banque', w: 70, align: 'right'}]);
-        drawRow([{text: 'Variation de stock (Produits)', w: 105}, {text: 'N/A', w: 45, align: 'center'}, {text: '6037', w: 75, align: 'center'}, {text: 'Inventaire', w: 85, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'À calculer', w: 70, align: 'right'}]);
+        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 80}, {text: 'N/A', w: 55}, {text: '-', w: 45, align: 'center'}, {text: 'PRELEV.', w: 45, align: 'center'}, {text: 'À joindre', w: 45, align: 'center'}, {text: '613', w: 30, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 35, align: 'right'}, {text: 'Voir Banque', w: 50, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 80}, {text: 'N/A', w: 55}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'Inventaire', w: 45, align: 'center'}, {text: '6037', w: 30, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 35, align: 'right'}, {text: 'À calculer', w: 50, align: 'right'}]);
         
-        drawRow([{text: 'TOTAL DÉPENSES SCANNÉES', w: 225}, {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 85}, {text: '', w: 45}, {text: '', w: 40}, {text: fMnt(sumDepenses), w: 70, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 445}, {text: fMnt(sumDepensesBanque), w: 50, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 445}, {text: fMnt(sumDepensesEspeces), w: 50, align: 'right'}], false, true);
         
         currentY += 25; // Saut de ligne renforcé pour empêcher le chevauchement !
 
