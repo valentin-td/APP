@@ -542,6 +542,13 @@ function App() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [annulationDialog, setAnnulationDialog] = useState(null);
   const [cancellationRobot, setCancellationRobot] = useState(null);
+
+  // --- ÉTATS : WORKFLOW DE VALIDATION COMPTABLE ---
+  const [statutMoisPrecedent, setStatutMoisPrecedent] = useState(null);
+  const [showModalValidationCompta, setShowModalValidationCompta] = useState(false);
+  const [checklistCompta, setChecklistCompta] = useState({ caisse: false, paie: false, depenses: false });
+  const [pinValidationCompta, setPinValidationCompta] = useState('');
+  const [isValidatingCompta, setIsValidatingCompta] = useState(false);
   const [selectedCancelRdvs, setSelectedCancelRdvs] = useState([]);
   const [cancelMessageTemplate, setCancelMessageTemplate] = useState('');
   const [auditNf525, setAuditNf525] = useState(null);
@@ -1808,14 +1815,60 @@ function App() {
           }
 
           const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
-          setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
-      } catch (e) { 
-          showToast(e.message || "Erreur de soumission", "error"); 
+          // --- FONCTIONS : WORKFLOW DE VALIDATION COMPTABLE ---
+  const chargerStatutMoisCompta = async () => {
+      if (!token || decodeToken(token)?.role !== 'gerant') return;
+      const today = new Date();
+      let prevMonth = today.getMonth(); 
+      let year = today.getFullYear();
+      if (prevMonth === 0) { prevMonth = 12; year -= 1; }
+      const moisAnnee = `${year}-${String(prevMonth).padStart(2, '0')}`;
+
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/compta/statut-mois?mois_annee=${moisAnnee}`, { headers: getAuthHeaders() });
+          const data = await handleFetchError(res);
+          setStatutMoisPrecedent({ mois: moisAnnee, libelle: new Date(year, prevMonth - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }), ...data });
+      } catch (e) { console.error("Erreur statut mois", e); }
+  };
+
+  useEffect(() => {
+      if (activeTab === 'admin') chargerStatutMoisCompta();
+  }, [activeTab]);
+
+  const previsualiserBrouillon = async () => {
+      if (isOffline || !navigator.onLine) return showToast("Téléchargement impossible hors-ligne.", "error");
+      showToast("Génération du brouillon en cours...");
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/export-pdf?mois_annee=${statutMoisPrecedent?.mois}`, { headers: getAuthHeaders() });
+          if (!res.ok) throw new Error("Erreur Serveur");
+          const blob = await res.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `Brouillon_Liasse_${statutMoisPrecedent?.mois}.pdf`; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
+      } catch (e) { showToast("Erreur de téléchargement", "error"); }
+  };
+
+  const validerEtEnvoyerMois = async () => {
+      if (!checklistCompta.caisse || !checklistCompta.paie || !checklistCompta.depenses) return showToast("Veuillez cocher toutes les vérifications de conformité.", "error");
+      if (!pinValidationCompta || pinValidationCompta.length < 4) return showToast("Veuillez saisir votre code PIN pour signer.", "error");
+      
+      setIsValidatingCompta(true);
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/compta/valider-mois', {
+              method: 'POST', headers: getAuthHeaders(true),
+              body: JSON.stringify({ mois_annee: statutMoisPrecedent.mois, code_pin: pinValidationCompta })
+          });
+          const data = await handleFetchError(res);
+          showToast(data.message, "success");
+          setShowModalValidationCompta(false);
+          setChecklistCompta({ caisse: false, paie: false, depenses: false });
+          setPinValidationCompta('');
+          chargerStatutMoisCompta();
+      } catch (e) {
+          showToast(e.message || "Erreur lors de la validation", "error");
       } finally {
-          setIsSubmittingAbsence(false);
+          setIsValidatingCompta(false);
       }
   };
-  const handleUploadJustificatifAbsence = (e) => {
       const file = e.target.files[0];
       if (file) {
           const reader = new FileReader();
