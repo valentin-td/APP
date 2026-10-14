@@ -3684,6 +3684,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     const { mois_annee } = req.query; // Format optionnel attendu: YYYY-MM
     try {
+        const today = new Date();
         let referenceDate = new Date();
         if (mois_annee) {
             const [year, month] = mois_annee.split('-');
@@ -3708,7 +3709,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         let numeroArchive = 'NON-APPLICABLE-MOIS-EN-COURS';
         if (estMoisCloture) {
             signatureArchive = crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${Date.now()}`).digest('hex').substring(0, 16).toUpperCase();
-            numeroArchive = `ARCH-${id_salon}-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}-${signatureArchive}`;
+            numeroArchive = `ARCH-${id_salon}-${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}-${signatureArchive}`;
         }
 
         // Utilisation de SELECT * pour éviter les crashs si la colonne forme_juridique n'est pas encore créée
