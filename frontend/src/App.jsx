@@ -5020,7 +5020,7 @@ function App() {
                   </div>
                   
                 {/* IMPORT MANUEL FACTURE (IA PRÉ-COMPTABLE) */}
-                  <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)', flexWrap: 'wrap', gap: '16px'}}>
+                  <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)', flexWrap: 'wrap', gap: '16px'}}>
                       <div>
                           <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
                               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--btn-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
@@ -5028,15 +5028,47 @@ function App() {
                           </div>
                           <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Prenez en photo un ticket ou importez un PDF pour générer la ligne comptable et les stocks.</span>
                       </div>
-                      <input type="file" id="upload-facture-manuelle" accept="application/pdf, image/jpeg, image/png" style={{display: 'none'}} onChange={handleUploadFactureManuel} />
-                      <button onClick={() => document.getElementById('upload-facture-manuelle').click()} disabled={isUploadingFacture} className="btn-action" style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0}}>
-                          {isUploadingFacture ? (
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{animation: 'spin 1s linear infinite'}}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
-                          ) : (
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                      
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: '1', minWidth: '250px', maxWidth: '350px' }}>
+                          <input 
+                              type="file" 
+                              id="upload-facture-manuelle-salon" 
+                              accept="application/pdf, image/jpeg, image/png, image/jpg" 
+                              multiple
+                              style={{display: 'none'}} 
+                              onChange={handleUploadFactureManuel} 
+                          />
+                          <button 
+                              onClick={() => document.getElementById('upload-facture-manuelle-salon').click()} 
+                              disabled={isUploadingFacture} 
+                              className="btn-action" 
+                              style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, justifyContent: 'center', width: '100%'}}
+                          >
+                              {isUploadingFacture ? (
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{animation: 'spin 1s linear infinite'}}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                              ) : (
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                              )}
+                              
+                              {isUploadingFacture 
+                                  ? (progressionBatch.total > 1 ? `Analyse du lot (${progressionBatch.actuel}/${progressionBatch.total})...` : "Analyse en cours...") 
+                                  : "Scanner un ou plusieurs documents"}
+                          </button>
+
+                          {isUploadingFacture && progressionBatch.total > 1 && (
+                              <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                  <div
+                                      style={{
+                                          height: '100%',
+                                          width: `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%`,
+                                          backgroundColor: 'var(--btn-primary)',
+                                          borderRadius: '999px',
+                                          transition: 'width 0.3s ease'
+                                      }}
+                                  />
+                              </div>
                           )}
-                          {isUploadingFacture ? "Analyse en cours..." : "Scanner un document"}
-                      </button>
+                      </div>
                   </div>
 
                     
