@@ -1170,32 +1170,30 @@ function App() {
           showToast("Action de l'IA confirmée !", "success");
           setModalIA(null);
           setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-        setRefreshTrigger(prev => prev + 1);
-        
-        // --- NOUVEAU : On force le rechargement immédiat du catalogue et des stats ---
-        if (typeof chargerTout === 'function') {
-            chargerTout();
+            setRefreshTrigger(prev => prev + 1);
+            if (typeof chargerTout === 'function') {
+                chargerTout();
+            }
+        } catch (e) {
+            showToast(`Erreur : ${e.message}`, "error");
         }
-      } catch (e) { 
-          showToast(`Erreur : ${e.message}`, "error"); 
-      }
-  };
+    };
 
-  const ignorerTacheIA = async (tache) => {
-    if (String(tache.id_tache).startsWith('UPLOAD_MANUEL_')) {
+    const ignorerTacheIA = async (tache) => {
+      if (String(tache.id_tache).startsWith('UPLOAD_MANUEL_')) {
         setModalIA(null);
         return;
-    }
-      try {
-          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
-              method: 'POST',
-              headers: getAuthHeaders()
-          });
-          showToast("Tâche ignorée", "info");
-          setModalIA(null);
-          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
-      } catch (e) { showToast("Erreur serveur.", "error"); }
-  };
+      }
+        try {
+            await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
+                method: 'POST',
+                headers: getAuthHeaders()
+            });
+            showToast("Tâche ignorée", "info");
+            setModalIA(null);
+            setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
+        } catch (e) { showToast("Erreur serveur.", "error"); }
+    };
 
   const sInscrire = async () => {
     if (!isLoginMode) {
@@ -1831,6 +1829,8 @@ function App() {
   };
 
   const [isUploadingFacture, setIsUploadingFacture] = useState(false);
+  const [progressionBatch, setProgressionBatch] = useState({ actuel: 0, total: 0 });
+  const [fileAttenteIA, setFileAttenteIA] = useState([]);
 
   const handleUploadFactureManuel = (e) => {
       const file = e.target.files[0];
