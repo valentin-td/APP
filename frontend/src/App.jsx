@@ -1154,6 +1154,17 @@ function App() {
       }
   }, [tachesIA, modalIA, catalogueListe]);
 
+  // Fonction qui gère la transition automatique vers la facture suivante du lot
+    const passerAuDocumentSuivant = (idTacheTraitee) => {
+        const resteFile = fileAttenteIA.filter(t => t.id_tache !== idTacheTraitee);
+        setFileAttenteIA(resteFile);
+        if (resteFile.length > 0) {
+            setModalIA(resteFile[0]); // Affiche instantanément la facture suivante
+        } else {
+            setModalIA(null); // Ferme la modale quand tout le lot est terminé
+        }
+    };
+
   const validerTacheIA = async (tache) => {
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/valider`, {
@@ -1168,15 +1179,31 @@ function App() {
           }
           
           showToast("Action de l'IA confirmée !", "success");
-          setModalIA(null);
           setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
             setRefreshTrigger(prev => prev + 1);
             if (typeof chargerTout === 'function') {
                 chargerTout();
             }
+            passerAuDocumentSuivant(tache.id_tache);
         } catch (e) {
             showToast(`Erreur : ${e.message}`, "error");
         }
+    };
+
+    const ignorerTacheIA = async (tache) => {
+      if (String(tache.id_tache).startsWith('UPLOAD_MANUEL_') || String(tache.id_tache).includes('_')) {
+        passerAuDocumentSuivant(tache.id_tache);
+        return;
+      }
+        try {
+            await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
+                method: 'POST',
+                headers: getAuthHeaders()
+            });
+            showToast("Tâche ignorée", "info");
+            setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
+            passerAuDocumentSuivant(tache.id_tache);
+        } catch (e) { showToast("Erreur serveur.", "error"); }
     };
 
     const ignorerTacheIA = async (tache) => {
