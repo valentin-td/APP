@@ -5125,7 +5125,6 @@ async function executerEnvoiComptable() {
     } catch (err) { console.error("Erreur globale Robot Comptable Automatique:", err); }
 }
 
-async function executerClotureFantome() {
 
 async function executerClotureFantome() {
     const clientDB = await pool.connect();
