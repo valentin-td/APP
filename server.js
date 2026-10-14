@@ -3936,7 +3936,11 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             currentY += 16;
         };
 
-        const fMnt = (mnt) => (parseFloat(mnt) || 0).toFixed(2).replace('.', ',') + ' €';
+        const fMnt = (mnt) => {
+            const parts = (parseFloat(mnt) || 0).toFixed(2).split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            return parts.join(',') + ' €';
+        };
 
         // --- 1. CHIFFRE D'AFFAIRES ---
         drawTableTitle("1. CHIFFRE D'AFFAIRES");
@@ -4106,7 +4110,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         });
         
         drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 80}, {text: 'N/A', w: 55}, {text: '-', w: 45, align: 'center'}, {text: 'PRELEV.', w: 45, align: 'center'}, {text: 'À joindre', w: 45, align: 'center'}, {text: '613', w: 30, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 35, align: 'right'}, {text: 'Voir Banque', w: 50, align: 'right'}]);
-        drawRow([{text: 'Variation de stock (Produits)', w: 80}, {text: 'N/A', w: 55}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'Inventaire', w: 45, align: 'center'}, {text: '6037', w: 30, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 35, align: 'right'}, {text: 'À calculer', w: 50, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 80}, {text: 'N/A', w: 55}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'Inventaire', w: 45, align: 'center'}, {text: '6037', w: 30, align: 'center'}, {text: 'Stk Début', w: 40, align: 'right'}, {text: 'Stk Fin', w: 35, align: 'right'}, {text: 'Variation', w: 50, align: 'right'}]);
         
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 445}, {text: fMnt(sumDepensesBanque), w: 50, align: 'right'}], false, true);
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 445}, {text: fMnt(sumDepensesEspeces), w: 50, align: 'right'}], false, true);
@@ -4177,10 +4181,15 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 ]);
             } else {
                 globalPrimes += parseFloat(e.total_prime || 0);
+                const fmtBase = (n) => {
+                    const parts = (parseFloat(n) || 0).toFixed(2).split('.');
+                    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                    return parts.join(',');
+                };
                 const tauxPresta = parseFloat(e.taux_presta || 0);
                 const tauxProduit = parseFloat(e.taux_produit || 0);
                 const regleTaux = `${tauxPresta}% / ${tauxProduit}%`;
-                const basesConcat = `${basePrestaHT.toFixed(2)} / ${baseProduitHT.toFixed(2)}`;
+                const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
                 
                 drawRow([
                     {text: nomComplet.substring(0,18), w: 60}, 
