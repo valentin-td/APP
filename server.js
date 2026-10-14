@@ -2850,20 +2850,23 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 // =========================================================================
 const PROMPT_SYSTEME_IA = `Tu es l'assistant pré-comptable d'un salon de coiffure. Analyse le contenu (email ou PDF) et retourne un JSON strict.
 
-CAS 1 - FACTURE FOURNISSEUR (L'Oréal, Wella, Matériel, etc.) : Si c'est une facture d'achat de produits/matériel.
+CAS 1 - FACTURE FOURNISSEUR (L'Oréal, Wella, Matériel, etc.) : Si c'est une facture d'achat de produits/matériel/services.
 -> Renvoie EXACTEMENT ce format :
 {"type": "FACTURE_ACHAT", "donnees": {
   "fournisseur": "Nom du fournisseur",
+  "numero_facture": "Numéro de la facture (si présent, sinon null)",
   "date_facture": "YYYY-MM-DD",
   "montant_ht": 100.50,
   "montant_tva": 20.10,
   "montant_ttc": 120.60,
+  "mode_paiement": "CARTE, ESPECES, PRELEVEMENT, VIREMENT, CHEQUE, ou NON_SPECIFIE",
+  "compte_comptable": "Ex: 607 (Revente), 6061 (Energie/Eau), 613 (Loyer), 604 (Prestations/Services), ou 6028 (Consommables)",
   "produits": [
     {"nom": "Shampooing ABC", "quantite": 5, "prix_unitaire_ht": 10.00, "reference": "REF123", "type_destine": "REVENTE"},
     {"nom": "Tube Coloration XYZ", "quantite": 10, "prix_unitaire_ht": 5.00, "reference": "REF456", "type_destine": "CONSOMMABLE"}
   ]
 }}
-IMPORTANT: Devine si le produit est destiné à la "REVENTE" (shampooing grand public, soins beauté) ou si c'est un "CONSOMMABLE" technique (coloration, oxydant, décoloration, produit bac).
+IMPORTANT: Devine si le produit est destiné à la "REVENTE" (shampooing grand public, soins beauté) ou si c'est un "CONSOMMABLE" technique (coloration, oxydant, décoloration, produit bac). Essaie de déduire le compte_comptable le plus logique selon le fournisseur.
 
 CAS 2 - RDV : Réservation de client. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe...", "date_heure_debut": "YYYY-MM-DDTHH:MM", "duree_minutes": 30}}
 CAS 3 - ABSENCE : Un employé sera absent. -> Renvoie {"type": "ABSENCE", "donnees": {"nom_employe": "nom", "type_demande": "ARRET_MALADIE ou CONGES", "date_debut": "YYYY-MM-DD", "date_fin": "YYYY-MM-DD"}}
@@ -2907,10 +2910,13 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null) {
                 type_tache: 'FACTURE_ACHAT',
                 donnees: {
                     fournisseur: String(analyse.donnees.fournisseur).trim(),
+                    numero_facture: analyse.donnees.numero_facture ? String(analyse.donnees.numero_facture).trim() : null,
                     date_facture: analyse.donnees.date_facture || dateDuJour,
                     montant_ht: parseFloat(analyse.donnees.montant_ht) || 0,
                     montant_tva: parseFloat(analyse.donnees.montant_tva) || 0,
                     montant_ttc: parseFloat(analyse.donnees.montant_ttc) || 0,
+                    mode_paiement: analyse.donnees.mode_paiement || 'NON_SPECIFIE',
+                    compte_comptable: analyse.donnees.compte_comptable || null,
                     produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
                     pdf_url: pdfUrl // On attache le lien du PDF pour le Split-Screen
                 }
@@ -3058,10 +3064,13 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
                 type_tache: 'FACTURE_ACHAT',
                 donnees: {
                     fournisseur: String(analyse.donnees.fournisseur || 'Fournisseur Inconnu').trim(),
+                    numero_facture: analyse.donnees.numero_facture ? String(analyse.donnees.numero_facture).trim() : null,
                     date_facture: analyse.donnees.date_facture || dateDuJour,
                     montant_ht: parseFloat(analyse.donnees.montant_ht) || 0,
                     montant_tva: parseFloat(analyse.donnees.montant_tva) || 0,
                     montant_ttc: parseFloat(analyse.donnees.montant_ttc) || 0,
+                    mode_paiement: analyse.donnees.mode_paiement || 'NON_SPECIFIE',
+                    compte_comptable: analyse.donnees.compte_comptable || null,
                     produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
                     pdf_url: urlCloudflare,
                     mime_type: mime_type || 'application/pdf'
