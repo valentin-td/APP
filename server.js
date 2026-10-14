@@ -332,6 +332,7 @@ pool.query(`
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS vu_par JSONB DEFAULT '[]';
     
     CREATE TABLE IF NOT EXISTS heures_ajustements (id_ajustement SERIAL PRIMARY KEY, id_employe INT, mois_annee VARCHAR(7), heures_ajoutees NUMERIC(10,2), motif TEXT, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS liasses_mensuelles_validees (id_validation SERIAL PRIMARY KEY, id_salon INT, mois_annee VARCHAR(7), date_validation TIMESTAMP DEFAULT CURRENT_TIMESTAMP, valide_par VARCHAR(255), UNIQUE(id_salon, mois_annee));
     CREATE TABLE IF NOT EXISTS push_subscriptions (id_sub SERIAL PRIMARY KEY, id_salon INT, role VARCHAR(20), id_employe INT, endpoint TEXT, keys JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS pointages (id_pointage SERIAL PRIMARY KEY, id_employe INT, id_salon INT, date_jour DATE DEFAULT CURRENT_DATE, type_action VARCHAR(20), heure_action TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 `).then(async () => {
@@ -3681,18 +3682,27 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/export-pdf', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
+    const { mois_annee } = req.query; // Format optionnel attendu: YYYY-MM
     try {
-        const today = new Date();
-        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-        const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        let referenceDate = new Date();
+        if (mois_annee) {
+            const [year, month] = mois_annee.split('-');
+            referenceDate = new Date(year, parseInt(month) - 1, 15);
+        }
+
+        const firstDayOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+        const lastDayOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0);
         
         const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const dateDebutStr = formatYMD(firstDayOfMonth);
         const dateFinStr = formatYMD(lastDayOfMonth);
 
-        // --- STATUT ET LÉGALITÉ ---
-        const estMoisCloture = today > lastDayOfMonth;
-        const statutDocument = estMoisCloture ? "DÉFINITIF (CLÔTURÉ)" : "BROUILLON PROVISOIRE";
+        // --- STATUT ET LÉGALITÉ (Basé sur la validation du gérant) ---
+        const moisCibleStr = `${referenceDate.getFullYear()}-${String(referenceDate.getMonth() + 1).padStart(2, '0')}`;
+        const validationRes = await pool.query('SELECT valide_par FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisCibleStr]);
+        
+        const estMoisCloture = validationRes.rowCount > 0;
+        const statutDocument = estMoisCloture ? "DÉFINITIF (CLÔTURÉ ET SIGNÉ)" : "BROUILLON PROVISOIRE - NON SIGNÉ";
         
         let signatureArchive = '';
         let numeroArchive = 'NON-APPLICABLE-MOIS-EN-COURS';
@@ -4842,193 +4852,271 @@ async function executerRobotMarketingEtPredictif() {
 }
 
 // =========================================================================
-// --- ROBOT D'ENVOI AU COMPTABLE (CRON JOB) ---
+// --- WORKFLOW COMPTABLE : ENVOI ET VALIDATION ---
+// =========================================================================
+async function envoyerBilanComptable(id_salon, mois_annee) {
+    try {
+        const salonRes = await pool.query("SELECT * FROM configuration_salon WHERE id_salon = $1", [id_salon]);
+        if (salonRes.rowCount === 0) return;
+        const salon = salonRes.rows[0];
+        
+        if (!salon.email_comptable || !salon.email_reception_factures || !salon.mot_de_passe_app_email) return;
+
+        const [year, month] = mois_annee.split('-');
+        const firstDayPrevMonth = new Date(year, parseInt(month) - 1, 1);
+        const lastDayPrevMonth = new Date(year, parseInt(month), 0);
+        
+        const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const dateDebutStr = formatYMD(firstDayPrevMonth);
+        const dateFinStr = formatYMD(lastDayPrevMonth);
+
+        const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+        const caParMethodeResult = await pool.query(`SELECT methode_paiement, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
+        const rhResult = await pool.query(`SELECT e.nom, COALESCE(SUM(c.montant_commission), 0) as total_prime FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3 WHERE e.id_salon = $1 GROUP BY e.nom`, [id_salon, dateDebutStr, dateFinStr]);
+        const absencesResult = await pool.query(`SELECT a.type_demande, a.nature_absence, a.date_debut, a.date_fin, a.fichier_cle_r2, e.nom as nom_employe FROM absences_employes a JOIN employes e ON a.id_employe = e.id_employe WHERE a.id_salon = $1 AND a.statut = 'VALIDE' AND a.date_debut <= $3 AND a.date_fin >= $2 ORDER BY e.nom ASC, a.date_debut ASC`, [id_salon, dateDebutStr, dateFinStr]);
+
+        const caTotal = parseFloat(caResult.rows[0].ca_total);
+
+        // --- GÉNÉRATION DU FEC ---
+        let fecContent = null;
+        try {
+            const ticketsFecRes = await pool.query(`
+                SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, 'Article') as nom_article, COALESCE(c.type_article, 'PRESTATION') as type_article, cc.date_cloture
+                FROM tickets t
+                JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
+                LEFT JOIN catalogue c ON lt.id_article = c.id_article
+                LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
+                WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+                ORDER BY t.date_creation ASC, t.id_ticket ASC
+            `, [id_salon, dateDebutStr, dateFinStr]);
+
+            let totalDebit = 0, totalCredit = 0;
+            const lignesFec = [];
+            const ticketsMap = {};
+
+            ticketsFecRes.rows.forEach(r => {
+                if (!ticketsMap[r.id_ticket]) ticketsMap[r.id_ticket] = { id_ticket: r.id_ticket, numero: r.numero_ticket_caisse, date: r.date_creation, date_valid: r.date_cloture || r.date_creation, methode: r.methode_paiement, total_ttc: parseFloat(r.total_ttc), lignes: [] };
+                ticketsMap[r.id_ticket].lignes.push(r);
+            });
+
+            const formatDateFEC = (date) => { const d = new Date(date); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
+            const formatMnt = (mnt) => Number(mnt).toFixed(2).replace('.', ',');
+
+            for (const t of Object.values(ticketsMap)) {
+                const dEcr = formatDateFEC(t.date), dVal = formatDateFEC(t.date_valid), pRef = t.numero, eNum = `VT-${t.id_ticket}`;
+                const cPaiement = t.methode === 'ESPECES' ? (salon.compte_caisse || '530000') : (salon.compte_banque || '512000');
+                const lPaiement = t.methode === 'ESPECES' ? 'Caisse' : 'Banque';
+
+                lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cPaiement, CompteLib: lPaiement, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `Encaissement ${pRef}`, Debit: formatMnt(t.total_ttc), Credit: '', EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' });
+                totalDebit += Math.round(t.total_ttc * 100);
+
+                for (const l of t.lignes) {
+                    const lTTC = parseFloat(l.total_ligne_ttc), tTVA = parseFloat(l.taux_tva_snapshot) || 20.00;
+                    const lHT = Number((lTTC / (1 + tTVA / 100)).toFixed(2)), lTVA = Number((lTTC - lHT).toFixed(2));
+                    const cVente = l.type_article === 'PRODUIT_REVENTE' ? (salon.compte_produits || '707000') : (salon.compte_prestations || '706000');
+                    const lVente = l.type_article === 'PRODUIT_REVENTE' ? 'Vente Produit' : 'Vente Prestation';
+                    const nNet = (l.nom_article || 'Article').substring(0, 30).replace(/\t/g, ' ').replace(/\n/g, ' ');
+
+                    if (lHT > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cVente, CompteLib: lVente, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: nNet, Debit: '', Credit: formatMnt(lHT), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lHT * 100); }
+                    if (lTVA > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: (salon.compte_tva || '445710'), CompteLib: `TVA Collectee ${tTVA}%`, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `TVA ${nNet}`.substring(0,30), Debit: '', Credit: formatMnt(lTVA), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lTVA * 100); }
+                }
+            }
+
+            if (totalDebit === totalCredit && lignesFec.length > 0) {
+                const h = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
+                fecContent = h.join('\t') + '\r\n' + lignesFec.map(row => h.map(col => row[col]).join('\t')).join('\r\n') + '\r\n';
+            }
+        } catch(e) { console.error(`Erreur génération FEC pour le salon ${id_salon}:`, e); }
+
+        // --- GÉNÉRATION DU PDF ET ENVOI ---
+        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
+        let buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+        
+        doc.on('end', async () => {
+            const pdfData = Buffer.concat(buffers); 
+            try {
+                let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) } });
+                const libelleMois = firstDayPrevMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+                
+                const attachments = [
+                    { filename: `Liasse_Comptable_${salon.nom_salon}_${libelleMois.replace(' ', '_')}.pdf`, content: pdfData }
+                ];
+                
+                if (fecContent) {
+                    attachments.push({
+                        filename: `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`,
+                        content: fecContent,
+                        contentType: 'text/plain; charset=windows-1252'
+                    });
+                }
+
+                let textBody = `Bonjour,\n\nVeuillez trouver en pièce jointe la liasse comptable de ${salon.nom_salon} pour la période du ${firstDayPrevMonth.toLocaleDateString('fr-FR')} au ${lastDayPrevMonth.toLocaleDateString('fr-FR')}.\nCe document a été vérifié et signé électroniquement par le gérant.\n\n`;
+                if (fecContent) textBody += `Le fichier FEC (Fichier des Écritures Comptables) est également joint, prêt à être importé dans votre logiciel.\n\n`;
+                textBody += `Cordialement,`;
+
+                await transporter.sendMail({
+                    from: `"${salon.nom_salon}" <${salon.email_reception_factures}>`, 
+                    to: salon.email_comptable, 
+                    subject: `✅ Liasse Comptable Mensuelle Validée - ${salon.nom_salon} (${libelleMois})`, 
+                    text: textBody,
+                    attachments: attachments
+                });
+            } catch (emailError) { console.error(`Erreur envoi email comptable pour le salon ${id_salon}:`, emailError); } 
+        });
+
+        const THEME_COLOR = '#00B4D8'; const TEXT_DARK = '#1f2937'; const TEXT_LIGHT = '#6b7280'; const LINE_COLOR = '#e5e7eb';
+        try { doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 }); } catch(e) { doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' }); }
+
+        doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#16a34a').text('ÉTAT : VALIDÉ ET SIGNÉ PAR LE GÉRANT', 50, 95);
+        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 110);
+        doc.moveDown(3);
+
+        const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
+            const y = doc.y;
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col1, 50, y);
+            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col2, 450, y, { width: 95, align: 'right' });
+            if (!isHeader && !isTotal) { doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke(); }
+            doc.y += 18;
+        };
+
+        const drawSectionHeader = (title) => {
+            doc.moveDown(1.5);
+            doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
+            doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
+            doc.moveDown(0.5);
+        };
+
+        drawSectionHeader('Chiffre d\'Affaires & Encaissements');
+        drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
+        caParMethodeResult.rows.forEach(m => drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`));
+        doc.moveDown(0.5); drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
+
+        drawSectionHeader('Dépenses (Traitées par IA)');
+        drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
+        let totalDepenses = 0;
+        if (facturesResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois.', 50, doc.y); doc.moveDown(1); } 
+        else { facturesResult.rows.forEach(f => { drawTableRow(`✓ ${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`); totalDepenses += parseFloat(f.montant_ttc); }); }
+        doc.moveDown(0.5); drawTableRow('Total Dépenses Numérisées', `${totalDepenses.toFixed(2)} €`, false, true);
+
+        drawSectionHeader('Commissions Employés');
+        drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
+        let totalPrimes = 0;
+        if (rhResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y); } 
+        else { rhResult.rows.forEach(c => { drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`); totalPrimes += parseFloat(c.total_prime); }); }
+        doc.moveDown(0.5); drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
+
+        doc.addPage();
+        doc.font('Helvetica-Bold').fontSize(24).fillColor(THEME_COLOR).text('Variables de Paie & Absences', 50, 50);
+        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 80);
+        doc.moveDown(3);
+
+        drawSectionHeader('Registre des Absences Validées');
+        if (!absencesResult || absencesResult.rowCount === 0) { 
+            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune absence enregistrée sur cette période.', 50, doc.y); 
+        } 
+        else {
+            drawTableRow('EMPLOYÉ & NATURE', 'DATES', true);
+            absencesResult.rows.forEach(abs => {
+                const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence || ''})` : `Congé (${abs.nature_absence || ''})`;
+                let dateD = ''; let dateF = '';
+                try { dateD = new Date(abs.date_debut).toLocaleDateString('fr-FR'); } catch(e){}
+                try { dateF = new Date(abs.date_fin).toLocaleDateString('fr-FR'); } catch(e){}
+                drawTableRow(`${abs.nom_employe || ''} - ${natureStr.replace('_', ' ')}${abs.fichier_cle_r2 ? " (Justificatif fourni)" : ""}`, `Du ${dateD} au ${dateF}`);
+            });
+        }
+
+        const pages = doc.bufferedPageRange();
+        for (let i = 0; i < pages.count; i++) { doc.switchToPage(i); doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR); }
+        doc.end();
+
+    } catch (err) {
+        console.error("Erreur génération liasse comptable :", err);
+    }
+}
+
+app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
+    const { mois_annee, code_pin } = req.body; // YYYY-MM attendu
+    const id_salon = req.user.id_salon;
+    
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider et signer la liasse comptable." });
+    
+    try {
+        const empRes = await pool.query("SELECT nom, code_pin FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
+        if (empRes.rowCount === 0) return res.status(404).json({ erreur: "Gérant introuvable." });
+        
+        const gerant = empRes.rows[0];
+        let pinMatch = false;
+        if (gerant.code_pin && gerant.code_pin.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(code_pin, gerant.code_pin);
+        } else {
+            pinMatch = (gerant.code_pin === code_pin);
+        }
+
+        if (!pinMatch) return res.status(401).json({ erreur: "Code PIN incorrect. Signature refusée." });
+
+        await pool.query(
+            "INSERT INTO liasses_mensuelles_validees (id_salon, mois_annee, valide_par) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            [id_salon, mois_annee, gerant.nom]
+        );
+
+        // Déclenche l'envoi immédiat au comptable
+        await envoyerBilanComptable(id_salon, mois_annee);
+
+        res.json({ message: "Liasse validée, signée et transmise à l'expert-comptable avec succès." });
+    } catch (e) {
+        console.error("Erreur validation mois:", e);
+        res.status(500).json({ erreur: "Erreur lors de la validation." });
+    }
+});
+
+app.get('/api/compta/statut-mois', verifierToken, async (req, res) => {
+    const { mois_annee } = req.query; // YYYY-MM
+    try {
+        const result = await pool.query('SELECT valide_par, date_validation FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [req.user.id_salon, mois_annee]);
+        res.json({ valide: result.rowCount > 0, infos: result.rowCount > 0 ? result.rows[0] : null });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture statut." }); }
+});
+
+// =========================================================================
+// --- ROBOT D'ENVOI AU COMPTABLE (CRON JOB MODIFIÉ) ---
 // =========================================================================
 async function executerEnvoiComptable() {
     try {
-        const salons = await pool.query("SELECT id_salon, nom_salon, email_comptable, jour_envoi_bilan, email_reception_factures, mot_de_passe_app_email, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva FROM configuration_salon WHERE email_comptable IS NOT NULL AND email_comptable != ''");
+        const salons = await pool.query("SELECT id_salon, nom_salon, jour_envoi_bilan, telephone_gerant, alertes_sms_actives, brevo_api_key, sms_sender_name FROM configuration_salon WHERE email_comptable IS NOT NULL");
         const today = new Date();
         const currentDay = today.getDate();
         const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+        
+        let prevMonth = today.getMonth(); 
+        let year = today.getFullYear();
+        if (prevMonth === 0) { prevMonth = 12; year -= 1; }
+        const moisAnneeCible = `${year}-${String(prevMonth).padStart(2, '0')}`;
 
         for (let salon of salons.rows) {
             try {
                 const jourCible = salon.jour_envoi_bilan || 1;
-                const shouldSend = currentDay === jourCible || (jourCible > lastDayOfMonth && currentDay === lastDayOfMonth);
+                const shouldCheck = currentDay === jourCible || (jourCible > lastDayOfMonth && currentDay === lastDayOfMonth);
                 
-                if (shouldSend && salon.email_reception_factures && salon.mot_de_passe_app_email) {
+                if (shouldCheck) {
                     const id_salon = salon.id_salon;
+                    const validationRes = await pool.query('SELECT 1 FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisAnneeCible]);
                     
-                    const firstDayPrevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-                    const lastDayPrevMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-                    
-                    const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                    const dateDebutStr = formatYMD(firstDayPrevMonth);
-                    const dateFinStr = formatYMD(lastDayPrevMonth);
-
-                    const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
-                    const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
-                    const caParMethodeResult = await pool.query(`SELECT methode_paiement, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
-                    const rhResult = await pool.query(`SELECT e.nom, COALESCE(SUM(c.montant_commission), 0) as total_prime FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3 WHERE e.id_salon = $1 GROUP BY e.nom`, [id_salon, dateDebutStr, dateFinStr]);
-                    
-                    // La requête qui manquait ou était fragile :
-                    const absencesResult = await pool.query(`SELECT a.type_demande, a.nature_absence, a.date_debut, a.date_fin, a.fichier_cle_r2, e.nom as nom_employe FROM absences_employes a JOIN employes e ON a.id_employe = e.id_employe WHERE a.id_salon = $1 AND a.statut = 'VALIDE' AND a.date_debut <= $3 AND a.date_fin >= $2 ORDER BY e.nom ASC, a.date_debut ASC`, [id_salon, dateDebutStr, dateFinStr]);
-
-                    const caTotal = parseFloat(caResult.rows[0].ca_total);
-
-                    // --- GÉNÉRATION DU FEC EN ARRIÈRE-PLAN ---
-                    let fecContent = null;
-                    try {
-                        const ticketsFecRes = await pool.query(`
-                            SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, 'Article') as nom_article, COALESCE(c.type_article, 'PRESTATION') as type_article, cc.date_cloture
-                            FROM tickets t
-                            JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
-                            LEFT JOIN catalogue c ON lt.id_article = c.id_article
-                            LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
-                            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
-                            ORDER BY t.date_creation ASC, t.id_ticket ASC
-                        `, [id_salon, dateDebutStr, dateFinStr]);
-
-                        let totalDebit = 0, totalCredit = 0;
-                        const lignesFec = [];
-                        const ticketsMap = {};
-
-                        ticketsFecRes.rows.forEach(r => {
-                            if (!ticketsMap[r.id_ticket]) ticketsMap[r.id_ticket] = { id_ticket: r.id_ticket, numero: r.numero_ticket_caisse, date: r.date_creation, date_valid: r.date_cloture || r.date_creation, methode: r.methode_paiement, total_ttc: parseFloat(r.total_ttc), lignes: [] };
-                            ticketsMap[r.id_ticket].lignes.push(r);
+                    if (validationRes.rowCount === 0) {
+                        // Relance automatique du gérant car ce n'est pas validé
+                        envoyerNotificationPush(id_salon, 'gerant', {
+                            title: "⚠️ Liasse Comptable en attente",
+                            body: `N'oubliez pas de vérifier et signer votre bilan du mois pour envoi à l'expert-comptable.`,
+                            url: '/?tab=admin'
                         });
-
-                        const formatDateFEC = (date) => { const d = new Date(date); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
-                        const formatMnt = (mnt) => Number(mnt).toFixed(2).replace('.', ',');
-
-                        for (const t of Object.values(ticketsMap)) {
-                            const dEcr = formatDateFEC(t.date), dVal = formatDateFEC(t.date_valid), pRef = t.numero, eNum = `VT-${t.id_ticket}`;
-                            const cPaiement = t.methode === 'ESPECES' ? (salon.compte_caisse || '530000') : (salon.compte_banque || '512000');
-                            const lPaiement = t.methode === 'ESPECES' ? 'Caisse' : 'Banque';
-
-                            lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cPaiement, CompteLib: lPaiement, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `Encaissement ${pRef}`, Debit: formatMnt(t.total_ttc), Credit: '', EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' });
-                            totalDebit += Math.round(t.total_ttc * 100);
-
-                            for (const l of t.lignes) {
-                                const lTTC = parseFloat(l.total_ligne_ttc), tTVA = parseFloat(l.taux_tva_snapshot) || 20.00;
-                                const lHT = Number((lTTC / (1 + tTVA / 100)).toFixed(2)), lTVA = Number((lTTC - lHT).toFixed(2));
-                                const cVente = l.type_article === 'PRODUIT_REVENTE' ? (salon.compte_produits || '707000') : (salon.compte_prestations || '706000');
-                                const lVente = l.type_article === 'PRODUIT_REVENTE' ? 'Vente Produit' : 'Vente Prestation';
-                                const nNet = (l.nom_article || 'Article').substring(0, 30).replace(/\t/g, ' ').replace(/\n/g, ' ');
-
-                                if (lHT > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cVente, CompteLib: lVente, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: nNet, Debit: '', Credit: formatMnt(lHT), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lHT * 100); }
-                                if (lTVA > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: (salon.compte_tva || '445710'), CompteLib: `TVA Collectee ${tTVA}%`, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `TVA ${nNet}`.substring(0,30), Debit: '', Credit: formatMnt(lTVA), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lTVA * 100); }
-                            }
+                        
+                        if (salon.alertes_sms_actives && salon.telephone_gerant && salon.brevo_api_key) {
+                            const smsTexte = `⚠️ STACK : Votre liasse comptable mensuelle attend votre signature ! Connectez-vous sur l'app pour la valider et l'envoyer à votre expert.`;
+                            await envoyerSMS_Intelligent(id_salon, salon.brevo_api_key, salon.sms_sender_name, salon.telephone_gerant, smsTexte);
                         }
-
-                        if (totalDebit === totalCredit && lignesFec.length > 0) {
-                            const h = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
-                            fecContent = h.join('\t') + '\r\n' + lignesFec.map(row => h.map(col => row[col]).join('\t')).join('\r\n') + '\r\n';
-                        }
-                    } catch(e) { console.error(`Erreur génération FEC Robot pour le salon ${salon.id_salon}:`, e); }
-
-                    // --- GÉNÉRATION DU PDF ET ENVOI ---
-                    const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
-                    let buffers = [];
-                    doc.on('data', buffers.push.bind(buffers));
-                    
-                    doc.on('end', async () => {
-                        const pdfData = Buffer.concat(buffers); 
-                        try {
-                            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) } });
-                            const moisAnnee = firstDayPrevMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
-                            
-                            const attachments = [
-                                { filename: `Liasse_Comptable_${salon.nom_salon}_${moisAnnee.replace(' ', '_')}.pdf`, content: pdfData }
-                            ];
-                            
-                            if (fecContent) {
-                                attachments.push({
-                                    filename: `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`,
-                                    content: fecContent,
-                                    contentType: 'text/plain; charset=windows-1252'
-                                });
-                            }
-
-                            let textBody = `Bonjour,\n\nVeuillez trouver en pièce jointe la liasse comptable de ${salon.nom_salon} pour la période du ${firstDayPrevMonth.toLocaleDateString('fr-FR')} au ${lastDayPrevMonth.toLocaleDateString('fr-FR')}.\n\n`;
-                            if (fecContent) textBody += `Le fichier FEC (Fichier des Écritures Comptables) est également joint, prêt à être importé dans votre logiciel (format TXT, partie double équilibrée).\n\n`;
-                            textBody += `Cordialement,`;
-
-                            await transporter.sendMail({
-                                from: `"${salon.nom_salon}" <${salon.email_reception_factures}>`, 
-                                to: salon.email_comptable, 
-                                subject: `📊 Liasse Comptable Mensuelle - ${salon.nom_salon} (${moisAnnee})`, 
-                                text: textBody,
-                                attachments: attachments
-                            });
-                            console.log(`[CRON] Bilan mensuel & FEC envoyés au comptable pour le salon ${id_salon}`);
-                        } catch (emailError) { console.error(`Erreur envoi email comptable pour le salon ${salon.id_salon}:`, emailError); } 
-                    });
-
-                    const THEME_COLOR = '#00B4D8'; const TEXT_DARK = '#1f2937'; const TEXT_LIGHT = '#6b7280'; const LINE_COLOR = '#e5e7eb';
-                    try { doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 }); } catch(e) { doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' }); }
-
-                    doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
-                    doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 95);
-                    doc.moveDown(4);
-
-                    const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
-                        const y = doc.y;
-                        doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col1, 50, y);
-                        doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col2, 450, y, { width: 95, align: 'right' });
-                        if (!isHeader && !isTotal) { doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke(); }
-                        doc.y += 18;
-                    };
-
-                    const drawSectionHeader = (title) => {
-                        doc.moveDown(1.5);
-                        doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
-                        doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
-                        doc.moveDown(0.5);
-                    };
-
-                    drawSectionHeader('Chiffre d\'Affaires & Encaissements');
-                    drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
-                    caParMethodeResult.rows.forEach(m => drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`));
-                    doc.moveDown(0.5); drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
-
-                    drawSectionHeader('Dépenses (Traitées par IA)');
-                    drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
-                    let totalDepenses = 0;
-                    if (facturesResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois.', 50, doc.y); doc.moveDown(1); } 
-                    else { facturesResult.rows.forEach(f => { drawTableRow(`✓ ${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`); totalDepenses += parseFloat(f.montant_ttc); }); }
-                    doc.moveDown(0.5); drawTableRow('Total Dépenses Numérisées', `${totalDepenses.toFixed(2)} €`, false, true);
-
-                    drawSectionHeader('Commissions Employés');
-                    drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
-                    let totalPrimes = 0;
-                    if (rhResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y); } 
-                    else { rhResult.rows.forEach(c => { drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`); totalPrimes += parseFloat(c.total_prime); }); }
-                    doc.moveDown(0.5); drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
-
-                    doc.addPage();
-                    doc.font('Helvetica-Bold').fontSize(24).fillColor(THEME_COLOR).text('Variables de Paie & Absences', 50, 50);
-                    doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 80);
-                    doc.moveDown(3);
-
-                    drawSectionHeader('Registre des Absences Validées');
-                    if (!absencesResult || absencesResult.rowCount === 0) { 
-                        doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune absence enregistrée sur cette période.', 50, doc.y); 
-                    } 
-                    else {
-                        drawTableRow('EMPLOYÉ & NATURE', 'DATES', true);
-                        absencesResult.rows.forEach(abs => {
-                            const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence || ''})` : `Congé (${abs.nature_absence || ''})`;
-                            let dateD = ''; let dateF = '';
-                            try { dateD = new Date(abs.date_debut).toLocaleDateString('fr-FR'); } catch(e){}
-                            try { dateF = new Date(abs.date_fin).toLocaleDateString('fr-FR'); } catch(e){}
-                            drawTableRow(`${abs.nom_employe || ''} - ${natureStr.replace('_', ' ')}${abs.fichier_cle_r2 ? " (Justificatif fourni)" : ""}`, `Du ${dateD} au ${dateF}`);
-                        });
                     }
-
-                    const pages = doc.bufferedPageRange();
-                    for (let i = 0; i < pages.count; i++) { doc.switchToPage(i); doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR); }
-                    doc.end();
                 }
             } catch (salonErr) {
                 console.error(`[ROBOT-COMPTABLE] Erreur isolée pour le salon ${salon.id_salon}:`, salonErr);
@@ -5036,6 +5124,8 @@ async function executerEnvoiComptable() {
         }
     } catch (err) { console.error("Erreur globale Robot Comptable Automatique:", err); }
 }
+
+async function executerClotureFantome() {
 
 async function executerClotureFantome() {
     const clientDB = await pool.connect();
