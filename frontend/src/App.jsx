@@ -1832,39 +1832,76 @@ function App() {
   const [progressionBatch, setProgressionBatch] = useState({ actuel: 0, total: 0 });
   const [fileAttenteIA, setFileAttenteIA] = useState([]);
 
-  const handleUploadFactureManuel = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      
-      const isAccepted = file.type === 'application/pdf' || file.type.startsWith('image/');
-      if (!isAccepted) return showToast("Veuillez envoyer un PDF ou une photo (JPG/PNG).", "error");
-      
-      setIsUploadingFacture(true);
-      showToast("L'IA décrypte le document (Patientez 5 à 15 sec)...", "info");
+  const handleUploadFactureManuel = async (e) => {
+      const fichiers = Array.from(e.target.files || []);
+      if (fichiers.length === 0) return;
 
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-          const base64String = reader.result.split(',')[1];
+      setIsUploadingFacture(true);
+      setProgressionBatch({ actuel: 0, total: fichiers.length });
+
+      const tachesAnalysees = [];
+      let erreursCount = 0;
+
+      const lireFichierEnBase64 = (file) => new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+      });
+
+      for (let i = 0; i < fichiers.length; i++) {
+          const file = fichiers[i];
+          setProgressionBatch({ actuel: i + 1, total: fichiers.length });
+          
+          const isAccepted = file.type === 'application/pdf' || file.type.startsWith('image/');
+          if (!isAccepted) {
+              erreursCount++;
+              continue; // On passe au fichier suivant si le format est mauvais
+          }
+
           try {
+              const base64 = await lireFichierEnBase64(file);
               const res = await fetch('https://api-salon-backend.onrender.com/api/ia/upload-facture', {
                   method: 'POST',
                   headers: getAuthHeaders(true),
-                  body: JSON.stringify({ fichier_base64: base64String, mime_type: file.type })
+                  body: JSON.stringify({
+                      fichier_base64: base64,
+                      mime_type: file.type
+                  })
               });
-              const data = await handleFetchError(res);
-              showToast(data.message, "success");
+
+              const data = await handleFetchError(res); // Sécurisé par ta gestion d'erreur globale
               
-              // MAGIE : Déclenchement instantané de la modale Split-Screen avec les données de l'IA !
-              setModalIA(data.tache); 
-              
+              if (data && data.tache) {
+                  tachesAnalysees.push({
+                      ...data.tache,
+                      id_tache: `${data.tache.id_tache}_${i}`, // ID unique pour la file d'attente
+                      nom_fichier_origine: file.name
+                  });
+              }
           } catch (err) {
-              showToast(err.message || "Erreur d'analyse.", "error");
-          } finally {
-              setIsUploadingFacture(false);
-              e.target.value = null; // Réinitialise l'input
+              erreursCount++;
           }
-      };
-      reader.readAsDataURL(file);
+      }
+
+      setIsUploadingFacture(false);
+      setProgressionBatch({ actuel: 0, total: 0 });
+      e.target.value = null; // Réinitialise l'input
+
+      if (tachesAnalysees.length > 0) {
+          setFileAttenteIA(tachesAnalysees);
+          setModalIA(tachesAnalysees[0]); // Ouvre immédiatement le 1er document du lot
+
+          if (erreursCount > 0) {
+              showToast(`${tachesAnalysees.length} document(s) prêt(s), ${erreursCount} échec(s).`, "info");
+          } else if (tachesAnalysees.length > 1) {
+              showToast(`${tachesAnalysees.length} documents prêts pour validation.`, "success");
+          } else {
+              showToast("Analyse de l'IA terminée !", "success");
+          }
+      } else {
+          showToast("Aucun document valide n'a pu être extrait du lot.", "error");
+      }
   };
 
   const ouvrirRdvSelectionne = (rdv) => {
@@ -2505,6 +2542,61 @@ function App() {
                                   {/* Partie Droite : Formulaire de Contrôle */}
                                   <div style={{flex: 1, minWidth: '40%', display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: window.innerWidth < 768 ? 'auto' : '530px', overflowY: 'auto', paddingRight: '8px'}}>
                                       
+                                      {fileAttenteIA.length > 1 && (
+                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', boxShadow: 'var(--shadow-sm)' }}>
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '13px', fontWeight: '600' }}>
+                                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                                                      <polyline points="2 17 12 22 22 17" />
+                                                      <polyline points="2 12 12 17 22 12" />
+                                                  </svg>
+                                                  <span>Lot en attente : {fileAttenteIA.findIndex(t => t.id_tache === modalIA.id_tache) + 1} sur {fileAttenteIA.length}</span>
+                                              </div>
+                                  
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                  <button
+                                                      type="button"
+                                                      disabled={fileAttenteIA.findIndex(t => t.id_tache === modalIA.id_tache) <= 0}
+                                                      onClick={() => {
+                                                          const idx = fileAttenteIA.findIndex(t => t.id_tache === modalIA.id_tache);
+                                                          if (idx > 0) {
+                                                              const copie = [...fileAttenteIA];
+                                                              copie[idx] = modalIA;
+                                                              setFileAttenteIA(copie);
+                                                              setModalIA(copie[idx - 1]);
+                                                          }
+                                                      }}
+                                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-app)', color: 'var(--text-main)', cursor: 'pointer', opacity: fileAttenteIA.findIndex(t => t.id_tache === modalIA.id_tache) <= 0 ? 0.4 : 1 }}
+                                                      title="Document précédent"
+                                                  >
+                                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                          <polyline points="15 18 9 12 15 6" />
+                                                      </svg>
+                                                  </button>
+                                  
+                                                  <button
+                                                      type="button"
+                                                      disabled={fileAttenteIA.findIndex(t => t.id_tache === modalIA.id_tache) >= fileAttenteIA.length - 1}
+                                                      onClick={() => {
+                                                          const idx = fileAttenteIA.findIndex(t => t.id_tache === modalIA.id_tache);
+                                                          if (idx < fileAttenteIA.length - 1) {
+                                                              const copie = [...fileAttenteIA];
+                                                              copie[idx] = modalIA;
+                                                              setFileAttenteIA(copie);
+                                                              setModalIA(copie[idx + 1]);
+                                                          }
+                                                      }}
+                                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-app)', color: 'var(--text-main)', cursor: 'pointer', opacity: fileAttenteIA.findIndex(t => t.id_tache === modalIA.id_tache) >= fileAttenteIA.length - 1 ? 0.4 : 1 }}
+                                                      title="Document suivant"
+                                                  >
+                                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                          <polyline points="9 18 15 12 9 6" />
+                                                      </svg>
+                                                  </button>
+                                              </div>
+                                          </div>
+                                      )}
+                                  
                                       <div style={{display: 'flex', gap: '12px'}}>
                                           <div style={{flex: 2}}>
                                               <label style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold'}}>Fournisseur</label>
