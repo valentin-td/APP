@@ -4857,6 +4857,7 @@ async function executerRobotMarketingEtPredictif() {
 // =========================================================================
 async function envoyerBilanComptable(id_salon, mois_annee) {
     try {
+        const today = new Date(); // <--- AJOUTE CETTE LIGNE ICI
         const salonRes = await pool.query("SELECT * FROM configuration_salon WHERE id_salon = $1", [id_salon]);
         if (salonRes.rowCount === 0) return;
         const salon = salonRes.rows[0];
