@@ -886,6 +886,7 @@ body:has(.modal-overlay) { overflow: hidden; }
     background: var(--bg-success);
     border-color: var(--color-success);
 }
+
 .checklist-checkbox {
     width: 22px;
     height: 22px;
