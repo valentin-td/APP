@@ -1815,7 +1815,15 @@ function App() {
           }
 
           const defaultAbsenceDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
-          // --- FONCTIONS : WORKFLOW DE VALIDATION COMPTABLE ---
+          setFormAbsence({ type_demande: 'CONGES', nature_absence: 'CP', type_prolongation: 'INITIAL', date_debut: defaultAbsenceDate, moment_debut: 'MATIN', date_fin: defaultAbsenceDate, moment_fin: 'APRES_MIDI', heures_sortie: '', commentaire: '', fichier_base64: null, nom_fichier: '', type_mime: '' });
+      } catch (e) { 
+          showToast(e.message || "Erreur de soumission", "error"); 
+      } finally {
+          setIsSubmittingAbsence(false);
+      }
+  };
+
+  // --- FONCTIONS : WORKFLOW DE VALIDATION COMPTABLE ---
   const chargerStatutMoisCompta = async () => {
       if (!token || decodeToken(token)?.role !== 'gerant') return;
       const today = new Date();
@@ -1837,13 +1845,13 @@ function App() {
 
   const previsualiserBrouillon = async () => {
       if (isOffline || !navigator.onLine) return showToast("Téléchargement impossible hors-ligne.", "error");
-      showToast("Génération du brouillon en cours...");
+      showToast("Génération du PDF en cours...");
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/export-pdf?mois_annee=${statutMoisPrecedent?.mois}`, { headers: getAuthHeaders() });
           if (!res.ok) throw new Error("Erreur Serveur");
           const blob = await res.blob();
           const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a'); a.href = url; a.download = `Brouillon_Liasse_${statutMoisPrecedent?.mois}.pdf`; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
+          const a = document.createElement('a'); a.href = url; a.download = `Liasse_${statutMoisPrecedent?.mois}.pdf`; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
       } catch (e) { showToast("Erreur de téléchargement", "error"); }
   };
 
@@ -1869,6 +1877,8 @@ function App() {
           setIsValidatingCompta(false);
       }
   };
+
+  const handleUploadJustificatifAbsence = (e) => {
       const file = e.target.files[0];
       if (file) {
           const reader = new FileReader();
@@ -3018,6 +3028,140 @@ function App() {
 
       <div className="main-content">
         <div className={`dashboard-container ${['caisse', 'agenda', 'messagerie'].includes(activeTab) ? 'wide' : ''}`}>
+
+              {/* WORKFLOW DE VALIDATION DE LA LIASSE MENSUELLE (ONGLET COMPTA) */}
+              {role === 'gerant' && activeTab === 'admin' && statutMoisPrecedent && (
+                  <div style={{ marginBottom: '24px', position: 'relative', zIndex: 20 }}>
+                      <div className="section-titre" style={{ marginTop: 0 }}>
+                          <span>Validation Liasse Mensuelle — {statutMoisPrecedent.libelle}</span>
+                      </div>
+                      <div className="carte scan-carte" style={{ borderColor: statutMoisPrecedent.valide ? 'var(--color-success)' : 'var(--border-color)', marginBottom: 0 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: '240px' }}>
+                                  <div className="icon" style={{ width: '40px', height: '40px', borderRadius: '12px', flexShrink: 0, background: statutMoisPrecedent.valide ? 'var(--bg-success)' : 'var(--bg-app)', color: statutMoisPrecedent.valide ? 'var(--color-success)' : 'var(--text-main)', borderColor: statutMoisPrecedent.valide ? 'var(--color-success)' : 'var(--border-color)' }}>
+                                      {statutMoisPrecedent.valide ? (
+                                          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                      ) : (
+                                          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                                      )}
+                                  </div>
+                                  <div>
+                                      <h3 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: '600', color: 'var(--text-main)' }}>
+                                          {statutMoisPrecedent.valide ? "Liasse validée et transmise" : "En attente de validation et signature"}
+                                      </h3>
+                                      <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                                          {statutMoisPrecedent.valide 
+                                              ? `Certifiée le ${new Date(statutMoisPrecedent.infos.date_validation).toLocaleDateString('fr-FR')} par ${statutMoisPrecedent.infos.valide_par}.` 
+                                              : "Vérifiez le brouillon mensuel puis signez la check-list de conformité pour l'envoyer à votre expert-comptable."}
+                                      </p>
+                                  </div>
+                              </div>
+                              <span className="badge-discret" style={{ background: statutMoisPrecedent.valide ? 'var(--bg-success)' : 'var(--bg-info)', color: statutMoisPrecedent.valide ? 'var(--color-success)' : 'var(--color-info)' }}>
+                                  {statutMoisPrecedent.valide ? "CERTIFIÉ NF525" : "À VALIDER"}
+                              </span>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              <button onClick={previsualiserBrouillon} className="btn-action" style={{ flex: 1, minWidth: '180px', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', gap: '8px' }}>
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                  <span>{statutMoisPrecedent.valide ? "Télécharger la liasse définitive" : "Prévisualiser le brouillon"}</span>
+                              </button>
+                              
+                              {!statutMoisPrecedent.valide && (
+                                  <button onClick={() => setShowModalValidationCompta(true)} className="btn-action" style={{ flex: 1, minWidth: '180px', gap: '8px' }}>
+                                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                      <span>Valider et envoyer</span>
+                                  </button>
+                              )}
+                          </div>
+                      </div>
+                  </div>
+              )}
+
+              {/* MODALE DE VALIDATION ET SIGNATURE COMPTABLE */}
+              {showModalValidationCompta && statutMoisPrecedent && (
+                  <div className="modal-overlay">
+                      <div className="modal-content" style={{ maxWidth: '480px' }}>
+                          <div className="modal-header">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <div className="icon" style={{ width: '34px', height: '34px', borderRadius: '10px' }}>
+                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                  </div>
+                                  <h3 style={{ margin: 0, fontSize: '17px', color: 'var(--text-main)' }}>Conformité — {statutMoisPrecedent.libelle}</h3>
+                              </div>
+                              <button className="modal-close-btn" onClick={() => setShowModalValidationCompta(false)}>
+                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                              </button>
+                          </div>
+
+                          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: 1.5 }}>
+                              Cochez les éléments vérifiés puis signez avec votre code PIN gérant pour sceller définitivement la liasse et la transmettre à l'expert-comptable.
+                          </p>
+
+                          <div className="checklist-container">
+                              <div className={`checklist-item ${checklistCompta.caisse ? 'checked' : ''}`} onClick={() => setChecklistCompta({ ...checklistCompta, caisse: !checklistCompta.caisse })}>
+                                  <div className="checklist-checkbox">
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                  </div>
+                                  <div className="checklist-content">
+                                      <span className="checklist-title">Caisse et clôtures Z vérifiées</span>
+                                      <span className="checklist-desc">Le rapprochement entre les encaissements, les espèces physiques et les remises en banque est exact.</span>
+                                  </div>
+                              </div>
+
+                              <div className={`checklist-item ${checklistCompta.paie ? 'checked' : ''}`} onClick={() => setChecklistCompta({ ...checklistCompta, paie: !checklistCompta.paie })}>
+                                  <div className="checklist-checkbox">
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                  </div>
+                                  <div className="checklist-content">
+                                      <span className="checklist-title">Variables de paie et absences vérifiées</span>
+                                      <span className="checklist-desc">Les commissions, heures supplémentaires/complémentaires et congés de l'équipe sont complets.</span>
+                                  </div>
+                              </div>
+
+                              <div className={`checklist-item ${checklistCompta.depenses ? 'checked' : ''}`} onClick={() => setChecklistCompta({ ...checklistCompta, depenses: !checklistCompta.depenses })}>
+                                  <div className="checklist-checkbox">
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                  </div>
+                                  <div className="checklist-content">
+                                      <span className="checklist-title">Dépenses et achats justifiés</span>
+                                      <span className="checklist-desc">Les factures fournisseurs du mois sont validées et les justificatifs sont tenus à disposition.</span>
+                                  </div>
+                              </div>
+                          </div>
+
+                          <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
+                              <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                  <span>Code PIN du gérant (Signature électronique)</span>
+                              </label>
+                              <input 
+                                  type="password" 
+                                  maxLength="10" 
+                                  inputMode="numeric"
+                                  className="input-fournisseur" 
+                                  placeholder="Saisissez votre code PIN" 
+                                  value={pinValidationCompta}
+                                  onChange={e => setPinValidationCompta(e.target.value)}
+                                  style={{ marginBottom: '6px', letterSpacing: '0.2em', fontWeight: '600', background: 'var(--bg-card)' }}
+                              />
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>
+                                  Cette signature scelle définitivement la liasse mensuelle aux normes NF525.
+                              </span>
+                          </div>
+
+                          <button 
+                              onClick={validerEtEnvoyerMois} 
+                              className="btn-action" 
+                              disabled={isValidatingCompta || !checklistCompta.caisse || !checklistCompta.paie || !checklistCompta.depenses || pinValidationCompta.length < 4}
+                              style={{ width: '100%', gap: '8px' }}
+                          >
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                              <span>{isValidatingCompta ? "Signature et envoi en cours..." : "Signer et transmettre"}</span>
+                          </button>
+                      </div>
+                  </div>
+              )}
 
               {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
               {role === 'salon' && activeTab === 'accueil' && (
