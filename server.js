@@ -4010,8 +4010,9 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         let sumDepenses = 0;
         facturesRes.rows.forEach(f => {
             sumDepenses += parseFloat(f.montant_ttc);
-            const ht = franchiseTVA ? parseFloat(f.montant_ttc) : parseFloat(f.montant_ht);
-            const tva = franchiseTVA ? 0 : parseFloat(f.montant_tva);
+            // On conserve les montants HT et TVA réels de la facture, même en franchise (anticipation de dépassement de seuil)
+            const ht = parseFloat(f.montant_ht);
+            const tva = parseFloat(f.montant_tva);
             
             let compte = '604 - Achats';
             const nomLower = (f.nom_fournisseur || '').toLowerCase();
