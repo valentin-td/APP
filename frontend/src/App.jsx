@@ -90,7 +90,9 @@ function App() {
   // les éléments comme interactifs, sinon le premier tap ne fait que simuler le
   // survol (:hover) et il faut taper une seconde fois pour déclencher le clic.
   useEffect(() => {
-      document.addEventListener('touchstart', function () {}, { passive: true });
+      const noop = () => {};
+      document.addEventListener('touchstart', noop, { passive: true });
+      return () => document.removeEventListener('touchstart', noop);
   }, []);
 
   useEffect(() => {
@@ -489,30 +491,7 @@ function App() {
       marquerConversationCommeLue();
   }, [chatActif, activeTab, messagesListe.length]);
 
-  // Corrige le gel du scroll tactile iOS/WebKit quand l'app revient du premier plan
-  // (bug connu : overflow-y:auto imbriqué dans un ancêtre position:fixed se fige après une mise en arrière-plan)
-  useEffect(() => {
-      const debloquerScrollChat = () => {
-          if (document.visibilityState !== 'visible') return;
-          const el = chatMessagesRef.current;
-          if (el) {
-              el.style.overflowY = 'hidden';
-              void el.offsetHeight; // force le reflow
-              el.style.overflowY = 'auto';
-          }
-          // Même correctif pour le scroll de la page entière
-          const overflowAvant = document.body.style.overflow;
-          document.body.style.overflow = 'hidden';
-          void document.body.offsetHeight;
-          document.body.style.overflow = overflowAvant;
-      };
-      document.addEventListener('visibilitychange', debloquerScrollChat);
-      window.addEventListener('pageshow', debloquerScrollChat);
-      return () => {
-          document.removeEventListener('visibilitychange', debloquerScrollChat);
-          window.removeEventListener('pageshow', debloquerScrollChat);
-      };
-  }, []);
+
   
   const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
   const [vuParOuvertMsgId, setVuParOuvertMsgId] = useState(null);
