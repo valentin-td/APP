@@ -823,3 +823,36 @@ body.dark-mode .theme-toggle-btn {
   .hover-bg-app:hover { background: var(--bg-app); }
   .hover-bg-card:hover { background: var(--bg-card); }
 }
+
+/* ===== FIX SCROLL TACTILE (iOS / Android) ===== */
+
+/* Plus de chaînage de scroll vers le document (cause du gel dans les conteneurs fixes) */
+html, body { overscroll-behavior: none; }
+
+/* Verrou du fond tant qu'une modale est dans le DOM.
+   Auto-réparant : pas d'état JS à restaurer, donc impossible de rester bloqué. */
+body:has(.modal-overlay) { overflow: hidden; }
+.modal-overlay { overscroll-behavior: contain; }
+.modal-content { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+@media (max-width: 767px) {
+  /* Modale : 90dvh au lieu de 90vh (vh dépasse la zone visible sur iOS) */
+  .modal-content { max-height: 90dvh; }
+
+  /* Filet de sécurité : un onglet plus haut que l'écran peut défiler au lieu de se figer */
+  .mobile-fixed-header {
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+  }
+
+  /* Agenda : un seul scroller vertical (.week-body) */
+  .week-body { overscroll-behavior-y: contain; }
+
+  /* Agenda : le swipe de jour reste horizontal uniquement.
+     Sans ça, overflow-x:auto force overflow-y:auto et crée un 2e scroller vertical imbriqué. */
+  .days-container {
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+  }
+}
