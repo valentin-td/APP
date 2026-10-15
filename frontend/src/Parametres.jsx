@@ -158,6 +158,18 @@ const groupesBas = [
                       <input type="text" className="input-fournisseur" placeholder="Vide si franchise" value={configSalon.tva_intra || ''} onChange={e => setConfigSalon({...configSalon, tva_intra: e.target.value})} />
                   </div>
               </div>
+              
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                  <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Capital Social (Si société)</label>
+                      <input type="text" className="input-fournisseur" placeholder="Ex: 1 000 €" value={configSalon.capital_social || ''} onChange={e => setConfigSalon({...configSalon, capital_social: e.target.value})} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ville du RCS</label>
+                      <input type="text" className="input-fournisseur" placeholder="Ex: Paris" value={configSalon.rcs_ville || ''} onChange={e => setConfigSalon({...configSalon, rcs_ville: e.target.value})} />
+                  </div>
+              </div>
+
               <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '0', fontStyle: 'italic' }}>
                   * Laissez le champ TVA vide si vous êtes en Franchise en base de TVA. Le logiciel génèrera une liasse sans TVA. Remplissez-le dès le dépassement de votre seuil majoré.
               </p>
