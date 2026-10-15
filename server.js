@@ -4795,8 +4795,6 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         
         drawHeaderDepenses();
         
- 
-        
         let sumDepensesBanque = 0, sumDepensesEspeces = 0, sumDepensesInconnu = 0;
         let totalDepensesHT = 0, totalDepensesTVA = 0, totalDepensesTTC = 0;
         
@@ -4985,7 +4983,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             }
 
             if (e.est_gerant) {
-               drawRow([
+                drawRow([
                     {text: nomComplet.substring(0,12), w: 60}, 
                     {text: 'Gérant', w: 50, align: 'center'},
                     {text: heuresAffichees, w: 40, align: 'center'},
@@ -5009,14 +5007,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
                 
                 drawRow([
-                    {text: nomComplet.substring(0,12), w: 50}, 
-                    {text: 'À déclarer', w: 55, align: 'center'},
-                    {text: heuresAffichees, w: 45, align: 'center'},
+                    {text: nomComplet.substring(0,12), w: 60}, 
+                    {text: 'À déclarer', w: 50, align: 'center'},
+                    {text: heuresAffichees, w: 40, align: 'center'},
                     {text: hsAffichees, w: 40, align: 'center'},
                     {text: pourboireAffiche, w: 40, align: 'center'},
                     {text: fMnt(caRealiseBaseHT), w: 45, align: 'right'}, 
-                    {text: basesConcat, w: 70, align: 'right'}, 
-                    {text: regleTaux, w: 60, align: 'center'}, 
+                    {text: basesConcat, w: 80, align: 'right'}, 
+                    {text: regleTaux, w: 50, align: 'center'}, 
                     {text: fMnt(e.total_prime), w: 55, align: 'right'}
                 ]);
             }
@@ -5026,14 +5024,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const caNonAttribue = totalHT - totalCAEmployes;
         if (Math.abs(caNonAttribue) > 0.01) {
             drawRow([
-                {text: 'CA orphelin', w: 50}, 
-                {text: 'N/A', w: 55, align: 'center'},
-                {text: 'N/A', w: 45, align: 'center'},
-                {text: 'N/A', w: 40, align: 'center'},
+                {text: 'CA orphelin', w: 60}, 
+                {text: 'N/A', w: 50, align: 'center'},
+                {text: '-', w: 40, align: 'center'},
+                {text: '-', w: 40, align: 'center'},
                 {text: '-', w: 40, align: 'center'},
                 {text: fMnt(caNonAttribue), w: 45, align: 'right'}, 
-                {text: '-', w: 70, align: 'right'}, 
-                {text: '-', w: 60, align: 'center'}, 
+                {text: '-', w: 80, align: 'right'}, 
+                {text: '-', w: 50, align: 'center'}, 
                 {text: '-', w: 55, align: 'right'}
             ]);
         }
