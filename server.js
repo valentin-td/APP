@@ -4468,10 +4468,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         doc.text(`${titreDirigeant} : ${nomGerant}`, 40, currentY);
         currentY += 15;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
+        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 250, currentY);
         doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
-        currentY += 15;
-        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 40, currentY);
-        currentY += 15;
+        currentY += 18;
         if (estMoisCloture) {
             // Encadré d'attestation individuelle (Conformité Loi de Finances)
             doc.rect(40, currentY - 5, 515, 65).fillAndStroke('#f0fdf4', '#16a34a');
@@ -4780,15 +4779,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         const drawHeaderDepenses = () => {
             drawRow([
-                {text: 'Fournisseur', w: 60},
+                {text: 'Fournisseur', w: 65},
                 {text: 'N° Fact.', w: 50},
                 {text: 'Source', w: 35, align: 'center'},
                 {text: 'Date F.', w: 50, align: 'center'},
-                {text: 'Paiem.', w: 45, align: 'center'},
-                {text: 'Statut', w: 45, align: 'center'},
-                {text: 'Cpte', w: 30, align: 'center'},
-                {text: 'HT', w: 40, align: 'right'},
-                {text: 'TVA', w: 35, align: 'right'},
+                {text: 'Paiem.', w: 40, align: 'center'},
+                {text: 'Statut', w: 40, align: 'center'},
+                {text: 'Cpte', w: 25, align: 'center'},
+                {text: 'HT', w: 45, align: 'right'},
+                {text: 'TVA', w: 40, align: 'right'},
                 {text: 'TTC', w: 50, align: 'right'}
             ], true);
         };
@@ -4818,22 +4817,20 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const statutColor = f.statut === 'VALIDE' ? '#16a34a' : '#ea580c';
                 const statutText = f.statut === 'VALIDE' ? 'Validé' : 'À valider';
 
-                let refFacture = f.numero ? f.numero.substring(0, 8) : 'n° non détecté';
+                let refFacture = f.numero ? f.numero.substring(0, 8) : 'n° inconnu';
                 let sourceDoc = f.url ? { text: 'Doc IA', link: f.url, color: '#0ea5e9' } : { text: 'Saisie' };
                 const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
                 
-                const dateFAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) : 'N/A';
-                const datePAff = !isNaN(f.date_paiement) ? f.date_paiement.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) : 'N/A';
+                const dateFAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'2-digit'}) : 'N/A';
 
-                // Pagination avant de dessiner la ligne (Pour éviter les factures coupées)
                 if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
 
                 drawRow([
-                    {text: f.fournisseur.substring(0, 12), w: 60}, {text: refFacture, w: 50}, {...sourceDoc, w: 35, align: 'center'},
+                    {text: f.fournisseur.substring(0, 12), w: 65}, {text: refFacture, w: 50}, {...sourceDoc, w: 35, align: 'center'},
                     {text: dateFAff, w: 50, align: 'center'},
-                    {text: modePaiementCourt, w: 45, align: 'center'}, {text: statutText, w: 45, align: 'center', color: statutColor},
-                    {text: compte, w: 30, align: 'center'}, {text: fMnt(f.ht), w: 40, align: 'right'},
-                    {text: fMnt(f.tva), w: 35, align: 'right'}, {text: fMnt(f.ttc), w: 50, align: 'right'}
+                    {text: modePaiementCourt, w: 40, align: 'center'}, {text: statutText, w: 40, align: 'center', color: statutColor},
+                    {text: compte, w: 25, align: 'center'}, {text: fMnt(f.ht), w: 45, align: 'right'},
+                    {text: fMnt(f.tva), w: 40, align: 'right'}, {text: fMnt(f.ttc), w: 50, align: 'right'}
                 ]);
             });
         }
@@ -4850,10 +4847,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         // Si aucune charge fixe n'est remontée par l'IA ou la saisie, on informe qu'il n'y en a pas
         if (!hasChargesFixes) {
-            drawRow([{text: 'Aucune charge fixe saisie (Loyer, URSSAF...)', w: 105}, {text: 'N/A', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 38, align: 'center'}, {text: '-', w: 32, align: 'center'}, {text: '-', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: '0,00 €', w: 45, align: 'right'}]);
+            drawRow([{text: 'Aucune charge fixe saisie (Loyer, URSSAF...)', w: 115}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 50, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 25, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: '0,00 €', w: 50, align: 'right'}]);
         }
         
-        drawRow([{text: 'Variation de stock (Produits)', w: 105}, {text: 'N/A', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 38, align: 'center'}, {text: 'Invent.', w: 32, align: 'center'}, {text: '6037', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: 'Non renseigné', w: 45, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 115}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 50, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'Invent.', w: 40, align: 'center'}, {text: '6037', w: 25, align: 'center'}, {text: '-', w: 45, align: 'right'}, {text: '-', w: 40, align: 'right'}, {text: 'Non renseigné', w: 50, align: 'right'}]);
         
         // Protection pour ne jamais séparer les totaux de leur tableau
         if (currentY > 670) { doc.addPage(); currentY = 40; }
@@ -5022,10 +5019,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const caNonAttribue = totalHT - totalCAEmployes;
         if (Math.abs(caNonAttribue) > 0.01) {
             drawRow([
-                {text: 'CA non attribué', w: 50}, 
+                {text: 'CA orphelin', w: 50}, 
                 {text: 'N/A', w: 55, align: 'center'},
-                {text: 'N/A', w: 45, align: 'center'},
-                {text: 'N/A', w: 40, align: 'center'},
+                {text: '-', w: 45, align: 'center'},
+                {text: '-', w: 40, align: 'center'},
                 {text: '-', w: 40, align: 'center'},
                 {text: fMnt(caNonAttribue), w: 45, align: 'right'}, 
                 {text: '-', w: 70, align: 'right'}, 
@@ -5121,30 +5118,32 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 operator = isAuto ? 'Clôture Auto.' : operator.substring(0, 12);
                 let especesReel = isAuto ? 'N/A' : fMnt(z.total_especes_reel);
                 
-                // NOUVEAU : On coupe le Hash SHA-256 en deux morceaux de 32 caractères pour qu'il tienne parfaitement dans la colonne
+                // CORRECTION DU HASH : Insertion d'un espace pour forcer le retour à la ligne
                 let hashAffiche = 'NON-SIGNE';
                 if (z.signature_hash && z.signature_hash.length === 64) {
-                    hashAffiche = z.signature_hash.substring(0, 32) + '\n' + z.signature_hash.substring(32, 64);
+                    hashAffiche = z.signature_hash.substring(0, 32) + ' ' + z.signature_hash.substring(32, 64);
                 } else if (z.signature_hash) {
                     hashAffiche = z.signature_hash;
                 }
                 
-                // Pagination manuelle pour éviter de couper la cellule multi-lignes
                 if (currentY > 750) { doc.addPage(); currentY = 40; }
 
                 doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR);
                 doc.text(`Z-${currentId}`, 40, currentY, { width: 25 });
                 doc.text(z.date_z, 75, currentY, { width: 50, align: 'center' });
                 doc.text(operator, 135, currentY, { width: 65 });
+                
+                // CORRECTION DE L'INVERSION DES COLONNES ICI :
                 doc.text(z.nb_tickets, 210, currentY, { width: 20, align: 'center' });
                 doc.text(fMnt(z.ca_ttc), 240, currentY, { width: 45, align: 'right' });
+                
                 doc.text(fMnt(cumulActuel), 295, currentY, { width: 55, align: 'right' });
                 doc.text(especesReel, 360, currentY, { width: 55, align: 'right' });
                 
                 doc.font('Courier').fontSize(6).fillColor(SEC_COLOR);
                 doc.text(hashAffiche, 425, currentY, { width: 130, align: 'right' });
                 
-                currentY += 22; // Espace pour les deux lignes du Hash
+                currentY += 18; 
                 doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor(BORDER_COLOR).stroke();
                 currentY += 6;
             });
