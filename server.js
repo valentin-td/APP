@@ -4519,7 +4519,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         doc.rect(40, currentY, 515, 85).fillAndStroke('#f9fafb', BORDER_COLOR);
         doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances)', 50, currentY + 10);
         doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
-            "• Ce document est généré par le système d'encaissement STACK assurant l'inaltérabilité et la traçabilité des données (CGI, art. 286, I-3° bis).\n" +
+            "• Ce document est généré par le système d'encaissement STACK assurant la traçabilité des données (CGI, art. 286, I-3° bis).\n" +
             "• Conservation : Les pièces fiscales doivent être conservées 6 ans, et les documents comptables 10 ans.\n" +
             "• RGPD : Les motifs médicaux exacts des arrêts de travail ont été masqués sur ce document de transmission comptable.\n" +
             "• Dépenses : Je confirme l'exactitude des frais déclarés et m'engage à fournir les justificatifs non-scannés à mon comptable.",
