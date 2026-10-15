@@ -4089,100 +4089,210 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             }
         }
 
-        // --- 3. DÉPENSES ---
+       // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
-        
-        drawRow([
-            {text: 'Fournisseur', w: 60},
-            {text: 'N° Fact.', w: 50},
-            {text: 'Source', w: 30, align: 'center'},
-            {text: 'Date Fact.', w: 40, align: 'center'},
-            {text: 'Date Paiem.', w: 40, align: 'center'},
-            {text: 'Paiem.', w: 35, align: 'center'},
-            {text: 'Statut', w: 35, align: 'center'},
-            {text: 'Cpte', w: 20, align: 'center'},
-            {text: 'HT', w: 30, align: 'right'},
-            {text: 'TVA', w: 25, align: 'right'},
-            {text: 'TTC', w: 40, align: 'right'}
-        ], true);
-        
-        let sumDepensesBanque = 0;
-        let sumDepensesEspeces = 0;
-        let sumDepensesInconnu = 0;
-        let totalDepensesHT = 0;
-        let totalDepensesTVA = 0;
-        let totalDepensesTTC = 0;
-        
-        facturesRes.rows.forEach(f => {
-            const ttc = parseFloat(f.montant_ttc) || 0;
-            const ht = parseFloat(f.montant_ht) || 0;
-            const tva = parseFloat(f.montant_tva) || 0;
-            
-            totalDepensesHT += ht;
-            totalDepensesTVA += tva;
-            totalDepensesTTC += ttc;
-            
-            if (f.mode_paiement === 'ESPECES') {
-                sumDepensesEspeces += ttc;
-            } else if (!f.mode_paiement || f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') {
-                sumDepensesInconnu += ttc;
-            } else {
-                sumDepensesBanque += ttc;
-            }
-            
-            let compte = f.compte_comptable || '604';
-            if (!f.compte_comptable) {
-                const nomLower = (f.nom_fournisseur || '').toLowerCase();
-                if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) {
-                    compte = '607';
-                } else if (nomLower.includes('edf') || nomLower.includes('eau') || nomLower.includes('orange') || nomLower.includes('urssaf') || nomLower.includes('loyer')) {
-                    compte = '613';
-                }
-            }
 
-            const isValide = f.statut_verification === 'VALIDE';
-            const statutColor = isValide ? '#16a34a' : '#ea580c';
-            const statutText = isValide ? 'Validé' : 'À valider';
+        // Requêtes additionnelles pour récupérer l'historique étendu et les factures en attente de l'IA
+        const iaFacturesRes = await pool.query(`SELECT id_tache, donnees, date_creation FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
+        const facturesMoisEtendues = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable, date_traitement as date_facture_brute, date_traitement as date_paiement_brute, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND date_traitement >= NOW() - INTERVAL '1 year'`, [id_salon]);
 
-            // Le numéro de facture a sa propre colonne
-            let refFacture = f.numero_facture ? f.numero_facture.substring(0, 10) : 'n° non détecté';
-            
-            // Le lien cliquable dans la colonne "Source"
-            let sourceDoc = f.justificatif_url ? { text: 'Doc IA', link: f.justificatif_url, color: '#0ea5e9' } : { text: 'Saisie' };
-            
-            const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
-            
-            // Faute de requête SQL dédiée à la date de paiement pour l'instant, on affiche la date de facture.
-            const datePaiementAffichee = f.date_facture; 
-
-            drawRow([
-                {text: f.nom_fournisseur.substring(0, 14), w: 60},
-                {text: refFacture, w: 50},
-                {...sourceDoc, w: 30, align: 'center'},
-                {text: f.date_facture, w: 40, align: 'center'},
-                {text: datePaiementAffichee, w: 40, align: 'center'},
-                {text: modePaiementCourt, w: 35, align: 'center'},
-                {text: statutText, w: 35, align: 'center', color: statutColor},
-                {text: compte, w: 20, align: 'center'},
-                {text: fMnt(ht), w: 30, align: 'right'},
-                {text: fMnt(tva), w: 25, align: 'right'},
-                {text: fMnt(ttc), w: 40, align: 'right'}
-            ]);
+        let toutesFactures = [];
+        
+        // 1. Ajout des factures validées
+        facturesMoisEtendues.rows.forEach(f => {
+            toutesFactures.push({
+                fournisseur: f.nom_fournisseur || 'Inconnu',
+                numero: f.numero_facture || null,
+                date_facture: new Date(f.date_facture_brute),
+                date_paiement: new Date(f.date_paiement_brute),
+                mode_paiement: f.mode_paiement || 'NON_SPECIFIE',
+                statut: 'VALIDE',
+                compte: f.compte_comptable,
+                ht: parseFloat(f.montant_ht) || 0,
+                tva: parseFloat(f.montant_tva) || 0,
+                ttc: parseFloat(f.montant_ttc) || 0,
+                url: f.justificatif_url,
+                source: f.justificatif_url ? 'IA' : 'Saisie'
+            });
         });
+
+        // 2. Ajout des factures IA en attente
+        iaFacturesRes.rows.forEach(t => {
+            const d = t.donnees || {};
+            let dateF = d.date_facture ? new Date(d.date_facture) : new Date(t.date_creation);
+            toutesFactures.push({
+                fournisseur: d.fournisseur || 'Inconnu',
+                numero: d.numero_facture || null,
+                date_facture: dateF,
+                date_paiement: dateF,
+                mode_paiement: d.mode_paiement || 'NON_SPECIFIE',
+                statut: 'A_VALIDER',
+                compte: d.compte_comptable,
+                ht: parseFloat(d.montant_ht) || 0,
+                tva: parseFloat(d.montant_tva) || 0,
+                ttc: parseFloat(d.montant_ttc) || 0,
+                url: d.pdf_url,
+                source: 'IA'
+            });
+        });
+
+        let facturesAffichees = [];
+        let facturesHorsPeriode = [];
+        let facturesAPayer = [];
+        let facturesDoublons = [];
+        let mapUnique = new Map();
+        let nbAValider = 0;
+
+        toutesFactures.forEach(f => {
+            const numKey = f.numero ? f.numero.toString().trim().toLowerCase() : 'sans_num';
+            const key = `${f.fournisseur.trim().toLowerCase()}_${numKey}`;
+            
+            // Dédoublonnage exact
+            if (numKey !== 'sans_num' && mapUnique.has(key)) {
+                facturesDoublons.push(f);
+                return;
+            }
+            if (numKey !== 'sans_num') mapUnique.set(key, true);
+            if (f.statut === 'A_VALIDER') nbAValider++;
+
+            // Vérification si la facture appartient à ce mois (par facture OU par paiement)
+            const isFactureInMonth = !isNaN(f.date_facture) && f.date_facture >= firstDayOfMonth && f.date_facture <= lastDayOfMonth;
+            const isPaiementInMonth = !isNaN(f.date_paiement) && f.date_paiement >= firstDayOfMonth && f.date_paiement <= lastDayOfMonth;
+            
+            if (isNaN(f.date_facture.getTime())) {
+                facturesHorsPeriode.push({...f, raison: "Date invalide ou manquante"});
+            } else if (isFactureInMonth || isPaiementInMonth) {
+                facturesAffichees.push(f);
+                if (f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') facturesAPayer.push(f);
+            } else {
+                facturesHorsPeriode.push({...f, raison: "Hors période cible"});
+            }
+        });
+
+        facturesAffichees.sort((a, b) => a.date_facture - b.date_facture);
+
+        doc.font('Helvetica-Oblique').fontSize(9).fillColor(SEC_COLOR)
+           .text(`Factures dans l'app : ${toutesFactures.length} · Affichées : ${facturesAffichees.length} · Hors période ou sans date : ${facturesHorsPeriode.length}`, 40, currentY);
+        currentY += 15;
         
+        if (nbAValider > 0) {
+            doc.font('Helvetica-Bold').fillColor('#ea580c').text(`⚠️ BLOCAGE : ${nbAValider} dépense(s) "À valider". La version définitive nécessite leur traitement.`, 40, currentY);
+            currentY += 15;
+        }
+
+        const drawHeaderDepenses = () => {
+            drawRow([
+                {text: 'Fournisseur', w: 60},
+                {text: 'N° Fact.', w: 50},
+                {text: 'Source', w: 30, align: 'center'},
+                {text: 'Date Fact.', w: 40, align: 'center'},
+                {text: 'Date Paiem.', w: 40, align: 'center'},
+                {text: 'Paiem.', w: 35, align: 'center'},
+                {text: 'Statut', w: 35, align: 'center'},
+                {text: 'Cpte', w: 20, align: 'center'},
+                {text: 'HT', w: 30, align: 'right'},
+                {text: 'TVA', w: 25, align: 'right'},
+                {text: 'TTC', w: 40, align: 'right'}
+            ], true);
+        };
+        
+        drawHeaderDepenses();
+        
+        let sumDepensesBanque = 0, sumDepensesEspeces = 0, sumDepensesInconnu = 0;
+        let totalDepensesHT = 0, totalDepensesTVA = 0, totalDepensesTTC = 0;
+        
+        if (facturesAffichees.length === 0) {
+            drawRow([{text: 'Aucune facture datée de cette période.', w: 515}]);
+        } else {
+            facturesAffichees.forEach(f => {
+                totalDepensesHT += f.ht; totalDepensesTVA += f.tva; totalDepensesTTC += f.ttc;
+                
+                if (f.mode_paiement === 'ESPECES') sumDepensesEspeces += f.ttc;
+                else if (!f.mode_paiement || f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') sumDepensesInconnu += f.ttc;
+                else sumDepensesBanque += f.ttc;
+                
+                let compte = f.compte || '604';
+                if (!f.compte) {
+                    const nomLower = f.fournisseur.toLowerCase();
+                    if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) compte = '607';
+                    else if (nomLower.includes('edf') || nomLower.includes('eau') || nomLower.includes('urssaf') || nomLower.includes('loyer')) compte = '613';
+                }
+
+                const statutColor = f.statut === 'VALIDE' ? '#16a34a' : '#ea580c';
+                const statutText = f.statut === 'VALIDE' ? 'Validé' : 'À valider';
+
+                let refFacture = f.numero ? f.numero.substring(0, 10) : 'n° non détecté';
+                let sourceDoc = f.url ? { text: 'Doc IA', link: f.url, color: '#0ea5e9' } : { text: 'Saisie' };
+                const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
+                
+                const dateFAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : 'N/A';
+                const datePAff = !isNaN(f.date_paiement) ? f.date_paiement.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : 'N/A';
+
+                // Pagination avant de dessiner la ligne (Pour éviter les factures coupées)
+                if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
+
+                drawRow([
+                    {text: f.fournisseur.substring(0, 14), w: 60}, {text: refFacture, w: 50}, {...sourceDoc, w: 30, align: 'center'},
+                    {text: dateFAff, w: 40, align: 'center'}, {text: datePAff, w: 40, align: 'center'},
+                    {text: modePaiementCourt, w: 35, align: 'center'}, {text: statutText, w: 35, align: 'center', color: statutColor},
+                    {text: compte, w: 20, align: 'center'}, {text: fMnt(f.ht), w: 30, align: 'right'},
+                    {text: fMnt(f.tva), w: 25, align: 'right'}, {text: fMnt(f.ttc), w: 40, align: 'right'}
+                ]);
+            });
+        }
+        
+        // Lignes d'attentes gérées dynamiquement
+        if (currentY > 710) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
         drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 60}, {text: 'N/A', w: 50}, {text: 'Saisie', w: 30, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'PRELEV.', w: 35, align: 'center'}, {text: 'À joindre', w: 35, align: 'center'}, {text: '613', w: 20, align: 'center'}, {text: '-', w: 30, align: 'right'}, {text: '-', w: 25, align: 'right'}, {text: 'Voir Banque', w: 40, align: 'right'}]);
         drawRow([{text: 'Variation de stock (Produits)', w: 60}, {text: 'N/A', w: 50}, {text: 'Saisie', w: 30, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 35, align: 'center'}, {text: 'Inventaire', w: 35, align: 'center'}, {text: '6037', w: 20, align: 'center'}, {text: '-', w: 30, align: 'right'}, {text: '-', w: 25, align: 'right'}, {text: 'À saisir', w: 40, align: 'right'}]);
+        
+        // Protection pour ne jamais séparer les totaux de leur tableau
+        if (currentY > 670) { doc.addPage(); currentY = 40; }
         
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 445}, {text: fMnt(sumDepensesBanque), w: 50, align: 'right'}], false, true);
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 445}, {text: fMnt(sumDepensesEspeces), w: 50, align: 'right'}], false, true);
         drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (À compléter)', w: 445}, {text: fMnt(sumDepensesInconnu), w: 50, align: 'right'}], false, true);
-        
         drawRow([{text: 'TOTAL GÉNÉRAL DES DÉPENSES', w: 340}, {text: fMnt(totalDepensesHT), w: 40, align: 'right'}, {text: fMnt(totalDepensesTVA), w: 35, align: 'right'}, {text: fMnt(totalDepensesTTC), w: 50, align: 'right'}], false, true);
 
         if (franchiseTVA) {
             currentY += 4;
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* En franchise en base de TVA, la TVA sur achats n'est pas récupérable. La charge réelle retenue en comptabilité est le montant TTC.", 40, currentY); 
             currentY += 12;
+        }
+
+        // --- ANNEXES : HORS PÉRIODE, DOUBLONS ET À PAYER ---
+        if (facturesHorsPeriode.length > 0 || facturesDoublons.length > 0 || facturesAPayer.length > 0) {
+            if (currentY > 650) { doc.addPage(); currentY = 40; } else { currentY += 15; }
+            
+            if (facturesHorsPeriode.length > 0) {
+                doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("Annexe : Factures hors période ou sans date (Exclues du total)", 40, currentY); currentY += 15;
+                facturesHorsPeriode.forEach(f => {
+                    const dAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR') : 'Sans date';
+                    doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(`• ${f.fournisseur} - N° ${f.numero || 'Inconnu'} - ${dAff} - ${fMnt(f.ttc)} -> Exclue : ${f.raison}`, 50, currentY);
+                    currentY += 10;
+                    if (currentY > 780) { doc.addPage(); currentY = 40; }
+                });
+                currentY += 10;
+            }
+
+            if (facturesDoublons.length > 0) {
+                doc.font('Helvetica-Bold').fontSize(10).fillColor('#ea580c').text("Annexe : Doublons détectés et bloqués (Exclus du total)", 40, currentY); currentY += 15;
+                facturesDoublons.forEach(f => {
+                    doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(`• ${f.fournisseur} - N° ${f.numero} - ${fMnt(f.ttc)} -> Déjà comptabilisée (Doublon exact)`, 50, currentY);
+                    currentY += 10;
+                    if (currentY > 780) { doc.addPage(); currentY = 40; }
+                });
+                currentY += 10;
+            }
+
+            if (facturesAPayer.length > 0) {
+                doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("Factures à payer à fin de mois (Non réglées / Mode inconnu)", 40, currentY); currentY += 15;
+                facturesAPayer.forEach(f => {
+                    doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(`• ${f.fournisseur} - N° ${f.numero || 'Inconnu'} - Reste à régler : ${fMnt(f.ttc)}`, 50, currentY);
+                    currentY += 10;
+                    if (currentY > 780) { doc.addPage(); currentY = 40; }
+                });
+            }
         }
 
         currentY += 25; // Saut de ligne renforcé pour empêcher le chevauchement !
