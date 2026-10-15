@@ -4349,7 +4349,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         // REQUÊTE : Historique des Z du mois (Enrichie avec le CA et tickets)
         const zMoisRes = await pool.query(`
-            SELECT c.id_cloture, c.numero_z_salon, TO_CHAR(c.date_cloture, 'DD/MM/YYYY') as date_z, 
+            SELECT c.id_cloture, COALESCE(c.numero_z_salon, c.id_cloture) as num_z_final, TO_CHAR(c.date_cloture, 'DD/MM/YYYY') as date_z, 
                    c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc,
                    COUNT(t.id_ticket) as nb_tickets,
                    COALESCE(SUM(t.total_ttc), 0) as ca_ttc
@@ -4359,7 +4359,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                                 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
             WHERE c.id_salon = $1 AND DATE(c.date_cloture) BETWEEN $2 AND $3 
             GROUP BY c.id_cloture, c.numero_z_salon, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc
-            ORDER BY c.numero_z_salon ASC, c.date_cloture ASC
+            ORDER BY num_z_final ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
         // NOUVEAU : On récupère les sommes EXACTES arrêtées à la date du dernier Z
         const lastZRes = await pool.query(`SELECT MAX(DATE(date_cloture)) as date_max, TO_CHAR(MAX(date_cloture), 'DD/MM/YYYY') as date_max_str FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
@@ -4468,8 +4468,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         doc.text(`${titreDirigeant} : ${nomGerant}`, 40, currentY);
         currentY += 15;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
-        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 250, currentY);
         doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
+        currentY += 15;
+        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 40, currentY);
         currentY += 15;
         if (estMoisCloture) {
             // Encadré d'attestation individuelle (Conformité Loi de Finances)
@@ -4779,17 +4780,16 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         const drawHeaderDepenses = () => {
             drawRow([
-                {text: 'Fournisseur', w: 50},
-                {text: 'N° Fact.', w: 45},
-                {text: 'Source', w: 25, align: 'center'},
-                {text: 'Date F.', w: 45, align: 'center'},
-                {text: 'Date P.', w: 45, align: 'center'},
-                {text: 'Paiem.', w: 38, align: 'center'},
-                {text: 'Statut', w: 32, align: 'center'},
-                {text: 'Cpte', w: 22, align: 'center'},
-                {text: 'HT', w: 33, align: 'right'},
-                {text: 'TVA', w: 28, align: 'right'},
-                {text: 'TTC', w: 45, align: 'right'}
+                {text: 'Fournisseur', w: 60},
+                {text: 'N° Fact.', w: 50},
+                {text: 'Source', w: 35, align: 'center'},
+                {text: 'Date F.', w: 50, align: 'center'},
+                {text: 'Paiem.', w: 45, align: 'center'},
+                {text: 'Statut', w: 45, align: 'center'},
+                {text: 'Cpte', w: 30, align: 'center'},
+                {text: 'HT', w: 40, align: 'right'},
+                {text: 'TVA', w: 35, align: 'right'},
+                {text: 'TTC', w: 50, align: 'right'}
             ], true);
         };
         
@@ -4829,11 +4829,11 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
 
                 drawRow([
-                    {text: f.fournisseur.substring(0, 10), w: 50}, {text: refFacture, w: 45}, {...sourceDoc, w: 25, align: 'center'},
-                    {text: dateFAff, w: 45, align: 'center'}, {text: datePAff, w: 45, align: 'center'},
-                    {text: modePaiementCourt, w: 38, align: 'center'}, {text: statutText, w: 32, align: 'center', color: statutColor},
-                    {text: compte, w: 22, align: 'center'}, {text: fMnt(f.ht), w: 33, align: 'right'},
-                    {text: fMnt(f.tva), w: 28, align: 'right'}, {text: fMnt(f.ttc), w: 45, align: 'right'}
+                    {text: f.fournisseur.substring(0, 12), w: 60}, {text: refFacture, w: 50}, {...sourceDoc, w: 35, align: 'center'},
+                    {text: dateFAff, w: 50, align: 'center'},
+                    {text: modePaiementCourt, w: 45, align: 'center'}, {text: statutText, w: 45, align: 'center', color: statutColor},
+                    {text: compte, w: 30, align: 'center'}, {text: fMnt(f.ht), w: 40, align: 'right'},
+                    {text: fMnt(f.tva), w: 35, align: 'right'}, {text: fMnt(f.ttc), w: 50, align: 'right'}
                 ]);
             });
         }
@@ -5024,6 +5024,16 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             drawRow([
                 {text: 'CA non attribué', w: 50}, 
                 {text: 'N/A', w: 55, align: 'center'},
+                {text: 'N/A', w: 45, align: 'center'},
+                {text: 'N/A', w: 40, align: 'center'},
+                {text: '-', w: 40, align: 'center'},
+                {text: fMnt(caNonAttribue), w: 45, align: 'right'}, 
+                {text: '-', w: 70, align: 'right'}, 
+                {text: '-', w: 60, align: 'center'}, 
+                {text: '-', w: 55, align: 'right'}
+            ]);
+        }
+                {text: 'N/A', w: 55, align: 'center'},
                 {text: '-', w: 45, align: 'center'},
                 {text: '-', w: 40, align: 'center'},
                 {text: '-', w: 40, align: 'center'},
@@ -5094,9 +5104,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             let expectedId = null;
 
             zMoisRes.rows.forEach(z => {
-                const currentId = parseInt(z.numero_z_salon || z.id_cloture);
+                const currentId = parseInt(z.num_z_final);
                 
-                // --- DÉTECTION DES SAUTS DE NUMÉROTATION (Z MANQUANTS) ---
                 if (expectedId !== null && currentId > expectedId) {
                     for (let i = expectedId; i < currentId; i++) {
                         drawRow([
@@ -5113,37 +5122,40 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 }
                 expectedId = currentId + 1;
 
-                const caTTC = parseFloat(z.ca_ttc) || 0;
-                sumCaZ += caTTC;
-                
-                // Suppression du correctif dynamique. Le cumul perpétuel affiché est dorénavant strictement celui scellé en base de données.
+                sumCaZ += parseFloat(z.ca_ttc) || 0;
                 let cumulActuel = parseFloat(z.cumul_perpetuel_ttc) || 0;
                 
-                // Détection d'un robot ou absence d'opérateur
                 let operator = z.ferme_par || 'Non spécifié';
                 let isAuto = operator.toLowerCase().includes('robot') || operator.toLowerCase().includes('auto') || operator === 'Non spécifié';
+                operator = isAuto ? 'Clôture Auto.' : operator.substring(0, 12);
+                let especesReel = isAuto ? 'N/A' : fMnt(z.total_especes_reel);
                 
-                // Harmonisation du libellé automatique
-                if (isAuto) {
-                    operator = 'Clôture Auto.';
-                } else {
-                    // Si c'est un humain, on limite proprement la taille sans casser les mots
-                    operator = operator.substring(0, 15);
+                // NOUVEAU : On coupe le Hash SHA-256 en deux morceaux de 32 caractères pour qu'il tienne parfaitement dans la colonne
+                let hashAffiche = 'NON-SIGNE';
+                if (z.signature_hash && z.signature_hash.length === 64) {
+                    hashAffiche = z.signature_hash.substring(0, 32) + '\n' + z.signature_hash.substring(32, 64);
+                } else if (z.signature_hash) {
+                    hashAffiche = z.signature_hash;
                 }
                 
-                // Un robot ne compte pas la caisse
-                let especesReel = isAuto ? 'Non compté' : fMnt(z.total_especes_reel);
+                // Pagination manuelle pour éviter de couper la cellule multi-lignes
+                if (currentY > 750) { doc.addPage(); currentY = 40; }
+
+                doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR);
+                doc.text(`Z-${currentId}`, 40, currentY, { width: 25 });
+                doc.text(z.date_z, 75, currentY, { width: 50, align: 'center' });
+                doc.text(operator, 135, currentY, { width: 65 });
+                doc.text(z.nb_tickets, 210, currentY, { width: 20, align: 'center' });
+                doc.text(fMnt(z.ca_ttc), 240, currentY, { width: 45, align: 'right' });
+                doc.text(fMnt(cumulActuel), 295, currentY, { width: 55, align: 'right' });
+                doc.text(especesReel, 360, currentY, { width: 55, align: 'right' });
                 
-                drawRow([
-                    {text: `Z-${currentId}`, w: 25}, 
-                    {text: z.date_z, w: 50, align: 'center'},
-                    {text: operator, w: 65}, 
-                    {text: z.nb_tickets, w: 20, align: 'center'},
-                    {text: fMnt(z.ca_ttc), w: 45, align: 'right'},
-                    {text: fMnt(cumulActuel), w: 55, align: 'right'},
-                    {text: especesReel, w: 55, align: 'right'}, 
-                    {text: z.signature_hash ? z.signature_hash : 'NON-SIGNE', w: 130, align: 'right'}
-                ]);
+                doc.font('Courier').fontSize(6).fillColor(SEC_COLOR);
+                doc.text(hashAffiche, 425, currentY, { width: 130, align: 'right' });
+                
+                currentY += 22; // Espace pour les deux lignes du Hash
+                doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor(BORDER_COLOR).stroke();
+                currentY += 6;
             });
             
             // Calcul du CA orphelin (Jours où il y a eu des ventes mais aucune clôture de caisse Z n'a été faite)
