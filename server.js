@@ -3461,7 +3461,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2::date AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
             GROUP BY COALESCE(c.type_article, 'PRESTATION'), COALESCE(lt.taux_tva_snapshot, 20)
             ORDER BY type_article ASC, taux_tva DESC
         `, paramsVentes);
@@ -3470,7 +3470,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const paiementsDetailJourRes = await pool.query(`
             SELECT methode_paiement, COUNT(id_ticket) as nb, COALESCE(SUM(total_ttc), 0) as total
             FROM tickets t
-            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
+            WHERE id_salon = $1 AND DATE(date_creation) = $2::date AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
             GROUP BY methode_paiement
         `, paramsVentes);
 
@@ -3478,7 +3478,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const mvtJourDetailRes = await pool.query(`
             SELECT TO_CHAR(date_creation, 'HH24:MI') as heure_mvt, type_mouvement, montant, motif
             FROM mouvements_caisse
-            WHERE id_salon = $1 AND DATE(date_creation) = $2
+            WHERE id_salon = $1 AND DATE(date_creation) = $2::date
             ORDER BY date_creation ASC
         `, [id_salon, dateCible]);
 
@@ -3486,7 +3486,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const pourboiresJourRes = await pool.query(`
             SELECT id_employe, COALESCE(SUM(montant_pourboire), 0) as total_pourboire
             FROM tickets
-            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE
+            WHERE id_salon = $1 AND DATE(date_creation) = $2::date AND statut != 'ANNULE' AND est_compense = FALSE
             GROUP BY id_employe
         `, [id_salon, dateCible]);
         const mapPourboiresJour = {};
@@ -3496,14 +3496,14 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const zSeqRes = await pool.query(`
             SELECT COUNT(*) as num_z_salon
             FROM clotures_caisse
-            WHERE id_salon = $1 AND date_cloture <= $2
+            WHERE id_salon = $1 AND date_cloture <= $2::date
         `, [id_salon, dateCible]);
         const numZSalon = parseInt(zSeqRes.rows[0].num_z_salon) || 1;
 
         const prevZRes = await pool.query(`
             SELECT cumul_perpetuel_ttc, signature_hash
             FROM clotures_caisse
-            WHERE id_salon = $1 AND date_cloture < $2
+            WHERE id_salon = $1 AND date_cloture < $2::date
             ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1
         `, [id_salon, dateCible]);
         const cumulAvantBdd = prevZRes.rowCount > 0 ? (parseFloat(prevZRes.rows[0].cumul_perpetuel_ttc) || 0) : 0;
@@ -3514,7 +3514,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             SELECT TO_CHAR(MIN(date_creation), 'HH24:MI') as premiere_vente,
                    TO_CHAR(MAX(date_creation), 'HH24:MI') as derniere_vente
             FROM tickets
-            WHERE id_salon = $1 AND DATE(date_creation) = $2
+            WHERE id_salon = $1 AND DATE(date_creation) = $2::date
         `, [id_salon, dateCible]);
         const heurePremiereVente = horairesTicketsRes.rows[0]?.premiere_vente || null;
         const heureDerniereVente = horairesTicketsRes.rows[0]?.derniere_vente || null;
@@ -3522,7 +3522,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const pointageMinRes = await pool.query(`
             SELECT TO_CHAR(MIN(heure_action), 'HH24:MI') as premier_pointage
             FROM pointages
-            WHERE id_salon = $1 AND date_jour = $2 AND type_action = 'ENTREE'
+            WHERE id_salon = $1 AND date_jour = $2::date AND type_action = 'ENTREE'
         `, [id_salon, dateCible]);
         const heurePremierPointage = pointageMinRes.rows[0]?.premier_pointage || null;
 
@@ -3532,7 +3532,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             WHERE id_salon = $1 AND (
                 (action IN ('CLOTURE_Z', 'CLOTURE_Z_AUTOMATIQUE') AND details->>'date_cloture' = $2)
                 OR (action = 'IMPRESSION_DUPLICATA_Z' AND details->>'date_cloture' = $2)
-                OR (DATE(date_creation) = $2 AND action IN ('OUVERTURE_TIROIR', 'TIROIR_SANS_VENTE'))
+                OR (DATE(date_creation) = $2::date AND action IN ('OUVERTURE_TIROIR', 'TIROIR_SANS_VENTE'))
             )
             ORDER BY id_jet ASC
         `, [id_salon, dateCible]);
