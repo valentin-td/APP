@@ -1834,8 +1834,14 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
         const totalJour = caResult.rows[0].total;
 
-        const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]);
-        const grandTotalPerpetuel = grandTotalResult.rows[0].total;
+        // RÈGLE D'OR NF525 : Le cumul n'est plus une somme globale (qui cause des décalages si l'historique est purgé/modifié).
+        // Nouveau Cumul = Cumul précédent + CA du jour.
+        const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon]);
+        
+        const ancienCumul = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].cumul_perpetuel_ttc ? parseFloat(dernierZInfo.rows[0].cumul_perpetuel_ttc) : 0;
+        const grandTotalPerpetuel = ancienCumul + parseFloat(totalJour);
+        const hashPrecedent = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].signature_hash ? dernierZInfo.rows[0].signature_hash : 'GENESIS_Z';
+        const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
 
         // --- CALCUL NF525 DE L'ÉCART DE CAISSE (BLIND CLOSE) ---
         const fCaisseMatin = parseFloat(fond_caisse_matin) || 0;
@@ -1861,9 +1867,6 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         }
         // --------------------------------------------------------
 
-        const dernierZ = await clientDB.query('SELECT signature_hash, numero_z_salon FROM clotures_caisse WHERE id_salon = $1 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon]);
-        const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
-        const nextZ = dernierZ.rowCount > 0 && dernierZ.rows[0].numero_z_salon ? parseInt(dernierZ.rows[0].numero_z_salon) + 1 : 1;
         const dateISO = new Date().toISOString();
         
         const signature = crypto.createHash('sha256')
@@ -4958,12 +4961,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const caTTC = parseFloat(z.ca_ttc) || 0;
                 sumCaZ += caTTC;
                 
-                // Test automatique NF525 : Correction du cumul perpétuel si un ticket retardataire n'a pas été inclus dans le snapshot DB
+                // Suppression du correctif dynamique. Le cumul perpétuel affiché est dorénavant strictement celui scellé en base de données.
                 let cumulActuel = parseFloat(z.cumul_perpetuel_ttc) || 0;
-                if (dernierCumulAffiche !== null && cumulActuel < dernierCumulAffiche + caTTC) {
-                    cumulActuel = dernierCumulAffiche + caTTC;
-                }
-                dernierCumulAffiche = cumulActuel;
                 
                 // Détection d'un robot ou absence d'opérateur
                 let operator = z.ferme_par || 'Non spécifié';
@@ -5800,8 +5799,13 @@ async function executerClotureFantome() {
                     const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
                     const totalJour = caResult.rows[0].total;
 
-                    const grandTotalResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) <= $2`, [id_salon, dateACloturerStr]);
-                    const grandTotalPerpetuel = grandTotalResult.rows[0].total;
+                    // NF525: Nouveau Cumul = Ancien Cumul + CA du jour.
+                    const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
+                    const ancienCumul = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].cumul_perpetuel_ttc ? parseFloat(dernierZInfo.rows[0].cumul_perpetuel_ttc) : 0;
+                    const grandTotalPerpetuel = ancienCumul + parseFloat(totalJour);
+                    
+                    const hashPrecedent = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].signature_hash ? dernierZInfo.rows[0].signature_hash : 'GENESIS_Z';
+                    const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
 
                     // --- CALCUL DU THÉORIQUE POUR LE ROBOT ---
                     const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE' AND est_compense = FALSE`, [id_salon, dateACloturerStr]);
@@ -5817,9 +5821,6 @@ async function executerClotureFantome() {
                     // Le robot force le total_reel au total_theorique (écart = 0) pour valider mathématiquement la journée
                     // -----------------------------------------
 
-                    const dernierZ = await clientDB.query('SELECT signature_hash, numero_z_salon FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
-                    const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
-                    const nextZ = dernierZ.rowCount > 0 && dernierZ.rows[0].numero_z_salon ? parseInt(dernierZ.rows[0].numero_z_salon) + 1 : 1;
                     const dateISO = new Date(j.jour); 
                     dateISO.setHours(23, 59, 59); // On scelle le robot à 23:59:59 de la veille
                     
