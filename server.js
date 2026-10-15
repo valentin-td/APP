@@ -262,7 +262,6 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ferme_par VARCHAR(100) DEFAULT 'Non spécifié';
     
-    -- Nouvelles colonnes pour le Z de caisse complet
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS fond_caisse_matin NUMERIC(10, 2) DEFAULT 0.00;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_theorique NUMERIC(10, 2) DEFAULT 0.00;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_reel NUMERIC(10, 2) DEFAULT 0.00;
@@ -271,10 +270,7 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS est_cloture_automatique BOOLEAN DEFAULT FALSE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compteur_tickets INT DEFAULT 0;
     
-    -- NOUVELLE COLONNE : Numérotation continue des Z par salon
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS numero_z_salon INT;
-
-    -- NOUVELLE TABLE : Petite caisse et régularisations
     CREATE TABLE IF NOT EXISTS mouvements_caisse (
         id_mouvement SERIAL PRIMARY KEY,
         id_salon INT,
