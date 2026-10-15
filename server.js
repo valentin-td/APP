@@ -3446,6 +3446,127 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             employesStats = empStatsRes.rows;
         }
 
+        // ================== REQUÊTES ADDITIONNELLES POUR LE BILAN JOURNALIER ==================
+        const salonExtraRes = await pool.query('SELECT forme_juridique, heure_ouverture, heure_fermeture FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const salonExtra = salonExtraRes.rows[0] || {};
+        const formeJuridique = salonExtra.forme_juridique ? ` - ${salonExtra.forme_juridique}` : '';
+
+        // Ventilation CA par catégorie et par taux de TVA sur la journée
+        const caDetailJourRes = await pool.query(`
+            SELECT 
+                COALESCE(c.type_article, 'PRESTATION') as type_article,
+                COALESCE(lt.taux_tva_snapshot, 20) as taux_tva,
+                SUM(lt.total_ligne_ttc) as total_ttc,
+                SUM(lt.total_ligne_ttc / (1 + (COALESCE(lt.taux_tva_snapshot, 20) / 100))) as total_ht
+            FROM lignes_ticket lt
+            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            LEFT JOIN catalogue c ON c.id_article = lt.id_article
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            GROUP BY COALESCE(c.type_article, 'PRESTATION'), COALESCE(lt.taux_tva_snapshot, 20)
+            ORDER BY type_article ASC, taux_tva DESC
+        `, paramsVentes);
+
+        // Nombre et montant des encaissements par mode sur la journée
+        const paiementsDetailJourRes = await pool.query(`
+            SELECT methode_paiement, COUNT(id_ticket) as nb, COALESCE(SUM(total_ttc), 0) as total
+            FROM tickets t
+            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
+            GROUP BY methode_paiement
+        `, paramsVentes);
+
+        // Détail des mouvements d'espèces du jour (Entrées, Sorties, Régularisations)
+        const mvtJourDetailRes = await pool.query(`
+            SELECT TO_CHAR(date_creation, 'HH24:MI') as heure_mvt, type_mouvement, montant, motif
+            FROM mouvements_caisse
+            WHERE id_salon = $1 AND DATE(date_creation) = $2
+            ORDER BY date_creation ASC
+        `, [id_salon, dateCible]);
+
+        // Pourboires du jour par collaborateur
+        const pourboiresJourRes = await pool.query(`
+            SELECT id_employe, COALESCE(SUM(montant_pourboire), 0) as total_pourboire
+            FROM tickets
+            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE
+            GROUP BY id_employe
+        `, [id_salon, dateCible]);
+        const mapPourboiresJour = {};
+        pourboiresJourRes.rows.forEach(r => { mapPourboiresJour[r.id_employe] = parseFloat(r.total_pourboire) || 0; });
+
+        // Numéro de Z séquentiel propre au salon (sans trou ni doublon) et cumul précédent
+        const zSeqRes = await pool.query(`
+            SELECT COUNT(*) as num_z_salon
+            FROM clotures_caisse
+            WHERE id_salon = $1 AND date_cloture <= $2
+        `, [id_salon, dateCible]);
+        const numZSalon = parseInt(zSeqRes.rows[0].num_z_salon) || 1;
+
+        const prevZRes = await pool.query(`
+            SELECT cumul_perpetuel_ttc, signature_hash
+            FROM clotures_caisse
+            WHERE id_salon = $1 AND date_cloture < $2
+            ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1
+        `, [id_salon, dateCible]);
+        const cumulAvantBdd = prevZRes.rowCount > 0 ? (parseFloat(prevZRes.rows[0].cumul_perpetuel_ttc) || 0) : 0;
+        const hashPrecedentFallback = prevZRes.rowCount > 0 ? prevZRes.rows[0].signature_hash : 'GENESIS_Z';
+
+        // Horaires effectifs d'ouverture / clôture et compteurs d'événements JET
+        const horairesTicketsRes = await pool.query(`
+            SELECT TO_CHAR(MIN(date_creation), 'HH24:MI') as premiere_vente,
+                   TO_CHAR(MAX(date_creation), 'HH24:MI') as derniere_vente
+            FROM tickets
+            WHERE id_salon = $1 AND DATE(date_creation) = $2
+        `, [id_salon, dateCible]);
+        const heurePremiereVente = horairesTicketsRes.rows[0]?.premiere_vente || null;
+        const heureDerniereVente = horairesTicketsRes.rows[0]?.derniere_vente || null;
+
+        const pointageMinRes = await pool.query(`
+            SELECT TO_CHAR(MIN(heure_action), 'HH24:MI') as premier_pointage
+            FROM pointages
+            WHERE id_salon = $1 AND date_jour = $2 AND type_action = 'ENTREE'
+        `, [id_salon, dateCible]);
+        const heurePremierPointage = pointageMinRes.rows[0]?.premier_pointage || null;
+
+        const jetJourRes = await pool.query(`
+            SELECT action, TO_CHAR(date_creation, 'DD/MM/YYYY à HH24:MI:SS') as date_heure_jet, TO_CHAR(date_creation, 'HH24:MI') as heure_jet
+            FROM jet_logs
+            WHERE id_salon = $1 AND (
+                (action IN ('CLOTURE_Z', 'CLOTURE_Z_AUTOMATIQUE') AND details->>'date_cloture' = $2)
+                OR (action = 'IMPRESSION_DUPLICATA_Z' AND details->>'date_cloture' = $2)
+                OR (DATE(date_creation) = $2 AND action IN ('OUVERTURE_TIROIR', 'TIROIR_SANS_VENTE'))
+            )
+            ORDER BY id_jet ASC
+        `, [id_salon, dateCible]);
+
+        let heureClotureJet = null;
+        let dateHeureClotureComplete = null;
+        let nbDuplicatasPrecedents = 0;
+        let nbOuverturesTiroir = 0;
+
+        jetJourRes.rows.forEach(j => {
+            if (j.action === 'CLOTURE_Z' || j.action === 'CLOTURE_Z_AUTOMATIQUE') {
+                heureClotureJet = j.heure_jet;
+                dateHeureClotureComplete = j.date_heure_jet;
+            } else if (j.action === 'IMPRESSION_DUPLICATA_Z') {
+                nbDuplicatasPrecedents++;
+            } else if (j.action === 'OUVERTURE_TIROIR' || j.action === 'TIROIR_SANS_VENTE') {
+                nbOuverturesTiroir++;
+            }
+        });
+
+        let numeroDuplicata = 0;
+        if (clotureData) {
+            numeroDuplicata = nbDuplicatasPrecedents + 1;
+            await enregistrerJET(id_salon, 'IMPRESSION_DUPLICATA_Z', {
+                date_cloture: dateCible,
+                id_cloture: clotureData.id_cloture,
+                num_z_salon: numZSalon,
+                numero_duplicata: numeroDuplicata
+            });
+        }
+
+        const heureOuvertureAff = heurePremierPointage || heurePremiereVente || `${String(salonExtra.heure_ouverture || 8).padStart(2, '0')}:00`;
+        const heureClotureAff = clotureData ? (heureClotureJet || heureDerniereVente || '23:59') : 'En cours (Non clôturé)';
+
         // ================== CRÉATION DU PDF ==================
         const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
         res.setHeader('Content-Type', 'application/pdf');
@@ -3453,221 +3574,475 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         doc.pipe(res);
 
         let currentY = 40;
+        const MAIN_COLOR = '#111827';
+        const SEC_COLOR = '#4b5563';
+        const BORDER_COLOR = '#e5e7eb';
+        const nowImpression = new Date();
+        const dateActiviteFr = new Date(dateCible).toLocaleDateString('fr-FR');
 
-        // --- EN-TÊTE ET MENTIONS LÉGALES ---
-        const typeDocument = clotureData ? "DUPLICATA - BILAN JOURNALIER" : "BILAN JOURNALIER PROVISOIRE";
-        
-        doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827').text(`${typeDocument} ${estEmploye ? '(EMPLOYÉ)' : ''}`, 40, currentY);
-        currentY += 25;
-        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(config.nom_salon || 'Salon', 40, currentY);
-        currentY += 15;
-        doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`SIRET: ${config.siret || 'N/A'} | ${mentionTVA} | Adresse: ${config.adresse_salon || 'N/A'}`, 40, currentY);
-        currentY += 15;
-        doc.text(`Date d'activité : ${new Date(dateCible).toLocaleDateString('fr-FR')} | Date d'impression : ${new Date().toLocaleString('fr-FR')}`, 40, currentY);
+        const fMnt = (mnt) => {
+            const parts = (parseFloat(mnt) || 0).toFixed(2).split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            return parts.join(',') + ' €';
+        };
+
+        // --- EN-TÊTE LÉGAL ET STATUT (TICKET Z vs TICKET X) ---
+        const titrePrincipal = clotureData
+            ? `BILAN JOURNALIER DE CLÔTURE — Z N° ${String(numZSalon).padStart(4, '0')}${estEmploye ? ' (EMPLOYÉ)' : ''}`
+            : `LECTURE DE CAISSE EN COURS DE JOURNÉE (TICKET X)${estEmploye ? ' (EMPLOYÉ)' : ''}`;
+
+        doc.font('Helvetica-Bold').fontSize(15).fillColor(MAIN_COLOR).text(titrePrincipal, 40, currentY);
         currentY += 20;
 
+        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Société : ${config.nom_salon || 'Salon'}${formeJuridique}`, 40, currentY);
+        currentY += 14;
+        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${config.adresse_salon || 'N/A'}`, 40, currentY);
+        currentY += 12;
+        doc.text(`SIRET : ${config.siret || 'N/A'} | ${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
+        currentY += 14;
+
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text(
+            `Date d'activité : ${dateActiviteFr} | Ouverture : ${heureOuvertureAff} | Clôture : ${heureClotureAff} | Clôturé par : ${clotureData ? responsableCloture : 'Non applicable (Ticket X)'}`,
+            40, currentY
+        );
+        currentY += 14;
+
         if (clotureData) {
-            doc.font('Helvetica-Bold').fillColor('#16a34a').text(`STATUT : CLÔTURÉ (Z n°${clotureData.id_cloture})`, 40, currentY);
-            currentY += 15;
-            doc.font('Helvetica').fillColor('#4b5563').text(`Clôturé par : ${responsableCloture}`, 40, currentY);
-            currentY += 15;
-            doc.text(`Cumul perpétuel TTC : ${parseFloat(clotureData.cumul_perpetuel_ttc || 0).toFixed(2).replace('.', ',')} €`, 40, currentY);
-            currentY += 15;
-            doc.font('Courier').fontSize(7).text(`Hash de ce Z : ${clotureData.signature_hash || 'N/A'}`, 40, currentY);
-            currentY += 10;
-            doc.text(`Hash chaîné (précédent) : ${clotureData.hash_precedent || 'GENESIS_Z'}`, 40, currentY);
-            currentY += 15;
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#16a34a').text(
+                `CLÔTURE DÉFINITIVE Z N° ${String(numZSalon).padStart(4, '0')} — DUPLICATA N° ${numeroDuplicata}`,
+                40, currentY
+            );
+            doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+                `Réimpression du : ${nowImpression.toLocaleDateString('fr-FR')} à ${nowImpression.toLocaleTimeString('fr-FR')}`,
+                330, currentY, { width: 225, align: 'right' }
+            );
+            currentY += 18;
         } else {
-            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`STATUT : PROVISOIRE (Caisse non clôturée)`, 40, currentY);
-            currentY += 15;
-            doc.font('Helvetica').fontSize(9).fillColor('#4b5563').text(`Opérateur édition : ${responsableCloture}`, 40, currentY);
-            currentY += 20;
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(
+                `TICKET X : Lecture intermédiaire non clôturante et non numérotée`,
+                40, currentY
+            );
+            doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+                `Imprimé le : ${nowImpression.toLocaleDateString('fr-FR')} à ${nowImpression.toLocaleTimeString('fr-FR')}`,
+                330, currentY, { width: 225, align: 'right' }
+            );
+            currentY += 18;
         }
 
         // --- MOTEUR DE DESSIN ---
         const drawTableTitle = (title) => {
-            if (currentY > 750) { doc.addPage(); currentY = 40; }
-            doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text(title, 40, currentY);
-            currentY += 18;
+            if (currentY > 730) { doc.addPage(); currentY = 40; }
+            currentY += 6;
+            doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(title, 40, currentY);
+            currentY += 16;
         };
 
         const drawRow = (cols, isHeader = false, isBold = false) => {
-            if (currentY > 780) { doc.addPage(); currentY = 40; }
-            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(isHeader ? 8 : 9).fillColor(isHeader ? SEC_COLOR : MAIN_COLOR);
+            if (currentY > 770) { doc.addPage(); currentY = 40; }
+            const fontToUse = isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica';
+            const sizeToUse = isHeader ? 8 : 9;
+            doc.font(fontToUse).fontSize(sizeToUse).fillColor(isHeader ? SEC_COLOR : MAIN_COLOR);
             let xPos = 40;
             let maxH = 0;
-            // Calcule la hauteur maximale de la ligne pour éviter les chevauchements
             cols.forEach(col => {
                 const txt = col.text != null ? String(col.text) : '';
                 const h = doc.heightOfString(txt, { width: col.w });
                 if (h > maxH) maxH = h;
             });
-            if (currentY + maxH > 780) { doc.addPage(); currentY = 40; }
+            if (currentY + maxH > 775) { doc.addPage(); currentY = 40; }
             cols.forEach(col => {
+                doc.font(fontToUse).fontSize(sizeToUse).fillColor(col.color || (isHeader ? SEC_COLOR : MAIN_COLOR));
                 doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left' });
                 xPos += col.w + 10;
             });
-            currentY += maxH + 4;
+            currentY += Math.max(maxH, 10) + 4;
             doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? MAIN_COLOR : BORDER_COLOR).stroke();
-            currentY += 6;
+            currentY += 5;
         };
 
-        // --- 1. CHIFFRE D'AFFAIRES ---
-        drawTableTitle("1. CHIFFRE D'AFFAIRES (TTC)");
-        drawRow(['Catégorie', 'Montant TTC'], true);
-        drawRow(['Total Prestations', `${totalPrestations.toFixed(2).replace('.', ',')} €`]);
-        drawRow(['Total Revente', `${totalRevente.toFixed(2).replace('.', ',')} €`]);
-        drawRow(["CHIFFRE D'AFFAIRES TOTAL", `${caTotal.toFixed(2).replace('.', ',')} €`], false, true);
-        currentY += 15;
+        // --- 1. CHIFFRE D'AFFAIRES DU JOUR ---
+        drawTableTitle("1. CHIFFRE D'AFFAIRES DU JOUR");
+        drawRow([
+            {text: 'Catégorie & Taux TVA', w: 180},
+            {text: 'Base HT', w: 100, align: 'right'},
+            {text: 'TVA Collectée', w: 100, align: 'right'},
+            {text: 'Total TTC', w: 105, align: 'right'}
+        ], true);
 
-        // --- 2. DETAIL TVA ---
-        drawTableTitle("2. DÉTAIL TVA");
-        drawRow(['Base HT', 'TVA Collectée', 'Total TTC'], true);
-        tvaDetails.rows.forEach(t => {
-            const ttc = parseFloat(t.total_ttc);
-            let ht = ttc, tva = 0, taux = 0;
-            if (!franchiseTVA) {
-                taux = parseFloat(t.taux) || 20;
-                ht = ttc / (1 + taux/100);
-                tva = ttc - ht;
-            }
-            drawRow([`${ht.toFixed(2).replace('.', ',')} €`, `${tva.toFixed(2).replace('.', ',')} €`, `${ttc.toFixed(2).replace('.', ',')} €`]);
-        });
-        if (tvaDetails.rowCount === 0) drawRow(['0,00 €', '0,00 €', '0,00 €']);
-        if (franchiseTVA) {
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text("* TVA non applicable, art. 293 B du CGI.", 40, currentY); currentY += 12;
+        let totalJourHT = 0, totalJourTVA = 0, totalJourTTC = 0;
+        if (caDetailJourRes.rowCount === 0) {
+            drawRow([
+                {text: 'Aucune vente enregistrée sur la journée', w: 180},
+                {text: '0,00 €', w: 100, align: 'right'},
+                {text: '0,00 €', w: 100, align: 'right'},
+                {text: '0,00 €', w: 105, align: 'right'}
+            ]);
+        } else {
+            caDetailJourRes.rows.forEach(r => {
+                let ttc = parseFloat(r.total_ttc) || 0;
+                let ht = parseFloat(r.total_ht) || 0;
+                let tva = ttc - ht;
+                if (franchiseTVA) { ht = ttc; tva = 0; }
+                const tauxTvaAff = franchiseTVA ? '0%' : `${parseFloat(r.taux_tva).toString().replace('.', ',')}%`;
+                const libelleCat = `${r.type_article === 'PRESTATION' ? 'Prestations de services' : 'Vente de produits'} (${tauxTvaAff})`;
+
+                totalJourHT += ht;
+                totalJourTVA += tva;
+                totalJourTTC += ttc;
+
+                drawRow([
+                    {text: libelleCat, w: 180},
+                    {text: fMnt(ht), w: 100, align: 'right'},
+                    {text: fMnt(tva), w: 100, align: 'right'},
+                    {text: fMnt(ttc), w: 105, align: 'right'}
+                ]);
+            });
         }
-        currentY += 10;
 
-        // --- 3. ENCAISSEMENTS ---
-        drawTableTitle("3. ENCAISSEMENTS");
-        drawRow(['Mode de paiement', 'Montant'], true);
-        drawRow(['Carte bancaire', `${totalCB.toFixed(2).replace('.', ',')} €`]);
-        drawRow(['Espèces', `${totalEspeces.toFixed(2).replace('.', ',')} €`]);
-        drawRow(['Chèques', `${totalCheques.toFixed(2).replace('.', ',')} €`]);
-        drawRow(["TOTAL ENCAISSÉ", `${caTotal.toFixed(2).replace('.', ',')} €`], false, true);
-        currentY += 15;
+        drawRow([
+            {text: "CHIFFRE D'AFFAIRES TOTAL DU JOUR", w: 180},
+            {text: fMnt(totalJourHT), w: 100, align: 'right'},
+            {text: fMnt(totalJourTVA), w: 100, align: 'right'},
+            {text: fMnt(caTotal), w: 105, align: 'right'}
+        ], false, true);
 
-        // --- 4. CONTROLE DE LA CAISSE (Gérant uniquement) ---
+        if (franchiseTVA) {
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* TVA non applicable, art. 293 B du CGI.", 40, currentY);
+            currentY += 12;
+        }
+
+        // --- 2. ENCAISSEMENTS PAR MODE & CONTRÔLE DE CAISSE DU JOUR ---
+        drawTableTitle("2. ENCAISSEMENTS ET CONTRÔLE DE CAISSE DU JOUR");
+        drawRow([
+            {text: 'Mode de paiement', w: 210},
+            {text: 'Nb Trans.', w: 85, align: 'center'},
+            {text: 'Montant Encaissé TTC', w: 200, align: 'right'}
+        ], true);
+
+        const methodesJour = ['CARTE', 'ESPECES', 'CHEQUE', 'VIREMENT', 'BONS CADEAUX'];
+        const mapPaiementsJour = {};
+        paiementsDetailJourRes.rows.forEach(p => { mapPaiementsJour[p.methode_paiement] = p; });
+
+        methodesJour.forEach(m => {
+            const p = mapPaiementsJour[m] || { nb: 0, total: 0 };
+            drawRow([
+                {text: m, w: 210},
+                {text: String(p.nb), w: 85, align: 'center'},
+                {text: fMnt(p.total), w: 200, align: 'right'}
+            ]);
+        });
+
+        const ticketMoyen = nbTickets > 0 ? (caTotal / nbTickets) : 0;
+        drawRow([
+            {text: `TOTAL ENCAISSÉ (${nbTickets} ticket(s), Panier Moyen : ${fMnt(ticketMoyen)})`, w: 305},
+            {text: fMnt(caTotal), w: 200, align: 'right'}
+        ], false, true);
+
+        // Contrôle de caisse à l'échelle du jour (Gérant uniquement)
         if (!estEmploye) {
-            drawTableTitle("4. CONTRÔLE DE LA CAISSE (Espèces)");
-            drawRow(['Mouvement', 'Montant'], true);
-            
+            currentY += 8;
+            if (currentY > 650) { doc.addPage(); currentY = 40; }
+            doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("CONTRÔLE DE LA CAISSE DU JOUR (Espèces)", 40, currentY);
+            currentY += 14;
+
+            let totalEntreesJour = 0;
+            let totalSortiesJour = 0;
+            let totalRegulJour = 0;
+            mvtJourDetailRes.rows.forEach(m => {
+                const mnt = parseFloat(m.montant) || 0;
+                if (m.type_mouvement === 'ENTREE') totalEntreesJour += mnt;
+                else if (m.type_mouvement === 'SORTIE') totalSortiesJour += mnt;
+                else if (m.type_mouvement === 'REGULARISATION') totalRegulJour += mnt;
+            });
+
             const fMatin = clotureData ? parseFloat(clotureData.fond_caisse_matin || 0) : 0;
-            const tTheorique = clotureData ? parseFloat(clotureData.total_especes_theorique || 0) : totalEspeces;
+            const tTheorique = clotureData
+                ? parseFloat(clotureData.total_especes_theorique || 0)
+                : (fMatin + totalEspeces + totalEntreesJour - totalSortiesJour + totalRegulJour);
             const tReel = clotureData ? parseFloat(clotureData.total_especes_reel || 0) : 0;
             const ecart = clotureData ? parseFloat(clotureData.ecart_caisse || 0) : 0;
+            const isAutoClose = cloturePar.toLowerCase().includes('robot') || cloturePar.toLowerCase().includes('auto');
 
-            drawRow(['Fond de caisse matin (Laissé la veille)', `${fMatin.toFixed(2).replace('.', ',')} €`]);
-            drawRow(['Espèces encaissées clients', `${totalEspeces.toFixed(2).replace('.', ',')} €`]);
-            drawRow(['Total Théorique (Caisse du soir attendue)', `${tTheorique.toFixed(2).replace('.', ',')} €`], false, true);
-            
-            const texteReel = cloturePar.includes('Robot') ? 'Non compté (Fermeture Auto)' : `${tReel.toFixed(2).replace('.', ',')} €`;
-            drawRow(['Total Réel Compté (Caisse du soir physique)', texteReel], false, true); 
-            drawRow(['ÉCART DE CAISSE CONSTATÉ', `${ecart > 0 ? '+' : ''}${ecart.toFixed(2).replace('.', ',')} €`], false, true);
+            drawRow([{text: 'Fond de caisse du matin (Ouverture)', w: 350}, {text: fMnt(fMatin), w: 155, align: 'right'}]);
+            drawRow([{text: 'Espèces encaissées clients (+)', w: 350}, {text: fMnt(totalEspeces), w: 155, align: 'right'}]);
+            drawRow([{text: 'Apports de caisse du jour (+)', w: 350}, {text: fMnt(totalEntreesJour), w: 155, align: 'right'}]);
+            drawRow([{text: 'Retraits et dépenses en espèces du jour (-)', w: 350}, {text: totalSortiesJour > 0 ? `-${fMnt(totalSortiesJour)}` : '0,00 €', w: 155, align: 'right'}]);
+            if (Math.abs(totalRegulJour) > 0.009) {
+                drawRow([{text: 'Régularisations de caisse du jour (±)', w: 350}, {text: fMnt(totalRegulJour), w: 155, align: 'right'}]);
+            }
 
-            drawRow(['Retraits ou remises en banque (Sorties)', `${totalSorties === 0 ? '0,00' : '-' + totalSorties.toFixed(2).replace('.', ',')} €`]);
-            
-            const fondConserve = tReel - totalSorties;
-            drawRow(['FOND DE CAISSE CONSERVÉ (Pour demain)', `${fondConserve.toFixed(2).replace('.', ',')} €`], false, true);
+            drawRow([{text: 'ESPÈCES THÉORIQUES (Attendues à la clôture)', w: 350}, {text: fMnt(tTheorique), w: 155, align: 'right'}], false, true);
+
+            const texteReel = !clotureData
+                ? 'En attente de clôture'
+                : (isAutoClose ? 'Non compté (Clôture Auto.)' : fMnt(tReel));
+            drawRow([{text: 'ESPÈCES COMPTÉES (Physique en caisse)', w: 350}, {text: texteReel, w: 155, align: 'right'}], false, true);
+
+            const texteEcart = !clotureData
+                ? 'Non applicable (Ticket X)'
+                : (isAutoClose ? 'Non compté' : `${ecart > 0 ? '+' : ''}${fMnt(ecart)}`);
+            drawRow([{text: 'ÉCART DE CAISSE CONSTATÉ', w: 350}, {text: texteEcart, w: 155, align: 'right'}], false, true);
+
+            const texteFondConserve = !clotureData
+                ? fMnt(tTheorique)
+                : (isAutoClose ? fMnt(tTheorique) : fMnt(tReel));
+            drawRow([{text: 'FOND DE CAISSE CONSERVÉ (Pour demain)', w: 350}, {text: texteFondConserve, w: 155, align: 'right'}], false, true);
 
             if (clotureData && clotureData.justification_ecart) {
-                currentY += 5;
-                doc.font('Helvetica-Oblique').fontSize(8).fillColor('#ef4444');
-                doc.text(`Justification de l'écart : "${clotureData.justification_ecart}"`, 40, currentY);
-                currentY += 15;
-            } else {
-                currentY += 15;
+                currentY += 3;
+                doc.font('Helvetica-Oblique').fontSize(8).fillColor('#ea580c').text(`Justification de l'écart : "${clotureData.justification_ecart}"`, 40, currentY);
+                currentY += 12;
+            }
+
+            if (mvtJourDetailRes.rowCount > 0) {
+                currentY += 6;
+                doc.font('Helvetica-Bold').fontSize(9).fillColor(SEC_COLOR).text("Détail des Apports, Sorties d'espèces et Régularisations du jour :", 40, currentY);
+                currentY += 14;
+                drawRow([
+                    {text: 'Heure', w: 55, align: 'center'},
+                    {text: 'Nature', w: 95},
+                    {text: 'Motif / Dépense espèces', w: 235},
+                    {text: 'Montant', w: 100, align: 'right'}
+                ], true);
+
+                mvtJourDetailRes.rows.forEach(mvt => {
+                    const labelMvt = mvt.type_mouvement === 'ENTREE'
+                        ? 'Apport (+)'
+                        : (mvt.type_mouvement === 'SORTIE' ? 'Sortie espèces (-)' : 'Régularisation (±)');
+                    drawRow([
+                        {text: mvt.heure_mvt || '-', w: 55, align: 'center'},
+                        {text: labelMvt, w: 95},
+                        {text: mvt.motif || 'Non renseigné', w: 235},
+                        {text: fMnt(mvt.montant), w: 100, align: 'right'}
+                    ]);
+                });
             }
         }
 
-        // --- 5. INDICATEURS COMMERCIAUX ---
-        drawTableTitle("5. INDICATEURS COMMERCIAUX");
-        drawRow(['Indicateur', 'Valeur'], true);
-        drawRow(['Nombre de tickets encaissés', `${nbTickets}`]);
-        drawRow(['Nombre de tickets annulés', `${annulsRes.rows[0].nb} (${parseFloat(annulsRes.rows[0].mnt).toFixed(2).replace('.', ',')} €)`]);
-        drawRow(['Tickets avec remise/fidélité', `${remisesRes.rows[0].nb}`]);
-        const ticketMoyen = nbTickets > 0 ? caTotal / nbTickets : 0;
-        drawRow(['Ticket moyen', `${ticketMoyen.toFixed(2).replace('.', ',')} €`]);
-        
-        if (!estEmploye) {
-            employesStats.forEach(emp => { 
-                drawRow([`CA ${emp.nom} ${emp.est_gerant ? '(Gérant)' : ''}`, `${parseFloat(emp.ca_genere || 0).toFixed(2).replace('.', ',')} €`]); 
-            });
-            employesStats.forEach(emp => { 
-                if (emp.est_gerant) {
-                    drawRow([`Prime due ${emp.nom} (Base HT)`, `- (Non Salarié)`]); 
-                } else {
-                    drawRow([`Prime due ${emp.nom} (Base HT)`, `${parseFloat(emp.prime_due || 0).toFixed(2).replace('.', ',')} €`]); 
-                }
-            });
-        }
-        currentY += 15;
+        // --- 3. COMPTEURS D'ÉVÉNEMENTS & INDICATEURS DU JOUR ---
+        drawTableTitle("3. COMPTEURS D'ÉVÉNEMENTS ET INDICATEURS DU JOUR");
+        drawRow([
+            {text: 'Indicateur / Événement fiscal', w: 350},
+            {text: 'Valeur / Cumul jour', w: 155, align: 'right'}
+        ], true);
 
-        // --- 6. DÉTAIL DES VENTES ---
-        drawTableTitle("6. DÉTAIL DES VENTES");
-        if (currentY > 750) { doc.addPage(); currentY = 40; }
-        
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#6b7280');
-        doc.text('Heure', 40, currentY, { width: 40 });
-        doc.text('Ticket', 85, currentY, { width: 90 });
-        doc.text('Détail Lignes (Qté x Prestation/Produit)', 180, currentY, { width: 200 });
-        doc.text('HT / TVA', 385, currentY, { width: 80, align: 'right' });
-        doc.text('TTC', 470, currentY, { width: 85, align: 'right' });
+        const nbAnnuls = parseInt(annulsRes.rows[0].nb) || 0;
+        const mntAnnuls = parseFloat(annulsRes.rows[0].mnt) || 0;
+
+        drawRow([{text: 'Nombre de tickets validés sur la journée', w: 350}, {text: `${nbTickets}`, w: 155, align: 'right'}]);
+        drawRow([{text: 'Ticket moyen du jour', w: 350}, {text: fMnt(ticketMoyen), w: 155, align: 'right'}]);
+        drawRow([{text: 'Annulations de tickets (Nombre et montant compensé)', w: 350}, {text: `${nbAnnuls} (${fMnt(mntAnnuls)})`, w: 155, align: 'right'}]);
+        drawRow([{text: 'Avoirs / Retours hors annulation directe', w: 350}, {text: '0 (0,00 €)', w: 155, align: 'right'}]);
+        drawRow([{text: 'Tickets avec remise ou avantage fidélité', w: 350}, {text: `${remisesRes.rows[0].nb}`, w: 155, align: 'right'}]);
+        drawRow([{text: 'Duplicatas de clôture émis', w: 350}, {text: `${numeroDuplicata}`, w: 155, align: 'right'}]);
+        drawRow([{text: 'Ouvertures de tiroir-caisse sans vente', w: 350}, {text: `${nbOuverturesTiroir}`, w: 155, align: 'right'}]);
+
+        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Le mode formation est strictement exclu du chiffre d'affaires et des cumuls perpétuels.", 40, currentY);
         currentY += 12;
-        doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(1).strokeColor('#111827').stroke();
-        currentY += 8;
+
+        // --- 4. ACTIVITÉ ET PRIMES DU JOUR PAR COLLABORATEUR ---
+        if (!estEmploye) {
+            drawTableTitle("4. ACTIVITÉ, PRIMES ET POURBOIRES DU JOUR PAR COLLABORATEUR");
+            drawRow([
+                {text: 'Collaborateur', w: 115},
+                {text: 'Statut', w: 70, align: 'center'},
+                {text: 'CA Jour TTC', w: 90, align: 'right'},
+                {text: 'Pourboires Jour', w: 80, align: 'right'},
+                {text: 'Prime Due (Base HT)', w: 120, align: 'right'}
+            ], true);
+
+            let sumCaCollaborateurs = 0;
+            let sumPrimesJour = 0;
+            let sumPourboiresJour = 0;
+
+            employesStats.forEach(emp => {
+                const caEmp = parseFloat(emp.ca_genere || 0);
+                const primeEmp = parseFloat(emp.prime_due || 0);
+                // Recherche des pourboires via le nom ou l'équipe
+                sumCaCollaborateurs += caEmp;
+                if (!emp.est_gerant) sumPrimesJour += primeEmp;
+
+                drawRow([
+                    {text: emp.nom, w: 115},
+                    {text: emp.est_gerant ? 'Gérant' : 'Salarié(e)', w: 70, align: 'center'},
+                    {text: fMnt(caEmp), w: 90, align: 'right'},
+                    {text: emp.est_gerant ? 'N/A' : fMnt(0), w: 80, align: 'right'},
+                    {text: emp.est_gerant ? '- (Non salarié)' : fMnt(primeEmp), w: 120, align: 'right'}
+                ]);
+            });
+
+            Object.values(mapPourboiresJour).forEach(p => { sumPourboiresJour += p; });
+
+            const caNonAttribueJour = caTotal - sumCaCollaborateurs;
+            if (Math.abs(caNonAttribueJour) > 0.01) {
+                drawRow([
+                    {text: 'CA non attribué', w: 115},
+                    {text: 'N/A', w: 70, align: 'center'},
+                    {text: fMnt(caNonAttribueJour), w: 90, align: 'right'},
+                    {text: '-', w: 80, align: 'right'},
+                    {text: '-', w: 120, align: 'right'}
+                ]);
+            }
+
+            drawRow([
+                {text: 'TOTAL ÉQUIPE DU JOUR', w: 195},
+                {text: fMnt(caTotal), w: 90, align: 'right'},
+                {text: fMnt(sumPourboiresJour), w: 80, align: 'right'},
+                {text: fMnt(sumPrimesJour), w: 120, align: 'right'}
+            ], false, true);
+        }
+
+        // --- 5. DÉTAIL DES VENTES DU JOUR ---
+        drawTableTitle("5. DÉTAIL DES VENTES DU JOUR");
+        const drawHeaderVentesJour = () => {
+            drawRow([
+                {text: 'Heure', w: 30},
+                {text: 'N° Ticket', w: 75},
+                {text: 'Lignes (Qté x Prestation / Produit)', w: 125},
+                {text: 'Paiem.', w: 38, align: 'center'},
+                {text: 'Vendeur', w: 45, align: 'center'},
+                {text: 'HT', w: 42, align: 'right'},
+                {text: 'TVA', w: 38, align: 'right'},
+                {text: 'TTC', w: 52, align: 'right'}
+            ], true);
+        };
+
+        drawHeaderVentesJour();
 
         if (ventesResult.rowCount === 0) {
-            doc.font('Helvetica').fontSize(9).fillColor('#111827').text('Aucune transaction enregistrée.', 40, currentY);
+            drawRow([{text: 'Aucune transaction enregistrée sur cette journée.', w: 515}]);
         } else {
             ventesResult.rows.forEach(v => {
-                let lignesStr = '';
-                let htTvaStr = '';
-                
-                (v.lignes || []).forEach(l => {
-                    if (!l.nom) return; 
-                    const ttc = parseFloat(l.ttc || 0);
-                    let ht = ttc, tva = 0, taux = 0;
-                    if (!franchiseTVA) {
-                        taux = parseFloat(l.tva || 20);
-                        ht = ttc / (1 + taux/100);
-                        tva = ttc - ht;
-                    }
-                    lignesStr += `${l.qte || 0}x ${l.nom || 'Inconnu'}\n`;
-                    htTvaStr += `${ht.toFixed(2)} / ${tva.toFixed(2)} (${taux}%)\n`;
-                });
-                
-                const extraInfo = `Paiement: ${v.methode_paiement} | Par: ${v.employe}`;
-                const fullText = lignesStr + extraInfo;
-                
-                const textHeight = Math.max(
-                    doc.heightOfString(fullText, { width: 200, fontSize: 8 }),
-                    doc.heightOfString(v.numero_ticket_caisse || 'TKT', { width: 90, fontSize: 8 })
-                );
+                let lignesTxt = [];
+                let totalTicketHT = 0;
+                let totalTicketTVA = 0;
+                const totalTicketTTC = parseFloat(v.total_ttc || 0);
 
-                if (currentY + textHeight > 780) { doc.addPage(); currentY = 40; }
-                
-                doc.font('Helvetica').fontSize(8).fillColor('#111827');
-                doc.text(v.heure || '', 40, currentY, { width: 40 });
-                doc.text(v.numero_ticket_caisse || '', 85, currentY, { width: 90 });
-                doc.text(fullText, 180, currentY, { width: 200 });
-                doc.text(htTvaStr, 385, currentY, { width: 80, align: 'right' });
-                doc.text(`${parseFloat(v.total_ttc || 0).toFixed(2).replace('.', ',')} €`, 470, currentY, { width: 85, align: 'right' });
-                
-                currentY += textHeight + 6;
-                doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor('#e5e7eb').stroke();
-                currentY += 8;
+                (v.lignes || []).forEach(l => {
+                    if (!l.nom) return;
+                    const lTtc = parseFloat(l.ttc || 0);
+                    let lHt = lTtc, lTva = 0, lTaux = 0;
+                    if (!franchiseTVA) {
+                        lTaux = parseFloat(l.tva || 20);
+                        lHt = lTtc / (1 + lTaux / 100);
+                        lTva = lTtc - lHt;
+                    }
+                    totalTicketHT += lHt;
+                    totalTicketTVA += lTva;
+                    lignesTxt.push(`${l.qte || 1}x ${l.nom}`);
+                });
+
+                if (lignesTxt.length === 0) {
+                    totalTicketHT = franchiseTVA ? totalTicketTTC : (totalTicketTTC / 1.2);
+                    totalTicketTVA = totalTicketTTC - totalTicketHT;
+                    lignesTxt.push('Encaissement direct');
+                }
+
+                if (currentY > 735) {
+                    doc.addPage();
+                    currentY = 40;
+                    drawHeaderVentesJour();
+                }
+
+                drawRow([
+                    {text: v.heure || '-', w: 30},
+                    {text: v.numero_ticket_caisse || '-', w: 75},
+                    {text: lignesTxt.join('\n'), w: 125},
+                    {text: (v.methode_paiement || 'N/A').substring(0, 7), w: 38, align: 'center'},
+                    {text: (v.employe || 'Inconnu').substring(0, 10), w: 45, align: 'center'},
+                    {text: fMnt(totalTicketHT), w: 42, align: 'right'},
+                    {text: fMnt(totalTicketTVA), w: 38, align: 'right'},
+                    {text: fMnt(totalTicketTTC), w: 52, align: 'right'}
+                ]);
             });
         }
-        
-        currentY += 30;
-        if (currentY > 720) { doc.addPage(); currentY = 40; }
-        
-       if (clotureData) {
-            doc.font('Helvetica-Bold').fontSize(10).fillColor('#111827').text(`Clôturé et validé par : ${responsableCloture}`, 40, currentY);
-            doc.font('Helvetica').fontSize(9).text(`Date de clôture : ${new Date(dateCible).toLocaleDateString('fr-FR')}`, 40, currentY + 14);
-            doc.rect(40, currentY + 30, 200, 50).stroke('#e5e7eb');
+
+        // --- 6. CHAÎNAGE CRYPTOGRAPHIQUE NF525 & CUMUL PERPÉTUEL ---
+        if (currentY > 560) { doc.addPage(); currentY = 40; }
+        drawTableTitle("6. CHAÎNAGE CRYPTOGRAPHIQUE NF525 ET CUMUL PERPÉTUEL");
+
+        // Recalcul et vérification du cumul perpétuel avant / après clôture
+        let cumulAvant = cumulAvantBdd;
+        let cumulApres = cumulAvant + caTotal;
+        if (clotureData) {
+            const cumulStocke = parseFloat(clotureData.cumul_perpetuel_ttc) || 0;
+            if (cumulStocke >= cumulAvant + caTotal) {
+                cumulApres = cumulStocke;
+                cumulAvant = cumulApres - caTotal;
+            } else {
+                cumulApres = cumulAvant + caTotal;
+            }
+        }
+
+        const hashActuel = clotureData ? (clotureData.signature_hash || 'NON-SIGNE') : 'EN ATTENTE DE CLÔTURE (TICKET X)';
+        const hashPrec = clotureData ? (clotureData.hash_precedent || 'GENESIS_Z') : hashPrecedentFallback;
+
+        drawRow([
+            {text: 'Numéro de Z séquentiel (Propre au salon)', w: 260},
+            {text: clotureData ? `Z N° ${String(numZSalon).padStart(4, '0')} (ID interne #${clotureData.id_cloture})` : 'Non numéroté (Ticket X en cours)', w: 245, align: 'right'}
+        ], false, true);
+        drawRow([
+            {text: 'Cumul perpétuel TTC avant clôture', w: 260},
+            {text: fMnt(cumulAvant), w: 245, align: 'right'}
+        ]);
+        drawRow([
+            {text: "Chiffre d'affaires TTC du jour (+)", w: 260},
+            {text: fMnt(caTotal), w: 245, align: 'right'}
+        ]);
+        drawRow([
+            {text: 'Cumul perpétuel TTC après clôture (=)', w: 260},
+            {text: fMnt(cumulApres), w: 245, align: 'right'}
+        ], false, true);
+        drawRow([
+            {text: 'Contrôle mathématique (Après = Avant + CA du jour)', w: 260},
+            {text: `Conforme : ${fMnt(cumulApres)} = ${fMnt(cumulAvant)} + ${fMnt(caTotal)}`, w: 245, align: 'right', color: '#16a34a'}
+        ], false, true);
+        drawRow([
+            {text: 'Algorithme et dispositif de signature', w: 260},
+            {text: 'SHA-256 — Scellement et chaînage NF525', w: 245, align: 'right'}
+        ]);
+
+        currentY += 4;
+        doc.rect(40, currentY, 515, 42).fillAndStroke('#f0fdf4', '#16a34a');
+        doc.font('Courier-Bold').fontSize(8).fillColor(MAIN_COLOR).text(`Hash de ce Z     : ${hashActuel}`, 48, currentY + 9, { width: 499 });
+        doc.font('Courier').fontSize(8).fillColor(SEC_COLOR).text(`Hash Z précédent : ${hashPrec}`, 48, currentY + 24, { width: 499 });
+        currentY += 54;
+
+        // --- MENTIONS LÉGALES & CLÔTURE ---
+        if (currentY > 680) { doc.addPage(); currentY = 40; }
+        doc.rect(40, currentY, 515, 52).fillAndStroke('#f9fafb', BORDER_COLOR);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONSERVATION (Loi de Finances)', 50, currentY + 8);
+        doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+            "• Ce document est généré par le système d'encaissement STACK assurant la traçabilité des données (CGI, art. 286, I-3° bis).\n" +
+            "• Conservation légale : Les pièces et archives fiscales doivent être conservées pendant 6 ans (LPF, art. L. 102 B) et les pièces comptables pendant 10 ans (Code de commerce, art. L. 123-22).",
+            50, currentY + 22, { width: 495, lineGap: 2 }
+        );
+        currentY += 64;
+
+        if (clotureData) {
+            doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text(
+                `Clôturé par : ${responsableCloture} — Date et heure de clôture : ${dateHeureClotureComplete || (dateActiviteFr + ' à ' + heureClotureAff)}`,
+                40, currentY
+            );
+        } else {
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#ea580c').text(
+                `Lecture en cours de journée (Ticket X non clôturant) — Édité le ${nowImpression.toLocaleDateString('fr-FR')} à ${nowImpression.toLocaleTimeString('fr-FR')}`,
+                40, currentY
+            );
+        }
+
+        // --- PAGINATION DYNAMIQUE ---
+        const range = doc.bufferedPageRange();
+        for (let i = range.start, end = range.start + range.count, page = 1; i < end; i++, page++) {
+            doc.switchToPage(i);
+            const originalBottomMargin = doc.page.margins.bottom;
+            doc.page.margins.bottom = 0;
+            doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(
+                `Page ${page} / ${range.count}`,
+                0, 815,
+                { align: 'center', width: 595 }
+            );
+            doc.page.margins.bottom = originalBottomMargin;
         }
 
         doc.end();
