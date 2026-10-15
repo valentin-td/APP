@@ -270,6 +270,9 @@ pool.query(`
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS justification_ecart TEXT;
     ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS est_cloture_automatique BOOLEAN DEFAULT FALSE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compteur_tickets INT DEFAULT 0;
+    
+    -- NOUVELLE COLONNE : Numérotation continue des Z par salon
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS numero_z_salon INT;
 
     -- NOUVELLE TABLE : Petite caisse et régularisations
     CREATE TABLE IF NOT EXISTS mouvements_caisse (
@@ -358,6 +361,18 @@ pool.query(`
     try {
         await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_TIMESTAMP;`);
         await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture); END IF; END $$;`);
+        
+        -- BACKFILL : Attribution d'un numéro de Z rétroactif continu pour tous les anciens historiques sans exception
+        await pool.query(`
+            UPDATE clotures_caisse
+            SET numero_z_salon = subquery.seq
+            FROM (
+                SELECT id_cloture, ROW_NUMBER() OVER (PARTITION BY id_salon ORDER BY date_cloture ASC, id_cloture ASC) as seq
+                FROM clotures_caisse
+            ) AS subquery
+            WHERE clotures_caisse.id_cloture = subquery.id_cloture
+            AND clotures_caisse.numero_z_salon IS NULL;
+        `);
         
         // 🚨 SÉCURITÉ NF525 : Triggers stricts anti-altération et anti-suppression
         await pool.query(`
@@ -1846,20 +1861,22 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         }
         // --------------------------------------------------------
 
-        const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1', [id_salon]);
+        const dernierZ = await clientDB.query('SELECT signature_hash, numero_z_salon FROM clotures_caisse WHERE id_salon = $1 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon]);
         const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
+        const nextZ = dernierZ.rowCount > 0 && dernierZ.rows[0].numero_z_salon ? parseInt(dernierZ.rows[0].numero_z_salon) + 1 : 1;
         const dateISO = new Date().toISOString();
+        
         const signature = crypto.createHash('sha256')
-            .update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO}`)
+            .update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO}`)
             .digest('hex');
 
         await clientDB.query(
-            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant', fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null]
+            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, numero_z_salon) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant', fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null, nextZ]
         );
 
-        await enregistrerJET(id_salon, 'CLOTURE_Z', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
+        await enregistrerJET(id_salon, 'CLOTURE_Z', { numero_z: nextZ, date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
 
         // --- PHASE 4 : WEBHOOK / POUSSÉE API TEMPS RÉEL (Ex: Pennylane) ---
         try {
@@ -3376,7 +3393,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const caTotal = parseFloat(caResult.rows[0].ca_total) || 0;
 
         // 3. Clôture Info et Mouvements
-        const clotureRes = await pool.query(`SELECT id_cloture, cumul_perpetuel_ttc, signature_hash, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
+        const clotureRes = await pool.query(`SELECT id_cloture, numero_z_salon, cumul_perpetuel_ttc, signature_hash, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2`, [id_salon, dateCible]);
         const clotureData = clotureRes.rowCount > 0 ? clotureRes.rows[0] : null;
         const cloturePar = clotureData ? clotureData.ferme_par : 'Non spécifié';
 
@@ -3496,13 +3513,14 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const mapPourboiresJour = {};
         pourboiresJourRes.rows.forEach(r => { mapPourboiresJour[r.id_employe] = parseFloat(r.total_pourboire) || 0; });
 
-        // Numéro de Z séquentiel propre au salon (sans trou ni doublon) et cumul précédent
-        const zSeqRes = await pool.query(`
-            SELECT COUNT(*) as num_z_salon
-            FROM clotures_caisse
-            WHERE id_salon = $1 AND date_cloture <= $2::date
-        `, [id_salon, dateCible]);
-        const numZSalon = parseInt(zSeqRes.rows[0].num_z_salon) || 1;
+        // Numéro de Z séquentiel propre au salon
+        let numZSalon = 1;
+        if (clotureData && clotureData.numero_z_salon) {
+            numZSalon = parseInt(clotureData.numero_z_salon);
+        } else {
+            const zSeqRes = await pool.query(`SELECT COALESCE(MAX(numero_z_salon), 0) + 1 as next_z FROM clotures_caisse WHERE id_salon = $1`, [id_salon]);
+            numZSalon = parseInt(zSeqRes.rows[0].next_z);
+        }
 
         const prevZRes = await pool.query(`
             SELECT cumul_perpetuel_ttc, signature_hash
@@ -4173,7 +4191,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         // REQUÊTE : Historique des Z du mois (Enrichie avec le CA et tickets)
         const zMoisRes = await pool.query(`
-            SELECT c.id_cloture, TO_CHAR(c.date_cloture, 'DD/MM/YYYY') as date_z, 
+            SELECT c.id_cloture, c.numero_z_salon, TO_CHAR(c.date_cloture, 'DD/MM/YYYY') as date_z, 
                    c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc,
                    COUNT(t.id_ticket) as nb_tickets,
                    COALESCE(SUM(t.total_ttc), 0) as ca_ttc
@@ -4182,8 +4200,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                                 AND DATE(t.date_creation) = DATE(c.date_cloture)
                                 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
             WHERE c.id_salon = $1 AND DATE(c.date_cloture) BETWEEN $2 AND $3 
-            GROUP BY c.id_cloture, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc
-            ORDER BY c.date_cloture ASC
+            GROUP BY c.id_cloture, c.numero_z_salon, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc
+            ORDER BY c.numero_z_salon ASC, c.date_cloture ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
         // NOUVEAU : On récupère les sommes EXACTES arrêtées à la date du dernier Z
         const lastZRes = await pool.query(`SELECT MAX(DATE(date_cloture)) as date_max, TO_CHAR(MAX(date_cloture), 'DD/MM/YYYY') as date_max_str FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
@@ -4918,7 +4936,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             let expectedId = null;
 
             zMoisRes.rows.forEach(z => {
-                const currentId = parseInt(z.id_cloture);
+                const currentId = parseInt(z.numero_z_salon || z.id_cloture);
                 
                 // --- DÉTECTION DES SAUTS DE NUMÉROTATION (Z MANQUANTS) ---
                 if (expectedId !== null && currentId > expectedId) {
@@ -4926,12 +4944,12 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                         drawRow([
                             {text: `Z-${i}`, w: 25}, 
                             {text: 'N/A', w: 50, align: 'center'}, 
-                            {text: 'Saut d\'ID', w: 75}, 
+                            {text: 'Saut d\'ID', w: 65}, 
                             {text: '-', w: 20, align: 'center'},
                             {text: '-', w: 45, align: 'right'},
                             {text: '-', w: 55, align: 'right'},
                             {text: '-', w: 55, align: 'right'}, 
-                            {text: 'Transaction annulée ou multi-salons', w: 120, align: 'right'}
+                            {text: 'Clôture manquante ou purgée', w: 130, align: 'right'}
                         ]);
                     }
                 }
@@ -4963,8 +4981,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 let especesReel = isAuto ? 'Non compté' : fMnt(z.total_especes_reel);
                 
                 drawRow([
-                    {text: `Z-${z.id_cloture}`, w: 25}, 
-                    {text: z.date_z, w: 50, align: 'center'}, 
+                    {text: `Z-${currentId}`, w: 25}, 
+                    {text: z.date_z, w: 50, align: 'center'},
                     {text: operator, w: 65}, 
                     {text: z.nb_tickets, w: 20, align: 'center'},
                     {text: fMnt(z.ca_ttc), w: 45, align: 'right'},
@@ -5746,13 +5764,21 @@ async function executerEnvoiComptable() {
 }
 
 
+let isFantomeRunning = false;
+
 async function executerClotureFantome() {
+    if (isFantomeRunning) return;
+    isFantomeRunning = true;
+
     const clientDB = await pool.connect();
     try {
         const salons = await clientDB.query("SELECT id_salon FROM configuration_salon");
         for (let s of salons.rows) {
             const id_salon = s.id_salon;
             
+            // Verrou transactionnel pour éviter qu'un robot et un humain clôturent le même salon en même temps
+            await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+
             // On cherche tous les jours (avant aujourd'hui) ayant des tickets mais aucune clôture correspondante
             const joursNonClotures = await clientDB.query(`
                 SELECT DISTINCT DATE(t.date_creation) as jour
@@ -5791,20 +5817,21 @@ async function executerClotureFantome() {
                     // Le robot force le total_reel au total_theorique (écart = 0) pour valider mathématiquement la journée
                     // -----------------------------------------
 
-                    const dernierZ = await clientDB.query('SELECT signature_hash FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
+                    const dernierZ = await clientDB.query('SELECT signature_hash, numero_z_salon FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
                     const hashPrecedent = dernierZ.rowCount > 0 && dernierZ.rows[0].signature_hash ? dernierZ.rows[0].signature_hash : 'GENESIS_Z';
+                    const nextZ = dernierZ.rowCount > 0 && dernierZ.rows[0].numero_z_salon ? parseInt(dernierZ.rows[0].numero_z_salon) + 1 : 1;
                     const dateISO = new Date(j.jour); 
                     dateISO.setHours(23, 59, 59); // On scelle le robot à 23:59:59 de la veille
                     
-                    const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
+                    const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
 
                     await clientDB.query(
-                        `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique) 
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-                        [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, 'Fermeture Automatique (En attente)', fCaisseMatin, tEspecesTheorique, tEspecesTheorique, 0, 'Clôture générée par le système', true]
+                        `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique, numero_z_salon) 
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                        [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, 'Fermeture Automatique (En attente)', fCaisseMatin, tEspecesTheorique, tEspecesTheorique, 0, 'Clôture générée par le système', true, nextZ]
                     );
 
-                    await enregistrerJET(id_salon, 'CLOTURE_Z_AUTOMATIQUE', { date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: 0, signature }, clientDB);
+                    await enregistrerJET(id_salon, 'CLOTURE_Z_AUTOMATIQUE', { numero_z: nextZ, date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: 0, signature }, clientDB);
                     await clientDB.query('COMMIT');
                     console.log(`[ROBOT] Clôture fantôme réussie pour le salon ${id_salon} (Date: ${dateACloturerStr})`);
                 } catch (e) {
@@ -5814,7 +5841,10 @@ async function executerClotureFantome() {
             }
         }
     } catch (err) { console.error("Erreur Globale Robot Clôture:", err); } 
-    finally { clientDB.release(); }
+    finally { 
+        clientDB.release(); 
+        isFantomeRunning = false;
+    }
 }
 
 // =========================================================================
