@@ -4075,14 +4075,24 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         
         let sumDepensesBanque = 0;
         let sumDepensesEspeces = 0;
+        let sumDepensesInconnu = 0;
+        let totalDepensesHT = 0;
+        let totalDepensesTVA = 0;
+        let totalDepensesTTC = 0;
         
         facturesRes.rows.forEach(f => {
-            const ttc = parseFloat(f.montant_ttc);
-            const ht = parseFloat(f.montant_ht);
-            const tva = parseFloat(f.montant_tva);
+            const ttc = parseFloat(f.montant_ttc) || 0;
+            const ht = parseFloat(f.montant_ht) || 0;
+            const tva = parseFloat(f.montant_tva) || 0;
+            
+            totalDepensesHT += ht;
+            totalDepensesTVA += tva;
+            totalDepensesTTC += ttc;
             
             if (f.mode_paiement === 'ESPECES') {
                 sumDepensesEspeces += ttc;
+            } else if (!f.mode_paiement || f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') {
+                sumDepensesInconnu += ttc;
             } else {
                 sumDepensesBanque += ttc;
             }
@@ -4125,7 +4135,16 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 445}, {text: fMnt(sumDepensesBanque), w: 50, align: 'right'}], false, true);
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 445}, {text: fMnt(sumDepensesEspeces), w: 50, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (À compléter)', w: 445}, {text: fMnt(sumDepensesInconnu), w: 50, align: 'right'}], false, true);
         
+        drawRow([{text: 'TOTAL GÉNÉRAL DES DÉPENSES', w: 340}, {text: fMnt(totalDepensesHT), w: 40, align: 'right'}, {text: fMnt(totalDepensesTVA), w: 35, align: 'right'}, {text: fMnt(totalDepensesTTC), w: 50, align: 'right'}], false, true);
+
+        if (franchiseTVA) {
+            currentY += 4;
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* En franchise en base de TVA, la TVA sur achats n'est pas récupérable. La charge réelle retenue en comptabilité est le montant TTC.", 40, currentY); 
+            currentY += 12;
+        }
+
         currentY += 25; // Saut de ligne renforcé pour empêcher le chevauchement !
 
         // --- 4. VARIABLES DE PAIE ---
