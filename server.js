@@ -4780,20 +4780,22 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         const drawHeaderDepenses = () => {
             drawRow([
-                {text: 'Fournisseur', w: 65},
-                {text: 'N° Fact.', w: 45},
+                {text: 'Fournisseur', w: 70},
+                {text: 'N° Fact.', w: 50},
                 {text: 'Source', w: 35, align: 'center'},
                 {text: 'Date F.', w: 45, align: 'center'},
-                {text: 'Paiem.', w: 45, align: 'center'},
+                {text: 'Paiem.', w: 40, align: 'center'},
                 {text: 'Statut', w: 40, align: 'center'},
                 {text: 'Cpte', w: 25, align: 'center'},
                 {text: 'HT', w: 40, align: 'right'},
-                {text: 'TVA', w: 35, align: 'right'},
+                {text: 'TVA', w: 30, align: 'right'},
                 {text: 'TTC', w: 45, align: 'right'}
             ], true);
         };
         
         drawHeaderDepenses();
+        
+ 
         
         let sumDepensesBanque = 0, sumDepensesEspeces = 0, sumDepensesInconnu = 0;
         let totalDepensesHT = 0, totalDepensesTVA = 0, totalDepensesTTC = 0;
@@ -4827,15 +4829,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
 
                 drawRow([
-                    {text: f.fournisseur.substring(0, 12), w: 65}, 
-                    {text: refFacture, w: 45}, 
-                    {...sourceDoc, w: 35, align: 'center'},
+                    {text: f.fournisseur.substring(0, 12), w: 70}, 
+                    {text: refFacture, w: 50}, 
+                    {text: sourceDoc.text, link: sourceDoc.link, color: sourceDoc.color, w: 35, align: 'center'},
                     {text: dateFAff, w: 45, align: 'center'},
-                    {text: modePaiementCourt, w: 45, align: 'center'}, 
+                    {text: modePaiementCourt, w: 40, align: 'center'}, 
                     {text: statutText, w: 40, align: 'center', color: statutColor},
                     {text: compte, w: 25, align: 'center'}, 
                     {text: fMnt(f.ht), w: 40, align: 'right'},
-                    {text: fMnt(f.tva), w: 35, align: 'right'}, 
+                    {text: fMnt(f.tva), w: 30, align: 'right'}, 
                     {text: fMnt(f.ttc), w: 45, align: 'right'}
                 ]);
             });
@@ -4853,10 +4855,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         // Si aucune charge fixe n'est remontée par l'IA ou la saisie, on informe qu'il n'y en a pas
         if (!hasChargesFixes) {
-            drawRow([{text: 'Aucune charge fixe saisie (Loyer, URSSAF...)', w: 120}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 25, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 35, align: 'right'}, {text: '0,00 €', w: 45, align: 'right'}]);
+            drawRow([{text: 'Aucune charge fixe saisie (Loyer, URSSAF...)', w: 120}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 25, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 30, align: 'right'}, {text: '0,00 €', w: 45, align: 'right'}]);
         }
         
-        drawRow([{text: 'Variation de stock (Produits)', w: 120}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'Invent.', w: 40, align: 'center'}, {text: '6037', w: 25, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 35, align: 'right'}, {text: 'Non renseigné', w: 45, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 120}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'Invent.', w: 40, align: 'center'}, {text: '6037', w: 25, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 30, align: 'right'}, {text: 'Non renseigné', w: 45, align: 'right'}]);
         
         // Protection pour ne jamais séparer les totaux de leur tableau
         if (currentY > 670) { doc.addPage(); currentY = 40; }
@@ -4934,14 +4936,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
         
         drawRow([
-            {text: 'Employé(e)', w: 50}, 
-            {text: 'Statut', w: 55, align: 'center'},
-            {text: 'Heures', w: 45, align: 'center'},
+            {text: 'Employé(e)', w: 60}, 
+            {text: 'Statut', w: 50, align: 'center'},
+            {text: 'Heures', w: 40, align: 'center'},
             {text: 'HS/HC', w: 40, align: 'center'},
-            {text: 'Pourboire', w: 40, align: 'center'},
+            {text: 'Pourb.', w: 40, align: 'center'},
             {text: 'CA Rél.', w: 45, align: 'right'}, 
-            {text: 'Base HT (Prs/Prd)', w: 70, align: 'right'}, 
-            {text: 'Taux (Prs/Prd)', w: 60, align: 'center'}, 
+            {text: 'Base HT (Prs/Prd)', w: 80, align: 'right'}, 
+            {text: 'Taux (P/P)', w: 50, align: 'center'}, 
             {text: 'Prime Brute', w: 55, align: 'right'}
         ], true);
 
@@ -4983,15 +4985,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             }
 
             if (e.est_gerant) {
-                drawRow([
-                    {text: nomComplet.substring(0,12), w: 50}, 
-                    {text: 'Gérant', w: 55, align: 'center'},
-                    {text: heuresAffichees, w: 45, align: 'center'},
+               drawRow([
+                    {text: nomComplet.substring(0,12), w: 60}, 
+                    {text: 'Gérant', w: 50, align: 'center'},
+                    {text: heuresAffichees, w: 40, align: 'center'},
                     {text: hsAffichees, w: 40, align: 'center'},
                     {text: pourboireAffiche, w: 40, align: 'center'},
                     {text: fMnt(caRealiseBaseHT), w: 45, align: 'right'}, 
-                    {text: '-', w: 70, align: 'right'}, 
-                    {text: '-', w: 60, align: 'center'}, 
+                    {text: '-', w: 80, align: 'right'}, 
+                    {text: '-', w: 50, align: 'center'}, 
                     {text: '-', w: 55, align: 'right'}
                 ]);
             } else {
