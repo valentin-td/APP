@@ -5033,16 +5033,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 {text: '-', w: 55, align: 'right'}
             ]);
         }
-                {text: 'N/A', w: 55, align: 'center'},
-                {text: '-', w: 45, align: 'center'},
-                {text: '-', w: 40, align: 'center'},
-                {text: '-', w: 40, align: 'center'},
-                {text: fMnt(caNonAttribue), w: 45, align: 'right'}, 
-                {text: '-', w: 70, align: 'right'}, 
-                {text: '-', w: 60, align: 'center'}, 
-                {text: '-', w: 55, align: 'right'}
-            ]);
-        }
+                
 
         if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 515}]);
         
