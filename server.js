@@ -5215,6 +5215,12 @@ app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider et signer la liasse comptable." });
     
     try {
+        // BLOCAGE STRICT : Vérification des factures en attente
+        const tachesEnAttente = await pool.query(`SELECT 1 FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
+        if (tachesEnAttente.rowCount > 0) {
+            return res.status(400).json({ erreur: `Signature bloquée : Il vous reste ${tachesEnAttente.rowCount} facture(s) "À valider" dans l'application. Veuillez les traiter avant de clôturer le mois.` });
+        }
+
         const empRes = await pool.query("SELECT nom, code_pin FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
         if (empRes.rowCount === 0) return res.status(404).json({ erreur: "Gérant introuvable." });
         
