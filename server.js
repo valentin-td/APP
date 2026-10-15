@@ -4062,15 +4062,16 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         drawTableTitle("3. DÉPENSES ET ACHATS");
         
         drawRow([
-            {text: 'Fournisseur', w: 80},
-            {text: 'N° Fact.', w: 55},
+            {text: 'Fournisseur', w: 70},
+            {text: 'N° Fact.', w: 60},
+            {text: 'Source', w: 35, align: 'center'},
             {text: 'Date', w: 45, align: 'center'},
-            {text: 'Paiem.', w: 45, align: 'center'},
-            {text: 'Statut', w: 45, align: 'center'},
-            {text: 'Cpte', w: 30, align: 'center'},
-            {text: 'HT', w: 40, align: 'right'},
-            {text: 'TVA', w: 35, align: 'right'},
-            {text: 'TTC', w: 50, align: 'right'}
+            {text: 'Paiem.', w: 40, align: 'center'},
+            {text: 'Statut', w: 40, align: 'center'},
+            {text: 'Cpte', w: 25, align: 'center'},
+            {text: 'HT', w: 35, align: 'right'},
+            {text: 'TVA', w: 30, align: 'right'},
+            {text: 'TTC', w: 45, align: 'right'}
         ], true);
         
         let sumDepensesBanque = 0;
@@ -4111,27 +4112,30 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             const statutColor = isValide ? '#16a34a' : '#ea580c';
             const statutText = isValide ? 'Validé' : 'À valider';
 
-            // Lien court PDF cliquable (l'expert n'a plus qu'à cliquer)
-            let shortRef = f.numero_facture ? f.numero_facture.substring(0, 8) : 'Doc IA';
-            const refDoc = f.justificatif_url ? { text: shortRef, link: f.justificatif_url, color: '#0ea5e9' } : { text: shortRef };
+            // Le numéro de facture a sa propre colonne (avec retour à la ligne automatique si "n° non détecté")
+            let refFacture = f.numero_facture ? f.numero_facture.substring(0, 10) : 'n° non détecté';
+            
+            // Le lien cliquable bascule sur la colonne "Source"
+            let sourceDoc = f.justificatif_url ? { text: 'Doc IA', link: f.justificatif_url, color: '#0ea5e9' } : { text: 'Saisie' };
             
             const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
 
             drawRow([
-                {text: f.nom_fournisseur.substring(0, 14), w: 80},
-                {...refDoc, w: 55},
+                {text: f.nom_fournisseur.substring(0, 14), w: 70},
+                {text: refFacture, w: 60},
+                {...sourceDoc, w: 35, align: 'center'},
                 {text: f.date_facture, w: 45, align: 'center'},
-                {text: modePaiementCourt, w: 45, align: 'center'},
-                {text: statutText, w: 45, align: 'center', color: statutColor},
-                {text: compte, w: 30, align: 'center'},
-                {text: fMnt(ht), w: 40, align: 'right'},
-                {text: fMnt(tva), w: 35, align: 'right'},
-                {text: fMnt(ttc), w: 50, align: 'right'}
+                {text: modePaiementCourt, w: 40, align: 'center'},
+                {text: statutText, w: 40, align: 'center', color: statutColor},
+                {text: compte, w: 25, align: 'center'},
+                {text: fMnt(ht), w: 35, align: 'right'},
+                {text: fMnt(tva), w: 30, align: 'right'},
+                {text: fMnt(ttc), w: 45, align: 'right'}
             ]);
         });
         
-        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 80}, {text: 'N/A', w: 55}, {text: '-', w: 45, align: 'center'}, {text: 'PRELEV.', w: 45, align: 'center'}, {text: 'À joindre', w: 45, align: 'center'}, {text: '613', w: 30, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 35, align: 'right'}, {text: 'Voir Banque', w: 50, align: 'right'}]);
-        drawRow([{text: 'Variation de stock (Produits)', w: 80}, {text: 'N/A', w: 55}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'Inventaire', w: 45, align: 'center'}, {text: '6037', w: 30, align: 'center'}, {text: 'Stk Début', w: 40, align: 'right'}, {text: 'Stk Fin', w: 35, align: 'right'}, {text: 'Variation', w: 50, align: 'right'}]);
+        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 70}, {text: 'N/A', w: 60}, {text: 'Saisie', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'PRELEV.', w: 40, align: 'center'}, {text: 'À joindre', w: 40, align: 'center'}, {text: '613', w: 25, align: 'center'}, {text: '-', w: 35, align: 'right'}, {text: '-', w: 30, align: 'right'}, {text: 'Voir Banque', w: 45, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 70}, {text: 'N/A', w: 60}, {text: 'Saisie', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'Inventaire', w: 40, align: 'center'}, {text: '6037', w: 25, align: 'center'}, {text: 'Stk Début', w: 35, align: 'right'}, {text: 'Stk Fin', w: 30, align: 'right'}, {text: 'Variation', w: 45, align: 'right'}]);
         
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 445}, {text: fMnt(sumDepensesBanque), w: 50, align: 'right'}], false, true);
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 445}, {text: fMnt(sumDepensesEspeces), w: 50, align: 'right'}], false, true);
