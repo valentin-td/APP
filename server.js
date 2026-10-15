@@ -4011,9 +4011,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
 
-        // Lignes à remplir manuellement par le comptable
-        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: '................................................... €', w: 225, align: 'right'}]);
-        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 260}, {text: '', w: 0}, {text: '................................................... €', w: 225, align: 'right'}]);
+        // Lignes de rapprochement bancaire (sans pointillés pour document définitif)
+        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: 'Non renseigné', w: 225, align: 'right'}]);
+        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 260}, {text: '', w: 0}, {text: 'Non renseigné', w: 225, align: 'right'}]);
         
         const fondDebut = parseFloat(caisseRes.rows[0].fond_debut_mois) || 0;
         const fondFin = parseFloat(caisseRes.rows[0].fond_fin_mois) || 0;
@@ -4032,7 +4032,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         drawRow([{text: `Espèces encaissées (Jusqu'au ${lastZDateStr}) (+)`, w: 260}, {text: '', w: 0}, {text: fMnt(especesEncaisseesZ), w: 225, align: 'right'}]);
         drawRow([{text: 'Apports de caisse (+)', w: 260}, {text: '', w: 0}, {text: fMnt(apportsZ), w: 225, align: 'right'}]);
         drawRow([{text: 'Retraits et Dépenses en espèces (-)', w: 260}, {text: '', w: 0}, {text: fMnt(retraitsZ), w: 225, align: 'right'}]);
-        drawRow([{text: 'Remises en banque non déclarées dans l\'App (-)', w: 260}, {text: '', w: 0}, {text: '.......... €', w: 225, align: 'right'}]);
+        drawRow([{text: 'Remises en banque non déclarées dans l\'App (-)', w: 260}, {text: '', w: 0}, {text: '0,00 €', w: 225, align: 'right'}]);
         drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 260}, {text: '', w: 0}, {text: fMnt(ecartsZ), w: 225, align: 'right'}]);
         
         drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseCalculee), w: 225, align: 'right'}], false, true);
@@ -4272,8 +4272,20 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         
         // Lignes d'attentes gérées dynamiquement (On fusionne le texte des deux 1ères colonnes pour gagner de la place)
         if (currentY > 710) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
-        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 105}, {text: 'Saisie', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'PRELEV.', w: 38, align: 'center'}, {text: 'À joindre', w: 32, align: 'center'}, {text: '613', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: 'Voir Banque', w: 45, align: 'right'}]);
-        drawRow([{text: 'Variation de stock (Produits)', w: 105}, {text: 'Saisie', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 38, align: 'center'}, {text: 'Invent.', w: 32, align: 'center'}, {text: '6037', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: 'À saisir', w: 45, align: 'right'}]);
+        
+        // Détection intelligente : Y a-t-il de vraies charges fixes déjà renseignées dans le tableau ?
+        let hasChargesFixes = facturesAffichees.some(f => {
+            const cpte = f.compte || '';
+            const nomL = (f.fournisseur || '').toLowerCase();
+            return cpte.startsWith('61') || cpte.startsWith('62') || cpte.startsWith('63') || cpte.startsWith('64') || nomL.includes('edf') || nomL.includes('urssaf') || nomL.includes('loyer') || nomL.includes('assurance');
+        });
+
+        // Si aucune charge fixe n'est remontée par l'IA ou la saisie, on informe qu'il n'y en a pas
+        if (!hasChargesFixes) {
+            drawRow([{text: 'Aucune charge fixe saisie (Loyer, URSSAF...)', w: 105}, {text: 'N/A', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 38, align: 'center'}, {text: '-', w: 32, align: 'center'}, {text: '-', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: '0,00 €', w: 45, align: 'right'}]);
+        }
+        
+        drawRow([{text: 'Variation de stock (Produits)', w: 105}, {text: 'N/A', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 38, align: 'center'}, {text: 'Invent.', w: 32, align: 'center'}, {text: '6037', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: 'Non renseigné', w: 45, align: 'right'}]);
         
         // Protection pour ne jamais séparer les totaux de leur tableau
         if (currentY > 670) { doc.addPage(); currentY = 40; }
@@ -4374,18 +4386,19 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             const basePrestaHT = parseFloat(e.base_presta_ht || 0);
             const baseProduitHT = parseFloat(e.base_produit_ht || 0);
             
-            // NOUVEAU : Logique d'affichage automatisée des heures et pourboires
-            let heuresAffichees = 'À saisir';
+            
+            // Logique d'affichage automatisée des heures et pourboires (sans champs "À saisir" à l'impression)
+            let heuresAffichees = 'Non renseigné';
             let hsAffichees = '0h';
-            let pourboireAffiche = parseFloat(e.total_pourboire) > 0 ? fMnt(e.total_pourboire) : '-';
+            let pourboireAffiche = parseFloat(e.total_pourboire) > 0 ? fMnt(e.total_pourboire) : '0,00 €';
 
             if (e.est_gerant) {
                 heuresAffichees = 'N/A';
                 hsAffichees = 'N/A';
                 pourboireAffiche = 'N/A';
             } else if (salonConfig.mode_suivi_heures === 'POINTEUSE') {
-                heuresAffichees = 'À saisir';
-                hsAffichees = 'À saisir';
+                heuresAffichees = 'Non renseigné';
+                hsAffichees = 'Non renseigné';
             } else {
                 const baseContrat = parseFloat(e.heures_mensuelles_base || 151.67);
                 const heuresAjust = mapAjustements[e.id_employe] || 0;
