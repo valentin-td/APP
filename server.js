@@ -4046,32 +4046,64 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         // Détail des mouvements de caisse (Apports/Retraits)
         if (mouvementsRes.rowCount > 0) {
             currentY += 5;
-            doc.font('Helvetica-Bold').fontSize(9).fillColor(SEC_COLOR).text("Détail des Apports et Retraits du mois :", 40, currentY); currentY += 14;
+            doc.font('Helvetica-Bold').fontSize(9).fillColor(SEC_COLOR).text(`Détail des Apports et Retraits (Inclus jusqu'au Z du ${lastZDateStr}) :`, 40, currentY); currentY += 14;
+            
+            const partsZ = lastZDateStr.split('/');
+            const dZ = new Date(partsZ[2], partsZ[1] - 1, partsZ[0]);
+            let aPosteriors = false;
+
             mouvementsRes.rows.forEach(mvt => {
-                const typeMvt = mvt.type_mouvement === 'ENTREE' ? 'Apport (+)' : 'Retrait/Dép. (-)';
-                drawRow([
-                    {text: mvt.date_mvt, w: 65, align: 'center'}, 
-                    {text: typeMvt, w: 90}, 
-                    {text: mvt.motif || 'Non renseigné', w: 215}, 
-                    {text: fMnt(mvt.montant), w: 115, align: 'right'}
-                ]);
+                const partsM = mvt.date_mvt.split('/');
+                const dM = new Date(partsM[2], partsM[1] - 1, partsM[0]);
+                
+                if (dM <= dZ) {
+                    const typeMvt = mvt.type_mouvement === 'ENTREE' ? 'Apport (+)' : 'Retrait/Dép. (-)';
+                    drawRow([
+                        {text: mvt.date_mvt, w: 65, align: 'center'}, 
+                        {text: typeMvt, w: 90}, 
+                        {text: mvt.motif || 'Non renseigné', w: 215}, 
+                        {text: fMnt(mvt.montant), w: 115, align: 'right'}
+                    ]);
+                } else {
+                    aPosteriors = true;
+                }
             });
+
+            if (aPosteriors) {
+                currentY += 5;
+                doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`Mouvements postérieurs au dernier Z (Non inclus dans le contrôle ci-dessus) :`, 40, currentY); currentY += 14;
+                mouvementsRes.rows.forEach(mvt => {
+                    const partsM = mvt.date_mvt.split('/');
+                    const dM = new Date(partsM[2], partsM[1] - 1, partsM[0]);
+                    
+                    if (dM > dZ) {
+                        const typeMvt = mvt.type_mouvement === 'ENTREE' ? 'Apport (+)' : 'Retrait/Dép. (-)';
+                        drawRow([
+                            {text: mvt.date_mvt, w: 65, align: 'center'}, 
+                            {text: typeMvt, w: 90}, 
+                            {text: mvt.motif || 'Non renseigné', w: 215}, 
+                            {text: fMnt(mvt.montant), w: 115, align: 'right'}
+                        ]);
+                    }
+                });
+            }
         }
 
         // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
         
         drawRow([
-            {text: 'Fournisseur', w: 70},
-            {text: 'N° Fact.', w: 60},
-            {text: 'Source', w: 35, align: 'center'},
-            {text: 'Date', w: 45, align: 'center'},
-            {text: 'Paiem.', w: 40, align: 'center'},
-            {text: 'Statut', w: 40, align: 'center'},
-            {text: 'Cpte', w: 25, align: 'center'},
-            {text: 'HT', w: 35, align: 'right'},
-            {text: 'TVA', w: 30, align: 'right'},
-            {text: 'TTC', w: 45, align: 'right'}
+            {text: 'Fournisseur', w: 60},
+            {text: 'N° Fact.', w: 50},
+            {text: 'Source', w: 30, align: 'center'},
+            {text: 'Date Fact.', w: 40, align: 'center'},
+            {text: 'Date Paiem.', w: 40, align: 'center'},
+            {text: 'Paiem.', w: 35, align: 'center'},
+            {text: 'Statut', w: 35, align: 'center'},
+            {text: 'Cpte', w: 20, align: 'center'},
+            {text: 'HT', w: 30, align: 'right'},
+            {text: 'TVA', w: 25, align: 'right'},
+            {text: 'TTC', w: 40, align: 'right'}
         ], true);
         
         let sumDepensesBanque = 0;
@@ -4112,30 +4144,34 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
             const statutColor = isValide ? '#16a34a' : '#ea580c';
             const statutText = isValide ? 'Validé' : 'À valider';
 
-            // Le numéro de facture a sa propre colonne (avec retour à la ligne automatique si "n° non détecté")
+            // Le numéro de facture a sa propre colonne
             let refFacture = f.numero_facture ? f.numero_facture.substring(0, 10) : 'n° non détecté';
             
-            // Le lien cliquable bascule sur la colonne "Source"
+            // Le lien cliquable dans la colonne "Source"
             let sourceDoc = f.justificatif_url ? { text: 'Doc IA', link: f.justificatif_url, color: '#0ea5e9' } : { text: 'Saisie' };
             
             const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
+            
+            // Faute de requête SQL dédiée à la date de paiement pour l'instant, on affiche la date de facture.
+            const datePaiementAffichee = f.date_facture; 
 
             drawRow([
-                {text: f.nom_fournisseur.substring(0, 14), w: 70},
-                {text: refFacture, w: 60},
-                {...sourceDoc, w: 35, align: 'center'},
-                {text: f.date_facture, w: 45, align: 'center'},
-                {text: modePaiementCourt, w: 40, align: 'center'},
-                {text: statutText, w: 40, align: 'center', color: statutColor},
-                {text: compte, w: 25, align: 'center'},
-                {text: fMnt(ht), w: 35, align: 'right'},
-                {text: fMnt(tva), w: 30, align: 'right'},
-                {text: fMnt(ttc), w: 45, align: 'right'}
+                {text: f.nom_fournisseur.substring(0, 14), w: 60},
+                {text: refFacture, w: 50},
+                {...sourceDoc, w: 30, align: 'center'},
+                {text: f.date_facture, w: 40, align: 'center'},
+                {text: datePaiementAffichee, w: 40, align: 'center'},
+                {text: modePaiementCourt, w: 35, align: 'center'},
+                {text: statutText, w: 35, align: 'center', color: statutColor},
+                {text: compte, w: 20, align: 'center'},
+                {text: fMnt(ht), w: 30, align: 'right'},
+                {text: fMnt(tva), w: 25, align: 'right'},
+                {text: fMnt(ttc), w: 40, align: 'right'}
             ]);
         });
         
-        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 70}, {text: 'N/A', w: 60}, {text: 'Saisie', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'PRELEV.', w: 40, align: 'center'}, {text: 'À joindre', w: 40, align: 'center'}, {text: '613', w: 25, align: 'center'}, {text: '-', w: 35, align: 'right'}, {text: '-', w: 30, align: 'right'}, {text: 'Voir Banque', w: 45, align: 'right'}]);
-        drawRow([{text: 'Variation de stock (Produits)', w: 70}, {text: 'N/A', w: 60}, {text: 'Saisie', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'Inventaire', w: 40, align: 'center'}, {text: '6037', w: 25, align: 'center'}, {text: 'Stk Début', w: 35, align: 'right'}, {text: 'Stk Fin', w: 30, align: 'right'}, {text: 'Variation', w: 45, align: 'right'}]);
+        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 60}, {text: 'N/A', w: 50}, {text: 'Saisie', w: 30, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'PRELEV.', w: 35, align: 'center'}, {text: 'À joindre', w: 35, align: 'center'}, {text: '613', w: 20, align: 'center'}, {text: '-', w: 30, align: 'right'}, {text: '-', w: 25, align: 'right'}, {text: 'Voir Banque', w: 40, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 60}, {text: 'N/A', w: 50}, {text: 'Saisie', w: 30, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 35, align: 'center'}, {text: 'Inventaire', w: 35, align: 'center'}, {text: '6037', w: 20, align: 'center'}, {text: 'Stk Début', w: 30, align: 'right'}, {text: 'Stk Fin', w: 25, align: 'right'}, {text: 'Variation', w: 40, align: 'right'}]);
         
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 445}, {text: fMnt(sumDepensesBanque), w: 50, align: 'right'}], false, true);
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 445}, {text: fMnt(sumDepensesEspeces), w: 50, align: 'right'}], false, true);
