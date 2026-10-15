@@ -6429,15 +6429,17 @@ app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, asyn
         await clientDB.query('DELETE FROM avis_demandes WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM taches_actions WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM ia_taches_attente WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM factures_fournisseurs WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM push_subscriptions WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM sms_opt_out WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM messages WHERE id_salon = $1', [id]);
+        await clientDB.query('DELETE FROM pointages WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM utilisateurs WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM configuration_salon WHERE id_salon = $1', [id]);
 
+        await enregistrerJET(id, 'PURGE_RGPD_SALON', { purge_par: 'SUPERADMIN', archives_fiscales_conservees: true }, clientDB);
+
         await clientDB.query('COMMIT');
-        res.json({ message: `Le salon #${id} et toutes ses données ont été supprimés.` });
+        res.json({ message: `Le salon #${id} a été purgé (archives fiscales et comptables NF525 conservées).` });
     } catch (e) {
         await clientDB.query('ROLLBACK');
         res.status(500).json({ erreur: "Erreur lors de la destruction du salon : " + e.message });
