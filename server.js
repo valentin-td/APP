@@ -278,8 +278,12 @@ pool.query(`
         type_mouvement VARCHAR(50) NOT NULL, -- 'ENTREE', 'SORTIE', 'REGULARISATION'
         montant NUMERIC(10, 2) NOT NULL,
         motif TEXT NOT NULL,
-        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        hash_precedent VARCHAR(64),
+        hash_mouvement VARCHAR(64)
     );
+    ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+    ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS hash_mouvement VARCHAR(64);
 
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS siret VARCHAR(50);
@@ -396,7 +400,32 @@ pool.query(`
                            OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
                             RAISE EXCEPTION 'Action bloquée (NF525) : Altération des données fiscales, de paiement ou de traçabilité interdite.';
                         END IF;
-                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'clotures_caisse', 'jet_logs', 'mouvements_caisse') THEN
+                    ELSIF TG_TABLE_NAME = 'clotures_caisse' THEN
+                        -- Seule la levée du drapeau est_cloture_automatique (TRUE -> FALSE) lors de la régularisation matinale est autorisée.
+                        -- Toute modification des montants, dates, numéros Z ou signatures cryptographiques est strictement bloquée.
+                        IF OLD.est_cloture_automatique IS DISTINCT FROM TRUE
+                           OR NEW.est_cloture_automatique IS DISTINCT FROM FALSE
+                           OR OLD.total_encaisse IS DISTINCT FROM NEW.total_encaisse
+                           OR OLD.signature_hash IS DISTINCT FROM NEW.signature_hash
+                           OR OLD.date_cloture IS DISTINCT FROM NEW.date_cloture
+                           OR OLD.cumul_perpetuel_ttc IS DISTINCT FROM NEW.cumul_perpetuel_ttc
+                           OR OLD.hash_precedent IS DISTINCT FROM NEW.hash_precedent
+                           OR OLD.fond_caisse_matin IS DISTINCT FROM NEW.fond_caisse_matin
+                           OR OLD.total_especes_theorique IS DISTINCT FROM NEW.total_especes_theorique
+                           OR OLD.total_especes_reel IS DISTINCT FROM NEW.total_especes_reel
+                           OR OLD.ecart_caisse IS DISTINCT FROM NEW.ecart_caisse
+                           OR OLD.numero_z_salon IS DISTINCT FROM NEW.numero_z_salon THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Altération interdite sur la table clotures_caisse';
+                        END IF;
+                    ELSIF TG_TABLE_NAME = 'mouvements_caisse' THEN
+                        IF (OLD.hash_mouvement IS NOT NULL AND OLD.hash_mouvement IS DISTINCT FROM NEW.hash_mouvement)
+                           OR OLD.montant IS DISTINCT FROM NEW.montant
+                           OR OLD.type_mouvement IS DISTINCT FROM NEW.type_mouvement
+                           OR OLD.motif IS DISTINCT FROM NEW.motif
+                           OR OLD.date_creation IS DISTINCT FROM NEW.date_creation THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table mouvements_caisse';
+                        END IF;
+                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'jet_logs') THEN
                         RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table %', TG_TABLE_NAME;
                     END IF;
                 END IF;
@@ -553,6 +582,26 @@ async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
         await dbClient.query('INSERT INTO jet_logs (id_salon, action, details, date_creation, hash_precedent, hash_jet) VALUES ($1, $2, $3, $4, $5, $6)', [id_salon, action, detailsJSON, dateISO, hashPrecedent, hashJet]);
         return hashJet;
     } catch (e) { return null; }
+}
+
+async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe = null, type_mouvement, montant, motif }) {
+    await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+    const lastMvt = await clientDB.query('SELECT hash_mouvement FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL ORDER BY id_mouvement DESC LIMIT 1', [id_salon]);
+    const hashPrecedent = lastMvt.rowCount > 0 ? lastMvt.rows[0].hash_mouvement : 'GENESIS_MVT';
+    const montantFormate = Number(montant).toFixed(2);
+    const motifPropre = String(motif || '').trim();
+    const dateISO = new Date().toISOString();
+    const ins = await clientDB.query(
+        `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif, date_creation, hash_precedent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_mouvement`,
+        [id_salon, id_employe, type_mouvement, montantFormate, motifPropre, dateISO, hashPrecedent]
+    );
+    const idMvt = ins.rows[0].id_mouvement;
+    const hashMouvement = crypto.createHash('sha256')
+        .update(`MVT-${id_salon}-${idMvt}-${type_mouvement}-${montantFormate}-${motifPropre}-${hashPrecedent}`)
+        .digest('hex');
+    await clientDB.query('UPDATE mouvements_caisse SET hash_mouvement = $1 WHERE id_mouvement = $2', [hashMouvement, idMvt]);
+    return { id_mouvement: idMvt, hash_mouvement: hashMouvement, hash_precedent: hashPrecedent };
 }
 
 const verifierClotureZ = async (req, res, next) => {
@@ -1500,7 +1549,8 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             }
         }
 
-        const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montant}-${previousHash}`).digest('hex');
+        const montantScelle = Number(montant).toFixed(2);
+        const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montantScelle}-${previousHash}`).digest('hex');
         await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
 
         if (id_client) {
@@ -1635,7 +1685,8 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
         );
         const idTicketCompensation = compensationResult.rows[0].id_ticket;
 
-        const newHash = crypto.createHash('sha256').update(`${idTicketCompensation}-${numeroCompensation}-${montantCompensation}-${previousHash}`).digest('hex');
+        const montantCompensationScelle = Number(montantCompensation).toFixed(2);
+        const newHash = crypto.createHash('sha256').update(`${idTicketCompensation}-${numeroCompensation}-${montantCompensationScelle}-${previousHash}`).digest('hex');
         await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idTicketCompensation]);
 
         // Vérifier si le ticket est désormais entièrement compensé
@@ -1785,14 +1836,23 @@ app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
     const { type_mouvement, montant, motif, id_employe } = req.body;
     if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
     if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
+    const clientDB = await pool.connect();
     try {
-        await pool.query(
-            `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif) VALUES ($1, $2, $3, $4, $5)`,
-            [req.user.id_salon, id_employe || null, type_mouvement, parseFloat(montant), motif.trim()]
-        );
-        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { type_mouvement, montant: parseFloat(montant), motif });
-        res.status(201).json({ message: "Mouvement de caisse enregistré." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); }
+        await clientDB.query('BEGIN');
+        const scelle = await enregistrerMouvementCaisseScelle(clientDB, {
+            id_salon: req.user.id_salon,
+            id_employe: id_employe || null,
+            type_mouvement,
+            montant: parseFloat(montant),
+            motif: motif.trim()
+        });
+        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, type_mouvement, montant: parseFloat(montant), motif: motif.trim(), hash_mouvement: scelle.hash_mouvement }, clientDB);
+        await clientDB.query('COMMIT');
+        res.status(201).json({ message: "Mouvement de caisse enregistré et scellé." });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: "Erreur lors de la sauvegarde." });
+    } finally { clientDB.release(); }
 });
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
@@ -1802,6 +1862,8 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     try {
         await clientDB.query('BEGIN');
         
+        // Verrouillage transactionnel strict NF525 sur le salon
+        await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
         await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
 
         const jourRes = await clientDB.query(
@@ -1828,14 +1890,13 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         if (dejaCloture.rowCount > 0) throw new Error(`La caisse pour la date du ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')} a déjà été clôturée.`);
 
         const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
-        const totalJour = caResult.rows[0].total;
+        const totalJour = Number(caResult.rows[0].total).toFixed(2);
 
-        // RÈGLE D'OR NF525 : Le cumul n'est plus une somme globale (qui cause des décalages si l'historique est purgé/modifié).
-        // Nouveau Cumul = Cumul précédent + CA du jour.
-        const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon]);
+        // RÈGLE D'OR NF525 : Nouveau Cumul = Ancien Cumul (du dernier Z scellé) + CA du jour (verrouillé FOR UPDATE).
+        const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1 FOR UPDATE', [id_salon]);
         
         const ancienCumul = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].cumul_perpetuel_ttc ? parseFloat(dernierZInfo.rows[0].cumul_perpetuel_ttc) : 0;
-        const grandTotalPerpetuel = ancienCumul + parseFloat(totalJour);
+        const grandTotalPerpetuel = Number((ancienCumul + parseFloat(totalJour)).toFixed(2));
         const hashPrecedent = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].signature_hash ? dernierZInfo.rows[0].signature_hash : 'GENESIS_Z';
         const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
 
@@ -1843,14 +1904,15 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         const fCaisseMatin = parseFloat(fond_caisse_matin) || 0;
         const tEspecesReel = parseFloat(total_especes_reel) || 0;
 
-        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE' AND est_compense = FALSE`, [id_salon, dateACloturerStr]);
+        // Somme algébrique exacte (inclut le ticket d'origine + et l'éventuel ticket d'annulation - du jour)
+        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
         const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
 
-        const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE 0 END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
+        const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE montant END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
         const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
 
-        const tEspecesTheorique = fCaisseMatin + totalEspecesVentes + totalMouvements;
-        const ecartCaisse = tEspecesReel - tEspecesTheorique;
+        const tEspecesTheorique = Number((fCaisseMatin + totalEspecesVentes + totalMouvements).toFixed(2));
+        const ecartCaisse = Number((tEspecesReel - tEspecesTheorique).toFixed(2));
 
         // 🚨 SI L'ÉCART EST > 2€ ET QU'ON N'A PAS ENCORE DE JUSTIFICATION, ON BLOQUE !
         if (Math.abs(ecartCaisse) > 2.00 && (!justification_ecart || justification_ecart.trim() === '')) {
@@ -1866,7 +1928,7 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         const dateISO = new Date().toISOString();
         
         const signature = crypto.createHash('sha256')
-            .update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO}`)
+            .update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}-${dateISO}`)
             .digest('hex');
 
         await clientDB.query(
@@ -1883,12 +1945,11 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             const apiKey = configRes.rows[0]?.pennylane_api_key;
             
             if (apiKey && apiKey.trim() !== '') {
-                // On récupère les écritures FEC de la journée qu'on vient de clôturer
                 const dateCloture = dateACloturerStr;
                 const ecrituresRes = await clientDB.query(`
                     SELECT t.numero_ticket_caisse, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, c.type_article 
                     FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article 
-                    WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+                    WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut = 'VALIDE'
                 `, [id_salon, dateCloture]);
 
                 if (ecrituresRes.rowCount > 0) {
@@ -1968,25 +2029,28 @@ app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
-        const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE", [id_cloture, req.user.id_salon]);
+        const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE FOR UPDATE", [id_cloture, req.user.id_salon]);
         if (clotureRes.rowCount === 0) throw new Error("Clôture automatique introuvable ou déjà régularisée.");
         
         const cloture = clotureRes.rows[0];
         const theorique = parseFloat(cloture.total_especes_theorique);
         const reel = parseFloat(montant_reel);
-        const ecart = reel - theorique;
+        const ecart = Number((reel - theorique).toFixed(2));
 
-        // Si l'équipe ne trouve pas le même montant que ce que le robot prévoyait, on l'injecte dans le bilan comptable du jour.
+        // Si l'équipe constate un écart par rapport au théorique de la fermeture auto, on crée un mouvement scellé
         if (Math.abs(ecart) > 0) {
-            await clientDB.query(
-                `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif) VALUES ($1, $2, $3, $4, $5)`,
-                [req.user.id_salon, id_employe || null, 'REGULARISATION', ecart, `Régularisation ouverture suite fermeture auto`]
-            );
-            await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, theorique, reel, ecart }, clientDB);
+            await enregistrerMouvementCaisseScelle(clientDB, {
+                id_salon: req.user.id_salon,
+                id_employe: id_employe || null,
+                type_mouvement: 'REGULARISATION',
+                montant: ecart,
+                motif: `Régularisation ouverture suite fermeture auto`
+            });
         }
+        await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, theorique, reel, ecart }, clientDB);
 
-        // On lève le flag pour débloquer le logiciel
-        await clientDB.query("UPDATE clotures_caisse SET est_cloture_automatique = FALSE, ferme_par = 'Robot (Régularisé)' WHERE id_cloture = $1", [id_cloture]);
+        // On lève uniquement le flag est_cloture_automatique (autorisé par le trigger NF525) sans toucher aux colonnes scellées
+        await clientDB.query("UPDATE clotures_caisse SET est_cloture_automatique = FALSE WHERE id_cloture = $1", [id_cloture]);
         
         await clientDB.query('COMMIT');
         res.json({ message: "Caisse régularisée avec succès." });
@@ -2020,27 +2084,56 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
         let prevHashTicket = 'GENESIS_BLOCK';
         
         for (let t of tickets.rows) {
+        for (let t of tickets.rows) {
             if (!t.hash_ticket) {
                 alertes.push(`Ticket #${t.id_ticket} non scellé (possible ticket hors-ligne en attente).`);
                 continue;
             }
-            const computed = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${t.total_ttc}-${prevHashTicket}`).digest('hex');
-            if (computed !== t.hash_ticket) {
+            const computedFormatted = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${Number(t.total_ttc).toFixed(2)}-${prevHashTicket}`).digest('hex');
+            const computedLegacy = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${parseFloat(t.total_ttc)}-${prevHashTicket}`).digest('hex');
+            if (computedFormatted !== t.hash_ticket && computedLegacy !== t.hash_ticket) {
                 erreurs.push(`Rupture cryptographique sur le ticket #${t.id_ticket} (${t.numero_ticket_caisse}).`);
                 break;
             }
             prevHashTicket = t.hash_ticket;
         }
 
-        // 2. Audit des CLÔTURES (Z)
-        const clotures = await pool.query('SELECT id_cloture, signature_hash, hash_precedent, date_cloture FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture ASC', [id_salon]);
+        // 2. Audit des CLÔTURES (Z) et continuité de numero_z_salon + cumul perpétuel
+        const clotures = await pool.query('SELECT id_cloture, numero_z_salon, total_encaisse, cumul_perpetuel_ttc, signature_hash, hash_precedent, date_cloture FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon ASC NULLS FIRST, id_cloture ASC', [id_salon]);
         let prevHashZ = 'GENESIS_Z';
+        let expectedNumZ = 1;
+        let prevCumulZ = 0;
         for (let c of clotures.rows) {
             if (c.hash_precedent !== prevHashZ) {
                 erreurs.push(`Rupture de chaînage sur la clôture Z du ${new Date(c.date_cloture).toLocaleDateString('fr-FR')}.`);
                 break;
             }
+            if (c.numero_z_salon && parseInt(c.numero_z_salon) !== expectedNumZ) {
+                erreurs.push(`Rupture de séquence sur la numérotation Z : attendu Z#${expectedNumZ}, trouvé Z#${c.numero_z_salon}.`);
+                break;
+            }
+            const cumulAttendu = Number((prevCumulZ + parseFloat(c.total_encaisse || 0)).toFixed(2));
+            const cumulStocke = Number(parseFloat(c.cumul_perpetuel_ttc || 0).toFixed(2));
+            if (Math.abs(cumulStocke - cumulAttendu) > 0.02) {
+                alertes.push(`Écart de cumul perpétuel sur Z#${c.numero_z_salon || c.id_cloture} (Attendu: ${cumulAttendu.toFixed(2)}€, Stocké: ${cumulStocke.toFixed(2)}€).`);
+            }
+            prevCumulZ = cumulStocke;
+            expectedNumZ++;
             prevHashZ = c.signature_hash;
+        }
+
+        // 2 bis. Audit des MOUVEMENTS DE CAISSE scellés
+        const mouvements = await pool.query('SELECT id_mouvement, type_mouvement, montant, motif, hash_precedent, hash_mouvement FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL ORDER BY id_mouvement ASC', [id_salon]);
+        let prevHashMvt = 'GENESIS_MVT';
+        for (let m of mouvements.rows) {
+            const expectedMvtHash = crypto.createHash('sha256')
+                .update(`MVT-${id_salon}-${m.id_mouvement}-${m.type_mouvement}-${Number(m.montant).toFixed(2)}-${String(m.motif || '').trim()}-${prevHashMvt}`)
+                .digest('hex');
+            if (m.hash_precedent !== prevHashMvt || m.hash_mouvement !== expectedMvtHash) {
+                erreurs.push(`Rupture de chaînage sur le mouvement de caisse #${m.id_mouvement}.`);
+                break;
+            }
+            prevHashMvt = m.hash_mouvement;
         }
 
         // 3. Audit du Journal des Événements Techniques (JET)
@@ -2147,10 +2240,10 @@ app.get('/api/export-fec', verifierToken, async (req, res) => {
         const CPT_PROD = config.compte_produits || '707000';
         const CPT_TVA = config.compte_tva || '445710';
 
-        // 2. Récupérer les tickets validés (avec leurs lignes) sur la période
+        // 2. Récupérer tous les tickets validés (ventes + avoirs d'annulation) sur la période
         const ticketsRes = await pool.query(`
             SELECT 
-                t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc,
+                t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, t.type_ticket,
                 lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, 'Article') as nom_article,
                 COALESCE(c.type_article, 'PRESTATION') as type_article,
                 cc.date_cloture
@@ -2158,7 +2251,7 @@ app.get('/api/export-fec', verifierToken, async (req, res) => {
             JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
             LEFT JOIN catalogue c ON lt.id_article = c.id_article
             LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
-            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
             ORDER BY t.date_creation ASC, t.id_ticket ASC
         `, [id_salon, date_debut, date_fin]);
 
@@ -3308,19 +3401,22 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
                 [fournisseur, ht, tva, ttc, id_salon, dateFacture.toISOString(), numFacture, modePaiement, justifUrl, compteComptable]
             );
 
-            // 1 Bis. SYNCHRONISATION CAISSE (NF525) : Sortie d'espèces automatique
+            // 1 Bis. SYNCHRONISATION CAISSE (NF525) : Sortie d'espèces automatique scellée
             if (modePaiement.toUpperCase() === 'ESPECES' && ttc > 0) {
                 const motifSortie = numFacture 
                     ? `Paiement Facture ${numFacture} - ${fournisseur}` 
                     : `Paiement Facture - ${fournisseur}`;
                 
-                await clientDB.query(
-                    `INSERT INTO mouvements_caisse (id_salon, type_mouvement, montant, motif) VALUES ($1, 'SORTIE', $2, $3)`,
-                    [id_salon, ttc, motifSortie]
-                );
+                const scelle = await enregistrerMouvementCaisseScelle(clientDB, {
+                    id_salon,
+                    id_employe: null,
+                    type_mouvement: 'SORTIE',
+                    montant: ttc,
+                    motif: motifSortie
+                });
                 
                 // On trace l'événement dans le journal technique pour l'inaltérabilité
-                await enregistrerJET(id_salon, 'MOUVEMENT_CAISSE', { type_mouvement: 'SORTIE', montant: ttc, motif: motifSortie }, clientDB);
+                await enregistrerJET(id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, type_mouvement: 'SORTIE', montant: ttc, motif: motifSortie, hash_mouvement: scelle.hash_mouvement }, clientDB);
             }
 
             // 2. ACTION STOCK : Ajout automatique des quantités validées
@@ -3514,7 +3610,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
     const id_employe = req.user.id_employe;
     
     try {
-        const configRes = await pool.query('SELECT nom_salon, siret, adresse_salon, tva_intra FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const configRes = await pool.query('SELECT nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville, heure_ouverture, heure_fermeture FROM configuration_salon WHERE id_salon = $1', [id_salon]);
         const config = configRes.rows[0] || {};
         
         const franchiseTVA = !config.tva_intra || config.tva_intra.trim() === '';
@@ -3523,10 +3619,10 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const filtreEmploye = estEmploye ? ' AND t.id_employe = $3' : '';
         const paramsVentes = estEmploye ? [id_salon, dateCible, id_employe] : [id_salon, dateCible];
         
-        // 1. Ventes Détaillées
+        // 1. Ventes Détaillées (Inclut les ventes et les écritures d'annulation pour exactitude comptable NF525)
         const ventesResult = await pool.query(`
             SELECT 
-                t.id_ticket, t.numero_ticket_caisse, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement,
+                t.id_ticket, t.numero_ticket_caisse, TO_CHAR(t.date_creation, 'HH24:MI') as heure, t.total_ttc, t.methode_paiement, t.type_ticket,
                 COALESCE(e.nom, 'Inconnu') as employe,
                 COALESCE(
                     json_agg(
@@ -3542,12 +3638,12 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
             LEFT JOIN catalogue c ON lt.id_article = c.id_article
             LEFT JOIN employes e ON t.id_employe = e.id_employe
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
-            GROUP BY t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.total_ttc, t.methode_paiement, e.nom
-            ORDER BY t.date_creation ASC
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' ${filtreEmploye}
+            GROUP BY t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.total_ttc, t.methode_paiement, t.type_ticket, e.nom
+            ORDER BY t.date_creation ASC, t.id_ticket ASC
         `, paramsVentes);
 
-        const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}`, paramsVentes);
+        const caResult = await pool.query(`SELECT COALESCE(SUM(t.total_ttc), 0) as ca_total FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' ${filtreEmploye}`, paramsVentes);
         const caTotal = parseFloat(caResult.rows[0].ca_total) || 0;
 
         // 3. Clôture Info et Mouvements
@@ -3566,7 +3662,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         else if (cloturePar.includes('Robot')) responsableCloture = 'Fermeture Automatique';
 
         // 4. Stats Commerciales (Annulations, Remises)
-        const statsResult = await pool.query(`SELECT COUNT(DISTINCT id_ticket) as nb_tickets FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}`, paramsVentes);
+        const statsResult = await pool.query(`SELECT COUNT(DISTINCT id_ticket) as nb_tickets FROM tickets t WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE ${filtreEmploye}`, paramsVentes);
         const nbTickets = parseInt(statsResult.rows[0].nb_tickets) || 0;
         
         const annulsRes = await pool.query(`SELECT COUNT(*) as nb, COALESCE(SUM(ABS(total_ttc)), 0) as mnt FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND type_ticket = 'ANNULATION'`, [id_salon, dateCible]);
@@ -3576,7 +3672,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const caCategories = await pool.query(`
             SELECT COALESCE(c.type_article, 'PRESTATION') as type_article, SUM(lt.total_ligne_ttc) as total
             FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON c.id_article = lt.id_article
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' ${filtreEmploye}
             GROUP BY COALESCE(c.type_article, 'PRESTATION')
         `, paramsVentes);
         
@@ -3590,7 +3686,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const tvaDetails = await pool.query(`
             SELECT lt.taux_tva_snapshot as taux, SUM(lt.total_ligne_ttc) as total_ttc
             FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' ${filtreEmploye}
             GROUP BY lt.taux_tva_snapshot ORDER BY lt.taux_tva_snapshot DESC
         `, paramsVentes);
 
@@ -3598,7 +3694,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         const paiements = await pool.query(`
             SELECT methode_paiement, SUM(total_ttc) as total
             FROM tickets t
-            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
+            WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE' ${filtreEmploye}
             GROUP BY methode_paiement
         `, paramsVentes);
         
@@ -3609,15 +3705,15 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             if (r.methode_paiement === 'CHEQUE') totalCheques += parseFloat(r.total || 0);
         });
 
-        // 8. Stats par employé (Gérant uniquement - base HT)
+        // 8. Stats par employé (Gérant uniquement - avec id_employe pour relier les pourboires)
         let employesStats = [];
         if (!estEmploye) {
             const empStatsRes = await pool.query(`
-                SELECT e.nom, e.est_gerant,
+                SELECT e.id_employe, e.nom, e.est_gerant,
                        COALESCE(SUM(t.total_ttc), 0) as ca_genere,
                        (SELECT COALESCE(SUM(c.montant_commission), 0) FROM commissions c WHERE c.id_employe = e.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) = $2) as prime_due
                 FROM employes e
-                LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE' AND t.est_compense = FALSE
+                LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut != 'ANNULE'
                 WHERE e.id_salon = $1
                 GROUP BY e.id_employe, e.nom, e.est_gerant
                 ORDER BY e.est_gerant DESC, e.nom ASC
@@ -3626,9 +3722,8 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         }
 
         // ================== REQUÊTES ADDITIONNELLES POUR LE BILAN JOURNALIER ==================
-        const salonExtraRes = await pool.query('SELECT forme_juridique, heure_ouverture, heure_fermeture FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const salonExtra = salonExtraRes.rows[0] || {};
-        const formeJuridique = salonExtra.forme_juridique ? ` - ${salonExtra.forme_juridique}` : '';
+        const salonExtra = config;
+        const formeJuridique = config.forme_juridique ? ` - ${config.forme_juridique}` : '';
 
         // Ventilation CA par catégorie et par taux de TVA sur la journée
         const caDetailJourRes = await pool.query(`
@@ -3640,16 +3735,16 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
-            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2::date AND t.statut != 'ANNULE' AND t.est_compense = FALSE ${filtreEmploye}
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2::date AND t.statut != 'ANNULE' ${filtreEmploye}
             GROUP BY COALESCE(c.type_article, 'PRESTATION'), COALESCE(lt.taux_tva_snapshot, 20)
             ORDER BY type_article ASC, taux_tva DESC
         `, paramsVentes);
 
         // Nombre et montant des encaissements par mode sur la journée
         const paiementsDetailJourRes = await pool.query(`
-            SELECT methode_paiement, COUNT(id_ticket) as nb, COALESCE(SUM(total_ttc), 0) as total
+            SELECT methode_paiement, COUNT(id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb, COALESCE(SUM(total_ttc), 0) as total
             FROM tickets t
-            WHERE id_salon = $1 AND DATE(date_creation) = $2::date AND statut != 'ANNULE' AND est_compense = FALSE ${filtreEmploye}
+            WHERE id_salon = $1 AND DATE(date_creation) = $2::date AND statut != 'ANNULE' ${filtreEmploye}
             GROUP BY methode_paiement
         `, paramsVentes);
 
@@ -3774,20 +3869,16 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         doc.font('Helvetica-Bold').fontSize(15).fillColor(MAIN_COLOR).text(titrePrincipal, 40, currentY);
         currentY += 20;
 
-        let capitalEtRCS = '';
-        if (config.capital_social || config.rcs_ville) {
-            const cap = config.capital_social ? `Capital social : ${config.capital_social}` : '';
-            const rcs = config.rcs_ville ? `RCS : ${config.rcs_ville}` : '';
-            if (cap && rcs) capitalEtRCS = ` | ${cap} | ${rcs}`;
-            else if (cap) capitalEtRCS = ` | ${cap}`;
-            else if (rcs) capitalEtRCS = ` | ${rcs}`;
-        }
+        const capSocialAff = config.capital_social && config.capital_social.trim() !== '' ? config.capital_social : 'Non renseigné';
+        const rcsVilleAff = config.rcs_ville && config.rcs_ville.trim() !== '' ? config.rcs_ville : 'Non renseigné';
 
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Société : ${config.nom_salon || 'Salon'}${formeJuridique}`, 40, currentY);
         currentY += 14;
-        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${config.adresse_salon || 'N/A'}`, 40, currentY);
+        doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${config.adresse_salon || 'Non renseignée'}`, 40, currentY);
         currentY += 12;
-        doc.text(`SIRET : ${config.siret || 'N/A'}${capitalEtRCS} | ${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
+        doc.text(`SIRET : ${config.siret || 'Non renseigné'} | Capital social : ${capSocialAff} | RCS : ${rcsVilleAff}`, 40, currentY);
+        currentY += 12;
+        doc.text(`${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
         currentY += 14;
 
         doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text(
@@ -4047,7 +4138,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             employesStats.forEach(emp => {
                 const caEmp = parseFloat(emp.ca_genere || 0);
                 const primeEmp = parseFloat(emp.prime_due || 0);
-                // Recherche des pourboires via le nom ou l'équipe
+                const pourboireEmp = mapPourboiresJour[emp.id_employe] || 0;
                 sumCaCollaborateurs += caEmp;
                 if (!emp.est_gerant) sumPrimesJour += primeEmp;
 
@@ -4055,7 +4146,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                     {text: emp.nom, w: 115},
                     {text: emp.est_gerant ? 'Gérant' : 'Salarié(e)', w: 70, align: 'center'},
                     {text: fMnt(caEmp), w: 90, align: 'right'},
-                    {text: emp.est_gerant ? 'N/A' : fMnt(0), w: 80, align: 'right'},
+                    {text: emp.est_gerant ? 'N/A' : fMnt(pourboireEmp), w: 80, align: 'right'},
                     {text: emp.est_gerant ? 'N/A (Gérant)' : fMnt(primeEmp), w: 120, align: 'right'}
                 ]);
             });
@@ -4083,16 +4174,17 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         // --- 5. DÉTAIL DES VENTES DU JOUR ---
         drawTableTitle("5. DÉTAIL DES VENTES DU JOUR");
+        // Total largeur : 32 + 88 + 95 + 42 + 45 + 46 + 44 + 53 = 445 + 7*10 = 515 pt
         const drawHeaderVentesJour = () => {
             drawRow([
-                {text: 'Heure', w: 35},
-                {text: 'N° Ticket', w: 95},
-                {text: 'Lignes (Qté x Presta / Produit)', w: 110},
-                {text: 'Paiem.', w: 45, align: 'center'},
+                {text: 'Heure', w: 32},
+                {text: 'N° Ticket', w: 88},
+                {text: 'Lignes (Qté x Presta / Produit)', w: 95},
+                {text: 'Paiem.', w: 42, align: 'center'},
                 {text: 'Vendeur', w: 45, align: 'center'},
-                {text: 'HT', w: 35, align: 'right'},
-                {text: 'TVA', w: 35, align: 'right'},
-                {text: 'TTC', w: 45, align: 'right'}
+                {text: 'HT', w: 46, align: 'right'},
+                {text: 'TVA', w: 44, align: 'right'},
+                {text: 'TTC', w: 53, align: 'right'}
             ], true);
         };
 
@@ -4134,14 +4226,14 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                 }
 
                 drawRow([
-                    {text: v.heure || '-', w: 35},
-                    {text: v.numero_ticket_caisse || '-', w: 95},
-                    {text: lignesTxt.join('\n'), w: 110},
-                    {text: (v.methode_paiement || 'N/A').substring(0, 8), w: 45, align: 'center'},
+                    {text: v.heure || '-', w: 32},
+                    {text: v.numero_ticket_caisse || '-', w: 88},
+                    {text: lignesTxt.join('\n'), w: 95},
+                    {text: (v.methode_paiement || 'N/A').substring(0, 8), w: 42, align: 'center'},
                     {text: (v.employe || 'Inconnu').substring(0, 10), w: 45, align: 'center'},
-                    {text: fMnt(totalTicketHT), w: 35, align: 'right'},
-                    {text: fMnt(totalTicketTVA), w: 35, align: 'right'},
-                    {text: fMnt(totalTicketTTC), w: 45, align: 'right'}
+                    {text: fMnt(totalTicketHT), w: 46, align: 'right'},
+                    {text: fMnt(totalTicketTVA), w: 44, align: 'right'},
+                    {text: fMnt(totalTicketTTC), w: 53, align: 'right'}
                 ]);
             });
         }
@@ -4191,22 +4283,23 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             {text: 'SHA-256 — Scellement et chaînage NF525', w: 245, align: 'right'}
         ]);
 
+        const formatHash64 = (h) => (h && h.length === 64) ? `${h.substring(0, 32)}\n                   ${h.substring(32, 64)}` : h;
         currentY += 4;
-        doc.rect(40, currentY, 515, 42).fillAndStroke('#f0fdf4', '#16a34a');
-        doc.font('Courier-Bold').fontSize(8).fillColor(MAIN_COLOR).text(`Hash de ce Z     : ${hashActuel}`, 48, currentY + 10, { width: 499 });
-        doc.font('Courier').fontSize(8).fillColor(SEC_COLOR).text(`Hash Z précédent : ${hashPrec}`, 48, currentY + 25, { width: 499 });
-        currentY += 54;
+        doc.rect(40, currentY, 515, 58).fillAndStroke('#f0fdf4', '#16a34a');
+        doc.font('Courier-Bold').fontSize(8).fillColor(MAIN_COLOR).text(`Hash de ce Z     : ${formatHash64(hashActuel)}`, 48, currentY + 8, { width: 499 });
+        doc.font('Courier').fontSize(8).fillColor(SEC_COLOR).text(`Hash Z précédent : ${formatHash64(hashPrec)}`, 48, currentY + 32, { width: 499 });
+        currentY += 68;
 
-        // --- MENTIONS LÉGALES & CLÔTURE ---
-        if (currentY > 680) { doc.addPage(); currentY = 40; }
-        doc.rect(40, currentY, 515, 52).fillAndStroke('#f9fafb', BORDER_COLOR);
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONSERVATION (Loi de Finances)', 50, currentY + 8);
+        // --- MENTIONS LÉGALES & ATTESTATION DE L'ÉDITEUR ---
+        if (currentY > 665) { doc.addPage(); currentY = 40; }
+        doc.rect(40, currentY, 515, 65).fillAndStroke('#f9fafb', BORDER_COLOR);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES, ATTESTATION ÉDITEUR ET CONSERVATION (Loi de Finances - NF525)', 50, currentY + 8);
         doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
-            "• Ce document est généré par le système d'encaissement STACK assurant la traçabilité des données (CGI, art. 286, I-3° bis).\n" +
+            "• Attestation individuelle de conformité : L'éditeur du logiciel STACK v1.0 atteste que ce système satisfait aux conditions d'inaltérabilité, de sécurisation, de conservation et d'archivage des données prévues au 3° bis du I de l'article 286 du CGI.\n" +
             "• Conservation légale : Les pièces et archives fiscales doivent être conservées pendant 6 ans (LPF, art. L. 102 B) et les pièces comptables pendant 10 ans (Code de commerce, art. L. 123-22).",
             50, currentY + 22, { width: 495, lineGap: 2 }
         );
-        currentY += 64;
+        currentY += 75;
 
         if (clotureData) {
             doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text(
@@ -4293,9 +4386,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         };
         const titreDirigeant = getTitreDirigeant(salonConfig.forme_juridique);
         
-        // 🚨 BLOCAGE STRICT : SIRET ET ADRESSE OBLIGATOIRES
+        // 🚨 BLOCAGE STRICT : SIRET ET ADRESSE OBLIGATOIRES (Rejection propre de la Promise)
         if (!salonConfig.siret || !salonConfig.adresse_salon || salonConfig.siret.trim() === '') {
-            return res.status(400).json({ erreur: "Édition bloquée : Le SIRET et l'Adresse du salon sont obligatoires pour générer une liasse légale. Veuillez les remplir dans vos paramètres." });
+            return reject(new Error("Édition bloquée : Le SIRET et l'Adresse du salon sont obligatoires pour générer une liasse légale. Veuillez les remplir dans vos paramètres."));
         }
 
         const franchiseTVA = !salonConfig.tva_intra || salonConfig.tva_intra.trim() === '';
@@ -4304,7 +4397,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
         const nomGerant = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Gérant';
 
-        // 1. REQUÊTE : Chiffre d'Affaires détaillé
+        // 1. REQUÊTE : Chiffre d'Affaires détaillé (Somme algébrique incluant ventes et avoirs d'annulation)
         const caDetailRes = await pool.query(`
             SELECT 
                 COALESCE(c.type_article, 'PRESTATION') as type_article,
@@ -4314,13 +4407,13 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
-            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
             GROUP BY COALESCE(c.type_article, 'PRESTATION'), lt.taux_tva_snapshot
         `, [id_salon, dateDebutStr, dateFinStr]);
 
         // 2. REQUÊTE : Paiements et Mouvements
-        const paiementsRes = await pool.query(`SELECT methode_paiement, COUNT(id_ticket) as nb, SUM(total_ttc) as total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
-        const statsRes = await pool.query(`SELECT COUNT(DISTINCT id_ticket) as nb_tickets, COUNT(DISTINCT id_client) as nb_clients, COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
+        const paiementsRes = await pool.query(`SELECT methode_paiement, COUNT(id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
+        const statsRes = await pool.query(`SELECT COUNT(DISTINCT id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb_tickets, COUNT(DISTINCT id_client) as nb_clients, COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
         
         const caisseRes = await pool.query(`
             SELECT 
@@ -4340,11 +4433,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             ORDER BY date_creation ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
 
-       // --- NOUVEAUTÉ : Cumul annuel pour la Franchise en Base ---
-        const firstDayOfYear = new Date(today.getFullYear(), 0, 1);
+        // --- Cumul annuel pour la Franchise en Base (basé sur l'année de referenceDate) ---
+        const firstDayOfYear = new Date(referenceDate.getFullYear(), 0, 1);
         const dateDebutAnneeStr = formatYMD(firstDayOfYear);
         
-        // CORRECTION DU CRASH : Paramètres $1, $2, $3 bien alignés
         const cumulAnnuelRes = await pool.query(`
             SELECT 
                 COALESCE(c.type_article, 'PRESTATION') as type_article,
@@ -4352,33 +4444,33 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
-            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
             GROUP BY COALESCE(c.type_article, 'PRESTATION')
         `, [id_salon, dateDebutAnneeStr, dateFinStr]);
 
-        // REQUÊTE : Historique des Z du mois (Enrichie avec le CA et tickets)
+        // REQUÊTE : Historique des Z du mois (CA exact via c.total_encaisse et nombre de tickets du jour)
         const zMoisRes = await pool.query(`
             SELECT c.id_cloture, COALESCE(c.numero_z_salon, c.id_cloture) as num_z_final, TO_CHAR(c.date_cloture, 'DD/MM/YYYY') as date_z, 
                    c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc,
-                   COUNT(t.id_ticket) as nb_tickets,
-                   COALESCE(SUM(t.total_ttc), 0) as ca_ttc
+                   COUNT(t.id_ticket) FILTER (WHERE t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE) as nb_tickets,
+                   COALESCE(c.total_encaisse, SUM(t.total_ttc), 0) as ca_ttc
             FROM clotures_caisse c
             LEFT JOIN tickets t ON t.id_salon = c.id_salon 
                                 AND DATE(t.date_creation) = DATE(c.date_cloture)
-                                AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+                                AND t.statut = 'VALIDE'
             WHERE c.id_salon = $1 AND DATE(c.date_cloture) BETWEEN $2 AND $3 
-            GROUP BY c.id_cloture, c.numero_z_salon, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc
-            ORDER BY c.date_cloture ASC, num_z_final ASC
+            GROUP BY c.id_cloture, c.numero_z_salon, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc, c.total_encaisse
+            ORDER BY c.numero_z_salon ASC NULLS LAST, c.date_cloture ASC, c.id_cloture ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
-        // NOUVEAU : On récupère les sommes EXACTES arrêtées à la date du dernier Z
+
+        // Sommes EXACTES arrêtées à la date du dernier Z
         const lastZRes = await pool.query(`SELECT MAX(DATE(date_cloture)) as date_max, TO_CHAR(MAX(date_cloture), 'DD/MM/YYYY') as date_max_str FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
         const lastZDate = lastZRes.rows[0].date_max || lastDayOfMonth;
         const lastZDateStr = lastZRes.rows[0].date_max_str || 'N/A';
 
-        // CORRECTION DU CRASH 42P18 : Paramètres $1, $2, $3 parfaitement alignés sans trous
         const controleRes = await pool.query(`
             SELECT 
-                (SELECT COALESCE(SUM(total_ttc), 0) FROM tickets WHERE id_salon = $1 AND methode_paiement = 'ESPECES' AND statut = 'VALIDE' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3) as especes_z,
+                (SELECT COALESCE(SUM(total_ttc), 0) FROM tickets WHERE id_salon = $1 AND methode_paiement = 'ESPECES' AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3) as especes_z,
                 (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'ENTREE' AND DATE(date_creation) BETWEEN $2 AND $3) as entrees_z,
                 (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $3) as sorties_z,
                 (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3) + (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $3) as ecarts_z
@@ -4395,9 +4487,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_presta_ht,
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') != 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_produit_ht,
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_prestation / 100) ELSE (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_produit / 100) END), 0) as total_prime,
-                   (SELECT COALESCE(SUM(montant_pourboire), 0) FROM tickets t2 WHERE t2.id_employe = e.id_employe AND DATE(t2.date_creation) BETWEEN $2 AND $3 AND t2.statut = 'VALIDE' AND t2.est_compense = FALSE) as total_pourboire
+                   (SELECT COALESCE(SUM(montant_pourboire), 0) FROM tickets t2 WHERE t2.id_employe = e.id_employe AND DATE(t2.date_creation) BETWEEN $2 AND $3 AND t2.statut = 'VALIDE') as total_pourboire
             FROM employes e 
-            LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3 AND t.statut = 'VALIDE' AND t.est_compense = FALSE
+            LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3 AND t.statut = 'VALIDE'
             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
             WHERE e.id_salon = $1 
@@ -4410,16 +4502,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const mapAjustements = {};
         ajustementsRes.rows.forEach(r => mapAjustements[r.id_employe] = parseFloat(r.heures_supp));
 
-        // 4bis. REQUÊTE : CA Réalisé par employé pour comparer avec la base (Passe en HT réel)
+        // 4bis. REQUÊTE : CA Réalisé par employé en HT réel
         const caEmployesRes = await pool.query(`
             SELECT t.id_employe, SUM(lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) as ca_realise_ht
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
-            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
             GROUP BY t.id_employe
         `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
-        const mapCaEmployes = {};
-        caEmployesRes.rows.forEach(r => mapCaEmployes[r.id_employe] = parseFloat(r.ca_realise_ht));
 
         // 5. REQUÊTE : Absences
         const absencesRes = await pool.query(`
@@ -4457,27 +4547,21 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         currentY += 20;
         
         const formeJuridique = salonConfig.forme_juridique ? ` - ${salonConfig.forme_juridique}` : '';
-        let capitalEtRCS = '';
-        if (salonConfig.capital_social || salonConfig.rcs_ville) {
-            const cap = salonConfig.capital_social ? `Capital social : ${salonConfig.capital_social}` : '';
-            const rcs = salonConfig.rcs_ville ? `RCS : ${salonConfig.rcs_ville}` : '';
-            if (cap && rcs) capitalEtRCS = ` | ${cap} | ${rcs}`;
-            else if (cap) capitalEtRCS = ` | ${cap}`;
-            else if (rcs) capitalEtRCS = ` | ${rcs}`;
-        }
+        const capSocialAff = salonConfig.capital_social && salonConfig.capital_social.trim() !== '' ? salonConfig.capital_social : 'Non renseigné';
+        const rcsVilleAff = salonConfig.rcs_ville && salonConfig.rcs_ville.trim() !== '' ? salonConfig.rcs_ville : 'Non renseigné';
 
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Société : ${nomDuSalon}${formeJuridique}`, 40, currentY);
         currentY += 14;
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${salonConfig.adresse_salon}`, 40, currentY);
         currentY += 12;
-        doc.text(`SIRET : ${salonConfig.siret}${capitalEtRCS}`, 40, currentY);
+        doc.text(`SIRET : ${salonConfig.siret} | Capital social : ${capSocialAff} | RCS : ${rcsVilleAff}`, 40, currentY);
         currentY += 12;
         doc.text(`${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
         currentY += 12;
         doc.text(`${titreDirigeant} : ${nomGerant}`, 40, currentY);
         currentY += 15;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(estMoisCloture ? '#16a34a' : '#ea580c').text(`ÉTAT : ${statutDocument}`, 40, currentY);
-        doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
+        doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 355, currentY, { width: 200, align: 'right' });
         currentY += 15;
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Période : ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}`, 40, currentY);
         currentY += 15;
@@ -4485,7 +4569,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             // Encadré d'attestation individuelle (Conformité Loi de Finances)
             doc.rect(40, currentY - 5, 515, 65).fillAndStroke('#f0fdf4', '#16a34a');
             currentY += 5;
-            doc.font('Helvetica-Bold').fontSize(10).fillColor('#16a34a').text(`✓ CLÔTURE MENSUELLE N° ${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}`, 50, currentY);
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#16a34a').text(`✓ CLÔTURE MENSUELLE N° ${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}`, 50, currentY);
             currentY += 14;
             doc.font('Courier').fontSize(8).fillColor('#111827').text(`Hash de validation : ${signatureArchive}`, 50, currentY);
             currentY += 12;
@@ -4496,19 +4580,41 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         }
         currentY += 25;
 
+        // Moteur drawRow anti-chevauchement avec calcul dynamique de hauteur et support de police par colonne
         const drawRow = (cols, isHeader = false, isBold = false) => {
-            if (currentY > 780) { doc.addPage(); currentY = 40; }
-            doc.font(isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(isHeader ? 8 : 9).fillColor(isHeader ? SEC_COLOR : MAIN_COLOR);
+            const activeCols = cols.filter(c => c.w > 0);
+            const defaultFont = isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica';
+            const defaultSize = isHeader ? 8 : 8.5;
+
+            let maxH = 0;
+            activeCols.forEach(col => {
+                const f = col.font || defaultFont;
+                const s = col.size || defaultSize;
+                doc.font(f).fontSize(s);
+                const txt = col.text != null ? String(col.text) : '';
+                const h = doc.heightOfString(txt, { width: col.w });
+                if (h > maxH) maxH = h;
+            });
+
+            if (currentY + maxH > 775) { doc.addPage(); currentY = 40; }
+
             let xPos = 40;
-            cols.forEach(col => {
-                if (col.color) doc.fillColor(col.color);
-                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left', link: col.link || null, underline: !!col.link });
-                if (col.color) doc.fillColor(isHeader ? SEC_COLOR : MAIN_COLOR); // Reset de la couleur
+            activeCols.forEach(col => {
+                const f = col.font || defaultFont;
+                const s = col.size || defaultSize;
+                doc.font(f).fontSize(s).fillColor(col.color || (isHeader ? SEC_COLOR : MAIN_COLOR));
+                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, {
+                    width: col.w,
+                    align: col.align || 'left',
+                    link: col.link || null,
+                    underline: !!col.link
+                });
                 xPos += col.w + 10;
             });
-            currentY += 12;
+
+            currentY += Math.max(maxH, 10) + 4;
             doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? MAIN_COLOR : BORDER_COLOR).stroke();
-            currentY += 6;
+            currentY += 5;
         };
 
         const drawTableTitle = (title) => {
@@ -4652,25 +4758,25 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         facturesAffichees.sort((a, b) => a.date_facture - b.date_facture);
 
         // --- 2. RAPPROCHEMENT BANCAIRE ---
+        // Total largeur : 210 + 70 + 215 = 495 + 2*10 = 515 pt (Fusion Col 1+2 = 210 + 10 + 70 = 290 pt)
         drawTableTitle("2. RAPPROCHEMENT BANCAIRE ET CAISSE");
-        drawRow([{text: 'Méthode de paiement', w: 200}, {text: 'Nb Trans.', w: 60, align: 'center'}, {text: 'Montant Encaissé TTC', w: 225, align: 'right'}], true);
+        drawRow([{text: 'Méthode de paiement', w: 210}, {text: 'Nb Trans.', w: 70, align: 'center'}, {text: 'Montant Encaissé TTC', w: 215, align: 'right'}], true);
         
         const methodes = ['CARTE', 'ESPECES', 'CHEQUE', 'VIREMENT', 'BONS CADEAUX'];
         let mapPaiements = {}; paiementsRes.rows.forEach(m => mapPaiements[m.methode_paiement] = m);
         methodes.forEach(m => {
             const row = mapPaiements[m] || { nb: 0, total: 0 };
-            drawRow([{text: m, w: 200}, {text: row.nb, w: 60, align: 'center'}, {text: fMnt(row.total), w: 225, align: 'right'}]);
+            drawRow([{text: m, w: 210}, {text: row.nb, w: 70, align: 'center'}, {text: fMnt(row.total), w: 215, align: 'right'}]);
         });
         
         const panierMoyen = statsRes.rows[0].nb_tickets > 0 ? (globalTTC / statsRes.rows[0].nb_tickets) : 0;
-        drawRow([{text: `Total Encaissements (${statsRes.rows[0].nb_tickets} tickets, Panier Moyen : ${fMnt(panierMoyen)})`, w: 260}, {text: '', w: 0}, {text: fMnt(globalTTC), w: 225, align: 'right'}], false, true);
+        drawRow([{text: `Total Encaissements (${statsRes.rows[0].nb_tickets} tickets, Panier Moyen : ${fMnt(panierMoyen)})`, w: 290}, {text: fMnt(globalTTC), w: 215, align: 'right'}], false, true);
         
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
 
-        // Lignes de rapprochement bancaire (sans pointillés pour document définitif)
-        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 260}, {text: '', w: 0}, {text: 'Non renseigné', w: 225, align: 'right'}]);
-        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 260}, {text: '', w: 0}, {text: 'Non renseigné', w: 225, align: 'right'}]);
+        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 290}, {text: 'Non renseigné', w: 215, align: 'right'}]);
+        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 290}, {text: 'Non renseigné', w: 215, align: 'right'}]);
         
         const fondDebut = parseFloat(caisseRes.rows[0].fond_debut_mois) || 0;
         const fondFin = parseFloat(caisseRes.rows[0].fond_fin_mois) || 0;
@@ -4679,22 +4785,20 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const retraitsZ = parseFloat(controleRes.rows[0].sorties_z) || 0;
         const ecartsZ = parseFloat(controleRes.rows[0].ecarts_z) || 0;
         
-        // Formule de contrôle stricte arrêtée à la date du Z
         const caisseCalculee = fondDebut + especesEncaisseesZ + apportsZ - retraitsZ + ecartsZ;
         
         currentY += 5;
         doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text(`CONTRÔLE DE CAISSE (Arrêté au dernier Z du ${lastZDateStr})`, 40, currentY); currentY += 14;
         
-        drawRow([{text: 'Fond de caisse au 1er du mois (Ouverture)', w: 260}, {text: '', w: 0}, {text: fMnt(fondDebut), w: 225, align: 'right'}]);
-        drawRow([{text: `Espèces encaissées (Jusqu'au ${lastZDateStr}) (+)`, w: 260}, {text: '', w: 0}, {text: fMnt(especesEncaisseesZ), w: 225, align: 'right'}]);
-        drawRow([{text: 'Apports de caisse (+)', w: 260}, {text: '', w: 0}, {text: fMnt(apportsZ), w: 225, align: 'right'}]);
-        drawRow([{text: 'Retraits et Dépenses en espèces (-)', w: 260}, {text: '', w: 0}, {text: fMnt(retraitsZ), w: 225, align: 'right'}]);
-        drawRow([{text: 'Remises en banque non déclarées dans l\'App (-)', w: 260}, {text: '', w: 0}, {text: '0,00 €', w: 225, align: 'right'}]);
-        drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 260}, {text: '', w: 0}, {text: fMnt(ecartsZ), w: 225, align: 'right'}]);
+        drawRow([{text: 'Fond de caisse au 1er du mois (Ouverture)', w: 290}, {text: fMnt(fondDebut), w: 215, align: 'right'}]);
+        drawRow([{text: `Espèces encaissées (Jusqu'au ${lastZDateStr}) (+)`, w: 290}, {text: fMnt(especesEncaisseesZ), w: 215, align: 'right'}]);
+        drawRow([{text: 'Apports de caisse (+)', w: 290}, {text: fMnt(apportsZ), w: 215, align: 'right'}]);
+        drawRow([{text: 'Retraits et Dépenses en espèces (-)', w: 290}, {text: fMnt(retraitsZ), w: 215, align: 'right'}]);
+        drawRow([{text: 'Remises en banque non déclarées dans l\'App (-)', w: 290}, {text: '0,00 €', w: 215, align: 'right'}]);
+        drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 290}, {text: fMnt(ecartsZ), w: 215, align: 'right'}]);
         
-        drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseCalculee), w: 225, align: 'right'}], false, true);
+        drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 290}, {text: fMnt(caisseCalculee), w: 215, align: 'right'}], false, true);
         
-        // Détermination du texte pour Espèces Comptées
         let especesCompteesTexte = fMnt(fondFin);
         if (zMoisRes.rowCount > 0) {
             const dernierZMois = zMoisRes.rows[zMoisRes.rowCount - 1];
@@ -4703,7 +4807,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             if (isAutoZ) especesCompteesTexte = 'Non compté';
         }
         
-        drawRow([{text: `ESPÈCES COMPTÉES (Lors du Z du ${lastZDateStr})`, w: 260}, {text: '', w: 0}, {text: especesCompteesTexte, w: 225, align: 'right'}], false, true);
+        drawRow([{text: `ESPÈCES COMPTÉES (Lors du Z du ${lastZDateStr})`, w: 290}, {text: especesCompteesTexte, w: 215, align: 'right'}], false, true);
         // --- VÉRIFICATION DE LA COHÉRENCE ESPÈCES (Factures vs Retraits) ---
         // On calcule le total des factures du mois payées en espèces (issues du bas de page)
         let totalFacturesEspecesMois = 0;
@@ -4784,21 +4888,23 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             currentY += 15;
         }
 
-        // On empêche d'isoler l'en-tête du tableau tout en bas de la page
         if (currentY > 680) { doc.addPage(); currentY = 40; }
 
+        // Largeurs calibrées (10 colonnes) : 62 + 43 + 32 + 40 + 38 + 38 + 24 + 48 + 45 + 55 = 425 + 9*10 = 515 pt
+        // Fusion Col 1+2 = 62 + 10 + 43 = 115 pt
+        // Fusion Col 1..7 = 277 + 6*10 = 337 pt | Fusion Col 1..9 = 337 + 10 + 48 + 10 + 45 = 450 pt
         const drawHeaderDepenses = () => {
             drawRow([
-                {text: 'Fournisseur', w: 70},
-                {text: 'N° Fact.', w: 50},
-                {text: 'Source', w: 35, align: 'center'},
-                {text: 'Date F.', w: 45, align: 'center'},
-                {text: 'Paiem.', w: 40, align: 'center'},
-                {text: 'Statut', w: 40, align: 'center'},
-                {text: 'Cpte', w: 25, align: 'center'},
-                {text: 'HT', w: 40, align: 'right'},
-                {text: 'TVA', w: 30, align: 'right'},
-                {text: 'TTC', w: 45, align: 'right'}
+                {text: 'Fournisseur', w: 62},
+                {text: 'N° Fact.', w: 43},
+                {text: 'Source', w: 32, align: 'center'},
+                {text: 'Date F.', w: 40, align: 'center'},
+                {text: 'Paiem.', w: 38, align: 'center'},
+                {text: 'Statut', w: 38, align: 'center'},
+                {text: 'Cpte', w: 24, align: 'center'},
+                {text: 'HT', w: 48, align: 'right'},
+                {text: 'TVA', w: 45, align: 'right'},
+                {text: 'TTC', w: 55, align: 'right'}
             ], true);
         };
         
@@ -4827,7 +4933,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const statutColor = f.statut === 'VALIDE' ? '#16a34a' : '#ea580c';
                 const statutText = f.statut === 'VALIDE' ? 'Validé' : 'À valider';
 
-                let refFacture = f.numero ? f.numero.substring(0, 8) : 'n° inconnu';
+                let refFacture = f.numero ? f.numero.substring(0, 9) : 'n° inconnu';
                 let sourceDoc = f.url ? { text: 'Doc IA', link: f.url, color: '#0ea5e9' } : { text: 'Saisie' };
                 const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
                 
@@ -4836,44 +4942,66 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
 
                 drawRow([
-                    {text: f.fournisseur.substring(0, 12), w: 70}, 
-                    {text: refFacture, w: 50}, 
-                    {text: sourceDoc.text, link: sourceDoc.link, color: sourceDoc.color, w: 35, align: 'center'},
-                    {text: dateFAff, w: 45, align: 'center'},
-                    {text: modePaiementCourt, w: 40, align: 'center'}, 
-                    {text: statutText, w: 40, align: 'center', color: statutColor},
-                    {text: compte, w: 25, align: 'center'}, 
-                    {text: fMnt(f.ht), w: 40, align: 'right'},
-                    {text: fMnt(f.tva), w: 30, align: 'right'}, 
-                    {text: fMnt(f.ttc), w: 45, align: 'right'}
+                    {text: f.fournisseur.substring(0, 14), w: 62}, 
+                    {text: refFacture, w: 43}, 
+                    {text: sourceDoc.text, link: sourceDoc.link, color: sourceDoc.color, w: 32, align: 'center'},
+                    {text: dateFAff, w: 40, align: 'center'},
+                    {text: modePaiementCourt, w: 38, align: 'center'}, 
+                    {text: statutText, w: 38, align: 'center', color: statutColor},
+                    {text: compte, w: 24, align: 'center'}, 
+                    {text: fMnt(f.ht), w: 48, align: 'right'},
+                    {text: fMnt(f.tva), w: 45, align: 'right'}, 
+                    {text: fMnt(f.ttc), w: 55, align: 'right'}
                 ]);
             });
         }
         
-        // Lignes d'attentes gérées dynamiquement (On fusionne le texte des deux 1ères colonnes pour gagner de la place)
         if (currentY > 710) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
         
-        // Détection intelligente : Y a-t-il de vraies charges fixes déjà renseignées dans le tableau ?
         let hasChargesFixes = facturesAffichees.some(f => {
             const cpte = f.compte || '';
             const nomL = (f.fournisseur || '').toLowerCase();
             return cpte.startsWith('61') || cpte.startsWith('62') || cpte.startsWith('63') || cpte.startsWith('64') || nomL.includes('edf') || nomL.includes('urssaf') || nomL.includes('loyer') || nomL.includes('assurance');
         });
 
-        // Si aucune charge fixe n'est remontée par l'IA ou la saisie, on informe qu'il n'y en a pas
+        // Fusion Col 1 + Col 2 = 62 + 10 + 43 = 115 pt pour alignement strict avec les colonnes 3 à 10
         if (!hasChargesFixes) {
-            drawRow([{text: 'Aucune charge fixe saisie (Loyer, URSSAF...)', w: 120}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 25, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 30, align: 'right'}, {text: '0,00 €', w: 45, align: 'right'}]);
+            drawRow([
+                {text: 'Aucune charge fixe saisie (Loyer, URSSAF...)', w: 115},
+                {text: 'N/A', w: 32, align: 'center'},
+                {text: '-', w: 40, align: 'center'},
+                {text: '-', w: 38, align: 'center'},
+                {text: '-', w: 38, align: 'center'},
+                {text: '-', w: 24, align: 'center'},
+                {text: '-', w: 48, align: 'right'},
+                {text: '-', w: 45, align: 'right'},
+                {text: '0,00 €', w: 55, align: 'right'}
+            ]);
         }
         
-        drawRow([{text: 'Variation de stock (Produits)', w: 120}, {text: 'N/A', w: 35, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'Invent.', w: 40, align: 'center'}, {text: '6037', w: 25, align: 'center'}, {text: '-', w: 40, align: 'right'}, {text: '-', w: 30, align: 'right'}, {text: 'Non renseigné', w: 45, align: 'right'}]);
+        drawRow([
+            {text: 'Variation de stock (Produits)', w: 115},
+            {text: 'N/A', w: 32, align: 'center'},
+            {text: '-', w: 40, align: 'center'},
+            {text: '-', w: 38, align: 'center'},
+            {text: 'Invent.', w: 38, align: 'center'},
+            {text: '6037', w: 24, align: 'center'},
+            {text: '-', w: 48, align: 'right'},
+            {text: '-', w: 45, align: 'right'},
+            {text: 'N/R', w: 55, align: 'right'}
+        ]);
         
-        // Protection pour ne jamais séparer les totaux de leur tableau
         if (currentY > 670) { doc.addPage(); currentY = 40; }
         
-        drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 435}, {text: fMnt(sumDepensesBanque), w: 60, align: 'right'}], false, true);
-        drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 435}, {text: fMnt(sumDepensesEspeces), w: 60, align: 'right'}], false, true);
-        drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (À compléter)', w: 435}, {text: fMnt(sumDepensesInconnu), w: 60, align: 'right'}], false, true);
-        drawRow([{text: 'TOTAL GÉNÉRAL DES DÉPENSES', w: 330}, {text: fMnt(totalDepensesHT), w: 45, align: 'right'}, {text: fMnt(totalDepensesTVA), w: 35, align: 'right'}, {text: fMnt(totalDepensesTTC), w: 60, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 450}, {text: fMnt(sumDepensesBanque), w: 55, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 450}, {text: fMnt(sumDepensesEspeces), w: 55, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (À compléter)', w: 450}, {text: fMnt(sumDepensesInconnu), w: 55, align: 'right'}], false, true);
+        drawRow([
+            {text: 'TOTAL GÉNÉRAL DES DÉPENSES', w: 337},
+            {text: fMnt(totalDepensesHT), w: 48, align: 'right'},
+            {text: fMnt(totalDepensesTVA), w: 45, align: 'right'},
+            {text: fMnt(totalDepensesTTC), w: 55, align: 'right'}
+        ], false, true);
 
         if (franchiseTVA) {
             currentY += 4;
@@ -4942,30 +5070,28 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
         
+        // Largeurs optimisées (Total = 455 + 8 gaps de 7.5 = 515px exacts)
         drawRow([
-            {text: 'Employé(e)', w: 60}, 
-            {text: 'Statut', w: 50, align: 'center'},
-            {text: 'Heures', w: 40, align: 'center'},
-            {text: 'HS/HC', w: 40, align: 'center'},
-            {text: 'Pourb.', w: 40, align: 'center'},
-            {text: 'CA Rél.', w: 45, align: 'right'}, 
-            {text: 'Base HT (Prs/Prd)', w: 80, align: 'right'}, 
+            {text: 'Employé(e)', w: 55}, 
+            {text: 'Statut', w: 42, align: 'center'},
+            {text: 'Heures', w: 32, align: 'center'},
+            {text: 'HS/HC', w: 32, align: 'center'},
+            {text: 'Pourb.', w: 38, align: 'right'},
+            {text: 'CA HT', w: 52, align: 'right'}, 
+            {text: 'Base HT (Prs/Prd)', w: 96, align: 'right'}, 
             {text: 'Taux (P/P)', w: 50, align: 'center'}, 
-            {text: 'Prime Brute', w: 55, align: 'right'}
+            {text: 'Prime Brute', w: 58, align: 'right'}
         ], true);
 
         let globalPrimes = 0;
         let totalCAEmployes = 0;
         rhRes.rows.forEach(e => {
-            // Utilisation du nom complet tel qu'enregistré, sans altération
-            const nomComplet = e.nom;
+            const nomComplet = e.nom || 'Inconnu';
             const caRealiseBaseHT = mapCaEmployes[e.id_employe] || 0;
             totalCAEmployes += caRealiseBaseHT;
             
-            // Les bases sont maintenant calculées à la virgule près avec la vraie TVA
             const basePrestaHT = parseFloat(e.base_presta_ht || 0);
             const baseProduitHT = parseFloat(e.base_produit_ht || 0);
-            
             
             let heuresAffichees = '-';
             let hsAffichees = '-';
@@ -4993,15 +5119,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
             if (e.est_gerant) {
                 drawRow([
-                    {text: nomComplet.substring(0,12), w: 60}, 
-                    {text: 'Gérant', w: 50, align: 'center'},
-                    {text: heuresAffichees, w: 40, align: 'center'},
-                    {text: hsAffichees, w: 40, align: 'center'},
-                    {text: pourboireAffiche, w: 40, align: 'center'},
-                    {text: fMnt(caRealiseBaseHT), w: 45, align: 'right'}, 
-                    {text: '-', w: 80, align: 'right'}, 
+                    {text: nomComplet.substring(0, 11), w: 55}, 
+                    {text: 'Gérant', w: 42, align: 'center'},
+                    {text: heuresAffichees, w: 32, align: 'center'},
+                    {text: hsAffichees, w: 32, align: 'center'},
+                    {text: pourboireAffiche, w: 38, align: 'right'},
+                    {text: fMnt(caRealiseBaseHT), w: 52, align: 'right'}, 
+                    {text: '-', w: 96, align: 'right'}, 
                     {text: '-', w: 50, align: 'center'}, 
-                    {text: '-', w: 55, align: 'right'}
+                    {text: '-', w: 58, align: 'right'}
                 ]);
             } else {
                 globalPrimes += parseFloat(e.total_prime || 0);
@@ -5016,15 +5142,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
                 
                 drawRow([
-                    {text: nomComplet.substring(0,12), w: 60}, 
-                    {text: 'À déclarer', w: 50, align: 'center'},
-                    {text: heuresAffichees, w: 40, align: 'center'},
-                    {text: hsAffichees, w: 40, align: 'center'},
-                    {text: pourboireAffiche, w: 40, align: 'center'},
-                    {text: fMnt(caRealiseBaseHT), w: 45, align: 'right'}, 
-                    {text: basesConcat, w: 80, align: 'right'}, 
+                    {text: nomComplet.substring(0, 11), w: 55}, 
+                    {text: 'Salarié', w: 42, align: 'center'},
+                    {text: heuresAffichees, w: 32, align: 'center'},
+                    {text: hsAffichees, w: 32, align: 'center'},
+                    {text: pourboireAffiche, w: 38, align: 'right'},
+                    {text: fMnt(caRealiseBaseHT), w: 52, align: 'right'}, 
+                    {text: basesConcat, w: 96, align: 'right'}, 
                     {text: regleTaux, w: 50, align: 'center'}, 
-                    {text: fMnt(e.total_prime), w: 55, align: 'right'}
+                    {text: fMnt(e.total_prime), w: 58, align: 'right'}
                 ]);
             }
         });
@@ -5033,27 +5159,27 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const caNonAttribue = totalHT - totalCAEmployes;
         if (Math.abs(caNonAttribue) > 0.01) {
             drawRow([
-                {text: 'CA orphelin', w: 60}, 
-                {text: 'N/A', w: 50, align: 'center'},
-                {text: '-', w: 40, align: 'center'},
-                {text: '-', w: 40, align: 'center'},
-                {text: '-', w: 40, align: 'center'},
-                {text: fMnt(caNonAttribue), w: 45, align: 'right'}, 
-                {text: '-', w: 80, align: 'right'}, 
+                {text: 'CA orphelin', w: 55}, 
+                {text: 'N/A', w: 42, align: 'center'},
+                {text: '-', w: 32, align: 'center'},
+                {text: '-', w: 32, align: 'center'},
+                {text: '-', w: 38, align: 'right'},
+                {text: fMnt(caNonAttribue), w: 52, align: 'right'}, 
+                {text: '-', w: 96, align: 'right'}, 
                 {text: '-', w: 50, align: 'center'}, 
-                {text: '-', w: 55, align: 'right'}
+                {text: '-', w: 58, align: 'right'}
             ]);
         }
-                
 
         if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 515}]);
         
         currentY += 4;
-        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Le CA Réalisé inclut tout. La Base HT exclut les articles non-commissionnés (forfaits techniques...). HC = Heures Complémentaires, HS = Supplémentaires.", 40, currentY); currentY += 12;
+        doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Le CA HT inclut toutes les ventes attribuées. La Base HT exclut les articles non-commissionnés. HC = Heures Compl., HS = Heures Supp.", 40, currentY); currentY += 12;
         
+        // Alignement strict avec la dernière colonne de 58px (450 + 7.5 gap + 57.5 = 515px)
         drawRow([
             {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 450}, 
-            {text: fMnt(globalPrimes), w: 55, align: 'right'}
+            {text: fMnt(globalPrimes), w: 58, align: 'right'}
         ], false, true);
         
         doc.addPage();
@@ -5087,38 +5213,39 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         // --- 5 BIS. ARCHIVE DES CLÔTURES (Z) ---
         drawTableTitle("5 BIS. HISTORIQUE DES CLÔTURES DE CAISSE (Z)");
+        // Grille mathématique unifiée entre drawRow et doc.text (Positions X : 40, 75, 135, 210, 240, 295, 360, 425)
         drawRow([
-            {text: 'N° Z', w: 25}, 
-            {text: 'Date', w: 50, align: 'center'}, 
-            {text: 'Opérateur', w: 75}, 
-            {text: 'Tkts', w: 20, align: 'center'},
-            {text: 'CA TTC', w: 45, align: 'right'},
-            {text: 'Cumul P.', w: 55, align: 'right'},
+            {text: 'N° Z', w: 28}, 
+            {text: 'Date', w: 52, align: 'center'}, 
+            {text: 'Opérateur', w: 65}, 
+            {text: 'Tkts', w: 22, align: 'center'},
+            {text: 'CA TTC', w: 48, align: 'right'},
+            {text: 'Cumul P.', w: 58, align: 'right'},
             {text: 'Espèces', w: 55, align: 'right'}, 
-            {text: 'Hash NF525', w: 120, align: 'right'}
+            {text: 'Hash NF525 (SHA-256)', w: 130, align: 'right'}
         ], true);
         
         if (zMoisRes.rowCount === 0) {
             drawRow([{text: 'Aucune clôture enregistrée ce mois-ci.', w: 515}]);
         } else {
             let sumCaZ = 0;
-            let dernierCumulAffiche = null;
             let expectedId = null;
 
             zMoisRes.rows.forEach(z => {
                 const currentId = parseInt(z.num_z_final);
                 
+                // Détection de rupture de séquence des Z (Exigence NF525)
                 if (expectedId !== null && currentId > expectedId) {
                     for (let i = expectedId; i < currentId; i++) {
                         drawRow([
-                            {text: `Z-${i}`, w: 25}, 
-                            {text: 'N/A', w: 50, align: 'center'}, 
-                            {text: 'Saut d\'ID', w: 65}, 
-                            {text: '-', w: 20, align: 'center'},
-                            {text: '-', w: 45, align: 'right'},
-                            {text: '-', w: 55, align: 'right'},
+                            {text: `Z-${i}`, w: 28}, 
+                            {text: 'ANOMALIE', w: 52, align: 'center'}, 
+                            {text: 'Saut de N°', w: 65}, 
+                            {text: '-', w: 22, align: 'center'},
+                            {text: '-', w: 48, align: 'right'},
+                            {text: '-', w: 58, align: 'right'},
                             {text: '-', w: 55, align: 'right'}, 
-                            {text: 'Clôture manquante ou purgée', w: 130, align: 'right'}
+                            {text: 'Clôture manquante ou altérée', w: 130, align: 'right'}
                         ]);
                     }
                 }
@@ -5132,30 +5259,27 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 operator = isAuto ? 'Clôture Auto.' : operator.substring(0, 12);
                 let especesReel = isAuto ? 'N/A' : fMnt(z.total_especes_reel);
                 
-                // CORRECTION DU HASH : Insertion d'un espace pour forcer le retour à la ligne
+                // Césure stricte sur 2 lignes de 32 caractères avec '\n' pour éviter tout chevauchement
                 let hashAffiche = 'NON-SIGNE';
                 if (z.signature_hash && z.signature_hash.length === 64) {
-                    hashAffiche = z.signature_hash.substring(0, 32) + ' ' + z.signature_hash.substring(32, 64);
+                    hashAffiche = z.signature_hash.substring(0, 32) + '\n' + z.signature_hash.substring(32, 64);
                 } else if (z.signature_hash) {
                     hashAffiche = z.signature_hash;
                 }
                 
-                if (currentY > 750) { doc.addPage(); currentY = 40; }
+                if (currentY > 745) { doc.addPage(); currentY = 40; }
 
-                doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR);
-                doc.text(`Z-${currentId}`, 40, currentY, { width: 25 });
-                doc.text(z.date_z, 75, currentY, { width: 50, align: 'center' });
-                doc.text(operator, 135, currentY, { width: 65 });
-                
-                // CORRECTION DE L'INVERSION DES COLONNES ICI :
-                doc.text(z.nb_tickets, 210, currentY, { width: 20, align: 'center' });
-                doc.text(fMnt(z.ca_ttc), 240, currentY, { width: 45, align: 'right' });
-                
-                doc.text(fMnt(cumulActuel), 295, currentY, { width: 55, align: 'right' });
-                doc.text(especesReel, 360, currentY, { width: 60, align: 'right' });
+                doc.font('Helvetica').fontSize(8.5).fillColor(MAIN_COLOR);
+                doc.text(`Z-${currentId}`, 40, currentY, { width: 28, lineBreak: false });
+                doc.text(z.date_z, 75, currentY, { width: 52, align: 'center', lineBreak: false });
+                doc.text(operator, 135, currentY, { width: 65, lineBreak: false });
+                doc.text(String(z.nb_tickets), 208, currentY, { width: 22, align: 'center', lineBreak: false });
+                doc.text(fMnt(z.ca_ttc), 238, currentY, { width: 48, align: 'right', lineBreak: false });
+                doc.text(fMnt(cumulActuel), 294, currentY, { width: 58, align: 'right', lineBreak: false });
+                doc.text(especesReel, 360, currentY, { width: 55, align: 'right', lineBreak: false });
                 
                 doc.font('Courier').fontSize(6).fillColor(SEC_COLOR);
-                doc.text(hashAffiche, 425, currentY, { width: 130, align: 'right' });
+                doc.text(hashAffiche, 425, currentY - 1, { width: 130, align: 'right' });
                 
                 currentY += 18; 
                 doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor(BORDER_COLOR).stroke();
@@ -5164,12 +5288,11 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             
             // Calcul du CA orphelin (Jours où il y a eu des ventes mais aucune clôture de caisse Z n'a été faite)
             const caNonCloture = globalTTC - sumCaZ;
-            if (caNonCloture > 0.01 || caNonCloture < -0.01) {
+            if (Math.abs(caNonCloture) > 0.01) {
                 drawRow([
-                    {text: 'CA des jours non clôturés (En attente de Z)', w: 175}, 
-                    {text: '', w: 0}, {text: '', w: 0}, {text: '', w: 0}, 
-                    {text: fMnt(caNonCloture), w: 45, align: 'right'}, 
-                    {text: '', w: 55}, {text: '', w: 50}, {text: '', w: 120}
+                    {text: 'CA hors clôture (Journées non clôturées)', w: 190}, 
+                    {text: fMnt(caNonCloture), w: 48, align: 'right'}, 
+                    {text: 'En attente de Z', w: 255, align: 'left'}
                 ], false, true);
             }
         }
