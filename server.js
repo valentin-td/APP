@@ -285,6 +285,8 @@ pool.query(`
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS siret VARCHAR(50);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS forme_juridique VARCHAR(30);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS capital_social VARCHAR(50);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS rcs_ville VARCHAR(100);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS mode_suivi_heures VARCHAR(20) DEFAULT 'MANUEL';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS tva_intra VARCHAR(50);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS adresse_salon TEXT;
@@ -924,7 +926,7 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique } = req.body;
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville } = req.body;
     try { 
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
         if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
@@ -936,8 +938,8 @@ app.post('/api/settings', verifierToken, async (req, res) => {
         }
 
         const updateQuery = pin_salon !== undefined
-            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23, mode_suivi_heures = $25, nom_salon = $26, siret = $27, adresse_salon = $28, tva_intra = $29, forme_juridique = $30 WHERE id_salon = $16`
-            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, tva_intra = $28, forme_juridique = $29 WHERE id_salon = $16`; 
+            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23, mode_suivi_heures = $25, nom_salon = $26, siret = $27, adresse_salon = $28, tva_intra = $29, forme_juridique = $30, capital_social = $31, rcs_ville = $32 WHERE id_salon = $16`
+            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, tva_intra = $28, forme_juridique = $29, capital_social = $30, rcs_ville = $31 WHERE id_salon = $16`; 
             
         const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
         
@@ -954,6 +956,8 @@ app.post('/api/settings', verifierToken, async (req, res) => {
         params.push(adresse_salon || null);
         params.push(tva_intra || null);
         params.push(forme_juridique || null);
+        params.push(capital_social || null);
+        params.push(rcs_ville || null);
         
         await pool.query(updateQuery, params);
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
@@ -4268,11 +4272,22 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         currentY += 20;
         
         const formeJuridique = salonConfig.forme_juridique ? ` - ${salonConfig.forme_juridique}` : '';
+        let capitalEtRCS = '';
+        if (salonConfig.capital_social || salonConfig.rcs_ville) {
+            const cap = salonConfig.capital_social ? `Capital social : ${salonConfig.capital_social}` : '';
+            const rcs = salonConfig.rcs_ville ? `RCS : ${salonConfig.rcs_ville}` : '';
+            if (cap && rcs) capitalEtRCS = ` | ${cap} | ${rcs}`;
+            else if (cap) capitalEtRCS = ` | ${cap}`;
+            else if (rcs) capitalEtRCS = ` | ${rcs}`;
+        }
+
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Société : ${nomDuSalon}${formeJuridique}`, 40, currentY);
         currentY += 14;
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${salonConfig.adresse_salon}`, 40, currentY);
         currentY += 12;
-        doc.text(`SIRET: ${salonConfig.siret} | ${mentionTVA} | NAF: 96.02A | IDCC: 2596 (Coiffure)`, 40, currentY);
+        doc.text(`SIRET : ${salonConfig.siret}${capitalEtRCS}`, 40, currentY);
+        currentY += 12;
+        doc.text(`${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
         currentY += 12;
         doc.text(`${titreDirigeant} : ${nomGerant}`, 40, currentY);
         currentY += 15;
@@ -4281,7 +4296,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         doc.text(`Édité le : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 390, currentY, { align: 'right' });
         currentY += 15;
         if (estMoisCloture) {
-            // Encadré officiel de certification NF525
+            // Encadré d'attestation individuelle (Conformité Loi de Finances)
             doc.rect(40, currentY - 5, 515, 65).fillAndStroke('#f0fdf4', '#16a34a');
             currentY += 5;
             doc.font('Helvetica-Bold').fontSize(10).fillColor('#16a34a').text(`✓ CLÔTURE MENSUELLE N° ${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}`, 50, currentY);
@@ -4290,7 +4305,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             currentY += 12;
             doc.font('Helvetica').fontSize(8).text(`Réf. Archive : ${numeroArchive}`, 50, currentY);
             currentY += 12;
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text(`Logiciel STACK v1.0 - Certificat d'inaltérabilité NF525 (CGI, art. 286, I-3° bis)`, 50, currentY);
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text(`Logiciel STACK v1.0 - Attestation individuelle de conformité (CGI, art. 286, I-3° bis)`, 50, currentY);
             currentY += 15;
         }
         currentY += 25;
@@ -4950,12 +4965,12 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 drawRow([
                     {text: `Z-${z.id_cloture}`, w: 25}, 
                     {text: z.date_z, w: 50, align: 'center'}, 
-                    {text: operator, w: 75}, 
+                    {text: operator, w: 65}, 
                     {text: z.nb_tickets, w: 20, align: 'center'},
                     {text: fMnt(z.ca_ttc), w: 45, align: 'right'},
                     {text: fMnt(cumulActuel), w: 55, align: 'right'},
                     {text: especesReel, w: 55, align: 'right'}, 
-                    {text: z.signature_hash ? z.signature_hash.substring(0, 18) + '...' : 'NON-SIGNE', w: 120, align: 'right'}
+                    {text: z.signature_hash ? z.signature_hash : 'NON-SIGNE', w: 130, align: 'right'}
                 ]);
             });
             
@@ -4978,7 +4993,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         doc.rect(40, currentY, 515, 85).fillAndStroke('#f9fafb', BORDER_COLOR);
         doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances)', 50, currentY + 10);
         doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
-            "• Ce document est généré par le système d'encaissement STACK assurant la traçabilité des données (CGI, art. 286, I-3° bis).\n" +
+            "• L'éditeur du logiciel STACK v1.0 atteste que ce système satisfait aux conditions d'inaltérabilité, de sécurisation, de conservation et d'archivage des données en vue du contrôle de l'administration fiscale, prévues au 3° bis du I de l'article 286 du CGI.\n" +
             "• Conservation : Les pièces fiscales doivent être conservées 6 ans, et les documents comptables 10 ans.\n" +
             "• RGPD : Les motifs médicaux exacts des arrêts de travail ont été masqués sur ce document de transmission comptable.\n" +
             "• Dépenses : Je confirme l'exactitude des frais déclarés et m'engage à fournir les justificatifs non-scannés à mon comptable.",
