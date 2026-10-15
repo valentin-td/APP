@@ -4189,26 +4189,29 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         facturesAffichees.sort((a, b) => a.date_facture - b.date_facture);
 
         doc.font('Helvetica-Oblique').fontSize(9).fillColor(SEC_COLOR)
-           .text(`Factures dans l'app : ${toutesFactures.length} · Affichées : ${facturesAffichees.length} · Hors période ou sans date : ${facturesHorsPeriode.length}`, 40, currentY);
+           .text(`Factures dans l'app : ${toutesFactures.length} · Affichées : ${facturesAffichees.length} · Hors période ou sans date : ${facturesHorsPeriode.length} · Doublons : ${facturesDoublons.length}`, 40, currentY);
         currentY += 15;
         
         if (nbAValider > 0) {
-            doc.font('Helvetica-Bold').fillColor('#ea580c').text(`⚠️ BLOCAGE : ${nbAValider} dépense(s) "À valider". La version définitive nécessite leur traitement.`, 40, currentY);
+            doc.font('Helvetica-Bold').fillColor('#ea580c').text(`BLOCAGE : ${nbAValider} dépense(s) "À valider". La version définitive nécessite leur traitement.`, 40, currentY);
             currentY += 15;
         }
 
+        // On empêche d'isoler l'en-tête du tableau tout en bas de la page
+        if (currentY > 680) { doc.addPage(); currentY = 40; }
+
         const drawHeaderDepenses = () => {
             drawRow([
-                {text: 'Fournisseur', w: 55},
+                {text: 'Fournisseur', w: 50},
                 {text: 'N° Fact.', w: 45},
                 {text: 'Source', w: 25, align: 'center'},
-                {text: 'Date Fact.', w: 45, align: 'center'},
-                {text: 'Date Paiem.', w: 45, align: 'center'},
-                {text: 'Paiem.', w: 35, align: 'center'},
-                {text: 'Statut', w: 35, align: 'center'},
-                {text: 'Cpte', w: 20, align: 'center'},
-                {text: 'HT', w: 35, align: 'right'},
-                {text: 'TVA', w: 30, align: 'right'},
+                {text: 'Date F.', w: 45, align: 'center'},
+                {text: 'Date P.', w: 45, align: 'center'},
+                {text: 'Paiem.', w: 38, align: 'center'},
+                {text: 'Statut', w: 32, align: 'center'},
+                {text: 'Cpte', w: 22, align: 'center'},
+                {text: 'HT', w: 33, align: 'right'},
+                {text: 'TVA', w: 28, align: 'right'},
                 {text: 'TTC', w: 45, align: 'right'}
             ], true);
         };
@@ -4238,38 +4241,38 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const statutColor = f.statut === 'VALIDE' ? '#16a34a' : '#ea580c';
                 const statutText = f.statut === 'VALIDE' ? 'Validé' : 'À valider';
 
-                let refFacture = f.numero ? f.numero.substring(0, 10) : 'n° non détecté';
+                let refFacture = f.numero ? f.numero.substring(0, 8) : 'n° non détecté';
                 let sourceDoc = f.url ? { text: 'Doc IA', link: f.url, color: '#0ea5e9' } : { text: 'Saisie' };
                 const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
                 
-                const dateFAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : 'N/A';
-                const datePAff = !isNaN(f.date_paiement) ? f.date_paiement.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : 'N/A';
+                const dateFAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) : 'N/A';
+                const datePAff = !isNaN(f.date_paiement) ? f.date_paiement.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) : 'N/A';
 
                 // Pagination avant de dessiner la ligne (Pour éviter les factures coupées)
                 if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
 
                 drawRow([
-                    {text: f.fournisseur.substring(0, 14), w: 55}, {text: refFacture, w: 45}, {...sourceDoc, w: 25, align: 'center'},
+                    {text: f.fournisseur.substring(0, 10), w: 50}, {text: refFacture, w: 45}, {...sourceDoc, w: 25, align: 'center'},
                     {text: dateFAff, w: 45, align: 'center'}, {text: datePAff, w: 45, align: 'center'},
-                    {text: modePaiementCourt, w: 35, align: 'center'}, {text: statutText, w: 35, align: 'center', color: statutColor},
-                    {text: compte, w: 20, align: 'center'}, {text: fMnt(f.ht), w: 35, align: 'right'},
-                    {text: fMnt(f.tva), w: 30, align: 'right'}, {text: fMnt(f.ttc), w: 45, align: 'right'}
+                    {text: modePaiementCourt, w: 38, align: 'center'}, {text: statutText, w: 32, align: 'center', color: statutColor},
+                    {text: compte, w: 22, align: 'center'}, {text: fMnt(f.ht), w: 33, align: 'right'},
+                    {text: fMnt(f.tva), w: 28, align: 'right'}, {text: fMnt(f.ttc), w: 45, align: 'right'}
                 ]);
             });
         }
         
-        // Lignes d'attentes gérées dynamiquement
+        // Lignes d'attentes gérées dynamiquement (On fusionne le texte des deux 1ères colonnes pour gagner de la place)
         if (currentY > 710) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
-        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 60}, {text: 'N/A', w: 50}, {text: 'Saisie', w: 30, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: 'PRELEV.', w: 35, align: 'center'}, {text: 'À joindre', w: 35, align: 'center'}, {text: '613', w: 20, align: 'center'}, {text: '-', w: 30, align: 'right'}, {text: '-', w: 25, align: 'right'}, {text: 'Voir Banque', w: 40, align: 'right'}]);
-        drawRow([{text: 'Variation de stock (Produits)', w: 60}, {text: 'N/A', w: 50}, {text: 'Saisie', w: 30, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 35, align: 'center'}, {text: 'Inventaire', w: 35, align: 'center'}, {text: '6037', w: 20, align: 'center'}, {text: '-', w: 30, align: 'right'}, {text: '-', w: 25, align: 'right'}, {text: 'À saisir', w: 40, align: 'right'}]);
+        drawRow([{text: 'Charges fixes (Loyer, URSSAF...)', w: 105}, {text: 'Saisie', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: 'PRELEV.', w: 38, align: 'center'}, {text: 'À joindre', w: 32, align: 'center'}, {text: '613', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: 'Voir Banque', w: 45, align: 'right'}]);
+        drawRow([{text: 'Variation de stock (Produits)', w: 105}, {text: 'Saisie', w: 25, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 45, align: 'center'}, {text: '-', w: 38, align: 'center'}, {text: 'Invent.', w: 32, align: 'center'}, {text: '6037', w: 22, align: 'center'}, {text: '-', w: 33, align: 'right'}, {text: '-', w: 28, align: 'right'}, {text: 'À saisir', w: 45, align: 'right'}]);
         
         // Protection pour ne jamais séparer les totaux de leur tableau
         if (currentY > 670) { doc.addPage(); currentY = 40; }
         
-        drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 445}, {text: fMnt(sumDepensesBanque), w: 50, align: 'right'}], false, true);
-        drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 445}, {text: fMnt(sumDepensesEspeces), w: 50, align: 'right'}], false, true);
-        drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (À compléter)', w: 445}, {text: fMnt(sumDepensesInconnu), w: 50, align: 'right'}], false, true);
-        drawRow([{text: 'TOTAL GÉNÉRAL DES DÉPENSES', w: 340}, {text: fMnt(totalDepensesHT), w: 40, align: 'right'}, {text: fMnt(totalDepensesTVA), w: 35, align: 'right'}, {text: fMnt(totalDepensesTTC), w: 50, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 435}, {text: fMnt(sumDepensesBanque), w: 60, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 435}, {text: fMnt(sumDepensesEspeces), w: 60, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (À compléter)', w: 435}, {text: fMnt(sumDepensesInconnu), w: 60, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL GÉNÉRAL DES DÉPENSES', w: 330}, {text: fMnt(totalDepensesHT), w: 45, align: 'right'}, {text: fMnt(totalDepensesTVA), w: 35, align: 'right'}, {text: fMnt(totalDepensesTTC), w: 60, align: 'right'}], false, true);
 
         if (franchiseTVA) {
             currentY += 4;
@@ -4283,9 +4286,28 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             
             if (facturesHorsPeriode.length > 0) {
                 doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text("Annexe : Factures hors période ou sans date (Exclues du total)", 40, currentY); currentY += 15;
+                
+                let sansDate = [];
+                let parMois = {};
                 facturesHorsPeriode.forEach(f => {
-                    const dAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR') : 'Sans date';
-                    doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(`• ${f.fournisseur} - N° ${f.numero || 'Inconnu'} - ${dAff} - ${fMnt(f.ttc)} -> Exclue : ${f.raison}`, 50, currentY);
+                    if (isNaN(f.date_facture.getTime())) {
+                        sansDate.push(f);
+                    } else {
+                        const m = f.date_facture.toLocaleDateString('fr-FR', {month: 'long', year: 'numeric'});
+                        if (!parMois[m]) parMois[m] = { count: 0, total: 0 };
+                        parMois[m].count++;
+                        parMois[m].total += f.ttc;
+                    }
+                });
+                
+                Object.keys(parMois).forEach(mois => {
+                    doc.font('Helvetica-Oblique').fontSize(9).fillColor(MAIN_COLOR).text(`• Synthèse : ${parMois[mois].count} facture(s) datée(s) de ${mois}, total ${fMnt(parMois[mois].total)}`, 50, currentY);
+                    currentY += 12;
+                    if (currentY > 780) { doc.addPage(); currentY = 40; }
+                });
+                
+                sansDate.forEach(f => {
+                    doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(`• ${f.fournisseur} - N° ${f.numero || 'Inconnu'} - Sans date - ${fMnt(f.ttc)} -> Exclue : Date invalide ou manquante`, 50, currentY);
                     currentY += 10;
                     if (currentY > 780) { doc.addPage(); currentY = 40; }
                 });
@@ -4295,7 +4317,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             if (facturesDoublons.length > 0) {
                 doc.font('Helvetica-Bold').fontSize(10).fillColor('#ea580c').text("Annexe : Doublons détectés et bloqués (Exclus du total)", 40, currentY); currentY += 15;
                 facturesDoublons.forEach(f => {
-                    doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(`• ${f.fournisseur} - N° ${f.numero} - ${fMnt(f.ttc)} -> Déjà comptabilisée (Doublon exact)`, 50, currentY);
+                    doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(`• ${f.fournisseur} - ${fMnt(f.ttc)} -> doublon de la facture n° ${f.numero}`, 50, currentY);
                     currentY += 10;
                     if (currentY > 780) { doc.addPage(); currentY = 40; }
                 });
@@ -4312,7 +4334,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             }
         }
 
-        currentY += 25; // Saut de ligne renforcé pour empêcher le chevauchement !
+        // On démarre systématiquement la section 4 (Variables de paie) sur une nouvelle page
+        doc.addPage();
+        currentY = 40;
 
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
