@@ -4350,7 +4350,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         // --- STATUT ET LÉGALITÉ (Basé sur la validation du gérant) ---
         const moisCibleStr = `${referenceDate.getFullYear()}-${String(referenceDate.getMonth() + 1).padStart(2, '0')}`;
-        const validationRes = await pool.query('SELECT valide_par FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisCibleStr]);
+        const validationRes = await pool.query('SELECT valide_par, date_validation FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisCibleStr]);
         
         const estMoisCloture = validationRes.rowCount > 0;
         const statutDocument = estMoisCloture ? "DÉFINITIF (CLÔTURÉ ET SIGNÉ)" : "BROUILLON PROVISOIRE - NON SIGNÉ";
@@ -4358,7 +4358,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         let signatureArchive = '';
         let numeroArchive = 'NON-APPLICABLE-MOIS-EN-COURS';
         if (estMoisCloture) {
-            signatureArchive = crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${Date.now()}`).digest('hex').substring(0, 16).toUpperCase();
+            const dateValISO = validationRes.rows[0].date_validation ? new Date(validationRes.rows[0].date_validation).toISOString() : dateFinStr;
+            signatureArchive = crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${validationRes.rows[0].valide_par}-${dateValISO}`).digest('hex').substring(0, 16).toUpperCase();
             numeroArchive = `ARCH-${id_salon}-${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}-${signatureArchive}`;
         }
 
@@ -5064,16 +5065,16 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
         
-        // Largeurs optimisées (Total = 455 + 8 gaps de 7.5 = 515px exacts)
+        // Largeurs calibrées sur le gap de 10pt de drawRow : 52+38+30+30+38+50+92+47+58 = 435pt + (8 * 10pt) = 515pt exacts
         drawRow([
-            {text: 'Employé(e)', w: 55}, 
-            {text: 'Statut', w: 42, align: 'center'},
-            {text: 'Heures', w: 32, align: 'center'},
-            {text: 'HS/HC', w: 32, align: 'center'},
+            {text: 'Employé(e)', w: 52}, 
+            {text: 'Statut', w: 38, align: 'center'},
+            {text: 'Heures', w: 30, align: 'center'},
+            {text: 'HS/HC', w: 30, align: 'center'},
             {text: 'Pourb.', w: 38, align: 'right'},
-            {text: 'CA HT', w: 52, align: 'right'}, 
-            {text: 'Base HT (Prs/Prd)', w: 96, align: 'right'}, 
-            {text: 'Taux (P/P)', w: 50, align: 'center'}, 
+            {text: 'CA HT', w: 50, align: 'right'}, 
+            {text: 'Base HT (Prs/Prd)', w: 92, align: 'right'}, 
+            {text: 'Taux (P/P)', w: 47, align: 'center'}, 
             {text: 'Prime Brute', w: 58, align: 'right'}
         ], true);
 
@@ -5113,14 +5114,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
             if (e.est_gerant) {
                 drawRow([
-                    {text: nomComplet.substring(0, 11), w: 55}, 
-                    {text: 'Gérant', w: 42, align: 'center'},
-                    {text: heuresAffichees, w: 32, align: 'center'},
-                    {text: hsAffichees, w: 32, align: 'center'},
+                    {text: nomComplet.substring(0, 11), w: 52}, 
+                    {text: 'Gérant', w: 38, align: 'center'},
+                    {text: heuresAffichees, w: 30, align: 'center'},
+                    {text: hsAffichees, w: 30, align: 'center'},
                     {text: pourboireAffiche, w: 38, align: 'right'},
-                    {text: fMnt(caRealiseBaseHT), w: 52, align: 'right'}, 
-                    {text: '-', w: 96, align: 'right'}, 
-                    {text: '-', w: 50, align: 'center'}, 
+                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
+                    {text: '-', w: 92, align: 'right'}, 
+                    {text: '-', w: 47, align: 'center'}, 
                     {text: '-', w: 58, align: 'right'}
                 ]);
             } else {
@@ -5136,14 +5137,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
                 
                 drawRow([
-                    {text: nomComplet.substring(0, 11), w: 55}, 
-                    {text: 'Salarié', w: 42, align: 'center'},
-                    {text: heuresAffichees, w: 32, align: 'center'},
-                    {text: hsAffichees, w: 32, align: 'center'},
+                    {text: nomComplet.substring(0, 11), w: 52}, 
+                    {text: 'Salarié', w: 38, align: 'center'},
+                    {text: heuresAffichees, w: 30, align: 'center'},
+                    {text: hsAffichees, w: 30, align: 'center'},
                     {text: pourboireAffiche, w: 38, align: 'right'},
-                    {text: fMnt(caRealiseBaseHT), w: 52, align: 'right'}, 
-                    {text: basesConcat, w: 96, align: 'right'}, 
-                    {text: regleTaux, w: 50, align: 'center'}, 
+                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
+                    {text: basesConcat, w: 92, align: 'right'}, 
+                    {text: regleTaux, w: 47, align: 'center'}, 
                     {text: fMnt(e.total_prime), w: 58, align: 'right'}
                 ]);
             }
@@ -5153,14 +5154,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const caNonAttribue = totalHT - totalCAEmployes;
         if (Math.abs(caNonAttribue) > 0.01) {
             drawRow([
-                {text: 'CA orphelin', w: 55}, 
-                {text: 'N/A', w: 42, align: 'center'},
-                {text: '-', w: 32, align: 'center'},
-                {text: '-', w: 32, align: 'center'},
+                {text: 'CA orphelin', w: 52}, 
+                {text: 'N/A', w: 38, align: 'center'},
+                {text: '-', w: 30, align: 'center'},
+                {text: '-', w: 30, align: 'center'},
                 {text: '-', w: 38, align: 'right'},
-                {text: fMnt(caNonAttribue), w: 52, align: 'right'}, 
-                {text: '-', w: 96, align: 'right'}, 
-                {text: '-', w: 50, align: 'center'}, 
+                {text: fMnt(caNonAttribue), w: 50, align: 'right'}, 
+                {text: '-', w: 92, align: 'right'}, 
+                {text: '-', w: 47, align: 'center'}, 
                 {text: '-', w: 58, align: 'right'}
             ]);
         }
@@ -5170,9 +5171,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         currentY += 4;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Le CA HT inclut toutes les ventes attribuées. La Base HT exclut les articles non-commissionnés. HC = Heures Compl., HS = Heures Supp.", 40, currentY); currentY += 12;
         
-        // Alignement strict avec la dernière colonne de 58px (450 + 7.5 gap + 57.5 = 515px)
+        // Fusion Col 1..8 = 377pt + 7*10pt = 447pt (+ 10pt gap + 58pt = 515pt exacts)
         drawRow([
-            {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 450}, 
+            {text: 'TOTAL PRIMES ÉQUIPE SALARIÉE', w: 447}, 
             {text: fMnt(globalPrimes), w: 58, align: 'right'}
         ], false, true);
         
@@ -5182,10 +5183,11 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         currentY = 100;
 
         // --- 5. ABSENCES ---
+        // Largeurs calibrées : 95 + 130 + 135 + 40 + 75 = 475pt + (4 * 10pt) = 515pt exacts
         drawTableTitle("5. REGISTRE DES ABSENCES ET CONGÉS");
-        drawRow([{text: 'Employé', w: 100}, {text: 'Motif (Masquage RGPD)', w: 130}, {text: 'Période', w: 140}, {text: 'Jours', w: 40, align: 'center'}, {text: 'Infos Compl.', w: 75}], true);
+        drawRow([{text: 'Employé', w: 95}, {text: 'Motif (Masquage RGPD)', w: 130}, {text: 'Période', w: 135}, {text: 'Jours', w: 40, align: 'center'}, {text: 'Infos Compl.', w: 75}], true);
         if (absencesRes.rowCount === 0) {
-            drawRow([{text: 'Aucune absence sur la période.', w: 100}, {text: '-', w: 130}, {text: '-', w: 140}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 75}]);
+            drawRow([{text: 'Aucune absence sur la période.', w: 95}, {text: '-', w: 130}, {text: '-', w: 135}, {text: '-', w: 40, align: 'center'}, {text: '-', w: 75}]);
         } else {
             absencesRes.rows.forEach(a => {
                 const estMaladie = a.type_demande === 'ARRET_MALADIE' || ['MALADIE_ORDINAIRE', 'ACCIDENT_TRAVAIL'].includes(a.nature_absence);
@@ -5196,9 +5198,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 for (let d = new Date(dDeb); d <= dFin; d.setDate(d.getDate() + 1)) { if (d.getDay() !== 0) joursOuvres++; }
                 
                 drawRow([
-                    {text: a.nom_employe, w: 100}, 
+                    {text: a.nom_employe, w: 95}, 
                     {text: motifAffiche, w: 130}, 
-                    {text: `Du ${dDeb.toLocaleDateString('fr-FR')} au ${dFin.toLocaleDateString('fr-FR')}`, w: 140}, 
+                    {text: `Du ${dDeb.toLocaleDateString('fr-FR')} au ${dFin.toLocaleDateString('fr-FR')}`, w: 135}, 
                     {text: `${joursOuvres} j.`, w: 40, align: 'center'},
                     {text: estMaladie ? 'Attente CPAM' : 'Solde CP: -', w: 75}
                 ]);
@@ -5206,16 +5208,16 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         }
 
         // --- 5 BIS. ARCHIVE DES CLÔTURES (Z) ---
+        // Largeurs calibrées : 28 + 48 + 62 + 22 + 48 + 55 + 52 + 130 = 445pt + (7 * 10pt) = 515pt exacts
         drawTableTitle("5 BIS. HISTORIQUE DES CLÔTURES DE CAISSE (Z)");
-        // Grille mathématique unifiée entre drawRow et doc.text (Positions X : 40, 75, 135, 210, 240, 295, 360, 425)
         drawRow([
             {text: 'N° Z', w: 28}, 
-            {text: 'Date', w: 52, align: 'center'}, 
-            {text: 'Opérateur', w: 65}, 
+            {text: 'Date', w: 48, align: 'center'}, 
+            {text: 'Opérateur', w: 62}, 
             {text: 'Tkts', w: 22, align: 'center'},
             {text: 'CA TTC', w: 48, align: 'right'},
-            {text: 'Cumul P.', w: 58, align: 'right'},
-            {text: 'Espèces', w: 55, align: 'right'}, 
+            {text: 'Cumul P.', w: 55, align: 'right'},
+            {text: 'Espèces', w: 52, align: 'right'}, 
             {text: 'Hash NF525 (SHA-256)', w: 130, align: 'right'}
         ], true);
         
@@ -5232,14 +5234,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 if (expectedId !== null && currentId > expectedId) {
                     for (let i = expectedId; i < currentId; i++) {
                         drawRow([
-                            {text: `Z-${i}`, w: 28}, 
-                            {text: 'ANOMALIE', w: 52, align: 'center'}, 
-                            {text: 'Saut de N°', w: 65}, 
+                            {text: `Z-${i}`, w: 28, color: '#dc2626'}, 
+                            {text: 'ANOMALIE', w: 48, align: 'center', color: '#dc2626'}, 
+                            {text: 'Saut de N°', w: 62, color: '#dc2626'}, 
                             {text: '-', w: 22, align: 'center'},
                             {text: '-', w: 48, align: 'right'},
-                            {text: '-', w: 58, align: 'right'},
-                            {text: '-', w: 55, align: 'right'}, 
-                            {text: 'Clôture manquante ou altérée', w: 130, align: 'right'}
+                            {text: '-', w: 55, align: 'right'},
+                            {text: '-', w: 52, align: 'right'}, 
+                            {text: 'Clôture manquante ou altérée', w: 130, align: 'right', color: '#dc2626'}
                         ]);
                     }
                 }
@@ -5261,32 +5263,25 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                     hashAffiche = z.signature_hash;
                 }
                 
-                if (currentY > 745) { doc.addPage(); currentY = 40; }
-
-                doc.font('Helvetica').fontSize(8.5).fillColor(MAIN_COLOR);
-                doc.text(`Z-${currentId}`, 40, currentY, { width: 28, lineBreak: false });
-                doc.text(z.date_z, 75, currentY, { width: 52, align: 'center', lineBreak: false });
-                doc.text(operator, 135, currentY, { width: 65, lineBreak: false });
-                doc.text(String(z.nb_tickets), 208, currentY, { width: 22, align: 'center', lineBreak: false });
-                doc.text(fMnt(z.ca_ttc), 238, currentY, { width: 48, align: 'right', lineBreak: false });
-                doc.text(fMnt(cumulActuel), 294, currentY, { width: 58, align: 'right', lineBreak: false });
-                doc.text(especesReel, 360, currentY, { width: 55, align: 'right', lineBreak: false });
-                
-                doc.font('Courier').fontSize(6).fillColor(SEC_COLOR);
-                doc.text(hashAffiche, 425, currentY - 1, { width: 130, align: 'right' });
-                
-                currentY += 18; 
-                doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(0.5).strokeColor(BORDER_COLOR).stroke();
-                currentY += 6;
+                drawRow([
+                    {text: `Z-${currentId}`, w: 28},
+                    {text: z.date_z, w: 48, align: 'center'},
+                    {text: operator, w: 62},
+                    {text: String(z.nb_tickets), w: 22, align: 'center'},
+                    {text: fMnt(z.ca_ttc), w: 48, align: 'right'},
+                    {text: fMnt(cumulActuel), w: 55, align: 'right'},
+                    {text: especesReel, w: 52, align: 'right'},
+                    {text: hashAffiche, w: 130, align: 'right', font: 'Courier', size: 6, color: SEC_COLOR}
+                ]);
             });
             
-            // Calcul du CA orphelin (Jours où il y a eu des ventes mais aucune clôture de caisse Z n'a été faite)
+            // Calcul du CA orphelin (Aligné sous CA TTC : 28+10+48+10+62+10+22 = 190pt, puis 48pt, puis 55+10+52+10+130 = 257pt)
             const caNonCloture = globalTTC - sumCaZ;
             if (Math.abs(caNonCloture) > 0.01) {
                 drawRow([
-                    {text: 'CA hors clôture (Journées non clôturées)', w: 190}, 
+                    {text: 'CA hors clôture (En attente de Z)', w: 190}, 
                     {text: fMnt(caNonCloture), w: 48, align: 'right'}, 
-                    {text: 'En attente de Z', w: 255, align: 'left'}
+                    {text: 'Journées non clôturées', w: 257, align: 'left'}
                 ], false, true);
             }
         }
@@ -6084,35 +6079,36 @@ async function executerClotureFantome() {
                 
                 try {
                     await clientDB.query('BEGIN');
-                    const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
-                    const totalJour = caResult.rows[0].total;
+                    await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
 
-                    // NF525: Nouveau Cumul = Ancien Cumul + CA du jour.
-                    const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
+                    const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+                    const totalJour = Number(caResult.rows[0].total).toFixed(2);
+
+                    // NF525: Nouveau Cumul = Ancien Cumul (du dernier Z scellé) + CA du jour.
+                    const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1 FOR UPDATE', [id_salon]);
                     const ancienCumul = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].cumul_perpetuel_ttc ? parseFloat(dernierZInfo.rows[0].cumul_perpetuel_ttc) : 0;
-                    const grandTotalPerpetuel = ancienCumul + parseFloat(totalJour);
+                    const grandTotalPerpetuel = Number((ancienCumul + parseFloat(totalJour)).toFixed(2));
                     
                     const hashPrecedent = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].signature_hash ? dernierZInfo.rows[0].signature_hash : 'GENESIS_Z';
                     const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
 
-                    // --- CALCUL DU THÉORIQUE POUR LE ROBOT ---
-                    const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE' AND est_compense = FALSE`, [id_salon, dateACloturerStr]);
+                    // --- CALCUL DU THÉORIQUE POUR LE ROBOT (Somme algébrique exacte incluant ventes + et avoirs -) ---
+                    const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
                     const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
 
-                    const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE 0 END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
+                    const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE montant END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
                     const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
 
                     const lastCloseRes = await clientDB.query('SELECT total_especes_reel FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
                     const fCaisseMatin = lastCloseRes.rowCount > 0 ? parseFloat(lastCloseRes.rows[0].total_especes_reel) : 0;
 
-                    const tEspecesTheorique = fCaisseMatin + totalEspecesVentes + totalMouvements;
-                    // Le robot force le total_reel au total_theorique (écart = 0) pour valider mathématiquement la journée
+                    const tEspecesTheorique = Number((fCaisseMatin + totalEspecesVentes + totalMouvements).toFixed(2));
                     // -----------------------------------------
 
                     const dateISO = new Date(j.jour); 
                     dateISO.setHours(23, 59, 59); // On scelle le robot à 23:59:59 de la veille
                     
-                    const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
+                    const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
 
                     await clientDB.query(
                         `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique, numero_z_salon) 
