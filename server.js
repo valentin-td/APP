@@ -4036,8 +4036,17 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 260}, {text: '', w: 0}, {text: fMnt(ecartsZ), w: 225, align: 'right'}]);
         
         drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseCalculee), w: 225, align: 'right'}], false, true);
-        drawRow([{text: `ESPÈCES COMPTÉES (Lors du Z du ${lastZDateStr})`, w: 260}, {text: '', w: 0}, {text: fMnt(fondFin), w: 225, align: 'right'}], false, true);
         
+        // Détermination du texte pour Espèces Comptées
+        let especesCompteesTexte = fMnt(fondFin);
+        if (zMoisRes.rowCount > 0) {
+            const dernierZMois = zMoisRes.rows[zMoisRes.rowCount - 1];
+            let opZ = dernierZMois.ferme_par || 'Non spécifié';
+            let isAutoZ = opZ.toLowerCase().includes('robot') || opZ.toLowerCase().includes('auto') || opZ === 'Non spécifié';
+            if (isAutoZ) especesCompteesTexte = 'Non compté';
+        }
+        
+        drawRow([{text: `ESPÈCES COMPTÉES (Lors du Z du ${lastZDateStr})`, w: 260}, {text: '', w: 0}, {text: especesCompteesTexte, w: 225, align: 'right'}], false, true);
         // --- VÉRIFICATION DE LA COHÉRENCE ESPÈCES (Factures vs Retraits) ---
         // On calcule le total des factures du mois payées en espèces (issues du bas de page)
         let totalFacturesEspecesMois = 0;
@@ -4354,10 +4363,12 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         ], true);
 
         let globalPrimes = 0;
+        let totalCAEmployes = 0;
         rhRes.rows.forEach(e => {
             // Utilisation du nom complet tel qu'enregistré, sans altération
             const nomComplet = e.nom;
             const caRealiseBaseHT = mapCaEmployes[e.id_employe] || 0;
+            totalCAEmployes += caRealiseBaseHT;
             
             // Les bases sont maintenant calculées à la virgule près avec la vraie TVA
             const basePrestaHT = parseFloat(e.base_presta_ht || 0);
@@ -4425,6 +4436,23 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 ]);
             }
         });
+        
+        // Calcul et affichage du CA non attribué (Tickets sans employé ou employé supprimé)
+        const caNonAttribue = totalHT - totalCAEmployes;
+        if (Math.abs(caNonAttribue) > 0.01) {
+            drawRow([
+                {text: 'CA non attribué', w: 50}, 
+                {text: 'N/A', w: 55, align: 'center'},
+                {text: '-', w: 45, align: 'center'},
+                {text: '-', w: 40, align: 'center'},
+                {text: '-', w: 40, align: 'center'},
+                {text: fMnt(caNonAttribue), w: 45, align: 'right'}, 
+                {text: '-', w: 70, align: 'right'}, 
+                {text: '-', w: 60, align: 'center'}, 
+                {text: '-', w: 55, align: 'right'}
+            ]);
+        }
+
         if (rhRes.rowCount === 0) drawRow([{text: 'Aucune donnée.', w: 515}]);
         
         currentY += 4;
