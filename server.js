@@ -3774,11 +3774,20 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         doc.font('Helvetica-Bold').fontSize(15).fillColor(MAIN_COLOR).text(titrePrincipal, 40, currentY);
         currentY += 20;
 
+        let capitalEtRCS = '';
+        if (config.capital_social || config.rcs_ville) {
+            const cap = config.capital_social ? `Capital social : ${config.capital_social}` : '';
+            const rcs = config.rcs_ville ? `RCS : ${config.rcs_ville}` : '';
+            if (cap && rcs) capitalEtRCS = ` | ${cap} | ${rcs}`;
+            else if (cap) capitalEtRCS = ` | ${cap}`;
+            else if (rcs) capitalEtRCS = ` | ${rcs}`;
+        }
+
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Société : ${config.nom_salon || 'Salon'}${formeJuridique}`, 40, currentY);
         currentY += 14;
         doc.font('Helvetica').fontSize(9).fillColor(SEC_COLOR).text(`Adresse : ${config.adresse_salon || 'N/A'}`, 40, currentY);
         currentY += 12;
-        doc.text(`SIRET : ${config.siret || 'N/A'} | ${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
+        doc.text(`SIRET : ${config.siret || 'N/A'}${capitalEtRCS} | ${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
         currentY += 14;
 
         doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text(
@@ -4047,7 +4056,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                     {text: emp.est_gerant ? 'Gérant' : 'Salarié(e)', w: 70, align: 'center'},
                     {text: fMnt(caEmp), w: 90, align: 'right'},
                     {text: emp.est_gerant ? 'N/A' : fMnt(0), w: 80, align: 'right'},
-                    {text: emp.est_gerant ? '- (Non salarié)' : fMnt(primeEmp), w: 120, align: 'right'}
+                    {text: emp.est_gerant ? 'N/A (Gérant)' : fMnt(primeEmp), w: 120, align: 'right'}
                 ]);
             });
 
@@ -4076,14 +4085,14 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         drawTableTitle("5. DÉTAIL DES VENTES DU JOUR");
         const drawHeaderVentesJour = () => {
             drawRow([
-                {text: 'Heure', w: 30},
-                {text: 'N° Ticket', w: 75},
-                {text: 'Lignes (Qté x Prestation / Produit)', w: 125},
-                {text: 'Paiem.', w: 38, align: 'center'},
+                {text: 'Heure', w: 35},
+                {text: 'N° Ticket', w: 95},
+                {text: 'Lignes (Qté x Presta / Produit)', w: 110},
+                {text: 'Paiem.', w: 45, align: 'center'},
                 {text: 'Vendeur', w: 45, align: 'center'},
-                {text: 'HT', w: 42, align: 'right'},
-                {text: 'TVA', w: 38, align: 'right'},
-                {text: 'TTC', w: 52, align: 'right'}
+                {text: 'HT', w: 35, align: 'right'},
+                {text: 'TVA', w: 35, align: 'right'},
+                {text: 'TTC', w: 45, align: 'right'}
             ], true);
         };
 
@@ -4125,14 +4134,14 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                 }
 
                 drawRow([
-                    {text: v.heure || '-', w: 30},
-                    {text: v.numero_ticket_caisse || '-', w: 75},
-                    {text: lignesTxt.join('\n'), w: 125},
-                    {text: (v.methode_paiement || 'N/A').substring(0, 7), w: 38, align: 'center'},
+                    {text: v.heure || '-', w: 35},
+                    {text: v.numero_ticket_caisse || '-', w: 95},
+                    {text: lignesTxt.join('\n'), w: 110},
+                    {text: (v.methode_paiement || 'N/A').substring(0, 8), w: 45, align: 'center'},
                     {text: (v.employe || 'Inconnu').substring(0, 10), w: 45, align: 'center'},
-                    {text: fMnt(totalTicketHT), w: 42, align: 'right'},
-                    {text: fMnt(totalTicketTVA), w: 38, align: 'right'},
-                    {text: fMnt(totalTicketTTC), w: 52, align: 'right'}
+                    {text: fMnt(totalTicketHT), w: 35, align: 'right'},
+                    {text: fMnt(totalTicketTVA), w: 35, align: 'right'},
+                    {text: fMnt(totalTicketTTC), w: 45, align: 'right'}
                 ]);
             });
         }
@@ -4184,8 +4193,8 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         currentY += 4;
         doc.rect(40, currentY, 515, 42).fillAndStroke('#f0fdf4', '#16a34a');
-        doc.font('Courier-Bold').fontSize(8).fillColor(MAIN_COLOR).text(`Hash de ce Z     : ${hashActuel}`, 48, currentY + 9, { width: 499 });
-        doc.font('Courier').fontSize(8).fillColor(SEC_COLOR).text(`Hash Z précédent : ${hashPrec}`, 48, currentY + 24, { width: 499 });
+        doc.font('Courier-Bold').fontSize(8).fillColor(MAIN_COLOR).text(`Hash de ce Z     : ${hashActuel}`, 48, currentY + 10, { width: 499 });
+        doc.font('Courier').fontSize(8).fillColor(SEC_COLOR).text(`Hash Z précédent : ${hashPrec}`, 48, currentY + 25, { width: 499 });
         currentY += 54;
 
         // --- MENTIONS LÉGALES & CLÔTURE ---
