@@ -2424,6 +2424,165 @@ app.get('/api/caisse/tickets/:id', verifierToken, async (req, res) => {
         res.json({ lignes: lignesDispos });
     } catch(e) { res.status(500).json({ erreur: "Erreur lors de la récupération du ticket." }); }
 });
+// =========================================================================
+// --- EXPORT PDF : FACTURE / TICKET CLIENT (CONFORMITÉ B2B & B2C) ---
+// =========================================================================
+app.get('/api/caisse/tickets/:id/pdf', verifierToken, async (req, res) => {
+    const id_ticket = req.params.id;
+    const id_salon = req.user.id_salon;
+
+    try {
+        const ticketData = await pool.query(`
+            SELECT t.*, COALESCE(c.nom, 'Client au comptoir') as nom_client, c.telephone as telephone_client
+            FROM tickets t
+            LEFT JOIN clients c ON t.id_client = c.id_client
+            WHERE t.id_ticket = $1 AND t.id_salon = $2
+        `, [id_ticket, id_salon]);
+
+        if (ticketData.rowCount === 0) return res.status(404).json({ erreur: "Facture introuvable." });
+        const ticket = ticketData.rows[0];
+
+        const lignesData = await pool.query(`
+            SELECT nom_article_snapshot, quantite, prix_unitaire_ttc, total_ligne_ttc, taux_tva_snapshot 
+            FROM lignes_ticket WHERE id_ticket = $1
+        `, [id_ticket]);
+
+        const configData = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = configData.rows[0];
+        const franchiseTVA = !config.tva_intra || config.tva_intra.trim() === '';
+
+        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
+        let buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+
+        doc.on('end', () => {
+            const pdfData = Buffer.concat(buffers);
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="Facture_${ticket.numero_ticket_caisse}.pdf"`);
+            res.send(pdfData);
+        });
+
+        // --- En-tête Prestataire (Le Salon) ---
+        doc.font('Helvetica-Bold').fontSize(20).fillColor('#111827').text(config.nom_salon || 'Salon', 50, 50);
+        doc.font('Helvetica').fontSize(10).fillColor('#4b5563');
+        doc.text(config.adresse_salon || 'Adresse non renseignée', 50, 75);
+        doc.text(`SIRET : ${config.siret || 'Non renseigné'}`, 50, 90);
+        
+        let mentionsEmetteur = `NAF : 96.02A`;
+        if (config.forme_juridique) mentionsEmetteur += ` | ${config.forme_juridique}`;
+        if (config.capital_social) mentionsEmetteur += ` | Capital : ${config.capital_social}`;
+        if (config.rcs_ville) mentionsEmetteur += ` | RCS ${config.rcs_ville}`;
+        doc.text(mentionsEmetteur, 50, 105);
+
+        if (!franchiseTVA) {
+            doc.text(`N° TVA Intracom. : ${config.tva_intra}`, 50, 120);
+        }
+
+        // --- En-tête Client ---
+        doc.rect(300, 50, 245, 85).stroke('#e5e7eb');
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111827').text('FACTURÉ À :', 315, 60);
+        doc.font('Helvetica').fontSize(10).fillColor('#4b5563').text(ticket.nom_client, 315, 80);
+        if (ticket.telephone_client) doc.text(ticket.telephone_client, 315, 95);
+
+        // --- Infos Facture ---
+        const dTicket = new Date(ticket.date_creation);
+        doc.font('Helvetica-Bold').fontSize(14).fillColor('#111827').text(ticket.type_ticket === 'ANNULATION' ? 'AVOIR / ANNULATION' : 'FACTURE', 50, 160);
+        doc.font('Helvetica').fontSize(10).fillColor('#4b5563');
+        doc.text(`Numéro de pièce : ${ticket.numero_ticket_caisse}`, 50, 180);
+        doc.text(`Date d'émission : ${dTicket.toLocaleDateString('fr-FR')} à ${dTicket.toLocaleTimeString('fr-FR')}`, 50, 195);
+        doc.text(`Moyen de règlement : ${ticket.methode_paiement}`, 50, 210);
+
+        // --- Tableau des Lignes ---
+        let currentY = 250;
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111827');
+        doc.text('Désignation', 50, currentY);
+        doc.text('Qté', 300, currentY, { width: 40, align: 'center' });
+        doc.text('PU HT', 340, currentY, { width: 60, align: 'right' });
+        doc.text('TVA', 400, currentY, { width: 50, align: 'right' });
+        doc.text('Total TTC', 460, currentY, { width: 85, align: 'right' });
+        currentY += 15;
+        doc.moveTo(50, currentY).lineTo(545, currentY).lineWidth(1).stroke('#111827');
+        currentY += 10;
+
+        let totalHT = 0;
+        let totalTVA = 0;
+        const totalTTC = parseFloat(ticket.total_ttc);
+
+        doc.font('Helvetica').fontSize(9).fillColor('#4b5563');
+        lignesData.rows.forEach(l => {
+            const lTTC = Math.abs(parseFloat(l.total_ligne_ttc));
+            const lTVA_taux = franchiseTVA ? 0 : parseFloat(l.taux_tva_snapshot);
+            const lHT = lTTC / (1 + lTVA_taux / 100);
+            const lTVA_montant = lTTC - lHT;
+            const puHT = lHT / Math.abs(l.quantite);
+
+            // On additionne (le PDF affiche tout en positif, l'indication "AVOIR" s'occupe de la soustraction légale)
+            totalHT += lHT;
+            totalTVA += lTVA_montant;
+
+            // Gestion de la hauteur dynamique pour les noms longs
+            const txtHeight = doc.heightOfString(l.nom_article_snapshot, { width: 240 });
+            if (currentY + txtHeight > 750) { doc.addPage(); currentY = 50; }
+
+            doc.text(l.nom_article_snapshot, 50, currentY, { width: 240 });
+            doc.text(Math.abs(l.quantite).toString(), 300, currentY, { width: 40, align: 'center' });
+            doc.text(puHT.toFixed(2) + ' €', 340, currentY, { width: 60, align: 'right' });
+            doc.text(franchiseTVA ? '0%' : lTVA_taux + '%', 400, currentY, { width: 50, align: 'right' });
+            doc.text(lTTC.toFixed(2) + ' €', 460, currentY, { width: 85, align: 'right' });
+            currentY += txtHeight + 5;
+        });
+
+        currentY += 10;
+        doc.moveTo(350, currentY).lineTo(545, currentY).lineWidth(0.5).stroke('#e5e7eb');
+        currentY += 10;
+
+        // --- Totaux ---
+        doc.font('Helvetica').fontSize(10);
+        doc.text('Total HT :', 350, currentY);
+        doc.text(totalHT.toFixed(2) + ' €', 460, currentY, { width: 85, align: 'right' });
+        currentY += 15;
+
+        if (!franchiseTVA) {
+            doc.text('Total TVA :', 350, currentY);
+            doc.text(totalTVA.toFixed(2) + ' €', 460, currentY, { width: 85, align: 'right' });
+            currentY += 15;
+        }
+
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#111827');
+        doc.text('NET À PAYER TTC :', 300, currentY);
+        doc.text(Math.abs(totalTTC).toFixed(2) + ' €', 440, currentY, { width: 105, align: 'right' });
+        
+        // --- Mentions Légales B2B & Sécurisation ---
+        currentY = 680;
+        doc.font('Helvetica-Bold').fontSize(8).fillColor('#111827').text("CONDITIONS DE PAIEMENT ET MENTIONS LÉGALES OBLIGATOIRES", 50, currentY);
+        currentY += 12;
+        doc.font('Helvetica').fontSize(7).fillColor('#4b5563');
+        
+        let mentionsArray = [
+            `Échéance : Paiement comptant à réception. Aucun escompte accordé pour paiement anticipé.`,
+            `Pénalités de retard : En cas de retard de paiement, une pénalité égale à 3 fois le taux d'intérêt légal en vigueur sera exigible de plein droit.`,
+            `Frais de recouvrement : Conformément à l'art. D. 441-5 du Code de commerce, une indemnité forfaitaire de 40 € pour frais de recouvrement sera due en cas de retard de paiement.`
+        ];
+
+        if (franchiseTVA) {
+            mentionsArray.unshift(`TVA non applicable, article 293 B du Code Général des Impôts.`);
+        }
+
+        mentionsArray.forEach(m => {
+            doc.text(`• ${m}`, 50, currentY, { width: 495 });
+            currentY += 10;
+        });
+
+        currentY += 10;
+        doc.font('Courier').fontSize(7).fillColor('#9ca3af').text(`Trace NF525 : Algorithme SHA-256 | Hash = ${ticket.hash_ticket || 'Génération en cours'}`, 50, currentY);
+
+        doc.end();
+
+    } catch (error) {
+        console.error("Erreur génération PDF B2B:", error);
+        res.status(500).json({ erreur: "Impossible de générer le document client." });
+    }
+});
 
 app.get('/api/clients', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM clients WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur clients."}); }});
 app.post('/api/clients', verifierToken, async (req, res) => { const { prenom, nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (prenom, nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [prenom || '', nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
