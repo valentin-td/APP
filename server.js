@@ -649,20 +649,13 @@ const authLimiter = rateLimit({
 
 app.post('/api/register', authLimiter, async (req, res) => {
     const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
+    if (!email || !mot_de_passe) return res.status(400).json({ erreur: "Email et mot de passe requis." });
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
-        
-        let type_tache = '';
-
-        // --- GESTION DES UPLOADS MANUELS VS TÂCHES AUTOMATIQUES ---
-        if (String(id).startsWith('UPLOAD_MANUEL_')) {
-            type_tache = 'FACTURE_ACHAT'; // On force le type pour un upload manuel
-        } else {
-            const tacheRes = await clientDB.query("SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2", [id, id_salon]);
-            if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
-            type_tache = tacheRes.rows[0].type_tache;
-        }
+        const exist = await clientDB.query('SELECT 1 FROM utilisateurs WHERE email = $1', [email]);
+        if (exist.rowCount > 0) throw new Error("Cet email est déjà utilisé.");
+        const hash = await bcrypt.hash(mot_de_passe, 10);
         
         const salonResult = await clientDB.query(
             "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
@@ -2083,7 +2076,6 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
         const tickets = await pool.query('SELECT id_ticket, numero_ticket_caisse, total_ttc, hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC', [id_salon]);
         let prevHashTicket = 'GENESIS_BLOCK';
         
-        for (let t of tickets.rows) {
         for (let t of tickets.rows) {
             if (!t.hash_ticket) {
                 alertes.push(`Ticket #${t.id_ticket} non scellé (possible ticket hors-ligne en attente).`);
@@ -4510,6 +4502,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
             GROUP BY t.id_employe
         `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
+        const mapCaEmployes = {};
+        caEmployesRes.rows.forEach(r => { mapCaEmployes[r.id_employe] = parseFloat(r.ca_realise_ht) || 0; });
 
         // 5. REQUÊTE : Absences
         const absencesRes = await pool.query(`
