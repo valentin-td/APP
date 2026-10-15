@@ -4369,6 +4369,87 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Le dépassement du seuil majoré rend la TVA immédiate. Celui du seuil de base ne la déclenche qu'au 1er janvier suivant.", 40, currentY); currentY += 12;
         }
 
+        // =========================================================================
+        // PRÉPARATION DES DONNÉES FACTURES (Nécessaire pour la Section 2 et 3)
+        // =========================================================================
+        const iaFacturesRes = await pool.query(`SELECT id_tache, donnees, date_creation FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
+        const facturesMoisEtendues = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable, date_traitement as date_facture_brute, date_traitement as date_paiement_brute, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND date_traitement >= NOW() - INTERVAL '1 year'`, [id_salon]);
+
+        let toutesFactures = [];
+        
+        // 1. Ajout des factures validées
+        facturesMoisEtendues.rows.forEach(f => {
+            toutesFactures.push({
+                fournisseur: f.nom_fournisseur || 'Inconnu',
+                numero: f.numero_facture || null,
+                date_facture: new Date(f.date_facture_brute),
+                date_paiement: new Date(f.date_paiement_brute),
+                mode_paiement: f.mode_paiement || 'NON_SPECIFIE',
+                statut: 'VALIDE',
+                compte: f.compte_comptable,
+                ht: parseFloat(f.montant_ht) || 0,
+                tva: parseFloat(f.montant_tva) || 0,
+                ttc: parseFloat(f.montant_ttc) || 0,
+                url: f.justificatif_url,
+                source: f.justificatif_url ? 'IA' : 'Saisie'
+            });
+        });
+
+        // 2. Ajout des factures IA en attente
+        iaFacturesRes.rows.forEach(t => {
+            const d = t.donnees || {};
+            let dateF = d.date_facture ? new Date(d.date_facture) : new Date(t.date_creation);
+            toutesFactures.push({
+                fournisseur: d.fournisseur || 'Inconnu',
+                numero: d.numero_facture || null,
+                date_facture: dateF,
+                date_paiement: dateF,
+                mode_paiement: d.mode_paiement || 'NON_SPECIFIE',
+                statut: 'A_VALIDER',
+                compte: d.compte_comptable,
+                ht: parseFloat(d.montant_ht) || 0,
+                tva: parseFloat(d.montant_tva) || 0,
+                ttc: parseFloat(d.montant_ttc) || 0,
+                url: d.pdf_url,
+                source: 'IA'
+            });
+        });
+
+        let facturesAffichees = [];
+        let facturesHorsPeriode = [];
+        let facturesAPayer = [];
+        let facturesDoublons = [];
+        let mapUnique = new Map();
+        let nbAValider = 0;
+
+        toutesFactures.forEach(f => {
+            const numKey = f.numero ? f.numero.toString().trim().toLowerCase() : 'sans_num';
+            const key = `${f.fournisseur.trim().toLowerCase()}_${numKey}`;
+            
+            // Dédoublonnage exact
+            if (numKey !== 'sans_num' && mapUnique.has(key)) {
+                facturesDoublons.push(f);
+                return;
+            }
+            if (numKey !== 'sans_num') mapUnique.set(key, true);
+            if (f.statut === 'A_VALIDER') nbAValider++;
+
+            // Vérification si la facture appartient à ce mois
+            const isFactureInMonth = !isNaN(f.date_facture) && f.date_facture >= firstDayOfMonth && f.date_facture <= lastDayOfMonth;
+            const isPaiementInMonth = !isNaN(f.date_paiement) && f.date_paiement >= firstDayOfMonth && f.date_paiement <= lastDayOfMonth;
+            
+            if (isNaN(f.date_facture.getTime())) {
+                facturesHorsPeriode.push({...f, raison: "Date invalide ou manquante"});
+            } else if (isFactureInMonth || isPaiementInMonth) {
+                facturesAffichees.push(f);
+                if (f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') facturesAPayer.push(f);
+            } else {
+                facturesHorsPeriode.push({...f, raison: "Hors période cible"});
+            }
+        });
+
+        facturesAffichees.sort((a, b) => a.date_facture - b.date_facture);
+
         // --- 2. RAPPROCHEMENT BANCAIRE ---
         drawTableTitle("2. RAPPROCHEMENT BANCAIRE ET CAISSE");
         drawRow([{text: 'Méthode de paiement', w: 200}, {text: 'Nb Trans.', w: 60, align: 'center'}, {text: 'Montant Encaissé TTC', w: 225, align: 'right'}], true);
@@ -4492,85 +4573,6 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
        // --- 3. DÉPENSES ---
         drawTableTitle("3. DÉPENSES ET ACHATS");
-
-        // Requêtes additionnelles pour récupérer l'historique étendu et les factures en attente de l'IA
-        const iaFacturesRes = await pool.query(`SELECT id_tache, donnees, date_creation FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
-        const facturesMoisEtendues = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable, date_traitement as date_facture_brute, date_traitement as date_paiement_brute, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND date_traitement >= NOW() - INTERVAL '1 year'`, [id_salon]);
-
-        let toutesFactures = [];
-        
-        // 1. Ajout des factures validées
-        facturesMoisEtendues.rows.forEach(f => {
-            toutesFactures.push({
-                fournisseur: f.nom_fournisseur || 'Inconnu',
-                numero: f.numero_facture || null,
-                date_facture: new Date(f.date_facture_brute),
-                date_paiement: new Date(f.date_paiement_brute),
-                mode_paiement: f.mode_paiement || 'NON_SPECIFIE',
-                statut: 'VALIDE',
-                compte: f.compte_comptable,
-                ht: parseFloat(f.montant_ht) || 0,
-                tva: parseFloat(f.montant_tva) || 0,
-                ttc: parseFloat(f.montant_ttc) || 0,
-                url: f.justificatif_url,
-                source: f.justificatif_url ? 'IA' : 'Saisie'
-            });
-        });
-
-        // 2. Ajout des factures IA en attente
-        iaFacturesRes.rows.forEach(t => {
-            const d = t.donnees || {};
-            let dateF = d.date_facture ? new Date(d.date_facture) : new Date(t.date_creation);
-            toutesFactures.push({
-                fournisseur: d.fournisseur || 'Inconnu',
-                numero: d.numero_facture || null,
-                date_facture: dateF,
-                date_paiement: dateF,
-                mode_paiement: d.mode_paiement || 'NON_SPECIFIE',
-                statut: 'A_VALIDER',
-                compte: d.compte_comptable,
-                ht: parseFloat(d.montant_ht) || 0,
-                tva: parseFloat(d.montant_tva) || 0,
-                ttc: parseFloat(d.montant_ttc) || 0,
-                url: d.pdf_url,
-                source: 'IA'
-            });
-        });
-
-        let facturesAffichees = [];
-        let facturesHorsPeriode = [];
-        let facturesAPayer = [];
-        let facturesDoublons = [];
-        let mapUnique = new Map();
-        let nbAValider = 0;
-
-        toutesFactures.forEach(f => {
-            const numKey = f.numero ? f.numero.toString().trim().toLowerCase() : 'sans_num';
-            const key = `${f.fournisseur.trim().toLowerCase()}_${numKey}`;
-            
-            // Dédoublonnage exact
-            if (numKey !== 'sans_num' && mapUnique.has(key)) {
-                facturesDoublons.push(f);
-                return;
-            }
-            if (numKey !== 'sans_num') mapUnique.set(key, true);
-            if (f.statut === 'A_VALIDER') nbAValider++;
-
-            // Vérification si la facture appartient à ce mois (par facture OU par paiement)
-            const isFactureInMonth = !isNaN(f.date_facture) && f.date_facture >= firstDayOfMonth && f.date_facture <= lastDayOfMonth;
-            const isPaiementInMonth = !isNaN(f.date_paiement) && f.date_paiement >= firstDayOfMonth && f.date_paiement <= lastDayOfMonth;
-            
-            if (isNaN(f.date_facture.getTime())) {
-                facturesHorsPeriode.push({...f, raison: "Date invalide ou manquante"});
-            } else if (isFactureInMonth || isPaiementInMonth) {
-                facturesAffichees.push(f);
-                if (f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') facturesAPayer.push(f);
-            } else {
-                facturesHorsPeriode.push({...f, raison: "Hors période cible"});
-            }
-        });
-
-        facturesAffichees.sort((a, b) => a.date_facture - b.date_facture);
 
         doc.font('Helvetica-Oblique').fontSize(9).fillColor(SEC_COLOR)
            .text(`Factures dans l'app : ${toutesFactures.length} · Affichées : ${facturesAffichees.length} · Hors période ou sans date : ${facturesHorsPeriode.length} · Doublons : ${facturesDoublons.length}`, 40, currentY);
