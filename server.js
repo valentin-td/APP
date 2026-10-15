@@ -4038,6 +4038,28 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 260}, {text: '', w: 0}, {text: fMnt(caisseCalculee), w: 225, align: 'right'}], false, true);
         drawRow([{text: `ESPÈCES COMPTÉES (Lors du Z du ${lastZDateStr})`, w: 260}, {text: '', w: 0}, {text: fMnt(fondFin), w: 225, align: 'right'}], false, true);
         
+        // --- VÉRIFICATION DE LA COHÉRENCE ESPÈCES (Factures vs Retraits) ---
+        // On calcule le total des factures du mois payées en espèces (issues du bas de page)
+        let totalFacturesEspecesMois = 0;
+        facturesAffichees.forEach(f => {
+            if (f.mode_paiement === 'ESPECES') totalFacturesEspecesMois += f.ttc;
+        });
+
+        const ecartDepensesCaisse = totalFacturesEspecesMois - retraitsZ;
+        
+        if (Math.abs(ecartDepensesCaisse) > 0.01) {
+            currentY += 5;
+            doc.font('Helvetica-Bold').fontSize(8).fillColor('#ea580c').text(
+                `ALERTE COMPTABLE : Désynchronisation Caisse / Dépenses.`, 40, currentY
+            );
+            currentY += 12;
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text(
+                `La section "3. Dépenses" totalise ${fMnt(totalFacturesEspecesMois)} de factures payées en espèces ce mois-ci, mais seuls ${fMnt(retraitsZ)} ont été officiellement retirés de la caisse durant cette même période. (Ex: Une facture de fin de mois a pu être réglée sur la caisse du mois suivant).`, 
+                40, currentY, { width: 515, lineGap: 2 }
+            );
+            currentY += 20; // Plus d'espace si le texte prend 2 lignes
+        }
+
         // Détail des mouvements de caisse (Apports/Retraits)
         if (mouvementsRes.rowCount > 0) {
             currentY += 5;
