@@ -3680,11 +3680,12 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 // =========================================================================
 // --- EXPORT PDF : LIASSE MENSUELLE COMPTABLE & LÉGALE (NF525) ---
 // =========================================================================
-app.get('/api/export-pdf', verifierToken, async (req, res) => {
-    const id_salon = req.user.id_salon;
-    const { mois_annee } = req.query; // Format optionnel attendu: YYYY-MM
-    try {
-        const today = new Date();
+
+// Fonction centrale unifiée pour générer le PDF (Prévisualisation + Envoi final)
+async function genererBufferLiassePdf(id_salon, mois_annee) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            const today = new Date();
         let referenceDate = new Date();
         if (mois_annee) {
             const [year, month] = mois_annee.split('-');
@@ -3870,25 +3871,19 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
         let buffers = [];
         doc.on('data', buffers.push.bind(buffers));
         
-        doc.on('end', async () => {
+        doc.on('end', () => {
             const pdfData = Buffer.concat(buffers); 
-            if (estMoisCloture && salonConfig.email_reception_factures && salonConfig.mot_de_passe_app_email) {
-                try {
-                    let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: dechiffrer(salonConfig.mot_de_passe_app_email) } });
-                    await transporter.sendMail({
-                        from: `"${nomDuSalon}" <${salonConfig.email_reception_factures}>`, 
-                        to: salonConfig.email_reception_factures, 
-                        subject: `📊 Liasse Mensuelle DÉFINITIVE - ${nomDuSalon}`, 
-                        text: `Bonjour,\nVeuillez trouver en pièce jointe la liasse comptable du mois.\nRéf. Archive NF525 : ${numeroArchive}`,
-                        attachments: [{ filename: `Liasse_${numeroArchive}.pdf`, content: pdfData }]
-                    });
-                } catch (e) {} 
-            }
+            // On renvoie le PDF brut en mémoire ainsi que les variables nécessaires pour la suite
+            resolve({ 
+                buffer: pdfData, 
+                numeroArchive, 
+                nomDuSalon, 
+                firstDayOfMonth, 
+                lastDayOfMonth, 
+                salonConfig, 
+                estMoisCloture 
+            });
         });
-
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Liasse_${numeroArchive}.pdf"`);
-        doc.pipe(res);
 
         let currentY = 40;
         const MAIN_COLOR = '#111827'; const SEC_COLOR = '#4b5563'; const BORDER_COLOR = '#e5e7eb';
@@ -4564,8 +4559,41 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 
         doc.end();
     } catch (erreur) { 
-        console.error("Erreur PDF Mensuel :", erreur);
-        res.status(500).send("Erreur lors de la génération du PDF mensuel."); 
+        console.error("Erreur génération buffer PDF :", erreur);
+        reject(erreur);
+    }
+    }); // Fin de la Promise
+} // Fin de la fonction genererBufferLiassePdf
+
+// ----------------------------------------------------------------------------------
+// ROUTE DE TÉLÉCHARGEMENT MANUEL (Prévisualisation du Gérant)
+// ----------------------------------------------------------------------------------
+app.get('/api/export-pdf', verifierToken, async (req, res) => {
+    try {
+        // On fait appel au moteur de dessin unifié !
+        const { buffer, numeroArchive, nomDuSalon, salonConfig, estMoisCloture } = await genererBufferLiassePdf(req.user.id_salon, req.query.mois_annee);
+        
+        // Envoi de sauvegarde (Brouillon) au gérant s'il a configuré son email
+        if (estMoisCloture && salonConfig.email_reception_factures && salonConfig.mot_de_passe_app_email) {
+            try {
+                let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salonConfig.email_reception_factures, pass: dechiffrer(salonConfig.mot_de_passe_app_email) } });
+                await transporter.sendMail({
+                    from: `"${nomDuSalon}" <${salonConfig.email_reception_factures}>`, 
+                    to: salonConfig.email_reception_factures, 
+                    subject: `📊 Liasse Mensuelle - ${nomDuSalon}`, 
+                    text: `Bonjour,\nVeuillez trouver en pièce jointe la copie de votre liasse comptable.\nRéf. Archive NF525 : ${numeroArchive}`,
+                    attachments: [{ filename: `Liasse_${numeroArchive}.pdf`, content: buffer }]
+                });
+            } catch (e) {} 
+        }
+
+        // On renvoie le PDF au navigateur pour le téléchargement
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Liasse_${numeroArchive}.pdf"`);
+        res.send(buffer);
+    } catch (erreur) {
+        console.error("Erreur téléchargement PDF :", erreur);
+        res.status(500).send("Erreur lors de la génération de la liasse mensuelle.");
     }
 });
 
@@ -5100,111 +5128,47 @@ async function envoyerBilanComptable(id_salon, mois_annee) {
             }
         } catch(e) { console.error(`Erreur génération FEC pour le salon ${id_salon}:`, e); }
 
-        // --- GÉNÉRATION DU PDF ET ENVOI ---
-        const doc = new PDFDocument({ size: 'A4', margin: 50, bufferPages: true });
-        let buffers = [];
-        doc.on('data', buffers.push.bind(buffers));
-        
-        doc.on('end', async () => {
-            const pdfData = Buffer.concat(buffers); 
-            try {
-                let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) } });
-                const libelleMois = firstDayPrevMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
-                
-                const attachments = [
-                    { filename: `Liasse_Comptable_${salon.nom_salon}_${libelleMois.replace(' ', '_')}.pdf`, content: pdfData }
-                ];
-                
-                if (fecContent) {
-                    attachments.push({
-                        filename: `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`,
-                        content: fecContent,
-                        contentType: 'text/plain; charset=windows-1252'
-                    });
-                }
-
-                let textBody = `Bonjour,\n\nVeuillez trouver en pièce jointe la liasse comptable de ${salon.nom_salon} pour la période du ${firstDayPrevMonth.toLocaleDateString('fr-FR')} au ${lastDayPrevMonth.toLocaleDateString('fr-FR')}.\nCe document a été vérifié et signé électroniquement par le gérant.\n\n`;
-                if (fecContent) textBody += `Le fichier FEC (Fichier des Écritures Comptables) est également joint, prêt à être importé dans votre logiciel.\n\n`;
-                textBody += `Cordialement,`;
-
-                await transporter.sendMail({
-                    from: `"${salon.nom_salon}" <${salon.email_reception_factures}>`, 
-                    to: salon.email_comptable, 
-                    subject: `✅ Liasse Comptable Mensuelle Validée - ${salon.nom_salon} (${libelleMois})`, 
-                    text: textBody,
-                    attachments: attachments
-                });
-            } catch (emailError) { console.error(`Erreur envoi email comptable pour le salon ${id_salon}:`, emailError); } 
-        });
-
-        const THEME_COLOR = '#00B4D8'; const TEXT_DARK = '#1f2937'; const TEXT_LIGHT = '#6b7280'; const LINE_COLOR = '#e5e7eb';
-        try { doc.image('./IMG_7089.PNG', doc.page.width - 150, 40, { width: 100 }); } catch(e) { doc.font('Helvetica-Bold').fontSize(22).fillColor(TEXT_DARK).text('STACK', doc.page.width - 150, 50, { align: 'right' }); }
-
-        doc.font('Helvetica-Bold').fontSize(36).fillColor(THEME_COLOR).text('Liasse Mensuelle', 50, 50);
-        doc.font('Helvetica-Bold').fontSize(12).fillColor('#16a34a').text('ÉTAT : VALIDÉ ET SIGNÉ PAR LE GÉRANT', 50, 95);
-        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 110);
-        doc.moveDown(3);
-
-        const drawTableRow = (col1, col2, isHeader = false, isTotal = false) => {
-            const y = doc.y;
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col1, 50, y);
-            doc.font(isHeader || isTotal ? 'Helvetica-Bold' : 'Helvetica-Oblique').fontSize(isHeader ? 9 : 10).fillColor(isTotal ? TEXT_DARK : TEXT_LIGHT).text(col2, 450, y, { width: 95, align: 'right' });
-            if (!isHeader && !isTotal) { doc.moveTo(50, y + 14).lineTo(545, y + 14).lineWidth(0.5).strokeColor(LINE_COLOR).stroke(); }
-            doc.y += 18;
-        };
-
-        const drawSectionHeader = (title) => {
-            doc.moveDown(1.5);
-            doc.font('Helvetica-Bold').fontSize(11).fillColor(THEME_COLOR).text(title.toUpperCase(), 50, doc.y);
-            doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(1.5).strokeColor(THEME_COLOR).stroke();
-            doc.moveDown(0.5);
-        };
-
-        drawSectionHeader('Chiffre d\'Affaires & Encaissements');
-        drawTableRow('MÉTHODE DE PAIEMENT', 'MONTANT', true);
-        caParMethodeResult.rows.forEach(m => drawTableRow(m.methode_paiement, `${parseFloat(m.total).toFixed(2)} €`));
-        doc.moveDown(0.5); drawTableRow('Total Chiffre d\'Affaires', `${caTotal.toFixed(2)} €`, false, true);
-
-        drawSectionHeader('Dépenses (Traitées par IA)');
-        drawTableRow('FOURNISSEUR / DATE', 'MONTANT TTC', true);
-        let totalDepenses = 0;
-        if (facturesResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune facture scannée ce mois.', 50, doc.y); doc.moveDown(1); } 
-        else { facturesResult.rows.forEach(f => { drawTableRow(`✓ ${f.nom_fournisseur} (${f.date})`, `${parseFloat(f.montant_ttc).toFixed(2)} €`); totalDepenses += parseFloat(f.montant_ttc); }); }
-        doc.moveDown(0.5); drawTableRow('Total Dépenses Numérisées', `${totalDepenses.toFixed(2)} €`, false, true);
-
-        drawSectionHeader('Commissions Employés');
-        drawTableRow('COLLABORATEUR', 'PRIME DUE', true);
-        let totalPrimes = 0;
-        if (rhResult.rowCount === 0) { doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune commission enregistrée.', 50, doc.y); } 
-        else { rhResult.rows.forEach(c => { drawTableRow(c.nom, `${parseFloat(c.total_prime).toFixed(2)} €`); totalPrimes += parseFloat(c.total_prime); }); }
-        doc.moveDown(0.5); drawTableRow('Total Primes Équipe', `${totalPrimes.toFixed(2)} €`, false, true);
-
-        doc.addPage();
-        doc.font('Helvetica-Bold').fontSize(24).fillColor(THEME_COLOR).text('Variables de Paie & Absences', 50, 50);
-        doc.font('Helvetica').fontSize(10).fillColor(TEXT_LIGHT).text(`Période : ${firstDayPrevMonth.toLocaleDateString('fr-FR')} - ${lastDayPrevMonth.toLocaleDateString('fr-FR')}`, 50, 80);
-        doc.moveDown(3);
-
-        drawSectionHeader('Registre des Absences Validées');
-        if (!absencesResult || absencesResult.rowCount === 0) { 
-            doc.font('Helvetica-Oblique').fontSize(10).fillColor(TEXT_LIGHT).text('Aucune absence enregistrée sur cette période.', 50, doc.y); 
-        } 
-        else {
-            drawTableRow('EMPLOYÉ & NATURE', 'DATES', true);
-            absencesResult.rows.forEach(abs => {
-                const natureStr = abs.type_demande === 'ARRET_MALADIE' ? `Arrêt (${abs.nature_absence || ''})` : `Congé (${abs.nature_absence || ''})`;
-                let dateD = ''; let dateF = '';
-                try { dateD = new Date(abs.date_debut).toLocaleDateString('fr-FR'); } catch(e){}
-                try { dateF = new Date(abs.date_fin).toLocaleDateString('fr-FR'); } catch(e){}
-                drawTableRow(`${abs.nom_employe || ''} - ${natureStr.replace('_', ' ')}${abs.fichier_cle_r2 ? " (Justificatif fourni)" : ""}`, `Du ${dateD} au ${dateF}`);
+        // --- GÉNÉRATION DU PDF DÉTAILLÉ ET ENVOI ---
+        try {
+            // L'appel magique : on génère le même document ultra-détaillé que la prévisualisation !
+            const { buffer, numeroArchive, firstDayOfMonth, lastDayOfMonth } = await genererBufferLiassePdf(id_salon, mois_annee);
+            
+            let transporter = nodemailer.createTransport({ 
+                host: 'smtp.gmail.com', port: 465, secure: true, 
+                auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) } 
             });
+            const libelleMois = firstDayOfMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+            
+            const attachments = [
+                { filename: `Liasse_Comptable_${numeroArchive}.pdf`, content: buffer }
+            ];
+            
+            // Le fichier texte FEC est conservé et joint à l'email comme avant
+            if (fecContent) {
+                attachments.push({
+                    filename: `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`,
+                    content: fecContent,
+                    contentType: 'text/plain; charset=windows-1252'
+                });
+            }
+
+            let textBody = `Bonjour,\n\nVeuillez trouver en pièce jointe la liasse comptable de ${salon.nom_salon} pour la période du ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}.\nCe document a été vérifié et signé électroniquement par le gérant.\n\n`;
+            if (fecContent) textBody += `Le fichier FEC (Fichier des Écritures Comptables) est également joint, prêt à être importé dans votre logiciel.\n\n`;
+            textBody += `Cordialement,`;
+
+            await transporter.sendMail({
+                from: `"${salon.nom_salon}" <${salon.email_reception_factures}>`, 
+                to: salon.email_comptable, 
+                subject: `✅ Liasse Comptable Mensuelle Validée - ${salon.nom_salon} (${libelleMois})`, 
+                text: textBody,
+                attachments: attachments
+            });
+        } catch (erreurEnvoi) {
+            console.error(`Erreur envoi email comptable pour le salon ${id_salon}:`, erreurEnvoi);
         }
 
-        const pages = doc.bufferedPageRange();
-        for (let i = 0; i < pages.count; i++) { doc.switchToPage(i); doc.rect(0, doc.page.height - 20, doc.page.width, 20).fill(THEME_COLOR); }
-        doc.end();
-
     } catch (err) {
-        console.error("Erreur génération liasse comptable :", err);
+        console.error("Erreur génération liasse comptable globale :", err);
     }
 }
 
