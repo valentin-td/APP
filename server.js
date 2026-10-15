@@ -349,11 +349,11 @@ pool.query(`
             await pool.query('INSERT INTO vapid_keys (id, public_key, private_key) VALUES (1, $1, $2)', [keys.publicKey, keys.privateKey]);
             vapidPublicKey = keys.publicKey;
             vapidPrivateKey = keys.privateKey;
-            console.log("✅ Nouvelles clés VAPID générées et sauvegardées en BDD.");
+            console.log(" Nouvelles clés VAPID générées et sauvegardées en BDD.");
         } else {
             vapidPublicKey = res.rows[0].public_key;
             vapidPrivateKey = res.rows[0].private_key;
-            console.log("✅ Clés VAPID (Push) chargées depuis la BDD.");
+            console.log("Clés VAPID (Push) chargées depuis la BDD.");
         }
         webpush.setVapidDetails('mailto:contact@stack.fr', vapidPublicKey, vapidPrivateKey);
     } catch (e) { console.error("Erreur init VAPID:", e); }
@@ -362,7 +362,7 @@ pool.query(`
         await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_TIMESTAMP;`);
         await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture); END IF; END $$;`);
         
-        -- BACKFILL : Attribution d'un numéro de Z rétroactif continu pour tous les anciens historiques sans exception
+        // BACKFILL : Attribution d'un numéro de Z rétroactif continu pour tous les anciens historiques sans exception
         await pool.query(`
             UPDATE clotures_caisse
             SET numero_z_salon = subquery.seq
