@@ -4177,17 +4177,17 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         const drawHeaderDepenses = () => {
             drawRow([
-                {text: 'Fournisseur', w: 60},
-                {text: 'N° Fact.', w: 50},
-                {text: 'Source', w: 30, align: 'center'},
-                {text: 'Date Fact.', w: 40, align: 'center'},
-                {text: 'Date Paiem.', w: 40, align: 'center'},
+                {text: 'Fournisseur', w: 55},
+                {text: 'N° Fact.', w: 45},
+                {text: 'Source', w: 25, align: 'center'},
+                {text: 'Date Fact.', w: 45, align: 'center'},
+                {text: 'Date Paiem.', w: 45, align: 'center'},
                 {text: 'Paiem.', w: 35, align: 'center'},
                 {text: 'Statut', w: 35, align: 'center'},
                 {text: 'Cpte', w: 20, align: 'center'},
-                {text: 'HT', w: 30, align: 'right'},
-                {text: 'TVA', w: 25, align: 'right'},
-                {text: 'TTC', w: 40, align: 'right'}
+                {text: 'HT', w: 35, align: 'right'},
+                {text: 'TVA', w: 30, align: 'right'},
+                {text: 'TTC', w: 45, align: 'right'}
             ], true);
         };
         
@@ -4227,11 +4227,11 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
 
                 drawRow([
-                    {text: f.fournisseur.substring(0, 14), w: 60}, {text: refFacture, w: 50}, {...sourceDoc, w: 30, align: 'center'},
-                    {text: dateFAff, w: 40, align: 'center'}, {text: datePAff, w: 40, align: 'center'},
+                    {text: f.fournisseur.substring(0, 14), w: 55}, {text: refFacture, w: 45}, {...sourceDoc, w: 25, align: 'center'},
+                    {text: dateFAff, w: 45, align: 'center'}, {text: datePAff, w: 45, align: 'center'},
                     {text: modePaiementCourt, w: 35, align: 'center'}, {text: statutText, w: 35, align: 'center', color: statutColor},
-                    {text: compte, w: 20, align: 'center'}, {text: fMnt(f.ht), w: 30, align: 'right'},
-                    {text: fMnt(f.tva), w: 25, align: 'right'}, {text: fMnt(f.ttc), w: 40, align: 'right'}
+                    {text: compte, w: 20, align: 'center'}, {text: fMnt(f.ht), w: 35, align: 'right'},
+                    {text: fMnt(f.tva), w: 30, align: 'right'}, {text: fMnt(f.ttc), w: 45, align: 'right'}
                 ]);
             });
         }
@@ -4296,14 +4296,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
         
         drawRow([
-            {text: 'Employé(e)', w: 60}, 
-            {text: 'Statut', w: 45, align: 'center'},
-            {text: 'Heures', w: 35, align: 'center'},
-            {text: 'HS/HC', w: 35, align: 'center'},
-            {text: 'Pourboire', w: 45, align: 'center'},
-            {text: 'CA Rél.', w: 50, align: 'right'}, 
-            {text: 'Base HT (Prs/Prd)', w: 75, align: 'right'}, 
-            {text: 'Taux (Prs/Prd)', w: 65, align: 'center'}, 
+            {text: 'Employé(e)', w: 50}, 
+            {text: 'Statut', w: 55, align: 'center'},
+            {text: 'Heures', w: 45, align: 'center'},
+            {text: 'HS/HC', w: 40, align: 'center'},
+            {text: 'Pourboire', w: 40, align: 'center'},
+            {text: 'CA Rél.', w: 45, align: 'right'}, 
+            {text: 'Base HT (Prs/Prd)', w: 70, align: 'right'}, 
+            {text: 'Taux (Prs/Prd)', w: 60, align: 'center'}, 
             {text: 'Prime Brute', w: 55, align: 'right'}
         ], true);
 
@@ -4344,14 +4344,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
             if (e.est_gerant) {
                 drawRow([
-                    {text: nomComplet.substring(0,18), w: 60}, 
-                    {text: 'Gérant', w: 45, align: 'center'},
-                    {text: heuresAffichees, w: 35, align: 'center'},
-                    {text: hsAffichees, w: 35, align: 'center'},
-                    {text: pourboireAffiche, w: 45, align: 'center'},
-                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
-                    {text: '-', w: 75, align: 'right'}, 
-                    {text: '-', w: 65, align: 'center'}, 
+                    {text: nomComplet.substring(0,12), w: 50}, 
+                    {text: 'Gérant', w: 55, align: 'center'},
+                    {text: heuresAffichees, w: 45, align: 'center'},
+                    {text: hsAffichees, w: 40, align: 'center'},
+                    {text: pourboireAffiche, w: 40, align: 'center'},
+                    {text: fMnt(caRealiseBaseHT), w: 45, align: 'right'}, 
+                    {text: '-', w: 70, align: 'right'}, 
+                    {text: '-', w: 60, align: 'center'}, 
                     {text: '-', w: 55, align: 'right'}
                 ]);
             } else {
@@ -4367,14 +4367,14 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
                 
                 drawRow([
-                    {text: nomComplet.substring(0,18), w: 60}, 
-                    {text: 'À déclarer', w: 45, align: 'center'},
-                    {text: heuresAffichees, w: 35, align: 'center'},
-                    {text: hsAffichees, w: 35, align: 'center'},
-                    {text: pourboireAffiche, w: 45, align: 'center'},
-                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
-                    {text: basesConcat, w: 75, align: 'right'}, 
-                    {text: regleTaux, w: 65, align: 'center'}, 
+                    {text: nomComplet.substring(0,12), w: 50}, 
+                    {text: 'À déclarer', w: 55, align: 'center'},
+                    {text: heuresAffichees, w: 45, align: 'center'},
+                    {text: hsAffichees, w: 40, align: 'center'},
+                    {text: pourboireAffiche, w: 40, align: 'center'},
+                    {text: fMnt(caRealiseBaseHT), w: 45, align: 'right'}, 
+                    {text: basesConcat, w: 70, align: 'right'}, 
+                    {text: regleTaux, w: 60, align: 'center'}, 
                     {text: fMnt(e.total_prime), w: 55, align: 'right'}
                 ]);
             }
