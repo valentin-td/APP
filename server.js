@@ -360,6 +360,13 @@ pool.query(`
     
     CREATE TABLE IF NOT EXISTS heures_ajustements (id_ajustement SERIAL PRIMARY KEY, id_employe INT, mois_annee VARCHAR(7), heures_ajoutees NUMERIC(10,2), motif TEXT, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS liasses_mensuelles_validees (id_validation SERIAL PRIMARY KEY, id_salon INT, mois_annee VARCHAR(7), date_validation TIMESTAMP DEFAULT CURRENT_TIMESTAMP, valide_par VARCHAR(255), UNIQUE(id_salon, mois_annee));
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS total_ht NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS total_tva NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS total_ttc NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS signature_hash VARCHAR(64);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS donnees_scellees TEXT;
     CREATE TABLE IF NOT EXISTS push_subscriptions (id_sub SERIAL PRIMARY KEY, id_salon INT, role VARCHAR(20), id_employe INT, endpoint TEXT, keys JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS pointages (id_pointage SERIAL PRIMARY KEY, id_employe INT, id_salon INT, date_jour DATE DEFAULT CURRENT_DATE, type_action VARCHAR(20), heure_action TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 `).then(async () => {
@@ -448,7 +455,7 @@ pool.query(`
                            OR OLD.date_creation IS DISTINCT FROM NEW.date_creation THEN
                             RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table mouvements_caisse';
                         END IF;
-                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'jet_logs') THEN
+                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'jet_logs', 'liasses_mensuelles_validees') THEN
                         RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table %', TG_TABLE_NAME;
                     END IF;
                 END IF;
@@ -472,6 +479,10 @@ pool.query(`
             -- 🚨 Sécurisation NF525 de la nouvelle table de mouvements d'espèces
             DROP TRIGGER IF EXISTS trigger_nf525_mouvements ON mouvements_caisse;
             CREATE TRIGGER trigger_nf525_mouvements BEFORE DELETE OR UPDATE ON mouvements_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            -- 🚨 Sécurisation NF525 des clôtures mensuelles
+            DROP TRIGGER IF EXISTS trigger_nf525_liasses ON liasses_mensuelles_validees;
+            CREATE TRIGGER trigger_nf525_liasses BEFORE DELETE OR UPDATE ON liasses_mensuelles_validees FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
         `);
     } catch (e) { console.error("Erreur Triggers NF525:", e); }
 }).catch((e) => console.error("Erreur Init DB:", e));
@@ -620,8 +631,14 @@ async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
     } catch (e) { return null; }
 }
 
-async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe = null, type_mouvement, montant, motif }) {
+async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe = null, type_mouvement, montant, motif, autoriserJourCloture = false }) {
     await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+    if (!autoriserJourCloture && type_mouvement !== 'REGULARISATION') {
+        const zDejaFait = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
+        if (zDejaFait.rowCount > 0) {
+            throw new Error("Action bloquée (NF525) : La clôture Z d'aujourd'hui a déjà été scellée. Aucun mouvement d'espèces ne peut être ajouté sur une journée clôturée.");
+        }
+    }
     const lastMvt = await clientDB.query('SELECT hash_mouvement FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL ORDER BY id_mouvement DESC LIMIT 1', [id_salon]);
     const hashPrecedent = lastMvt.rowCount > 0 ? lastMvt.rows[0].hash_mouvement : 'GENESIS_MVT';
     const montantFormate = Number(montant).toFixed(2);
@@ -657,6 +674,11 @@ const verifierClotureZ = async (req, res, next) => {
                 const ferme = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE($2::timestamp)', [id_salon, d.toISOString()]);
                 if (ferme.rowCount === 0) dateTicket = d.toISOString();
             }
+        }
+        // NF525 : Interdiction formelle d'encaisser sur une journée dont le Z est déjà scellé
+        const zCibleDejaFait = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE(COALESCE($2::timestamp, NOW()))', [id_salon, dateTicket]);
+        if (zCibleDejaFait.rowCount > 0) {
+            return res.status(423).json({ erreur: "La clôture (Z) d'aujourd'hui a déjà été effectuée. Aucun nouvel encaissement n'est autorisé sur une journée clôturée." });
         }
         req.dateTicketEffective = dateTicket;
         req.idTempOffline = idTemp;
@@ -1553,24 +1575,52 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         const pourboire = parseFloat(req.body.pourboire) || 0.00; // NOUVEAU
 
         const ticketResult = await clientDB.query(
-            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne, montant_pourboire) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END, $10) RETURNING id_ticket;`, 
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne, montant_pourboire) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END, $10) RETURNING id_ticket, date_creation;`, 
             [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null, pourboire]
         );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
+        const dateCreationISO = new Date(ticketResult.rows[0].date_creation).toISOString();
 
         const employeResult = await clientDB.query('SELECT * FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
         const employe = employeResult.rowCount > 0 ? employeResult.rows[0] : null;
 
+        let totalTvaTicketCents = 0;
+
         if (lignes && lignes.length > 0) {
-            for (let ligne of lignes) {
-                const total_ligne = ligne.quantite * ligne.prix_unitaire;
+            // Calcul de la somme brute des lignes pour répartir au centime près toute remise éventuelle (Cohérence NF525 : Somme Lignes === Ticket TTC)
+            const targetTicketCents = Math.round((parseFloat(montant) || 0) * 100);
+            const rawLines = lignes.map(l => ({
+                ...l,
+                rawCents: Math.round((parseFloat(l.quantite) || 0) * (parseFloat(l.prix_unitaire) || 0) * 100)
+            }));
+            const sumRawCents = rawLines.reduce((acc, l) => acc + l.rawCents, 0);
+
+            let cumulAllocatedCents = 0;
+            for (let i = 0; i < rawLines.length; i++) {
+                const ligne = rawLines[i];
+                let netLineCents = ligne.rawCents;
+                if (sumRawCents > 0 && sumRawCents !== targetTicketCents) {
+                    if (i === rawLines.length - 1) {
+                        netLineCents = Math.max(0, targetTicketCents - cumulAllocatedCents);
+                    } else {
+                        netLineCents = Math.round((ligne.rawCents * targetTicketCents) / sumRawCents);
+                        cumulAllocatedCents += netLineCents;
+                    }
+                }
+                const total_ligne = Number((netLineCents / 100).toFixed(2));
+                const qteNum = parseFloat(ligne.quantite) || 1;
+                const puEffectif = Number((total_ligne / qteNum).toFixed(2));
 
                 const articleSnapshot = await clientDB.query('SELECT nom, taux_tva FROM catalogue WHERE id_article = $1 AND id_salon = $2', [ligne.id_article, id_salon]);
                 const nomSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].nom : (ligne.nom || 'Article supprimé');
                 const tvaSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].taux_tva : 20.00;
+                const tauxTvaReel = franchiseTVA ? 0 : parseFloat(tvaSnapshot);
+
+                const lineHtCents = franchiseTVA ? netLineCents : Math.round(netLineCents / (1 + (tauxTvaReel / 100)));
+                totalTvaTicketCents += (netLineCents - lineHtCents);
 
                 await clientDB.query(`INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`, 
-                [idNouveauTicket, ligne.id_article, ligne.quantite, ligne.prix_unitaire, total_ligne, id_salon, nomSnapshot, tvaSnapshot]);
+                [idNouveauTicket, ligne.id_article, ligne.quantite, puEffectif, total_ligne, id_salon, nomSnapshot, tvaSnapshot]);
                 
                 const updateStockQuery = `UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') RETURNING nom, stock_actuel, type_article;`;
                 const stockResult = await clientDB.query(updateStockQuery, [ligne.quantite, ligne.id_article, id_salon]);
@@ -1592,14 +1642,9 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 
                 if (employe) {
                     const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
-                    
-                    // CORRECTION FRANCHISE EN BASE : Si franchise, TVA = 0 (HT = TTC). Sinon on applique le vrai taux de l'article.
-                    const tauxTvaReel = franchiseTVA ? 0 : parseFloat(tvaSnapshot);
-                    const baseHtCommission = total_ligne / (1 + (tauxTvaReel / 100));
-                    
+                    const baseHtCommission = Number((lineHtCents / 100).toFixed(2));
                     const montant_commission = (baseHtCommission * (taux / 100)).toFixed(2);
                     
-                    // On insère 'baseHtCommission' dans montant_vente pour que les tableaux de bord affichent la vraie base HT
                     await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon, date_creation) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, NOW()))`, 
                     [id_employe, idNouveauTicket, baseHtCommission, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
                 }
@@ -1607,8 +1652,10 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         }
 
         const montantScelle = Number(montant).toFixed(2);
-        const newHash = crypto.createHash('sha256').update(`${idNouveauTicket}-${numeroTicket}-${montantScelle}-${previousHash}`).digest('hex');
-        await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
+        const tvaScellee = (totalTvaTicketCents / 100).toFixed(2);
+        const chaineScellee = `${idNouveauTicket}|${numeroTicket}|${dateCreationISO}|VENTE|${methode}|${montantScelle}|${tvaScellee}|${previousHash}`;
+        const newHash = crypto.createHash('sha256').update(chaineScellee).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineScellee, idNouveauTicket]);
 
         if (id_client) {
             const clientCheck = await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1 AND id_salon = $2 RETURNING points_fidelite, tampons_fidelite`, [id_client, id_salon]);
@@ -1677,6 +1724,12 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
     try {
         await clientDB.query('BEGIN');
 
+        // NF525 : Interdiction d'émettre un ticket d'annulation sur une journée déjà clôturée (Z effectué)
+        const zAujourdHui = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
+        if (zAujourdHui.rowCount > 0) {
+            throw new Error("Action bloquée (NF525) : La clôture Z d'aujourd'hui a déjà été scellée. Impossible d'émettre un avoir d'annulation sur une journée clôturée.");
+        }
+
         const ticketRes = await clientDB.query(
             "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION'",
             [id_ticket, id_salon]
@@ -1743,14 +1796,27 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
 
         const compensationResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
-             VALUES ($1, $2, $3, $4, $5, FALSE, $6, 'VALIDE', 'ANNULATION', $7, $8) RETURNING id_ticket;`,
+             VALUES ($1, $2, $3, $4, $5, FALSE, $6, 'VALIDE', 'ANNULATION', $7, $8) RETURNING id_ticket, date_creation;`,
             [numeroCompensation, ticket.id_client, ticket.id_employe, montantCompensation, id_salon, ticket.methode_paiement, id_ticket, motif.trim()]
         );
         const idTicketCompensation = compensationResult.rows[0].id_ticket;
+        const dateCompISO = new Date(compensationResult.rows[0].date_creation).toISOString();
+
+        const configTvaRes = await clientDB.query('SELECT tva_intra FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const franchiseTVAAnnul = !configTvaRes.rows[0]?.tva_intra || configTvaRes.rows[0].tva_intra.trim() === '';
+        let totalTvaCompCents = 0;
+        for (const l of lignesToProcess) {
+            const lineCents = -Math.round(Math.abs(parseFloat(l.total_ligne_ttc) || 0) * 100);
+            const taux = franchiseTVAAnnul ? 0 : (parseFloat(l.taux_tva_snapshot) || 20);
+            const htCents = franchiseTVAAnnul ? lineCents : Math.round(lineCents / (1 + taux / 100));
+            totalTvaCompCents += (lineCents - htCents);
+        }
 
         const montantCompensationScelle = Number(montantCompensation).toFixed(2);
-        const newHash = crypto.createHash('sha256').update(`${idTicketCompensation}-${numeroCompensation}-${montantCompensationScelle}-${previousHash}`).digest('hex');
-        await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idTicketCompensation]);
+        const tvaCompScellee = (totalTvaCompCents / 100).toFixed(2);
+        const chaineCompScellee = `${idTicketCompensation}|${numeroCompensation}|${dateCompISO}|ANNULATION|${ticket.methode_paiement}|${montantCompensationScelle}|${tvaCompScellee}|${previousHash}`;
+        const newHash = crypto.createHash('sha256').update(chaineCompScellee).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineCompScellee, idTicketCompensation]);
 
         // Vérifier si le ticket est désormais entièrement compensé
         const dejaCompenseRes = await clientDB.query("SELECT COALESCE(SUM(ABS(total_ttc)), 0) as deja_rembourse FROM tickets WHERE id_ticket_origine = $1 AND statut != 'ANNULE'", [id_ticket]);
@@ -2146,7 +2212,7 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
         let alertes = [];
         
         // 1. Audit des TICKETS
-        const tickets = await pool.query('SELECT id_ticket, numero_ticket_caisse, total_ttc, hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC', [id_salon]);
+        const tickets = await pool.query('SELECT id_ticket, numero_ticket_caisse, total_ttc, hash_ticket, donnees_scellees FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC', [id_salon]);
         let prevHashTicket = 'GENESIS_BLOCK';
         
         for (let t of tickets.rows) {
@@ -2154,9 +2220,22 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
                 alertes.push(`Ticket #${t.id_ticket} non scellé (possible ticket hors-ligne en attente).`);
                 continue;
             }
-            const computedFormatted = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${Number(t.total_ttc).toFixed(2)}-${prevHashTicket}`).digest('hex');
-            const computedLegacy = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${parseFloat(t.total_ttc)}-${prevHashTicket}`).digest('hex');
-            if (computedFormatted !== t.hash_ticket && computedLegacy !== t.hash_ticket) {
+            let hashValide = false;
+            if (t.donnees_scellees) {
+                const parts = t.donnees_scellees.split('|');
+                const prevInPayload = parts[parts.length - 1];
+                const computedEnrichi = crypto.createHash('sha256').update(t.donnees_scellees).digest('hex');
+                if (prevInPayload === prevHashTicket && computedEnrichi === t.hash_ticket) {
+                    hashValide = true;
+                }
+            } else {
+                const computedFormatted = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${Number(t.total_ttc).toFixed(2)}-${prevHashTicket}`).digest('hex');
+                const computedLegacy = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${parseFloat(t.total_ttc)}-${prevHashTicket}`).digest('hex');
+                if (computedFormatted === t.hash_ticket || computedLegacy === t.hash_ticket) {
+                    hashValide = true;
+                }
+            }
+            if (!hashValide) {
                 erreurs.push(`Rupture cryptographique sur le ticket #${t.id_ticket} (${t.numero_ticket_caisse}).`);
                 break;
             }
@@ -4245,16 +4324,21 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             ]);
         } else {
             caDetailJourRes.rows.forEach(r => {
-                let ttc = parseFloat(r.total_ttc) || 0;
-                let ht = parseFloat(r.total_ht) || 0;
-                let tva = ttc - ht;
-                if (franchiseTVA) { ht = ttc; tva = 0; }
-                const tauxTvaAff = franchiseTVA ? '0%' : `${parseFloat(r.taux_tva).toString().replace('.', ',')}%`;
+                const ttcCents = Math.round((parseFloat(r.total_ttc) || 0) * 100);
+                const taux = franchiseTVA ? 0 : (parseFloat(r.taux_tva) || 0);
+                const htCents = franchiseTVA ? ttcCents : Math.round(ttcCents / (1 + taux / 100));
+                const tvaCents = ttcCents - htCents;
+
+                const ht = htCents / 100;
+                const tva = tvaCents / 100;
+                const ttc = ttcCents / 100;
+
+                const tauxTvaAff = franchiseTVA ? '0%' : `${taux.toString().replace('.', ',')}%`;
                 const libelleCat = `${r.type_article === 'PRESTATION' ? 'Prestations de services' : 'Vente de produits'} (${tauxTvaAff})`;
 
-                totalJourHT += ht;
-                totalJourTVA += tva;
-                totalJourTTC += ttc;
+                totalJourHT = Number((totalJourHT + ht).toFixed(2));
+                totalJourTVA = Number((totalJourTVA + tva).toFixed(2));
+                totalJourTTC = Number((totalJourTTC + ttc).toFixed(2));
 
                 drawRow([
                     {text: libelleCat, w: 180},
@@ -4653,9 +4737,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const dateDebutStr = formatYMD(firstDayOfMonth);
         const dateFinStr = formatYMD(lastDayOfMonth);
 
-        // --- STATUT ET LÉGALITÉ (Basé sur la validation du gérant) ---
+        // --- STATUT ET LÉGALITÉ (Basé sur la validation scellée du gérant) ---
         const moisCibleStr = `${referenceDate.getFullYear()}-${String(referenceDate.getMonth() + 1).padStart(2, '0')}`;
-        const validationRes = await pool.query('SELECT valide_par, date_validation FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisCibleStr]);
+        const validationRes = await pool.query('SELECT valide_par, date_validation, signature_hash, hash_precedent FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisCibleStr]);
         
         const estMoisCloture = validationRes.rowCount > 0;
         const statutDocument = estMoisCloture ? "DÉFINITIF (CLÔTURÉ ET SIGNÉ)" : "BROUILLON PROVISOIRE - NON SIGNÉ";
@@ -4664,7 +4748,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         let numeroArchive = 'NON-APPLICABLE-MOIS-EN-COURS';
         if (estMoisCloture) {
             const dateValISO = validationRes.rows[0].date_validation ? new Date(validationRes.rows[0].date_validation).toISOString() : dateFinStr;
-            signatureArchive = crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${validationRes.rows[0].valide_par}-${dateValISO}`).digest('hex').substring(0, 16).toUpperCase();
+            const fullHash = validationRes.rows[0].signature_hash || crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${validationRes.rows[0].valide_par}-${dateValISO}`).digest('hex');
+            signatureArchive = fullHash.substring(0, 16).toUpperCase();
             numeroArchive = `ARCH-${id_salon}-${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}-${signatureArchive}`;
         }
 
@@ -4935,12 +5020,21 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         drawRow([{text: 'Catégorie & Taux TVA', w: 180}, {text: 'Base HT', w: 100, align: 'right'}, {text: 'TVA Collectée', w: 100, align: 'right'}, {text: 'Total TTC', w: 105, align: 'right'}], true);
         let totalHT = 0, totalTVA = 0, globalTTC = 0;
         caDetailRes.rows.forEach(r => {
-            let ht = parseFloat(r.total_ht), ttc = parseFloat(r.total_ttc), tva = ttc - ht;
-            if (franchiseTVA) { ht = ttc; tva = 0; } // En franchise, HT = TTC
-            const tauxTvaFormate = franchiseTVA ? '0%' : parseFloat(r.taux_tva).toString().replace('.', ',') + '%';
+            const ttcCents = Math.round((parseFloat(r.total_ttc) || 0) * 100);
+            const taux = franchiseTVA ? 0 : (parseFloat(r.taux_tva) || 0);
+            const htCents = franchiseTVA ? ttcCents : Math.round(ttcCents / (1 + taux / 100));
+            const tvaCents = ttcCents - htCents;
+
+            const ht = htCents / 100;
+            const tva = tvaCents / 100;
+            const ttc = ttcCents / 100;
+
+            const tauxTvaFormate = franchiseTVA ? '0%' : taux.toString().replace('.', ',') + '%';
             const label = `${r.type_article === 'PRESTATION' ? 'Prestations de services' : 'Vente de produits'} (${tauxTvaFormate})`;
             
-            totalHT += ht; totalTVA += tva; globalTTC += ttc;
+            totalHT = Number((totalHT + ht).toFixed(2));
+            totalTVA = Number((totalTVA + tva).toFixed(2));
+            globalTTC = Number((globalTTC + ttc).toFixed(2));
             drawRow([{text: label, w: 180}, {text: fMnt(ht), w: 100, align: 'right'}, {text: fMnt(tva), w: 100, align: 'right'}, {text: fMnt(ttc), w: 105, align: 'right'}]);
         });
         if (caDetailRes.rowCount === 0) drawRow([{text: 'Aucune transaction', w: 180}, {text: '-', w: 100, align: 'right'}, {text: '-', w: 100, align: 'right'}, {text: '-', w: 105, align: 'right'}]);
@@ -5064,13 +5158,16 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         
         const methodes = ['CARTE', 'ESPECES', 'CHEQUE', 'VIREMENT', 'BONS CADEAUX'];
         let mapPaiements = {}; paiementsRes.rows.forEach(m => mapPaiements[m.methode_paiement] = m);
+        let totalEncaissementsReel = 0;
         methodes.forEach(m => {
             const row = mapPaiements[m] || { nb: 0, total: 0 };
-            drawRow([{text: m, w: 210}, {text: row.nb, w: 70, align: 'center'}, {text: fMnt(row.total), w: 215, align: 'right'}]);
+            const mntMode = Number((parseFloat(row.total) || 0).toFixed(2));
+            totalEncaissementsReel = Number((totalEncaissementsReel + mntMode).toFixed(2));
+            drawRow([{text: m, w: 210}, {text: row.nb, w: 70, align: 'center'}, {text: fMnt(mntMode), w: 215, align: 'right'}]);
         });
         
-        const panierMoyen = statsRes.rows[0].nb_tickets > 0 ? (globalTTC / statsRes.rows[0].nb_tickets) : 0;
-        drawRow([{text: `Total Encaissements (${statsRes.rows[0].nb_tickets} tickets, Panier Moyen : ${fMnt(panierMoyen)})`, w: 290}, {text: fMnt(globalTTC), w: 215, align: 'right'}], false, true);
+        const panierMoyen = statsRes.rows[0].nb_tickets > 0 ? (totalEncaissementsReel / statsRes.rows[0].nb_tickets) : 0;
+        drawRow([{text: `Total Encaissements (${statsRes.rows[0].nb_tickets} tickets, Panier Moyen : ${fMnt(panierMoyen)})`, w: 290}, {text: fMnt(totalEncaissementsReel), w: 215, align: 'right'}], false, true);
         
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
@@ -5580,8 +5677,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 ]);
             });
             
-            // Calcul du CA orphelin (Aligné sous CA TTC : 28+10+48+10+62+10+22 = 190pt, puis 48pt, puis 55+10+52+10+130 = 257pt)
-            const caNonCloture = globalTTC - sumCaZ;
+            // Calcul du CA orphelin basé sur totalEncaissementsReel (inclut les remises fidélité éventuelles)
+            const caNonCloture = totalEncaissementsReel - sumCaZ;
             if (Math.abs(caNonCloture) > 0.01) {
                 drawRow([
                     {text: 'CA hors clôture (En attente de Z)', w: 190}, 
@@ -6221,16 +6318,59 @@ app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider et signer la liasse comptable." });
-    
+    if (!mois_annee || !/^\d{4}-\d{2}$/.test(mois_annee)) return res.status(400).json({ erreur: "Format de période invalide (YYYY-MM attendu)." });
+
+    const clientDB = await pool.connect();
     try {
-        // BLOCAGE STRICT : Vérification des factures en attente
-        const tachesEnAttente = await pool.query(`SELECT 1 FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
+        await clientDB.query('BEGIN');
+        await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+
+        const [yearStr, monthStr] = mois_annee.split('-');
+        const firstDay = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, 1);
+        const lastDay = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10), 0);
+        const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const dateDebutStr = formatYMD(firstDay);
+        const dateFinStr = formatYMD(lastDay);
+
+        // 1. BLOCAGE STRICT : Vérification des factures en attente
+        const tachesEnAttente = await clientDB.query(`SELECT 1 FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
         if (tachesEnAttente.rowCount > 0) {
+            await clientDB.query('ROLLBACK');
             return res.status(400).json({ erreur: `Signature bloquée : Il vous reste ${tachesEnAttente.rowCount} facture(s) "À valider" dans l'application. Veuillez les traiter avant de clôturer le mois.` });
         }
 
-        const empRes = await pool.query("SELECT nom, code_pin FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
-        if (empRes.rowCount === 0) return res.status(404).json({ erreur: "Gérant introuvable." });
+        // 2. BLOCAGE STRICT NF525 : Toutes les journées ayant eu des tickets sur le mois doivent avoir leur Z clôturé
+        const joursSansZ = await clientDB.query(`
+            SELECT MIN(DATE(t.date_creation)) as jour_manquant
+            FROM tickets t
+            WHERE t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3
+              AND NOT EXISTS (
+                  SELECT 1 FROM clotures_caisse c
+                  WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
+              )
+        `, [id_salon, dateDebutStr, dateFinStr]);
+        if (joursSansZ.rowCount > 0 && joursSansZ.rows[0].jour_manquant) {
+            await clientDB.query('ROLLBACK');
+            return res.status(400).json({ erreur: `Signature bloquée (NF525) : La journée du ${new Date(joursSansZ.rows[0].jour_manquant).toLocaleDateString('fr-FR')} n'a pas fait l'objet d'une clôture Z.` });
+        }
+
+        // 3. BLOCAGE STRICT NF525 : Aucune clôture automatique en attente de régularisation sur la période
+        const zAutoEnAttente = await clientDB.query(`
+            SELECT TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_z
+            FROM clotures_caisse
+            WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3 AND est_cloture_automatique = TRUE
+            LIMIT 1
+        `, [id_salon, dateDebutStr, dateFinStr]);
+        if (zAutoEnAttente.rowCount > 0) {
+            await clientDB.query('ROLLBACK');
+            return res.status(400).json({ erreur: `Signature bloquée (NF525) : La clôture automatique du ${zAutoEnAttente.rows[0].date_z} doit d'abord être régularisée.` });
+        }
+
+        const empRes = await clientDB.query("SELECT nom, code_pin FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
+        if (empRes.rowCount === 0) {
+            await clientDB.query('ROLLBACK');
+            return res.status(404).json({ erreur: "Gérant introuvable." });
+        }
         
         const gerant = empRes.rows[0];
         let pinMatch = false;
@@ -6240,20 +6380,84 @@ app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
             pinMatch = (gerant.code_pin === code_pin);
         }
 
-        if (!pinMatch) return res.status(400).json({ erreur: "Code PIN incorrect. Signature refusée." });
+        if (!pinMatch) {
+            await clientDB.query('ROLLBACK');
+            return res.status(400).json({ erreur: "Code PIN incorrect. Signature refusée." });
+        }
 
-        await pool.query(
-            "INSERT INTO liasses_mensuelles_validees (id_salon, mois_annee, valide_par) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            [id_salon, mois_annee, gerant.nom]
+        // Calcul des totaux mensuels figés et chaînage cryptographique mensuel NF525
+        const confRes = await clientDB.query('SELECT tva_intra FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const franchiseTVA = !confRes.rows[0]?.tva_intra || confRes.rows[0].tva_intra.trim() === '';
+
+        const caMoisRes = await clientDB.query(`
+            SELECT COALESCE(lt.taux_tva_snapshot, 20) as taux_tva, COALESCE(SUM(lt.total_ligne_ttc), 0) as total_ttc
+            FROM lignes_ticket lt
+            JOIN tickets t ON t.id_ticket = lt.id_ticket
+            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
+            GROUP BY COALESCE(lt.taux_tva_snapshot, 20)
+        `, [id_salon, dateDebutStr, dateFinStr]);
+
+        let moisHtCents = 0, moisTvaCents = 0, moisTtcCents = 0;
+        caMoisRes.rows.forEach(r => {
+            const ttcC = Math.round((parseFloat(r.total_ttc) || 0) * 100);
+            const taux = franchiseTVA ? 0 : (parseFloat(r.taux_tva) || 0);
+            const htC = franchiseTVA ? ttcC : Math.round(ttcC / (1 + taux / 100));
+            moisHtCents += htC;
+            moisTvaCents += (ttcC - htC);
+            moisTtcCents += ttcC;
+        });
+
+        const totalHT = (moisHtCents / 100).toFixed(2);
+        const totalTVA = (moisTvaCents / 100).toFixed(2);
+        const totalTTC = (moisTtcCents / 100).toFixed(2);
+
+        const dernierZMois = await clientDB.query(`
+            SELECT COALESCE(cumul_perpetuel_ttc, 0) as cumul
+            FROM clotures_caisse
+            WHERE id_salon = $1 AND DATE(date_cloture) <= $2
+            ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1
+        `, [id_salon, dateFinStr]);
+        const cumulPerpetuel = Number(dernierZMois.rows[0]?.cumul || 0).toFixed(2);
+
+        const prevLiasse = await clientDB.query(`
+            SELECT signature_hash FROM liasses_mensuelles_validees
+            WHERE id_salon = $1 AND signature_hash IS NOT NULL
+            ORDER BY id_validation DESC LIMIT 1 FOR UPDATE
+        `, [id_salon]);
+        const hashPrecedent = prevLiasse.rowCount > 0 ? prevLiasse.rows[0].signature_hash : 'GENESIS_LIASSE';
+        const dateValISO = new Date().toISOString();
+        const signatureHash = crypto.createHash('sha256')
+            .update(`LIASSE-${id_salon}-${mois_annee}-${totalHT}-${totalTVA}-${totalTTC}-${cumulPerpetuel}-${gerant.nom}-${dateValISO}-${hashPrecedent}`)
+            .digest('hex');
+
+        await clientDB.query(
+            `INSERT INTO liasses_mensuelles_validees (id_salon, mois_annee, date_validation, valide_par, total_ht, total_tva, total_ttc, cumul_perpetuel_ttc, hash_precedent, signature_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id_salon, mois_annee) DO NOTHING`,
+            [id_salon, mois_annee, dateValISO, gerant.nom, totalHT, totalTVA, totalTTC, cumulPerpetuel, hashPrecedent, signatureHash]
         );
+
+        await enregistrerJET(id_salon, 'CLOTURE_MENSUELLE_SCELLEE', {
+            mois_annee,
+            total_ht: totalHT,
+            total_tva: totalTVA,
+            total_ttc: totalTTC,
+            cumul_perpetuel_ttc: cumulPerpetuel,
+            valide_par: gerant.nom,
+            signature_hash: signatureHash
+        }, clientDB);
+
+        await clientDB.query('COMMIT');
 
         // Déclenche l'envoi immédiat au comptable
         await envoyerBilanComptable(id_salon, mois_annee);
 
-        res.json({ message: "Liasse validée, signée et transmise à l'expert-comptable avec succès." });
+        res.json({ message: "Liasse validée, signée et transmise à l'expert-comptable avec succès.", signature_hash: signatureHash });
     } catch (e) {
+        await clientDB.query('ROLLBACK');
         console.error("Erreur validation mois:", e);
-        res.status(500).json({ erreur: "Erreur lors de la validation." });
+        res.status(500).json({ erreur: e.message || "Erreur lors de la validation." });
+    } finally {
+        clientDB.release();
     }
 });
 
