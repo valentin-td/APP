@@ -168,8 +168,15 @@ function envoyerEvenementSSE(id_salon, nomEvenement, data = {}) {
     for (const res of clients) res.write(payload);
 }
 
-app.get('/api/events/:id_salon', verifierToken, (req, res) => {
-    if (String(req.user.id_salon) !== req.params.id_salon) return res.status(403).end();
+app.get('/api/events/:id_salon', (req, res, next) => {
+    if (!req.headers.authorization && req.query.token) {
+        req.headers.authorization = `Bearer ${req.query.token}`;
+    }
+    next();
+}, verifierToken, (req, res) => {
+    if (String(req.user.id_salon) !== String(req.params.id_salon) || req.user.role !== 'gerant') {
+        return res.status(403).end();
+    }
     
     const room = req.params.id_salon;
     req.setTimeout(0); res.socket.setTimeout(0); res.socket.setNoDelay(true);
@@ -3390,6 +3397,7 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null) {
 }
 
 app.get('/api/ia/taches', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
     try {
         const result = await pool.query("SELECT * FROM ia_taches_attente WHERE id_salon = $1 AND statut = 'ATTENTE' ORDER BY date_creation DESC", [req.user.id_salon]);
         res.json(result.rows);
@@ -3398,6 +3406,7 @@ app.get('/api/ia/taches', verifierToken, async (req, res) => {
 
 // --- UPLOAD MANUEL DE FACTURE (PDF OU IMAGE) VERS L'IA ---
 app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
     try {
         const { fichier_base64, mime_type } = req.body;
         if (!fichier_base64) return res.status(400).json({ erreur: "Fichier manquant." });
@@ -3467,24 +3476,31 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
             analyse = JSON.parse(completion.choices[0].message.content.replace(/```json/gi, '').replace(/```/g, '').trim());
         }
 
-        // 3. Formatage et renvoi immédiat au frontend (Sans passage par la base de données)
+        // 3. Enregistrement en base avec statut ATTENTE pour garantir la validation humaine unique
         if (analyse.type === 'FACTURE_ACHAT' && analyse.donnees) {
+            const donneesPropres = {
+                fournisseur: String(analyse.donnees.fournisseur || 'Fournisseur Inconnu').trim(),
+                numero_facture: analyse.donnees.numero_facture ? String(analyse.donnees.numero_facture).trim() : null,
+                date_facture: analyse.donnees.date_facture || dateDuJour,
+                montant_ht: parseFloat(analyse.donnees.montant_ht) || 0,
+                montant_tva: parseFloat(analyse.donnees.montant_tva) || 0,
+                montant_ttc: parseFloat(analyse.donnees.montant_ttc) || 0,
+                mode_paiement: analyse.donnees.mode_paiement || 'NON_SPECIFIE',
+                compte_comptable: analyse.donnees.compte_comptable || null,
+                produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
+                pdf_url: urlCloudflare,
+                mime_type: mime_type || 'application/pdf'
+            };
+
+            const insertRes = await pool.query(
+                `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees, statut) VALUES ($1, 'FACTURE_ACHAT', $2, 'ATTENTE') RETURNING id_tache`,
+                [id_salon, donneesPropres]
+            );
+
             const tachePreRemplie = {
-                id_tache: 'UPLOAD_MANUEL_' + Date.now(), // Identifiant spécifique pour contourner l'attente
+                id_tache: insertRes.rows[0].id_tache,
                 type_tache: 'FACTURE_ACHAT',
-                donnees: {
-                    fournisseur: String(analyse.donnees.fournisseur || 'Fournisseur Inconnu').trim(),
-                    numero_facture: analyse.donnees.numero_facture ? String(analyse.donnees.numero_facture).trim() : null,
-                    date_facture: analyse.donnees.date_facture || dateDuJour,
-                    montant_ht: parseFloat(analyse.donnees.montant_ht) || 0,
-                    montant_tva: parseFloat(analyse.donnees.montant_tva) || 0,
-                    montant_ttc: parseFloat(analyse.donnees.montant_ttc) || 0,
-                    mode_paiement: analyse.donnees.mode_paiement || 'NON_SPECIFIE',
-                    compte_comptable: analyse.donnees.compte_comptable || null,
-                    produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
-                    pdf_url: urlCloudflare,
-                    mime_type: mime_type || 'application/pdf'
-                }
+                donnees: donneesPropres
             };
             
             return res.json({ message: "Analyse IA terminée avec succès.", tache: tachePreRemplie });
@@ -3499,6 +3515,7 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
 });
 
 app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider une tâche IA." });
     const { id } = req.params;
     const donnees = req.body;
     const id_salon = req.user.id_salon;
@@ -3506,16 +3523,15 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
     try {
         await clientDB.query('BEGIN');
         
-        let type_tache = '';
+        const idTacheNum = parseInt(id, 10);
+        if (isNaN(idTacheNum)) throw new Error("Identifiant de tâche invalide.");
 
-        // --- GESTION DES UPLOADS MANUELS VS TÂCHES AUTOMATIQUES ---
-        if (String(id).startsWith('UPLOAD_MANUEL_')) {
-            type_tache = 'FACTURE_ACHAT'; // On force le type pour un upload manuel
-        } else {
-            const tacheRes = await clientDB.query("SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2", [id, id_salon]);
-            if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable.");
-            type_tache = tacheRes.rows[0].type_tache;
-        }
+        const tacheRes = await clientDB.query(
+            "SELECT type_tache FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2 AND statut = 'ATTENTE' FOR UPDATE",
+            [idTacheNum, id_salon]
+        );
+        if (tacheRes.rowCount === 0) throw new Error("Tâche introuvable ou déjà traitée.");
+        const type_tache = tacheRes.rows[0].type_tache;
 
         // --- NOUVEAU CAS : VALIDATION FACTURE FOURNISSEUR (DOUBLE ACTION) ---
         if (type_tache === 'FACTURE_ACHAT') {
@@ -3660,9 +3676,7 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             );
         }
 
-        if (!String(id).startsWith('UPLOAD_MANUEL_')) {
-            await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1", [id]);
-        }
+        await clientDB.query("UPDATE ia_taches_attente SET statut = 'VALIDE' WHERE id_tache = $1 AND id_salon = $2", [idTacheNum, id_salon]);
         await clientDB.query('COMMIT');
         res.json({ message: "Action IA validée !" });
     } catch (e) {
@@ -3674,8 +3688,11 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
 });
 
 app.post('/api/ia/taches/:id/ignorer', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut ignorer une tâche IA." });
     try {
-        await pool.query("UPDATE ia_taches_attente SET statut = 'IGNORE' WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
+        const idTacheNum = parseInt(req.params.id, 10);
+        if (isNaN(idTacheNum)) return res.status(400).json({ erreur: "ID invalide" });
+        await pool.query("UPDATE ia_taches_attente SET statut = 'IGNORE' WHERE id_tache = $1 AND id_salon = $2", [idTacheNum, req.user.id_salon]);
         res.json({ message: "Tâche ignorée." });
     } catch (e) { res.status(500).json({ erreur: "Erreur" }); }
 });
@@ -6446,7 +6463,7 @@ cron.schedule('0 9 * * *', () => { executerRobotMarketingEtPredictif(); });
 cron.schedule('*/10 9-19 * * *', () => { executerRobotAvisSatisfaction(); }); 
 cron.schedule('0 4 * * *', () => { executerRobotAvisSatisfaction(); }); 
 
-app.get('/api/admin/forcer-robot', async (req, res) => { 
+app.get('/api/admin/forcer-robot', verifierToken, verifierSuperAdmin, async (req, res) => {
     try {
         console.log("=========================================");
         console.log("=== DÉCLENCHEMENT MANUEL DES ROBOTS ===");
