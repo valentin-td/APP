@@ -153,7 +153,11 @@ io.on('connection', (socket) => {
                 if (room !== socket.id) socket.leave(room);
             }
             socket.data.user = user;
-            socket.join(String(user.id_salon));
+            const salonRoom = String(user.id_salon);
+            socket.join(salonRoom);
+            if (user.role === 'gerant') socket.join(`${salonRoom}_gerant`);
+            else if (user.role === 'salon') socket.join(`${salonRoom}_salon`);
+            else if (user.role === 'employe' && user.id_employe) socket.join(`${salonRoom}_emp_${user.id_employe}`);
         } catch (e) { /* ignoré silencieusement */ }
     });
 });
@@ -559,6 +563,19 @@ const verifierPlan = (plansAutorises) => {
         return res.status(403).json({ erreur: "Accès refusé. Cette fonctionnalité nécessite un forfait supérieur.", require_upsell: true });
     };
 };
+
+async function envoyerSMS(apiKey, senderName, telephone, contenu) {
+    try {
+        const res = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST', headers: { 'accept': 'application/json', 'api-key': apiKey, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (senderName || 'LeSalon').substring(0, 11), recipient: telephone, content: contenu })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("Erreur Envoi SMS:", e);
+        return false;
+    }
+}
 
 async function envoyerSMS_Intelligent(id_salon, apiKey, senderName, telephone, contenu) {
     try {
@@ -2556,7 +2573,15 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             reactions: {},
             vu_par: []
         };
-        io.to(req.user.id_salon.toString()).emit('nouveauMessage', newMessage);
+        const salonRoom = req.user.id_salon.toString();
+        if (dest === 0) {
+            io.to(salonRoom).emit('nouveauMessage', newMessage);
+        } else {
+            const ciblesRooms = new Set([`${salonRoom}_gerant`, `${salonRoom}_salon`]);
+            if (id_expediteur && id_expediteur > 0) ciblesRooms.add(`${salonRoom}_emp_${id_expediteur}`);
+            if (dest && dest > 0) ciblesRooms.add(`${salonRoom}_emp_${dest}`);
+            ciblesRooms.forEach(room => io.to(room).emit('nouveauMessage', newMessage));
+        }
         
         // Envoi de la notification Push : uniquement au(x) vrai(s) destinataire(s) du message
         let cibleNotif;
@@ -3051,6 +3076,26 @@ app.put('/api/stocks/:id', verifierToken, async (req, res) => {
 app.get('/api/rh', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès RH réservé au gérant." });
     const id_salon = req.user.id_salon;
+    try {
+        const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`;
+        const rhResult = await pool.query(rhQuery, [id_salon]);
+        const employesData = await Promise.all(rhResult.rows.map(async (emp) => {
+            const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`;
+            const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]);
+            let historique = histoResult.rows.map(r => parseFloat(r.total_prime));
+            while(historique.length < 6) historique.unshift(0);
+            if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0];
+            const avisEmp = await pool.query(`SELECT note, commentaire, prenom, date_creation FROM avis_demandes WHERE id_salon = $2 AND id_employe = $1 AND statut = 'REPONDU' AND note IS NOT NULL ORDER BY date_creation DESC`, [emp.id_employe, id_salon]);
+            const notes = avisEmp.rows.map(a => a.note);
+            const moyenneNote = notes.length > 0 ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : null;
+            return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6), note_moyenne: moyenneNote, nb_avis: notes.length, derniers_avis: avisEmp.rows.slice(0, 3) };
+        }));
+        res.json(employesData);
+    } catch (erreur) {
+        res.status(500).json({ erreur: "Erreur requête RH." });
+    }
+});
+
 // =========================================================================
 // --- MODULE RH : CONGÉS ET ARRÊTS MALADIE ---
 // =========================================================================
@@ -5654,7 +5699,7 @@ async function executerRobotComptable() {
 
         await clientDB.query(`DELETE FROM robot_memoire_emails WHERE date_traitement < NOW() - INTERVAL '7 days'`);
 
-        const salonsResult = await clientDB.query('SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL');
+        const salonsResult = await clientDB.query("SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL AND email_reception_factures != '' AND mot_de_passe_app_email IS NOT NULL AND mot_de_passe_app_email != ''");
         for (let salon of salonsResult.rows) {
             const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) }, logger: false });
             try {
