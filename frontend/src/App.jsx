@@ -340,8 +340,9 @@ function App() {
   const [editMsgContent, setEditMsgContent] = useState('');
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeReactionId, setActiveReactionId] = useState(null);
+  const isSendingMsgRef = useRef(false);
   const messagesEndRef = useRef(null);
-  const chatMessagesRef = useRef(null); // <-- LA LIGNE MANQUANTE EST ICI
+  const chatMessagesRef = useRef(null); 
   
 
   // Auto-scroll doux et contrôlé (syntaxe 100% compatible)
@@ -373,14 +374,17 @@ function App() {
   // Identifie à quelle conversation (clé du contact) appartient un message.
   // Renvoie null si le message ne concerne pas l'utilisateur courant (ex: échange entre deux autres employés).
   const getCleConversation = (msg, roleUtilisateur, myId) => {
-      if (msg.id_destinataire === 0) return 'salon';
+      if (Number(msg.id_destinataire) === 0) return 'salon';
       if (roleUtilisateur === 'employe') {
-          if (msg.id_expediteur === myId) return (msg.id_destinataire === null || msg.id_destinataire === -1) ? 'gerant' : msg.id_destinataire;
-          if (msg.id_destinataire === myId) return (msg.id_expediteur === null || msg.id_expediteur === -1) ? 'gerant' : msg.id_expediteur;
+          if (Number(msg.id_expediteur) === Number(myId)) return (msg.id_destinataire === null || Number(msg.id_destinataire) === -1) ? 'gerant' : msg.id_destinataire;
+          if (Number(msg.id_destinataire) === Number(myId)) return (msg.id_expediteur === null || Number(msg.id_expediteur) === -1) ? 'gerant' : msg.id_expediteur;
           return null;
       }
+      if (roleUtilisateur === 'salon') {
+          if ((msg.id_expediteur === -1 && msg.id_destinataire === null) || (msg.id_expediteur === null && msg.id_destinataire === -1)) return 'gerant';
+      }
       // Vue gérant ou salon : l'autre extrémité de la conversation est celle qui n'est ni null (gérant) ni -1 (salon)
-      const estIdentitePatron = (v) => v === null || v === -1;
+      const estIdentitePatron = (v) => v === null || Number(v) === -1;
       if (estIdentitePatron(msg.id_expediteur) && !estIdentitePatron(msg.id_destinataire)) return msg.id_destinataire;
       if (estIdentitePatron(msg.id_destinataire) && !estIdentitePatron(msg.id_expediteur)) return msg.id_expediteur;
       return null;
@@ -2397,7 +2401,8 @@ function App() {
   };
 
   const envoyerMessage = async () => {
-      if (!msgInput.trim() && !msgFile) return;
+      if ((!msgInput.trim() && !msgFile) || isSendingMsgRef.current) return;
+      isSendingMsgRef.current = true;
       
       const monProfil = role === 'employe' ? (employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe) : null;
       
@@ -2424,7 +2429,11 @@ function App() {
                   return next;
               });
           }
-      } catch (e) { if (e.message !== "Session expirée" && e.message !== "Abonnement inactif") showToast(e.message || "Erreur d'envoi du message", "error"); }
+      } catch (e) {
+          if (e.message !== "Session expirée" && e.message !== "Abonnement inactif") showToast(e.message || "Erreur d'envoi du message", "error");
+      } finally {
+          isSendingMsgRef.current = false;
+      }
   };
 
   const supprimerMessage = async (id) => {
@@ -5520,134 +5529,143 @@ function App() {
                               .chat-vu-par-liste-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-main); white-space: nowrap; }
                           `}</style>
                           <div className="chat-messages" ref={chatMessagesRef}>
-                              {(messagesListe || []).filter(m => {
-                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
-                                  if (chatActif === 'salon') return m.id_destinataire === 0;
-                                  if (chatActif === 'gerant') return (m.id_expediteur === myId && m.id_destinataire === null) || (m.id_expediteur === null && m.id_destinataire === myId);
-                                  return (m.id_expediteur === myId && m.id_destinataire === chatActif) || (m.id_expediteur === chatActif && m.id_destinataire === myId);
-                              }).map((msg, idxMsg, tableauMsgsConv) => {
-                                  const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
-                                  const isMine = msg.id_expediteur === myId;
-                                  const myReactId = role === 'employe' ? `emp_${myId}` : (role === 'salon' ? 'salon' : 'gerant');
-                                  const messagePrecedent = tableauMsgsConv[idxMsg - 1];
-                                  const changerDeJour = !messagePrecedent || new Date(msg.date_creation).toDateString() !== new Date(messagePrecedent.date_creation).toDateString();
+                                  {(messagesListe || []).filter(m => {
+                                      const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
+                                      return String(getCleConversation(m, role, myId)) === String(chatActif);
+                                  }).map((msg, idxMsg, tableauMsgsConv) => {
+                                      const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
+                                      const isMine = (myId === null && msg.id_expediteur === null) || (myId !== null && Number(msg.id_expediteur) === Number(myId));
+                                      const myReactId = role === 'employe' ? `emp_${myId}` : (role === 'salon' ? 'salon' : 'gerant');
+                                      const messagePrecedent = tableauMsgsConv[idxMsg - 1];
+                                      const changerDeJour = !messagePrecedent || new Date(msg.date_creation).toDateString() !== new Date(messagePrecedent.date_creation).toDateString();
+                                      const safeReactions = typeof msg.reactions === 'string' ? (() => { try { return JSON.parse(msg.reactions); } catch(e) { return {}; } })() : (msg.reactions || {});
+                                      const safeVuPar = Array.isArray(msg.vu_par) ? msg.vu_par : [];
+                                      const isSafeImage = typeof msg.fichier_url === 'string' && (/^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(msg.fichier_url) || msg.fichier_url.startsWith('https://'));
 
-                                  return (
-                                      <div key={msg.id_message} style={{display: 'contents'}}>
-                                      {changerDeJour && (
-                                          <div className="chat-date-separateur"><span>{formatDateSeparateur(msg.date_creation)}</span></div>
-                                      )}
-                                      <div className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', maxWidth: '100%'}}>
-                                          {!isMine && renderAvatar(msg.photo_expediteur, msg.nom_expediteur, 32)}
-                                          
-                                          <div style={{display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', minWidth: 0}}>
-                                              {!isMine && <span style={{fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', marginLeft: '4px'}}>{msg.nom_expediteur}</span>}
+                                      return (
+                                          <div key={msg.id_message} style={{display: 'contents'}}>
+                                          {changerDeJour && (
+                                              <div className="chat-date-separateur"><span>{formatDateSeparateur(msg.date_creation)}</span></div>
+                                          )}
+                                          <div className={`chat-msg-row ${isMine ? 'mine' : 'others'}`} style={{position: 'relative', maxWidth: '100%'}}>
+                                              {!isMine && renderAvatar(msg.photo_expediteur, msg.nom_expediteur || 'Gérant', 32)}
                                               
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexDirection: isMine ? 'row-reverse' : 'row', maxWidth: '100%', minWidth: 0}}>
+                                              <div style={{display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', minWidth: 0}}>
+                                                  {!isMine && <span style={{fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', marginLeft: '4px'}}>{msg.nom_expediteur || 'Gérant'}</span>}
                                                   
-                                                  {editingMsgId === msg.id_message ? (
-                                                      <div style={{display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
-                                                          <textarea value={editMsgContent} onChange={e => setEditMsgContent(e.target.value)} className="chat-input" style={{minHeight: '60px', width: '250px', border: '1px solid var(--border-focus)'}} />
-                                                          <div style={{display: 'flex', gap: '8px'}}>
-                                                              <button onClick={() => validerEdition(msg.id_message)} style={{background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Valider</button>
-                                                              <button onClick={() => setEditingMsgId(null)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Annuler</button>
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexDirection: isMine ? 'row-reverse' : 'row', maxWidth: '100%', minWidth: 0}}>
+                                                      
+                                                      {editingMsgId === msg.id_message ? (
+                                                          <div style={{display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-app)', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
+                                                              <textarea value={editMsgContent} onChange={e => setEditMsgContent(e.target.value)} className="chat-input" style={{minHeight: '60px', width: '250px', border: '1px solid var(--border-focus)'}} />
+                                                              <div style={{display: 'flex', gap: '8px'}}>
+                                                                  <button onClick={() => validerEdition(msg.id_message)} style={{background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Valider</button>
+                                                                  <button onClick={() => setEditingMsgId(null)} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold'}}>Annuler</button>
+                                                              </div>
                                                           </div>
-                                                      </div>
-                                                  ) : (
-                                                      <div style={{position: 'relative'}}>
-                                                          <div className="chat-bubble">
-                                                              {msg.contenu}
-                                                              {msg.fichier_url && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                                      ) : (
+                                                          <div style={{position: 'relative'}}>
+                                                              <div className="chat-bubble">
+                                                                  {msg.contenu}
+                                                                  {isSafeImage && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                                              </div>
+                                                              {isMine && safeVuPar.length > 0 && (
+                                                                  <div className="chat-vu-par" onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(vuParOuvertMsgId === msg.id_message ? null : msg.id_message); }}>
+                                                                      {safeVuPar.slice(0, 3).map((idProfil, i) => {
+                                                                          const dernierEtTropPlein = i === 2 && safeVuPar.length > 3;
+                                                                          const profil = resoudreProfilVu(idProfil);
+                                                                          return (
+                                                                              <div key={idProfil} className="chat-vu-par-bulle" style={{ marginLeft: i === 0 ? 0 : '-8px' }}>
+                                                                                  {dernierEtTropPlein ? <span className="chat-vu-par-plus">+{safeVuPar.length - 2}</span> : renderAvatar(profil.photo_url, profil.nom, 14)}
+                                                                              </div>
+                                                                          );
+                                                                      })}
+                                                                      {vuParOuvertMsgId === msg.id_message && (
+                                                                          <>
+                                                                              {/* Calque invisible pour fermer l'encart en cliquant n'importe où à côté */}
+                                                                              <div onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(null); }} style={{position: 'fixed', inset: 0, zIndex: 19}}></div>
+                                                                              
+                                                                              <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)} onClick={(e) => e.stopPropagation()}>
+                                                                                  <div className="chat-vu-par-liste-titre">Vu par</div>
+                                                                                  {safeVuPar.map(idProfil => {
+                                                                                      const profil = resoudreProfilVu(idProfil);
+                                                                                      return (
+                                                                                          <div key={idProfil} className="chat-vu-par-liste-item">
+                                                                                              {renderAvatar(profil.photo_url, profil.nom, 22)}
+                                                                                              <span>{profil.nom}</span>
+                                                                                          </div>
+                                                                                      );
+                                                                                  })}
+                                                                              </div>
+                                                                          </>
+                                                                      )}
+                                                                  </div>
+                                                              )}
                                                           </div>
-                                                          {isMine && msg.vu_par && msg.vu_par.length > 0 && (
-                                                              <div className="chat-vu-par" onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(vuParOuvertMsgId === msg.id_message ? null : msg.id_message); }}>
-                                                                  {msg.vu_par.slice(0, 3).map((idProfil, i) => {
-                                                                      const dernierEtTropPlein = i === 2 && msg.vu_par.length > 3;
-                                                                      const profil = resoudreProfilVu(idProfil);
-                                                                      return (
-                                                                          <div key={idProfil} className="chat-vu-par-bulle" style={{ marginLeft: i === 0 ? 0 : '-8px' }}>
-                                                                              {dernierEtTropPlein ? <span className="chat-vu-par-plus">+{msg.vu_par.length - 2}</span> : renderAvatar(profil.photo_url, profil.nom, 14)}
-                                                                          </div>
-                                                                      );
-                                                                  })}
-                                                                  {vuParOuvertMsgId === msg.id_message && (
-                                                                      <>
-                                                                          {/* Calque invisible pour fermer l'encart en cliquant n'importe où à côté */}
-                                                                          <div onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(null); }} style={{position: 'fixed', inset: 0, zIndex: 19}}></div>
-                                                                          
-                                                                          <div className="chat-vu-par-liste" onMouseLeave={() => setVuParOuvertMsgId(null)} onClick={(e) => e.stopPropagation()}>
-                                                                              <div className="chat-vu-par-liste-titre">Vu par</div>
-                                                                              {msg.vu_par.map(idProfil => {
-                                                                                  const profil = resoudreProfilVu(idProfil);
-                                                                                  return (
-                                                                                      <div key={idProfil} className="chat-vu-par-liste-item">
-                                                                                          {renderAvatar(profil.photo_url, profil.nom, 22)}
-                                                                                          <span>{profil.nom}</span>
-                                                                                      </div>
-                                                                                  );
-                                                                              })}
-                                                                          </div>
-                                                                      </>
-                                                                  )}
-                                                              </div>
-                                                          )}
-                                                      </div>
-                                                  )}
-                                                  
-                                                  {isMine && !editingMsgId && (
-                                                      <div style={{position: 'relative'}}>
-                                                          <button className="chat-msg-actions-btn" onClick={() => setActiveMenuId(activeMenuId === msg.id_message ? null : msg.id_message)}>
-                                                              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-                                                          </button>
-                                                          {activeMenuId === msg.id_message && (
-                                                              <div className="chat-msg-menu">
-                                                                  <button onClick={() => demarrerEdition(msg)}> Modifier</button>
-                                                                  <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}> Supprimer</button>
-                                                              </div>
-                                                          )}
-                                                      </div>
-                                                  )}
-                                                  
-                                                  {!isMine && (
-                                                      <div style={{position: 'relative'}}>
-                                                          <button className="chat-msg-actions-btn" onClick={() => setActiveReactionId(activeReactionId === msg.id_message ? null : msg.id_message)}>
-                                                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm-3-10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm6 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm-3 5.5c2.326 0 4.316-1.42 5.127-3.5H8.873c.81 2.08 2.8 3.5 5.127 3.5z"/></svg>
-                                                          </button>
-                                                          {activeReactionId === msg.id_message && (
-                                                              <div className="chat-reaction-picker" onMouseLeave={() => setActiveReactionId(null)}>
-                                                                  {CHAT_EMOJIS.map(em => (
-                                                                      <button key={em} onClick={() => toggleReaction(msg.id_message, em)}>{em}</button>
-                                                                  ))}
-                                                              </div>
-                                                          )}
-                                                      </div>
-                                                  )}
-                                              </div>
-                                              
-                                              {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px', width: '100%', justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
-                                                      {Object.entries(msg.reactions).map(([em, users]) => {
-                                                          const listeNoms = users.map(id => resoudreProfilVu(id).nom).join(', ');
-                                                          const isReacted = users.includes(myReactId);
-                                                          return (
-                                                              <div key={em} title={listeNoms} onClick={() => toggleReaction(msg.id_message, em)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold', border: `1px solid ${isReacted ? 'var(--color-info)' : 'var(--border-color)'}`, background: isReacted ? 'var(--bg-info)' : 'var(--bg-card)', color: isReacted ? 'var(--color-info)' : 'var(--text-secondary)' }}>
-                                                                  <span>{em}</span> <span>{users.length}</span>
-                                                              </div>
-                                                          );
-                                                      })}
+                                                      )}
+                                                      
+                                                      {(isMine || role === 'gerant') && !editingMsgId && (
+                                                          <div style={{position: 'relative'}}>
+                                                              <button className="chat-msg-actions-btn" onClick={() => setActiveMenuId(activeMenuId === msg.id_message ? null : msg.id_message)}>
+                                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                                                              </button>
+                                                              {activeMenuId === msg.id_message && (
+                                                                  <>
+                                                                      <div onClick={() => setActiveMenuId(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
+                                                                      <div className="chat-msg-menu" style={{zIndex: 999}}>
+                                                                          {isMine && <button onClick={() => demarrerEdition(msg)}> Modifier</button>}
+                                                                          <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}> Supprimer</button>
+                                                                      </div>
+                                                                  </>
+                                                              )}
+                                                          </div>
+                                                      )}
+                                                      
+                                                      {!isMine && (
+                                                          <div style={{position: 'relative'}}>
+                                                              <button className="chat-msg-actions-btn" onClick={() => setActiveReactionId(activeReactionId === msg.id_message ? null : msg.id_message)}>
+                                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm-3-10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm6 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm-3 5.5c2.326 0 4.316-1.42 5.127-3.5H8.873c.81 2.08 2.8 3.5 5.127 3.5z"/></svg>
+                                                              </button>
+                                                              {activeReactionId === msg.id_message && (
+                                                                  <>
+                                                                      <div onClick={() => setActiveReactionId(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
+                                                                      <div className="chat-reaction-picker" style={{zIndex: 999}} onMouseLeave={() => setActiveReactionId(null)}>
+                                                                          {CHAT_EMOJIS.map(em => (
+                                                                              <button key={em} onClick={() => toggleReaction(msg.id_message, em)}>{em}</button>
+                                                                          ))}
+                                                                      </div>
+                                                                  </>
+                                                              )}
+                                                          </div>
+                                                      )}
                                                   </div>
-                                              )}
-                                              
-                                              <div className="chat-meta">
-                                                  <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                                  
+                                                  {Object.keys(safeReactions).length > 0 && (
+                                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px', width: '100%', justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
+                                                          {Object.entries(safeReactions).map(([em, users]) => {
+                                                              const safeUsers = Array.isArray(users) ? users : [];
+                                                              if (safeUsers.length === 0) return null;
+                                                              const listeNoms = safeUsers.map(id => resoudreProfilVu(id).nom).join(', ');
+                                                              const isReacted = safeUsers.includes(myReactId);
+                                                              return (
+                                                                  <div key={em} title={listeNoms} onClick={() => toggleReaction(msg.id_message, em)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold', border: `1px solid ${isReacted ? 'var(--color-info)' : 'var(--border-color)'}`, background: isReacted ? 'var(--bg-info)' : 'var(--bg-card)', color: isReacted ? 'var(--color-info)' : 'var(--text-secondary)' }}>
+                                                                      <span>{em}</span> <span>{safeUsers.length}</span>
+                                                                  </div>
+                                                              );
+                                                          })}
+                                                      </div>
+                                                  )}
+                                                  
+                                                  <div className="chat-meta">
+                                                      <span>{new Date(msg.date_creation).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                                  </div>
                                               </div>
                                           </div>
-                                      </div>
-                                      </div>
-                                  );
-                              })}
-                              <div ref={messagesEndRef} />
-                          </div>
+                                          </div>
+                                      );
+                                  })}
+                                  <div ref={messagesEndRef} />
+                              </div>
 
                           <div className="chat-input-area">
                               <button className="chat-btn chat-file-btn" onClick={() => document.getElementById('chat-file-upload').click()}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
