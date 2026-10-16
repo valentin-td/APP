@@ -1044,7 +1044,18 @@ app.get('/api/settings', verifierToken, async (req, res) => {
         const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); 
         if (result.rowCount > 0) {
             let config = result.rows[0];
-            config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email); 
+            
+            // Sécurité : Seul le gérant a le droit de voir les secrets de configuration (clés API, mots de passe mail, PIN)
+            if (req.user.role !== 'gerant') {
+                delete config.mot_de_passe_app_email;
+                delete config.brevo_api_key;
+                delete config.pennylane_api_key;
+                delete config.google_api_key;
+                delete config.pin_salon;
+            } else {
+                config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email); 
+            }
+            
             res.json(config);
         } else {
             res.json({});
@@ -6485,10 +6496,10 @@ app.get('/api/admin/forcer-robot', verifierToken, verifierSuperAdmin, async (req
     }
 });
 
-// --- CHEAT CODE : VOYAGE DANS LE TEMPS (TESTS UNIQUEMENT) ---
-app.get('/api/admin/time-travel/:id_salon', async (req, res) => {
+// --- CHEAT CODE : VOYAGE DANS LE TEMPS (DÉVELOPPEMENT UNIQUEMENT) ---
+app.get('/api/admin/time-travel/:id_salon', verifierToken, verifierSuperAdmin, async (req, res) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ erreur: "Désactivé en production." });
     try {
-        // On recule la date de fin d'essai à il y a 5 jours
         await pool.query(
             "UPDATE configuration_salon SET date_fin_essai = NOW() - INTERVAL '5 days' WHERE id_salon = $1", 
             [req.params.id_salon]
@@ -6499,13 +6510,14 @@ app.get('/api/admin/time-travel/:id_salon', async (req, res) => {
     }
 });
 
-// --- CHEAT CODE : INJECTION SIRET POUR TEST PDF ---
-app.get('/api/admin/fix-siret-38', async (req, res) => {
+// --- CHEAT CODE : INJECTION SIRET POUR TEST PDF (DÉVELOPPEMENT UNIQUEMENT) ---
+app.get('/api/admin/fix-siret-38', verifierToken, verifierSuperAdmin, async (req, res) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ erreur: "Désactivé en production." });
     try {
         await pool.query(
-            "UPDATE configuration_salon SET siret = '12345678901234', siret_salon = '12345678901234', adresse_salon = '123 Rue de Test, 75000 Paris' WHERE id_salon = 38"
+            "UPDATE configuration_salon SET siret = '12345678901234', adresse_salon = '123 Rue de Test, 75000 Paris' WHERE id_salon = 38"
         );
-        res.json({ message: "✅ SIRET (12345678901234) et Adresse injectés avec succès pour le salon 38 !" });
+        res.json({ message: "✅ SIRET et Adresse injectés avec succès !" });
     } catch (e) { 
         res.status(500).json({ erreur: e.message }); 
     }
