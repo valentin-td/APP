@@ -675,6 +675,7 @@ const authLimiter = rateLimit({
     max: 5, // Limite stricte
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { xForwardedForHeader: false, default: false },
     keyGenerator: (req) => {
         // Isole le compteur par IP, par type de connexion (route) et par cible (ID du salon ou email)
         const cible = req.body.id_salon || req.body.email || 'global';
@@ -6623,7 +6624,7 @@ app.get('/api/admin/fix-siret-38', verifierToken, verifierSuperAdmin, async (req
 // =========================================================================
 // --- GOD MODE (SUPER-ADMIN) ---
 // =========================================================================
-const verifierSuperAdmin = async (req, res, next) => {
+async function verifierSuperAdmin(req, res, next) {
     try {
         const userRes = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [req.user.id_salon]);
         if (userRes.rowCount === 0 || userRes.rows[0].email !== '2@gmail.com') {
@@ -6633,7 +6634,7 @@ const verifierSuperAdmin = async (req, res, next) => {
     } catch (e) {
         return res.status(500).json({ erreur: "Erreur de vérification des droits admin." });
     }
-};
+}
 
 app.get('/api/superadmin/stats', verifierToken, verifierSuperAdmin, async (req, res) => {
     try {
