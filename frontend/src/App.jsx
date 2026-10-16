@@ -1114,7 +1114,8 @@ function App() {
       
       const ouvrirConnexionSSE = () => {
           if (eventSource) eventSource.close();
-          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}`;
+          const tokenApi = localStorage.getItem('api_token');
+          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}${tokenApi ? `?token=${encodeURIComponent(tokenApi)}` : ''}`;
           eventSource = new EventSource(url, { withCredentials: true });
           dernierSignal = Date.now();
           
@@ -1135,6 +1136,7 @@ function App() {
           });
       };
       
+      verifierTachesIAEnBase();
       ouvrirConnexionSSE();
 
       const onFocus = () => verifierTachesIAEnBase();
@@ -1210,17 +1212,14 @@ function App() {
   };
 
   const ignorerTacheIA = async (tache) => {
-      if (String(tache.id_tache).startsWith('UPLOAD_MANUEL_') || String(tache.id_tache).includes('_')) {
-          passerAuDocumentSuivant(tache.id_tache);
-          return;
-      }
       try {
-          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${tache.id_tache}/ignorer`, {
+          const baseId = String(tache.id_tache).replace(/_\d+$/, '');
+          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/ignorer`, {
               method: 'POST',
               headers: getAuthHeaders()
           });
           showToast("Tâche ignorée", "info");
-          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
+          setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache && String(t.id_tache) !== String(baseId)));
           passerAuDocumentSuivant(tache.id_tache);
       } catch (e) { 
           showToast("Erreur serveur.", "error"); 
