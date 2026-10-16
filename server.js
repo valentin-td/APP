@@ -2216,151 +2216,199 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
 });
 
 // =========================================================================
-// --- EXPORT FEC (Fichier des Écritures Comptables) ---
+// --- MOTEUR UNIFIÉ & ROUTE EXPORT FEC (Art. A.47 A-1 du LPF / NF525) ---
 // =========================================================================
+async function construireContenuFEC(id_salon, date_debut, date_fin) {
+    // 1. Récupérer la configuration comptable et fiscale (Franchise TVA + SIREN) du salon
+    const configRes = await pool.query(
+        'SELECT siret, tva_intra, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva FROM configuration_salon WHERE id_salon = $1',
+        [id_salon]
+    );
+    const config = configRes.rows[0] || {};
+    const franchiseTVA = !config.tva_intra || config.tva_intra.trim() === '';
+    const siren = config.siret ? String(config.siret).replace(/\D/g, '').substring(0, 9) : '';
+
+    const CPT_BANQUE = config.compte_banque || '512000';
+    const CPT_CAISSE = config.compte_caisse || '530000';
+    const CPT_PRESTA = config.compte_prestations || '706000';
+    const CPT_PROD = config.compte_produits || '707000';
+    const CPT_TVA = config.compte_tva || '445710';
+
+    // 2. Récupérer tous les tickets validés (ventes + avoirs d'annulation) sur la période
+    const ticketsRes = await pool.query(`
+        SELECT 
+            t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, t.type_ticket,
+            lt.id_ligne, lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, c.nom, 'Prestation') as nom_article,
+            COALESCE(c.type_article, 'PRESTATION') as type_article,
+            cc.date_cloture
+        FROM tickets t
+        LEFT JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
+        LEFT JOIN catalogue c ON lt.id_article = c.id_article
+        LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
+        WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
+        ORDER BY t.date_creation ASC, t.id_ticket ASC, lt.id_ligne ASC
+    `, [id_salon, date_debut, date_fin]);
+
+    const formatDateFEC = (date) => {
+        if (!date) return '';
+        const d = new Date(date);
+        return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const formatMontant = (cents) => (Math.abs(cents) / 100).toFixed(2).replace('.', ',');
+
+    // Regroupement par ticket dans l'ordre chronologique strict
+    const ticketsList = [];
+    const ticketsMap = new Map();
+    ticketsRes.rows.forEach(r => {
+        if (!ticketsMap.has(r.id_ticket)) {
+            const tObj = {
+                id_ticket: r.id_ticket,
+                numero: r.numero_ticket_caisse || `TKT-${r.id_ticket}`,
+                date: r.date_creation,
+                date_valid: r.date_cloture || r.date_creation,
+                methode: r.methode_paiement || 'CARTE',
+                type_ticket: r.type_ticket || 'VENTE',
+                total_ttc: parseFloat(r.total_ttc) || 0,
+                lignes: []
+            };
+            ticketsMap.set(r.id_ticket, tObj);
+            ticketsList.push(tObj);
+        }
+        if (r.total_ligne_ttc !== null && r.total_ligne_ttc !== undefined) {
+            ticketsMap.get(r.id_ticket).lignes.push(r);
+        }
+    });
+
+    let totalDebitCents = 0;
+    let totalCreditCents = 0;
+    const lignesFec = [];
+    let sequenceEcriture = 1; // Numérotation continue sans trou propre au salon (Exigence Art. A.47 A-1 LPF)
+
+    for (const t of ticketsList) {
+        const ticketCents = Math.round(t.total_ttc * 100);
+        if (ticketCents === 0) continue;
+
+        const estAvoir = ticketCents < 0 || t.type_ticket === 'ANNULATION';
+        const absTicketCents = Math.abs(ticketCents);
+
+        const dateEcriture = formatDateFEC(t.date);
+        const dateValid = formatDateFEC(t.date_valid);
+        const pieceRef = String(t.numero).replace(/[\t\r\n]/g, ' ').trim();
+        const ecritureNum = `VT-${String(sequenceEcriture).padStart(6, '0')}`;
+        sequenceEcriture++;
+
+        const cptePaiement = (t.methode === 'ESPECES') ? CPT_CAISSE : CPT_BANQUE;
+        const libellePaiement = (t.methode === 'ESPECES') ? 'Caisse' : 'Banque';
+        const prefixeLib = estAvoir ? 'Avoir Annulation' : 'Encaissement';
+
+        // 1. Ligne de règlement (Débit si Vente, Crédit si Avoir/Annulation)
+        lignesFec.push({
+            JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+            CompteNum: cptePaiement, CompteLib: libellePaiement, CompAuxNum: '', CompAuxLib: '',
+            PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `${prefixeLib} ${pieceRef}`.substring(0, 40),
+            Debit: estAvoir ? '0,00' : formatMontant(absTicketCents),
+            Credit: estAvoir ? formatMontant(absTicketCents) : '0,00',
+            EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+        });
+        if (estAvoir) totalCreditCents += absTicketCents;
+        else totalDebitCents += absTicketCents;
+
+        // 2. Préparation et équilibrage au centime près des lignes de produits/prestations
+        const lignesBrutes = t.lignes.length > 0
+            ? t.lignes
+            : [{ total_ligne_ttc: t.total_ttc, taux_tva_snapshot: 20.00, nom_article: 'Prestation globale', type_article: 'PRESTATION' }];
+
+        let cumulLignesCents = 0;
+        const lignesCalculees = lignesBrutes.map((l) => {
+            const c = Math.abs(Math.round((parseFloat(l.total_ligne_ttc) || 0) * 100));
+            cumulLignesCents += c;
+            return { ...l, absCents: c };
+        });
+
+        // Ajustement automatique sur la dernière ligne en cas de remise fidélité ou écart de centime sur le ticket
+        const ecartTicketCents = absTicketCents - cumulLignesCents;
+        if (ecartTicketCents !== 0 && lignesCalculees.length > 0) {
+            const lastIdx = lignesCalculees.length - 1;
+            if (lignesCalculees[lastIdx].absCents + ecartTicketCents >= 0) {
+                lignesCalculees[lastIdx].absCents += ecartTicketCents;
+            }
+        }
+
+        // 3. Génération des lignes de Produits (706/707) et de TVA (445710 uniquement si assujetti)
+        for (const ligne of lignesCalculees) {
+            if (ligne.absCents === 0) continue;
+
+            const tauxTVA = franchiseTVA ? 0 : (parseFloat(ligne.taux_tva_snapshot) ?? 20.00);
+            const ligneHTCents = franchiseTVA ? ligne.absCents : Math.round(ligne.absCents / (1 + tauxTVA / 100));
+            const ligneTVACents = franchiseTVA ? 0 : (ligne.absCents - ligneHTCents);
+
+            const cpteVente = (ligne.type_article === 'PRODUIT_REVENTE') ? CPT_PROD : CPT_PRESTA;
+            const libelleVente = (ligne.type_article === 'PRODUIT_REVENTE') ? 'Vente Produit' : 'Vente Prestation';
+            const nomNettoye = (ligne.nom_article || 'Article').substring(0, 30).replace(/[\t\r\n]/g, ' ').trim();
+
+            if (ligneHTCents > 0) {
+                lignesFec.push({
+                    JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                    CompteNum: cpteVente, CompteLib: libelleVente, CompAuxNum: '', CompAuxLib: '',
+                    PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: nomNettoye,
+                    Debit: estAvoir ? formatMontant(ligneHTCents) : '0,00',
+                    Credit: estAvoir ? '0,00' : formatMontant(ligneHTCents),
+                    EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+                });
+                if (estAvoir) totalDebitCents += ligneHTCents;
+                else totalCreditCents += ligneHTCents;
+            }
+
+            if (ligneTVACents > 0) {
+                const tauxAff = Number(tauxTVA).toString().replace('.', ',');
+                lignesFec.push({
+                    JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                    CompteNum: CPT_TVA, CompteLib: `TVA Collectee ${tauxAff}%`, CompAuxNum: '', CompAuxLib: '',
+                    PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `TVA ${nomNettoye}`.substring(0, 30),
+                    Debit: estAvoir ? formatMontant(ligneTVACents) : '0,00',
+                    Credit: estAvoir ? '0,00' : formatMontant(ligneTVACents),
+                    EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+                });
+                if (estAvoir) totalDebitCents += ligneTVACents;
+                else totalCreditCents += ligneTVACents;
+            }
+        }
+    }
+
+    if (totalDebitCents !== totalCreditCents) {
+        throw new Error(`Déséquilibre comptable détecté (Débit: ${(totalDebitCents / 100).toFixed(2)}€ / Crédit: ${(totalCreditCents / 100).toFixed(2)}€).`);
+    }
+
+    const headers = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
+    let fecContent = headers.join('\t') + '\r\n';
+    for (const row of lignesFec) {
+        fecContent += headers.map(h => row[h]).join('\t') + '\r\n';
+    }
+
+    const dateFinCompact = date_fin.replace(/-/g, '');
+    const nomFichier = siren.length === 9
+        ? `${siren}FEC${dateFinCompact}.txt`
+        : `FEC_${id_salon}_${date_debut.replace(/-/g, '')}_${dateFinCompact}.txt`;
+
+    return { fecContent, nomFichier, nbLignes: lignesFec.length, totalEquilibre: totalDebitCents / 100 };
+}
+
 app.get('/api/export-fec', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     const { date_debut, date_fin } = req.query;
     if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
 
     try {
-        // 1. Récupérer la configuration comptable du salon
-        const configRes = await pool.query('SELECT compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const config = configRes.rows[0] || {};
-        const CPT_BANQUE = config.compte_banque || '512000';
-        const CPT_CAISSE = config.compte_caisse || '530000';
-        const CPT_PRESTA = config.compte_prestations || '706000';
-        const CPT_PROD = config.compte_produits || '707000';
-        const CPT_TVA = config.compte_tva || '445710';
+        const { fecContent, nomFichier, nbLignes, totalEquilibre } = await construireContenuFEC(id_salon, date_debut, date_fin);
 
-        // 2. Récupérer tous les tickets validés (ventes + avoirs d'annulation) sur la période
-        const ticketsRes = await pool.query(`
-            SELECT 
-                t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, t.type_ticket,
-                lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, 'Article') as nom_article,
-                COALESCE(c.type_article, 'PRESTATION') as type_article,
-                cc.date_cloture
-            FROM tickets t
-            JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
-            LEFT JOIN catalogue c ON lt.id_article = c.id_article
-            LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
-            WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
-            ORDER BY t.date_creation ASC, t.id_ticket ASC
-        `, [id_salon, date_debut, date_fin]);
+        await enregistrerJET(id_salon, 'EXPORT_FEC_GENERE', { date_debut, date_fin, nb_lignes: nbLignes, total_equilibre: totalEquilibre });
 
-        let totalDebitCents = 0;
-        let totalCreditCents = 0;
-        const lignesFec = [];
-
-        // L'administration exige ce format exact de date (sans tirets)
-        const formatDateFEC = (date) => {
-            if (!date) return '';
-            const d = new Date(date);
-            return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-        };
-        // L'administration exige des virgules pour les décimales
-        const formatMontant = (montant) => Number(montant).toFixed(2).replace('.', ',');
-
-        // Grouper les lignes par ticket pour équilibrer chaque pièce comptable
-        const ticketsMap = {};
-        ticketsRes.rows.forEach(r => {
-            if (!ticketsMap[r.id_ticket]) {
-                ticketsMap[r.id_ticket] = {
-                    id_ticket: r.id_ticket,
-                    numero: r.numero_ticket_caisse,
-                    date: r.date_creation,
-                    date_valid: r.date_cloture || r.date_creation,
-                    methode: r.methode_paiement,
-                    total_ttc: parseFloat(r.total_ttc),
-                    lignes: []
-                };
-            }
-            ticketsMap[r.id_ticket].lignes.push(r);
-        });
-
-        // 3. Génération des écritures (La Partie Double)
-        for (const t of Object.values(ticketsMap)) {
-            const dateEcriture = formatDateFEC(t.date);
-            const dateValid = formatDateFEC(t.date_valid);
-            const pieceRef = t.numero;
-            const ecritureNum = `VT-${t.id_ticket}`;
-            
-            // Ligne de DÉBIT (Paiement)
-            const cptePaiement = (t.methode === 'ESPECES') ? CPT_CAISSE : CPT_BANQUE;
-            const libellePaiement = (t.methode === 'ESPECES') ? 'Caisse' : 'Banque';
-            
-            lignesFec.push({
-                JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
-                CompteNum: cptePaiement, CompteLib: libellePaiement, CompAuxNum: '', CompAuxLib: '',
-                PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `Encaissement ${pieceRef}`,
-                Debit: formatMontant(t.total_ttc), Credit: '', EcritureLet: '', DateLet: '',
-                ValidDate: dateValid, Montantdevise: '', Idevise: ''
-            });
-            totalDebitCents += Math.round(t.total_ttc * 100);
-
-            // Lignes de CRÉDIT (Produit/Presta + TVA)
-            for (const ligne of t.lignes) {
-                const ligneTTC = parseFloat(ligne.total_ligne_ttc);
-                const tauxTVA = parseFloat(ligne.taux_tva_snapshot) || 20.00;
-                
-                // Calcul strict pour éviter les erreurs d'arrondis comptables
-                const ligneHT = Number((ligneTTC / (1 + tauxTVA / 100)).toFixed(2));
-                const ligneTVA = Number((ligneTTC - ligneHT).toFixed(2));
-
-                const cpteVente = (ligne.type_article === 'PRODUIT_REVENTE') ? CPT_PROD : CPT_PRESTA;
-                const libelleVente = (ligne.type_article === 'PRODUIT_REVENTE') ? 'Vente Produit' : 'Vente Prestation';
-                const nomNettoye = (ligne.nom_article || 'Article').substring(0, 30).replace(/\t/g, ' ').replace(/\n/g, ' ');
-
-                // Crédit CA (HT)
-                if (ligneHT > 0) {
-                    lignesFec.push({
-                        JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
-                        CompteNum: cpteVente, CompteLib: libelleVente, CompAuxNum: '', CompAuxLib: '',
-                        PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: nomNettoye,
-                        Debit: '', Credit: formatMontant(ligneHT), EcritureLet: '', DateLet: '',
-                        ValidDate: dateValid, Montantdevise: '', Idevise: ''
-                    });
-                    totalCreditCents += Math.round(ligneHT * 100);
-                }
-
-                // Crédit TVA
-                if (ligneTVA > 0) {
-                    lignesFec.push({
-                        JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
-                        CompteNum: CPT_TVA, CompteLib: `TVA Collectee ${tauxTVA}%`, CompAuxNum: '', CompAuxLib: '',
-                        PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `TVA ${nomNettoye}`.substring(0,30),
-                        Debit: '', Credit: formatMontant(ligneTVA), EcritureLet: '', DateLet: '',
-                        ValidDate: dateValid, Montantdevise: '', Idevise: ''
-                    });
-                    totalCreditCents += Math.round(ligneTVA * 100);
-                }
-            }
-        }
-
-        // 4. L'AUTO-DIAGNOSTIC (Contrôle d'équilibre comptable)
-        if (totalDebitCents !== totalCreditCents) {
-            console.error(`Déséquilibre FEC : Débit=${totalDebitCents/100} Crédit=${totalCreditCents/100}`);
-            return res.status(500).json({ erreur: `Déséquilibre comptable détecté (Débit: ${(totalDebitCents/100).toFixed(2)}€ / Crédit: ${(totalCreditCents/100).toFixed(2)}€). Export bloqué pour protéger votre comptabilité.` });
-        }
-
-        // 5. Assemblage du fichier FEC au format TXT normé (séparateur TAB)
-        const headers = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
-        
-        let fecContent = headers.join('\t') + '\r\n';
-        for (const row of lignesFec) {
-            fecContent += headers.map(h => row[h]).join('\t') + '\r\n';
-        }
-
-        // Traçabilité de l'action dans le journal technique NF525
-        await enregistrerJET(id_salon, 'EXPORT_FEC_GENERE', { date_debut, date_fin, nb_lignes: lignesFec.length, total_equilibre: totalDebitCents / 100 });
-
-        res.setHeader('Content-Type', 'text/plain; charset=windows-1252'); // L'ANSI/Windows-1252 est le standard attendu par les impôts français
-        res.setHeader('Content-Disposition', `attachment; filename="FEC_${id_salon}_${date_debut.replace(/-/g, '')}_${date_fin.replace(/-/g, '')}.txt"`);
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${nomFichier}"`);
         res.send(fecContent);
-
     } catch (e) {
         console.error("❌ Erreur export FEC:", e);
-        res.status(500).json({ erreur: "Erreur lors de la génération du fichier FEC." });
+        res.status(500).json({ erreur: e.message || "Erreur lors de la génération du fichier FEC." });
     }
 });
 
@@ -5891,54 +5939,14 @@ async function envoyerBilanComptable(id_salon, mois_annee) {
 
         const caTotal = parseFloat(caResult.rows[0].ca_total);
 
-        // --- GÉNÉRATION DU FEC ---
+        // --- GÉNÉRATION DU FEC (Moteur unifié normé Art. A.47 A-1 LPF) ---
         let fecContent = null;
+        let nomFichierFec = `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`;
         try {
-            const ticketsFecRes = await pool.query(`
-                SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, 'Article') as nom_article, COALESCE(c.type_article, 'PRESTATION') as type_article, cc.date_cloture
-                FROM tickets t
-                JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
-                LEFT JOIN catalogue c ON lt.id_article = c.id_article
-                LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
-                WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND t.est_compense = FALSE AND DATE(t.date_creation) BETWEEN $2 AND $3
-                ORDER BY t.date_creation ASC, t.id_ticket ASC
-            `, [id_salon, dateDebutStr, dateFinStr]);
-
-            let totalDebit = 0, totalCredit = 0;
-            const lignesFec = [];
-            const ticketsMap = {};
-
-            ticketsFecRes.rows.forEach(r => {
-                if (!ticketsMap[r.id_ticket]) ticketsMap[r.id_ticket] = { id_ticket: r.id_ticket, numero: r.numero_ticket_caisse, date: r.date_creation, date_valid: r.date_cloture || r.date_creation, methode: r.methode_paiement, total_ttc: parseFloat(r.total_ttc), lignes: [] };
-                ticketsMap[r.id_ticket].lignes.push(r);
-            });
-
-            const formatDateFEC = (date) => { const d = new Date(date); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
-            const formatMnt = (mnt) => Number(mnt).toFixed(2).replace('.', ',');
-
-            for (const t of Object.values(ticketsMap)) {
-                const dEcr = formatDateFEC(t.date), dVal = formatDateFEC(t.date_valid), pRef = t.numero, eNum = `VT-${t.id_ticket}`;
-                const cPaiement = t.methode === 'ESPECES' ? (salon.compte_caisse || '530000') : (salon.compte_banque || '512000');
-                const lPaiement = t.methode === 'ESPECES' ? 'Caisse' : 'Banque';
-
-                lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cPaiement, CompteLib: lPaiement, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `Encaissement ${pRef}`, Debit: formatMnt(t.total_ttc), Credit: '', EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' });
-                totalDebit += Math.round(t.total_ttc * 100);
-
-                for (const l of t.lignes) {
-                    const lTTC = parseFloat(l.total_ligne_ttc), tTVA = parseFloat(l.taux_tva_snapshot) || 20.00;
-                    const lHT = Number((lTTC / (1 + tTVA / 100)).toFixed(2)), lTVA = Number((lTTC - lHT).toFixed(2));
-                    const cVente = l.type_article === 'PRODUIT_REVENTE' ? (salon.compte_produits || '707000') : (salon.compte_prestations || '706000');
-                    const lVente = l.type_article === 'PRODUIT_REVENTE' ? 'Vente Produit' : 'Vente Prestation';
-                    const nNet = (l.nom_article || 'Article').substring(0, 30).replace(/\t/g, ' ').replace(/\n/g, ' ');
-
-                    if (lHT > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: cVente, CompteLib: lVente, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: nNet, Debit: '', Credit: formatMnt(lHT), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lHT * 100); }
-                    if (lTVA > 0) { lignesFec.push({ JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: eNum, EcritureDate: dEcr, CompteNum: (salon.compte_tva || '445710'), CompteLib: `TVA Collectee ${tTVA}%`, CompAuxNum: '', CompAuxLib: '', PieceRef: pRef, PieceDate: dEcr, EcritureLib: `TVA ${nNet}`.substring(0,30), Debit: '', Credit: formatMnt(lTVA), EcritureLet: '', DateLet: '', ValidDate: dVal, Montantdevise: '', Idevise: '' }); totalCredit += Math.round(lTVA * 100); }
-                }
-            }
-
-            if (totalDebit === totalCredit && lignesFec.length > 0) {
-                const h = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
-                fecContent = h.join('\t') + '\r\n' + lignesFec.map(row => h.map(col => row[col]).join('\t')).join('\r\n') + '\r\n';
+            const fecData = await construireContenuFEC(id_salon, dateDebutStr, dateFinStr);
+            if (fecData && fecData.nbLignes > 0) {
+                fecContent = fecData.fecContent;
+                nomFichierFec = fecData.nomFichier;
             }
         } catch(e) { console.error(`Erreur génération FEC pour le salon ${id_salon}:`, e); }
 
