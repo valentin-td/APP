@@ -478,8 +478,15 @@ function App() {
           return next;
       });
 
-      const idsAVoir = messagesConv.filter(m => m.id_expediteur !== myId && !(m.vu_par || []).includes(monProfilId)).map(m => m.id_message);
+      const idsAVoir = messagesConv.filter(m => m.id_expediteur !== myId && !(Array.isArray(m.vu_par) && m.vu_par.includes(monProfilId))).map(m => m.id_message);
       if (idsAVoir.length > 0) {
+          // Mise à jour optimiste immédiate pour éviter les appels API redondants
+          setMessagesListe(prev => (prev || []).map(m => {
+              if (!idsAVoir.includes(m.id_message)) return m;
+              const actuels = Array.isArray(m.vu_par) ? m.vu_par : [];
+              return actuels.includes(monProfilId) ? m : { ...m, vu_par: [...actuels, monProfilId] };
+          }));
+
           fetch('https://api-salon-backend.onrender.com/api/messages/vu', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ids: idsAVoir }) })
               .then(async (res) => { if (!res.ok) { const d = await res.json().catch(() => ({})); console.error('Erreur marquage vu :', res.status, d.erreur); } })
               .catch((e) => console.error('Erreur réseau marquage vu :', e));
@@ -1035,18 +1042,36 @@ function App() {
                   transports: ['websocket'],
                   reconnectionAttempts: Infinity,
                   timeout: 5000,
-                  withCredentials: true
+                  withCredentials: true,
+                  auth: { token: localStorage.getItem('api_token') }
               });
               newSocket.on('connect', () => {
                   newSocket.emit('rejoindreSalon', user.id_salon);
               });
               newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
               newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-              newSocket.on('nouveauMessage', (data) => { setMessagesListe(prev => [...(prev || []), data]); });
-              newSocket.on('messageModifie', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, contenu: data.contenu } : m)); });
-              newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => m.id_message !== data.id_message)); });
-              newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, reactions: data.reactions } : m)); });
-              newSocket.on('messageVu', (data) => { setMessagesListe(prev => (prev || []).map(m => m.id_message === data.id_message ? { ...m, vu_par: data.vu_par } : m)); });
+              newSocket.on('nouveauMessage', (data) => {
+                  // Filtrage de sécurité côté client : un employé ignore les messages privés qui ne le concernent pas
+                  if (user.role === 'employe' && data.id_destinataire !== 0 && data.id_expediteur !== user.id_employe && data.id_destinataire !== user.id_employe) {
+                      return;
+                  }
+                  setMessagesListe(prev => {
+                      const liste = prev || [];
+                      if (liste.some(m => Number(m.id_message) === Number(data.id_message))) return liste;
+                      return [...liste, data];
+                  });
+              });
+              newSocket.on('messageModifie', (data) => { setMessagesListe(prev => (prev || []).map(m => Number(m.id_message) === Number(data.id_message) ? { ...m, contenu: data.contenu } : m)); });
+              newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => Number(m.id_message) !== Number(data.id_message))); });
+              newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => Number(m.id_message) === Number(data.id_message) ? { ...m, reactions: data.reactions } : m)); });
+              newSocket.on('messageVu', (data) => {
+                  setMessagesListe(prev => (prev || []).map(m => {
+                      if (Number(m.id_message) !== Number(data.id_message)) return m;
+                      const existants = Array.isArray(m.vu_par) ? m.vu_par : [];
+                      const nouveaux = Array.isArray(data.vu_par) ? data.vu_par : [];
+                      return { ...m, vu_par: Array.from(new Set([...existants, ...nouveaux])) };
+                  }));
+              });
               
               // ÉCOUTE TEMPS RÉEL (Synchronisation instantanée des statuts et du chronomètre)
               newSocket.on('statutPointageUpdate', (data) => {
@@ -2353,11 +2378,22 @@ function App() {
 
   const handleChatFileUpload = (e) => {
       const file = e.target.files[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => setMsgFile(reader.result);
-          reader.readAsDataURL(file);
+      if (!file) return;
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+      if (!allowedTypes.includes(file.type)) {
+          showToast("Format non supporté (JPG, PNG, WEBP ou GIF uniquement).", "error");
+          e.target.value = null;
+          return;
       }
+      if (file.size > 4 * 1024 * 1024) {
+          showToast("L'image est trop lourde (maximum 4 Mo).", "error");
+          e.target.value = null;
+          return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => setMsgFile(reader.result);
+      reader.readAsDataURL(file);
+      e.target.value = null;
   };
 
   const envoyerMessage = async () => {
@@ -2392,7 +2428,11 @@ function App() {
   };
 
   const supprimerMessage = async (id) => {
-      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() }); setActiveMenuId(null); } catch (e) { showToast("Erreur de suppression", "error"); }
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+          await handleFetchError(res);
+          setActiveMenuId(null);
+      } catch (e) { showToast(e.message || "Erreur de suppression", "error"); }
   };
 
   const demarrerEdition = (msg) => {
@@ -2403,7 +2443,11 @@ function App() {
 
   const validerEdition = async (id) => {
       if(!editMsgContent.trim()) return setEditingMsgId(null);
-      try { await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ contenu: editMsgContent.trim() }) }); setEditingMsgId(null); } catch (e) { showToast("Erreur de modification", "error"); }
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ contenu: editMsgContent.trim() }) });
+          await handleFetchError(res);
+          setEditingMsgId(null);
+      } catch (e) { showToast(e.message || "Erreur de modification", "error"); }
   };
 
   const toggleReaction = async (id, emoji) => {
