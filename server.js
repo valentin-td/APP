@@ -362,7 +362,8 @@ pool.query(`
         await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_TIMESTAMP;`);
         await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture); END IF; END $$;`);
         
-        // BACKFILL : Attribution d'un numéro de Z rétroactif continu pour tous les anciens historiques sans exception
+        // BACKFILL STRICT NF525 : Désactivation temporaire du trigger pour garantir une séquence 1..N sans trou ni doublon par salon
+        await pool.query(`DROP TRIGGER IF EXISTS trigger_nf525_clotures ON clotures_caisse;`);
         await pool.query(`
             UPDATE clotures_caisse
             SET numero_z_salon = subquery.seq
@@ -371,7 +372,7 @@ pool.query(`
                 FROM clotures_caisse
             ) AS subquery
             WHERE clotures_caisse.id_cloture = subquery.id_cloture
-            AND clotures_caisse.numero_z_salon IS NULL;
+            AND clotures_caisse.numero_z_salon IS DISTINCT FROM subquery.seq;
         `);
         
         // 🚨 SÉCURITÉ NF525 : Triggers stricts anti-altération et anti-suppression
@@ -3767,14 +3768,24 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             numZSalon = parseInt(zSeqRes.rows[0].next_z);
         }
 
+        // Récupération stricte du Z précédent par ordre chronologique et séquentiel
         const prevZRes = await pool.query(`
-            SELECT cumul_perpetuel_ttc, signature_hash
+            SELECT id_cloture, numero_z_salon, cumul_perpetuel_ttc, signature_hash
             FROM clotures_caisse
             WHERE id_salon = $1 AND date_cloture < $2::date
             ORDER BY date_cloture DESC, id_cloture DESC LIMIT 1
         `, [id_salon, dateCible]);
         const cumulAvantBdd = prevZRes.rowCount > 0 ? (parseFloat(prevZRes.rows[0].cumul_perpetuel_ttc) || 0) : 0;
         const hashPrecedentFallback = prevZRes.rowCount > 0 ? prevZRes.rows[0].signature_hash : 'GENESIS_Z';
+
+        // Si le numéro Z stocké est incohérent (ex: Z#1 alors qu'il existe des Z antérieurs), on calcule son rang réel
+        if (clotureData && prevZRes.rowCount > 0 && numZSalon <= 1) {
+            const rangRes = await pool.query(
+                `SELECT COUNT(*)::int as rang FROM clotures_caisse WHERE id_salon = $1 AND (date_cloture < $2::date OR (date_cloture = $2::date AND id_cloture <= $3))`,
+                [id_salon, dateCible, clotureData.id_cloture]
+            );
+            if (rangRes.rows[0]?.rang > 0) numZSalon = rangRes.rows[0].rang;
+        }
 
         // Horaires effectifs d'ouverture / clôture et compteurs d'événements JET
         const horairesTicketsRes = await pool.query(`
@@ -3832,7 +3843,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         }
 
         const heureOuvertureAff = heurePremierPointage || heurePremiereVente || `${String(salonExtra.heure_ouverture || 8).padStart(2, '0')}:00`;
-        const heureClotureAff = clotureData ? (heureClotureJet || heureDerniereVente || '23:59') : 'En cours (Non clôturé)';
+        const heureClotureAff = clotureData ? (dateHeureClotureComplete || heureClotureJet || heureDerniereVente || '23:59') : 'En cours (Non clôturé)';
 
         // ================== CRÉATION DU PDF ==================
         const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
@@ -3861,8 +3872,10 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         doc.font('Helvetica-Bold').fontSize(15).fillColor(MAIN_COLOR).text(titrePrincipal, 40, currentY);
         currentY += 20;
 
-        const capSocialAff = config.capital_social && config.capital_social.trim() !== '' ? config.capital_social : 'Non renseigné';
-        const rcsVilleAff = config.rcs_ville && config.rcs_ville.trim() !== '' ? config.rcs_ville : 'Non renseigné';
+        const capSocialAff = config.capital_social && String(config.capital_social).trim() !== ''
+            ? (String(config.capital_social).includes('€') ? config.capital_social.trim() : `${config.capital_social.trim()} €`)
+            : 'Non renseigné';
+        const rcsVilleAff = config.rcs_ville && String(config.rcs_ville).trim() !== '' ? config.rcs_ville.trim() : 'Non renseigné';
 
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text(`Société : ${config.nom_salon || 'Salon'}${formeJuridique}`, 40, currentY);
         currentY += 14;
@@ -3873,9 +3886,9 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         doc.text(`${mentionTVA} | NAF : 96.02A | IDCC : 2596 (Coiffure)`, 40, currentY);
         currentY += 14;
 
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text(
-            `Date d'activité : ${dateActiviteFr} | Ouverture : ${heureOuvertureAff} | Clôture : ${heureClotureAff} | Clôturé par : ${clotureData ? responsableCloture : 'Non applicable (Ticket X)'}`,
-            40, currentY
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MAIN_COLOR).text(
+            `Journée d'activité : ${dateActiviteFr} | Ouverture : ${heureOuvertureAff} | Scellement Z : ${heureClotureAff} | Opérateur : ${clotureData ? responsableCloture : 'Ticket X'}`,
+            40, currentY, { width: 515 }
         );
         currentY += 14;
 
@@ -3901,7 +3914,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             currentY += 18;
         }
 
-        // --- MOTEUR DE DESSIN ---
+        // --- MOTEUR DE DESSIN UNIFIÉ (Anti-chevauchement avec support font/size par colonne) ---
         const drawTableTitle = (title) => {
             if (currentY > 730) { doc.addPage(); currentY = 40; }
             currentY += 6;
@@ -3910,23 +3923,34 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         };
 
         const drawRow = (cols, isHeader = false, isBold = false) => {
-            if (currentY > 770) { doc.addPage(); currentY = 40; }
-            const fontToUse = isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica';
-            const sizeToUse = isHeader ? 8 : 9;
-            doc.font(fontToUse).fontSize(sizeToUse).fillColor(isHeader ? SEC_COLOR : MAIN_COLOR);
-            let xPos = 40;
+            const activeCols = cols.filter(c => c.w > 0);
+            const defaultFont = isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica';
+            const defaultSize = isHeader ? 8 : 8.5;
+
             let maxH = 0;
-            cols.forEach(col => {
+            activeCols.forEach(col => {
+                const f = col.font || defaultFont;
+                const s = col.size || defaultSize;
+                doc.font(f).fontSize(s);
                 const txt = col.text != null ? String(col.text) : '';
                 const h = doc.heightOfString(txt, { width: col.w });
                 if (h > maxH) maxH = h;
             });
+
             if (currentY + maxH > 775) { doc.addPage(); currentY = 40; }
-            cols.forEach(col => {
-                doc.font(fontToUse).fontSize(sizeToUse).fillColor(col.color || (isHeader ? SEC_COLOR : MAIN_COLOR));
-                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left' });
+
+            let xPos = 40;
+            activeCols.forEach(col => {
+                const f = col.font || defaultFont;
+                const s = col.size || defaultSize;
+                doc.font(f).fontSize(s).fillColor(col.color || (isHeader ? SEC_COLOR : MAIN_COLOR));
+                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, {
+                    width: col.w,
+                    align: col.align || 'left'
+                });
                 xPos += col.w + 10;
             });
+
             currentY += Math.max(maxH, 10) + 4;
             doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? MAIN_COLOR : BORDER_COLOR).stroke();
             currentY += 5;
@@ -4166,17 +4190,17 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         // --- 5. DÉTAIL DES VENTES DU JOUR ---
         drawTableTitle("5. DÉTAIL DES VENTES DU JOUR");
-        // Total largeur : 32 + 88 + 95 + 42 + 45 + 46 + 44 + 53 = 445 + 7*10 = 515 pt
+        // Grille calibrée sans retour à la ligne sur le symbole € : 28 + 82 + 95 + 38 + 46 + 52 + 48 + 56 = 445 + (7 * 10) = 515 pt
         const drawHeaderVentesJour = () => {
             drawRow([
-                {text: 'Heure', w: 32},
-                {text: 'N° Ticket', w: 88},
+                {text: 'Heure', w: 28},
+                {text: 'N° Ticket', w: 82},
                 {text: 'Lignes (Qté x Presta / Produit)', w: 95},
-                {text: 'Paiem.', w: 42, align: 'center'},
-                {text: 'Vendeur', w: 45, align: 'center'},
-                {text: 'HT', w: 46, align: 'right'},
-                {text: 'TVA', w: 44, align: 'right'},
-                {text: 'TTC', w: 53, align: 'right'}
+                {text: 'Paiem.', w: 38, align: 'center'},
+                {text: 'Vendeur', w: 46, align: 'center'},
+                {text: 'HT', w: 52, align: 'right'},
+                {text: 'TVA', w: 48, align: 'right'},
+                {text: 'TTC', w: 56, align: 'right'}
             ], true);
         };
 
@@ -4218,41 +4242,50 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                 }
 
                 drawRow([
-                    {text: v.heure || '-', w: 32},
-                    {text: v.numero_ticket_caisse || '-', w: 88},
-                    {text: lignesTxt.join('\n'), w: 95},
-                    {text: (v.methode_paiement || 'N/A').substring(0, 8), w: 42, align: 'center'},
-                    {text: (v.employe || 'Inconnu').substring(0, 10), w: 45, align: 'center'},
-                    {text: fMnt(totalTicketHT), w: 46, align: 'right'},
-                    {text: fMnt(totalTicketTVA), w: 44, align: 'right'},
-                    {text: fMnt(totalTicketTTC), w: 53, align: 'right'}
+                    {text: v.heure || '-', w: 28, size: 8},
+                    {text: v.numero_ticket_caisse || '-', w: 82, size: 7.5},
+                    {text: lignesTxt.join('\n'), w: 95, size: 8},
+                    {text: (v.methode_paiement || 'N/A').substring(0, 8), w: 38, align: 'center', size: 8},
+                    {text: (v.employe || 'Inconnu').substring(0, 12), w: 46, align: 'center', size: 8},
+                    {text: fMnt(totalTicketHT), w: 52, align: 'right', size: 8},
+                    {text: fMnt(totalTicketTVA), w: 48, align: 'right', size: 8},
+                    {text: fMnt(totalTicketTTC), w: 56, align: 'right', size: 8}
                 ]);
             });
+
+            // Ligne de totalisation du journal des ventes (Fusion Col 1..5 = 28+82+95+38+46 + 4*10 = 329 pt)
+            drawRow([
+                {text: `TOTAL DES VENTES DU JOUR (${ventesResult.rowCount} pièce(s))`, w: 329},
+                {text: fMnt(totalJourHT), w: 52, align: 'right'},
+                {text: fMnt(totalJourTVA), w: 48, align: 'right'},
+                {text: fMnt(caTotal), w: 56, align: 'right'}
+            ], false, true);
         }
 
         // --- 6. CHAÎNAGE CRYPTOGRAPHIQUE NF525 & CUMUL PERPÉTUEL ---
-        if (currentY > 560) { doc.addPage(); currentY = 40; }
+        if (currentY > 540) { doc.addPage(); currentY = 40; }
         drawTableTitle("6. CHAÎNAGE CRYPTOGRAPHIQUE NF525 ET CUMUL PERPÉTUEL");
 
-        // Recalcul et vérification du cumul perpétuel avant / après clôture
-        let cumulAvant = cumulAvantBdd;
-        let cumulApres = cumulAvant + caTotal;
-        if (clotureData) {
+        // Règle NF525 stricte : Nouveau Cumul = Ancien Cumul (du dernier Z scellé) + CA du jour
+        let cumulAvant = numZSalon === 1 ? 0 : cumulAvantBdd;
+        let cumulApres = Number((cumulAvant + caTotal).toFixed(2));
+        if (clotureData && clotureData.cumul_perpetuel_ttc != null) {
             const cumulStocke = parseFloat(clotureData.cumul_perpetuel_ttc) || 0;
-            if (cumulStocke >= cumulAvant + caTotal) {
+            if (numZSalon > 1 && Math.abs(cumulStocke - (cumulAvant + caTotal)) < 0.05) {
                 cumulApres = cumulStocke;
-                cumulAvant = cumulApres - caTotal;
-            } else {
-                cumulApres = cumulAvant + caTotal;
+            } else if (numZSalon > 1 && cumulStocke >= caTotal) {
+                cumulApres = cumulStocke;
+                cumulAvant = Number((cumulStocke - caTotal).toFixed(2));
             }
         }
 
         const hashActuel = clotureData ? (clotureData.signature_hash || 'NON-SIGNE') : 'EN ATTENTE DE CLÔTURE (TICKET X)';
-        const hashPrec = clotureData ? (clotureData.hash_precedent || 'GENESIS_Z') : hashPrecedentFallback;
+        const hashPrec = (numZSalon === 1) ? 'GENESIS_Z' : (clotureData ? (clotureData.hash_precedent || hashPrecedentFallback) : hashPrecedentFallback);
+        const splitHash32 = (h) => (h && h.length === 64) ? `${h.substring(0, 32)}\n${h.substring(32, 64)}` : h;
 
         drawRow([
             {text: 'Numéro de Z séquentiel (Propre au salon)', w: 260},
-            {text: clotureData ? `Z N° ${String(numZSalon).padStart(4, '0')} (ID interne #${clotureData.id_cloture})` : 'Non numéroté (Ticket X en cours)', w: 245, align: 'right'}
+            {text: clotureData ? `Z N° ${String(numZSalon).padStart(4, '0')}` : 'Non numéroté (Ticket X en cours)', w: 245, align: 'right'}
         ], false, true);
         drawRow([
             {text: 'Cumul perpétuel TTC avant clôture', w: 260},
@@ -4274,15 +4307,17 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             {text: 'Algorithme et dispositif de signature', w: 260},
             {text: 'SHA-256 — Scellement et chaînage NF525', w: 245, align: 'right'}
         ]);
-
-        const formatHash64 = (h) => (h && h.length === 64) ? `${h.substring(0, 32)}\n                   ${h.substring(32, 64)}` : h;
-        currentY += 4;
-        doc.rect(40, currentY, 515, 58).fillAndStroke('#f0fdf4', '#16a34a');
-        doc.font('Courier-Bold').fontSize(8).fillColor(MAIN_COLOR).text(`Hash de ce Z     : ${formatHash64(hashActuel)}`, 48, currentY + 8, { width: 499 });
-        doc.font('Courier').fontSize(8).fillColor(SEC_COLOR).text(`Hash Z précédent : ${formatHash64(hashPrec)}`, 48, currentY + 32, { width: 499 });
-        currentY += 68;
+        drawRow([
+            {text: 'Empreinte SHA-256 de ce Z (Scellement)', w: 260},
+            {text: splitHash32(hashActuel), w: 245, align: 'right', font: 'Courier-Bold', size: 7.5, color: '#166534'}
+        ]);
+        drawRow([
+            {text: 'Empreinte SHA-256 du Z précédent (Chaînage)', w: 260},
+            {text: splitHash32(hashPrec), w: 245, align: 'right', font: 'Courier', size: 7.5, color: SEC_COLOR}
+        ]);
 
         // --- MENTIONS LÉGALES & ATTESTATION DE L'ÉDITEUR ---
+        currentY += 6;
         if (currentY > 665) { doc.addPage(); currentY = 40; }
         doc.rect(40, currentY, 515, 65).fillAndStroke('#f9fafb', BORDER_COLOR);
         doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES, ATTESTATION ÉDITEUR ET CONSERVATION (Loi de Finances - NF525)', 50, currentY + 8);
