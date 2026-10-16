@@ -721,8 +721,12 @@ app.post('/api/login', authLimiter, async (req, res) => {
 
 // --- GESTION DES HEURES (AJUSTEMENTS MANUELS DU MODE PRO) ---
 app.post('/api/rh/ajustements', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut ajuster les heures." });
     const { id_employe, mois_annee, heures_ajoutees, motif } = req.body;
     try {
+        const empCheck = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, req.user.id_salon]);
+        if (empCheck.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable dans ce salon." });
+
         await pool.query(
             `INSERT INTO heures_ajustements (id_employe, mois_annee, heures_ajoutees, motif) VALUES ($1, $2, $3, $4)`,
             [id_employe, mois_annee, heures_ajoutees, motif]
@@ -757,7 +761,15 @@ app.get('/api/rh/statut-pointages', verifierToken, async (req, res) => {
 app.post('/api/rh/pointage', verifierToken, async (req, res) => {
     const { id_employe, type_action } = req.body; // 'ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'
     const id_salon = req.user.id_salon;
+    const actionsValides = ['ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'];
+    if (!actionsValides.includes(type_action)) return res.status(400).json({ erreur: "Action de pointage invalide." });
+    if (req.user.role === 'employe' && Number(req.user.id_employe) !== Number(id_employe)) {
+        return res.status(403).json({ erreur: "Vous ne pouvez pointer que pour votre propre profil." });
+    }
     try {
+        const empCheck = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        if (empCheck.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable dans ce salon." });
+
         await pool.query(
             `INSERT INTO pointages (id_employe, id_salon, date_jour, type_action) VALUES ($1, $2, CURRENT_DATE, $3)`,
             [id_employe, id_salon, type_action]
@@ -1434,9 +1446,13 @@ app.post('/api/sms/send', verifierToken, async (req, res) => {
     } catch(e) { res.status(500).json({ erreur: "Erreur d'envoi." }); }
 });
 app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé au poste Caisse/Salon ou au Gérant." });
     const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement, pourboire, _id_temp, date_creation } = req.body;
     const id_salon = req.user.id_salon;
     const methode = methode_paiement || 'CARTE';
+    if (isNaN(montant) || parseFloat(montant) < 0 || !Array.isArray(lignes) || lignes.length === 0) {
+        return res.status(400).json({ erreur: "Montant ou panier invalide." });
+    }
     
     // --- SÉCURITÉ ANTI-FRAUDE : VÉRIFICATION DU POINTAGE ---
     // Si la pointeuse est activée dans ce salon, on vérifie le statut du collaborateur
@@ -1577,23 +1593,28 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         await clientDB.query('UPDATE tickets SET hash_ticket = $1 WHERE id_ticket = $2', [newHash, idNouveauTicket]);
 
         if (id_client) {
-            await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1`, [id_client]);
+            const clientCheck = await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1 AND id_salon = $2 RETURNING points_fidelite, tampons_fidelite`, [id_client, id_salon]);
+            if (clientCheck.rowCount === 0) throw new Error("Client introuvable dans ce salon.");
+            const clientFidelite = clientCheck.rows[0];
+
             const configRes = await clientDB.query(`SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1`, [id_salon]);
             
             if (configRes.rowCount > 0) {
                 const config = configRes.rows[0];
                 if (recompense_appliquee) {
                     if (config.fidelite_type === 'POINTS') {
-                        await clientDB.query(`UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1) WHERE id_client = $2`, [config.fidelite_points_seuil, id_client]);
+                        if ((clientFidelite.points_fidelite || 0) < (config.fidelite_points_seuil || 0)) throw new Error("Points de fidélité insuffisants.");
+                        await clientDB.query(`UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1) WHERE id_client = $2 AND id_salon = $3`, [config.fidelite_points_seuil, id_client, id_salon]);
                     } else if (config.fidelite_type === 'TAMPONS') {
-                        await clientDB.query(`UPDATE clients SET tampons_fidelite = GREATEST(0, tampons_fidelite - $1) WHERE id_client = $2`, [config.fidelite_tampons_seuil, id_client]);
+                        if ((clientFidelite.tampons_fidelite || 0) < (config.fidelite_tampons_seuil || 0)) throw new Error("Tampons de fidélité insuffisants.");
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = GREATEST(0, tampons_fidelite - $1) WHERE id_client = $2 AND id_salon = $3`, [config.fidelite_tampons_seuil, id_client, id_salon]);
                     }
                 } else {
                     if (config.fidelite_type === 'POINTS') {
-                        const pointsToAdd = Math.floor(montant);
-                        await clientDB.query(`UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2`, [pointsToAdd, id_client]);
+                        const pointsToAdd = Math.max(0, Math.floor(montant));
+                        await clientDB.query(`UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2 AND id_salon = $3`, [pointsToAdd, id_client, id_salon]);
                     } else if (config.fidelite_type === 'TAMPONS') {
-                        await clientDB.query(`UPDATE clients SET tampons_fidelite = tampons_fidelite + 1 WHERE id_client = $2`, [id_client]);
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = tampons_fidelite + 1 WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
                     }
                 }
             }
@@ -1628,6 +1649,7 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 });
 
 app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant est habilité à annuler un ticket." });
     const id_ticket = req.params.id;
     const id_salon = req.user.id_salon;
     const { motif, lignes_a_annuler } = req.body;
@@ -1725,7 +1747,7 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
                 [idTicketCompensation, ligne.id_article, -ligne.quantite, ligne.prix_unitaire_ttc, -ligne.total_ligne_ttc, id_salon, ligne.nom_article_snapshot, ligne.taux_tva_snapshot]
             );
-            await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2", [ligne.quantite, ligne.id_article]);
+            await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2 AND id_salon = $3", [ligne.quantite, ligne.id_article, id_salon]);
             
             // REMISE EN STOCK DES RECETTES SI PRÉSENTES
             const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [ligne.nom_article_snapshot, id_salon]);
@@ -1856,7 +1878,9 @@ app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => 
 });
 
 app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Accès réservé à la caisse du salon ou au gérant." });
     const { type_mouvement, montant, motif, id_employe } = req.body;
+    if (!['ENTREE', 'SORTIE'].includes(type_mouvement)) return res.status(400).json({ erreur: "Type de mouvement invalide." });
     if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
     if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
     const clientDB = await pool.connect();
@@ -1879,6 +1903,7 @@ app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
 });
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "La clôture Z est réservée au gérant ou au poste Salon." });
     const id_salon = req.user.id_salon;
     const { ferme_par, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
     const clientDB = await pool.connect();
@@ -2830,11 +2855,23 @@ app.get('/api/caisse/tickets/:id/pdf', verifierToken, async (req, res) => {
 
 app.get('/api/clients', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM clients WHERE id_salon = $1 ORDER BY nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur clients."}); }});
 app.post('/api/clients', verifierToken, async (req, res) => { const { prenom, nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (prenom, nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [prenom || '', nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
-app.delete('/api/clients/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }});
+app.delete('/api/clients/:id', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Action non autorisée." });
+    try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }
+});
 
-app.get('/api/employes', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT e.*, EXISTS(SELECT 1 FROM pointages p WHERE p.id_employe = e.id_employe AND p.date_jour = CURRENT_DATE) as a_pointe_aujourdhui FROM employes e WHERE e.id_salon = $1 ORDER BY e.nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }});
+app.get('/api/employes', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT e.id_employe, e.nom, e.role, e.taux_commission_prestation, e.taux_commission_produit, e.photo_url, e.est_gerant, e.type_contrat, e.heures_mensuelles_base, e.id_salon, EXISTS(SELECT 1 FROM pointages p WHERE p.id_employe = e.id_employe AND p.date_jour = CURRENT_DATE) as a_pointe_aujourdhui FROM employes e WHERE e.id_salon = $1 ORDER BY e.nom ASC',
+            [req.user.id_salon]
+        );
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }
+});
 app.post('/api/employes', verifierToken, async (req, res) => { 
-    const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, type_contrat, heures_mensuelles_base } = req.body; 
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut ajouter un employé." });
+    const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, type_contrat, heures_mensuelles_base } = req.body;
     try { 
         if (!code_pin) return res.status(400).json({ erreur: "Le code PIN est obligatoire." });
         if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
@@ -2873,7 +2910,10 @@ app.put('/api/employes/:id', verifierToken, async (req, res) => {
         res.json({message: "Employé modifié"});
     } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
 });
-app.delete('/api/employes/:id', verifierToken, async (req, res) => { try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }});
+app.delete('/api/employes/:id', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut supprimer un employé." });
+    try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }
+});
 
 app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
     if (req.user.role !== 'employe' || parseInt(req.params.id) !== req.user.id_employe) return res.status(403).json({ erreur: "Action non autorisée." });
@@ -2886,7 +2926,8 @@ app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
 app.get('/api/catalogue', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur catalogue."}); }});
 
 app.post('/api/catalogue', verifierToken, async (req, res) => { 
-    const { nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours } = req.body; 
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Modification du catalogue réservée au gérant et au salon." });
+    const { nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours } = req.body;
     try { 
         const typeArticleFormatte = type_article || 'PRESTATION'; 
         const prixFormatte = parseFloat((prix || "0").toString().replace(',', '.')) || 0; 
@@ -2925,9 +2966,13 @@ app.post('/api/catalogue', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }
 });
 
-app.delete('/api/catalogue/:id', verifierToken, async (req, res) => { try { const articleRes = await pool.query('SELECT nom, type_article, prix FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); if (articleRes.rowCount > 0) { await enregistrerJET(req.user.id_salon, 'SUPPRESSION_ARTICLE', { id_article: req.params.id, ...articleRes.rows[0] }); } res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }});
+app.delete('/api/catalogue/:id', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Suppression réservée au gérant et au salon." });
+    try { const articleRes = await pool.query('SELECT nom, type_article, prix FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); if (articleRes.rowCount > 0) { await enregistrerJET(req.user.id_salon, 'SUPPRESSION_ARTICLE', { id_article: req.params.id, ...articleRes.rows[0] }); } res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }
+});
 
 app.put('/api/catalogue/:id/nom', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Modification réservée au gérant et au salon." });
     const nouveauNom = (req.body.nom || '').trim();
     if (!nouveauNom) return res.status(400).json({ erreur: "Le nom ne peut pas être vide." });
     try {
@@ -2993,6 +3038,7 @@ app.get('/api/stocks', verifierToken, async (req, res) => {
 });
 
 app.put('/api/stocks/:id', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Correction du stock réservée au gérant et au salon." });
     const nouveauStock = parseInt(req.body.nouveau_stock);
     if (isNaN(nouveauStock) || nouveauStock < 0) return res.status(400).json({ erreur: "Quantité invalide." });
     try {
@@ -3002,7 +3048,9 @@ app.put('/api/stocks/:id', verifierToken, async (req, res) => {
         res.json({ message: "Stock mis à jour." });
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour du stock." }); }
 });
-app.get('/api/rh', verifierToken, async (req, res) => { const id_salon = req.user.id_salon; try { const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`; const rhResult = await pool.query(rhQuery, [id_salon]); const employesData = await Promise.all(rhResult.rows.map(async (emp) => { const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`; const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]); let historique = histoResult.rows.map(r => parseFloat(r.total_prime)); while(historique.length < 6) historique.unshift(0); if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0]; const avisEmp = await pool.query(`SELECT note, commentaire, prenom, date_creation FROM avis_demandes WHERE id_salon = $2 AND id_employe = $1 AND statut = 'REPONDU' AND note IS NOT NULL ORDER BY date_creation DESC`, [emp.id_employe, id_salon]); const notes = avisEmp.rows.map(a => a.note); const moyenneNote = notes.length > 0 ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : null; return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6), note_moyenne: moyenneNote, nb_avis: notes.length, derniers_avis: avisEmp.rows.slice(0, 3) }; })); res.json(employesData); } catch (erreur) { res.status(500).json({ erreur: "Erreur requête RH." }); }});
+app.get('/api/rh', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès RH réservé au gérant." });
+    const id_salon = req.user.id_salon;
 // =========================================================================
 // --- MODULE RH : CONGÉS ET ARRÊTS MALADIE ---
 // =========================================================================
@@ -3088,13 +3136,13 @@ app.post('/api/rh/absences', verifierToken, verifierPlan(['PREMIUM']), async (re
 
 // 2. Le gérant Valide ou Refuse un congé
 app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider ou refuser une absence." });
     
     const { statut, motif_refus } = req.body;
     try {
         let conflits = [];
         if (statut === 'VALIDE') {
-            const absenceResInfo = await pool.query("SELECT id_employe, TO_CHAR(date_debut, 'YYYY-MM-DD') as date_debut_str, TO_CHAR(date_fin, 'YYYY-MM-DD') as date_fin_str FROM absences_employes WHERE id_absence = $1", [req.params.id]);
+            const absenceResInfo = await pool.query("SELECT id_employe, TO_CHAR(date_debut, 'YYYY-MM-DD') as date_debut_str, TO_CHAR(date_fin, 'YYYY-MM-DD') as date_fin_str FROM absences_employes WHERE id_absence = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
             if (absenceResInfo.rowCount > 0) {
                 const absInfo = absenceResInfo.rows[0];
                 const rdvs = await pool.query(
@@ -3133,12 +3181,16 @@ app.get('/api/rh/absences/:id/justificatif', verifierToken, async (req, res) => 
     try {
         // Seul le gérant ou l'employé concerné peut voir le document
         const absenceRes = await pool.query(
-            'SELECT fichier_cle_r2 FROM absences_employes WHERE id_absence = $1 AND id_salon = $2',
+            'SELECT id_employe, fichier_cle_r2 FROM absences_employes WHERE id_absence = $1 AND id_salon = $2',
             [req.params.id, req.user.id_salon]
         );
 
         if (absenceRes.rowCount === 0 || !absenceRes.rows[0].fichier_cle_r2) {
             return res.status(404).json({ erreur: "Aucun justificatif trouvé." });
+        }
+
+        if (req.user.role !== 'gerant' && (req.user.role !== 'employe' || Number(req.user.id_employe) !== Number(absenceRes.rows[0].id_employe))) {
+            return res.status(403).json({ erreur: "Accès refusé à ce justificatif médical." });
         }
 
         // Génération d'une URL temporaire
