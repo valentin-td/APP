@@ -2123,10 +2123,26 @@ function App() {
       
       const totalReel = calculerTotalCaisseReel();
       
-      const enAttente = await localforage.getItem('offline_tickets') || [];
-      if (enAttente.length > 0) { await syncOfflineTickets(); const reste = await localforage.getItem('offline_tickets') || []; if (reste.length > 0) { setZDialogOuvert(false); return showToast(`${reste.length} ticket(s) hors-ligne à synchroniser avant la clôture.`, "error"); } }
-      
       try {
+          // 1. On sécurise la lecture du stockage local (Contre les blocages de Navigation privée / Iframe)
+          let enAttente = [];
+          try {
+              enAttente = await localforage.getItem('offline_tickets') || [];
+          } catch(storageErr) {
+              console.warn("Stockage local indisponible :", storageErr);
+          }
+
+          if (enAttente.length > 0) { 
+              try { await syncOfflineTickets(); } catch(e) {}
+              let reste = [];
+              try { reste = await localforage.getItem('offline_tickets') || []; } catch(e) {}
+              if (reste.length > 0) { 
+                  setZDialogOuvert(false); 
+                  return showToast(`${reste.length} ticket(s) hors-ligne à synchroniser avant la clôture.`, "error"); 
+              } 
+          }
+          
+          // 2. On exécute la clôture
           const payload = {
               ferme_par: employeNom,
               code_pin: userRole === 'salon' ? zCodePin : undefined,
@@ -2134,6 +2150,7 @@ function App() {
               total_especes_reel: totalReel,
               justification_ecart: justificationEcart
           };
+          
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
           const data = await res.json().catch(() => ({}));
           
@@ -2150,9 +2167,9 @@ function App() {
           setClotureFaiteAujourdhui(true);
           setZEmployeSelect('');
           setZCodePin('');
-      } catch(e) {
+      } catch(e) { 
           if (typeof chargerTout === 'function') chargerTout();
-          showToast(e.message || "Erreur lors de la clôture.", "error");
+          showToast(e.message || "Erreur lors de la clôture.", "error"); 
       }
   };
   // --- Rappel de clôture journalière (bandeau) ---
