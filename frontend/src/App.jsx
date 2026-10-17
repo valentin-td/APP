@@ -2036,6 +2036,7 @@ function App() {
 
   const [zDialogOuvert, setZDialogOuvert] = useState(false);
   const [zEmployeSelect, setZEmployeSelect] = useState('');
+  const [zCodePin, setZCodePin] = useState('');
   
   // Nouveaux états pour la calculatrice de caisse (Blind Close)
   const [compteCaisse, setCompteCaisse] = useState({
@@ -2055,6 +2056,7 @@ function App() {
 
   const demanderZDeCaisse = () => {
       setZEmployeSelect(role === 'gerant' ? 'Gérant' : '');
+      setZCodePin('');
       setCompteCaisse({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
       setFondCaisseMatin('');
       setEcartDetecte(null);
@@ -2065,6 +2067,10 @@ function App() {
   const executerZDeCaisse = async (employeNom) => {
       if(isOffline || !navigator.onLine) { setZDialogOuvert(false); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
       if (!fondCaisseMatin || isNaN(fondCaisseMatin)) return showToast("Le fond de caisse du matin est obligatoire.", "error");
+      if (userRole === 'salon' && configSalon.securite_pin_salon_active !== false) {
+          if (!employeNom) return showToast("Veuillez sélectionner le collaborateur qui clôture la caisse.", "error");
+          if (!zCodePin || zCodePin.trim().length < 4) return showToast("Veuillez saisir votre code PIN personnel pour sceller la clôture.", "error");
+      }
       
       const totalReel = calculerTotalCaisseReel();
       
@@ -2072,14 +2078,20 @@ function App() {
       if (enAttente.length > 0) { await syncOfflineTickets(); const reste = await localforage.getItem('offline_tickets') || []; if (reste.length > 0) { setZDialogOuvert(false); return showToast(`${reste.length} ticket(s) hors-ligne à synchroniser avant la clôture.`, "error"); } }
       
       try {
-          const payload = { ferme_par: employeNom, fond_caisse_matin: parseFloat(fondCaisseMatin), total_especes_reel: totalReel, justification_ecart: justificationEcart };
+          const payload = {
+              ferme_par: employeNom,
+              code_pin: userRole === 'salon' ? zCodePin : undefined,
+              fond_caisse_matin: parseFloat(fondCaisseMatin),
+              total_especes_reel: totalReel,
+              justification_ecart: justificationEcart
+          };
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
           const data = await res.json().catch(() => ({}));
           
           if (!res.ok) {
               if (data.require_justification) {
                   setEcartDetecte(data.ecart);
-                  return; // 🚨 On bloque la fermeture de la modale pour forcer la justification !
+                  return; // On bloque la fermeture de la modale pour forcer la justification
               }
               throw new Error(data.erreur || "Erreur de clôture.");
           }
@@ -2088,6 +2100,7 @@ function App() {
           showToast(data.message, "success");
           setClotureFaiteAujourdhui(true);
           setZEmployeSelect('');
+          setZCodePin('');
       } catch(e) { showToast(e.message || "Erreur lors de la clôture.", "error"); }
   };
   // --- Rappel de clôture journalière (bandeau) ---
