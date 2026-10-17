@@ -2054,6 +2054,47 @@ function App() {
              ((parseInt(compteCaisse.p010)||0) * 0.10) + ((parseInt(compteCaisse.p005)||0) * 0.05) + ((parseInt(compteCaisse.p002)||0) * 0.02) + ((parseInt(compteCaisse.p001)||0) * 0.01);
   };
 
+  const getStatutBlocagePin = (empIdentifier) => {
+      if (!empIdentifier) return { bloque: false, definitif: false, message: null, tentatives: 0 };
+      const emp = (employesListe || []).find(
+          e => String(e.id_employe) === String(empIdentifier) || (e.nom && e.nom.toLowerCase() === String(empIdentifier).toLowerCase())
+      );
+      if (!emp) return { bloque: false, definitif: false, message: null, tentatives: 0 };
+      if (emp.pin_bloque_definitif) {
+          return {
+              bloque: true,
+              definitif: true,
+              tentatives: emp.pin_tentatives_echouees || 9,
+              message: "Accès PIN bloqué définitivement (9 échecs). Déblocage requis par le gérant dans l'espace Équipe."
+          };
+      }
+      if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
+          const min = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
+          return {
+              bloque: true,
+              definitif: false,
+              tentatives: emp.pin_tentatives_echouees || 3,
+              message: `Accès PIN suspendu temporairement (${min} min restante${min > 1 ? 's' : ''}).`
+          };
+      }
+      return { bloque: false, definitif: false, message: null, tentatives: emp.pin_tentatives_echouees || 0 };
+  };
+
+  const debloquerPinEmploye = async (id_employe) => {
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${id_employe}/debloquer-pin`, {
+              method: 'PUT',
+              headers: getAuthHeaders(true)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.erreur || "Impossible de débloquer ce collaborateur.");
+          showToast(data.message || "Code PIN débloqué avec succès", "success");
+          if (typeof chargerTout === 'function') chargerTout();
+      } catch (e) {
+          showToast(e.message, "error");
+      }
+  };
+
   const demanderZDeCaisse = () => {
       setZEmployeSelect(role === 'gerant' ? 'Gérant' : '');
       setZCodePin('');
@@ -2101,7 +2142,10 @@ function App() {
           setClotureFaiteAujourdhui(true);
           setZEmployeSelect('');
           setZCodePin('');
-      } catch(e) { showToast(e.message || "Erreur lors de la clôture.", "error"); }
+      } catch(e) {
+          if (typeof chargerTout === 'function') chargerTout();
+          showToast(e.message || "Erreur lors de la clôture.", "error");
+      }
   };
   // --- Rappel de clôture journalière (bandeau) ---
   const [clotureFaiteAujourdhui, setClotureFaiteAujourdhui] = useState(true);
@@ -5847,34 +5891,50 @@ function App() {
                       <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }}>€</span>
                   </div>
 
-                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
-                      <div style={{ textAlign: 'left', background: 'var(--bg-app)', padding: '14px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
-                          <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Collaborateur à l'ouverture</label>
-                          <select
-                              className="input-fournisseur"
-                              value={reguEmployeId}
-                              onChange={e => setReguEmployeId(e.target.value)}
-                              style={{ marginBottom: '10px' }}
-                          >
-                              <option value="">-- Sélectionnez votre nom --</option>
-                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                          </select>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                              Code PIN personnel
-                          </label>
-                          <input
-                              type="password"
-                              inputMode="numeric"
-                              maxLength="10"
-                              className="input-fournisseur"
-                              placeholder="Saisissez votre code PIN"
-                              value={reguCodePin}
-                              onChange={e => setReguCodePin(e.target.value.replace(/\D/g, ''))}
-                              style={{ margin: 0, letterSpacing: '0.15em', textAlign: 'center', fontWeight: 'bold' }}
-                          />
-                      </div>
-                  )}
+                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
+                      const statutPin = getStatutBlocagePin(reguEmployeId);
+                      return (
+                          <div style={{ textAlign: 'left', background: 'var(--bg-app)', padding: '14px', borderRadius: '12px', border: `1px solid ${statutPin.bloque ? 'var(--color-danger)' : 'var(--border-color)'}`, marginBottom: '20px' }}>
+                              <label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Collaborateur à l'ouverture</label>
+                              <select
+                                  className="input-fournisseur"
+                                  value={reguEmployeId}
+                                  onChange={e => { setReguEmployeId(e.target.value); setReguCodePin(''); }}
+                                  style={{ marginBottom: '12px', width: '100%', boxSizing: 'border-box' }}
+                              >
+                                  <option value="">-- Sélectionnez votre nom --</option>
+                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                              </select>
+                              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                      Code PIN personnel
+                                  </span>
+                                  {statutPin.tentatives > 0 && !statutPin.bloque && (
+                                      <span style={{ fontSize: '10px', color: '#d97706', textTransform: 'none' }}>{statutPin.tentatives} échec(s) enregistré(s)</span>
+                                  )}
+                              </label>
+                              <input
+                                  type="password"
+                                  inputMode="numeric"
+                                  autoComplete="off"
+                                  maxLength="10"
+                                  disabled={statutPin.bloque}
+                                  className="input-fournisseur"
+                                  placeholder={statutPin.bloque ? "Accès verrouillé" : "Saisissez votre code PIN"}
+                                  value={reguCodePin}
+                                  onChange={e => setReguCodePin(e.target.value.replace(/\D/g, ''))}
+                                  style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px', fontSize: 'clamp(14px, 2.5vw, 16px)', letterSpacing: reguCodePin ? '0.2em' : 'normal', textAlign: 'center', fontWeight: '600', opacity: statutPin.bloque ? 0.5 : 1 }}
+                              />
+                              {statutPin.bloque && (
+                                  <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '500', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                                      <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                      <span>{statutPin.message}</span>
+                                  </div>
+                              )}
+                          </div>
+                      );
+                  })()}
 
                   <button 
                       onClick={soumettreRegularisation} 
@@ -6005,23 +6065,39 @@ function App() {
                           </select>
                       </div>
 
-                      {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
-                          <div style={{ marginBottom: '24px' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>
-                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                  Code PIN personnel
-                              </label>
-                              <input
-                                  type="password"
-                                  inputMode="numeric"
-                                  maxLength="10"
-                                  placeholder="Saisissez votre code PIN"
-                                  value={newMouvement.code_pin || ''}
-                                  onChange={(e) => setNewMouvement({ ...newMouvement, code_pin: e.target.value.replace(/\D/g, '') })}
-                                  style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '15px', fontWeight: 'bold', letterSpacing: '0.15em', textAlign: 'center' }}
-                              />
-                          </div>
-                      )}
+                      {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
+                          const statutPinMvt = getStatutBlocagePin(newMouvement.id_employe);
+                          return (
+                              <div style={{ marginBottom: '24px' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                          Code PIN personnel
+                                      </span>
+                                      {statutPinMvt.tentatives > 0 && !statutPinMvt.bloque && (
+                                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#d97706' }}>{statutPinMvt.tentatives} échec(s)</span>
+                                      )}
+                                  </label>
+                                  <input
+                                      type="password"
+                                      inputMode="numeric"
+                                      autoComplete="off"
+                                      maxLength="10"
+                                      disabled={statutPinMvt.bloque}
+                                      placeholder={statutPinMvt.bloque ? "Accès verrouillé" : "Saisissez votre code PIN"}
+                                      value={newMouvement.code_pin || ''}
+                                      onChange={(e) => setNewMouvement({ ...newMouvement, code_pin: e.target.value.replace(/\D/g, '') })}
+                                      style={{ width: '100%', boxSizing: 'border-box', minHeight: '44px', padding: '12px', borderRadius: '12px', border: `1px solid ${statutPinMvt.bloque ? 'var(--color-danger)' : 'var(--border-color)'}`, background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: 'clamp(14px, 2.5vw, 16px)', fontWeight: '600', letterSpacing: newMouvement.code_pin ? '0.2em' : 'normal', textAlign: 'center', opacity: statutPinMvt.bloque ? 0.5 : 1 }}
+                                  />
+                                  {statutPinMvt.bloque && (
+                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '500', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                          <span>{statutPinMvt.message}</span>
+                                      </div>
+                                  )}
+                              </div>
+                          );
+                      })()}
 
                       <button onClick={ajouterMouvementCaisse} className="btn-action" style={{ width: '100%', padding: '14px', borderRadius: '12px', fontSize: '16px' }}>
                           Valider l'opération
@@ -6048,37 +6124,53 @@ function App() {
                   </div>
                   
                   <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
-                      {role === 'salon' && (
-                          <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
-                              <div style={{ display: 'flex', gap: '12px', flexDirection: isMobile ? 'column' : 'row' }}>
-                                  <div style={{ flex: 1 }}>
-                                      <label style={{ display: 'block', marginBottom: '8px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Responsable de la fermeture</label>
-                                      <select className="input-fournisseur" value={zEmployeSelect} onChange={e => setZEmployeSelect(e.target.value)} style={{ margin: 0 }}>
-                                          <option value="">-- Sélectionnez votre nom --</option>
-                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
-                                      </select>
+                      {role === 'salon' && (() => {
+                          const statutPinZ = getStatutBlocagePin(zEmployeSelect);
+                          return (
+                              <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: `1px solid ${statutPinZ.bloque ? 'var(--color-danger)' : 'var(--border-color)'}`, marginBottom: '20px' }}>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                                      <div style={{ flex: '1 1 210px', minWidth: 0 }}>
+                                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Responsable de la fermeture</label>
+                                          <select className="input-fournisseur" value={zEmployeSelect} onChange={e => { setZEmployeSelect(e.target.value); setZCodePin(''); }} style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px' }}>
+                                              <option value="">-- Sélectionnez votre nom --</option>
+                                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
+                                          </select>
+                                      </div>
+                                      {configSalon.securite_pin_salon_active !== false && (
+                                          <div style={{ flex: '1 1 210px', minWidth: 0 }}>
+                                              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                                      Code PIN personnel
+                                                  </span>
+                                                  {statutPinZ.tentatives > 0 && !statutPinZ.bloque && (
+                                                      <span style={{ fontSize: '10px', color: '#d97706', textTransform: 'none' }}>{statutPinZ.tentatives} échec(s)</span>
+                                                  )}
+                                              </label>
+                                              <input
+                                                  type="password"
+                                                  inputMode="numeric"
+                                                  autoComplete="off"
+                                                  maxLength="10"
+                                                  disabled={statutPinZ.bloque}
+                                                  className="input-fournisseur"
+                                                  placeholder={statutPinZ.bloque ? "Accès verrouillé" : "Votre code PIN"}
+                                                  value={zCodePin}
+                                                  onChange={e => setZCodePin(e.target.value.replace(/\D/g, ''))}
+                                                  style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px', fontSize: 'clamp(14px, 2.5vw, 16px)', letterSpacing: zCodePin ? '0.2em' : 'normal', textAlign: 'center', fontWeight: '600', opacity: statutPinZ.bloque ? 0.5 : 1 }}
+                                              />
+                                          </div>
+                                      )}
                                   </div>
-                                  {configSalon.securite_pin_salon_active !== false && (
-                                      <div style={{ flex: 1 }}>
-                                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                              Code PIN personnel
-                                          </label>
-                                          <input
-                                              type="password"
-                                              inputMode="numeric"
-                                              maxLength="10"
-                                              className="input-fournisseur"
-                                              placeholder="Votre code PIN"
-                                              value={zCodePin}
-                                              onChange={e => setZCodePin(e.target.value.replace(/\D/g, ''))}
-                                              style={{ margin: 0, letterSpacing: '0.15em', textAlign: 'center', fontWeight: 'bold' }}
-                                          />
+                                  {statutPinZ.bloque && (
+                                      <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '500', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                          <span>{statutPinZ.message}</span>
                                       </div>
                                   )}
                               </div>
-                          </div>
-                      )}
+                          );
+                      })()}
 
                       <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px dashed var(--border-color)', marginBottom: '24px' }}>
                           <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)', marginBottom: '8px' }}>
