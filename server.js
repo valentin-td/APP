@@ -260,6 +260,7 @@ pool.query(`
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS derniere_verif_stock DATE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pin_salon VARCHAR(255);
     ALTER TABLE configuration_salon ALTER COLUMN pin_salon TYPE VARCHAR(255);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS securite_pin_salon_active BOOLEAN DEFAULT TRUE;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_temp_offline VARCHAR(64);
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS date_synchro_hors_ligne TIMESTAMP;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_id_temp_offline ON tickets (id_salon, id_temp_offline) WHERE id_temp_offline IS NOT NULL;
@@ -1076,20 +1077,23 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville } = req.body;
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, securite_pin_salon_active, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville } = req.body;
     try { 
         const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
-        if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
+        if ((pin_salon !== undefined || securite_pin_salon_active !== undefined) && req.user.role !== 'gerant') {
+            return res.status(403).json({ erreur: "Seul le gérant peut modifier les paramètres de sécurité du salon." });
+        }
         if (pin_salon && isPinWeak(pin_salon)) return res.status(400).json({ erreur: "Le code PIN du salon est trop simple (évitez 0000, 1234...)." });
         
         let finalPinSalon = pin_salon;
         if (pin_salon && !pin_salon.startsWith('$2')) {
             finalPinSalon = await bcrypt.hash(pin_salon, 10);
         }
+        const secPinSalon = securite_pin_salon_active !== undefined ? Boolean(securite_pin_salon_active) : true;
 
         const updateQuery = pin_salon !== undefined
-            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23, mode_suivi_heures = $25, nom_salon = $26, siret = $27, adresse_salon = $28, tva_intra = $29, forme_juridique = $30, capital_social = $31, rcs_ville = $32 WHERE id_salon = $16`
-            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, tva_intra = $28, forme_juridique = $29, capital_social = $30, rcs_ville = $31 WHERE id_salon = $16`; 
+            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23, mode_suivi_heures = $25, nom_salon = $26, siret = $27, adresse_salon = $28, tva_intra = $29, forme_juridique = $30, capital_social = $31, rcs_ville = $32, securite_pin_salon_active = $33 WHERE id_salon = $16`
+            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, tva_intra = $28, forme_juridique = $29, capital_social = $30, rcs_ville = $31, securite_pin_salon_active = $32 WHERE id_salon = $16`; 
             
         const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
         
@@ -1108,6 +1112,7 @@ app.post('/api/settings', verifierToken, async (req, res) => {
         params.push(forme_juridique || null);
         params.push(capital_social || null);
         params.push(rcs_ville || null);
+        params.push(secPinSalon);
         
         await pool.query(updateQuery, params);
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
@@ -2004,36 +2009,88 @@ app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => 
     } catch (e) { res.status(500).json({ erreur: "Erreur lecture mouvements." }); }
 });
 
+async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_operateur, code_pin, action_label }) {
+    if (req.user.role !== 'salon') return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Gérant' };
+    const id_salon = req.user.id_salon;
+    const confRes = await clientDB.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+    const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
+    if (!protectionActive) return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Salon' };
+
+    if (!code_pin || String(code_pin).trim() === '') {
+        const err = new Error(`Code PIN personnel requis pour valider cette opération (${action_label}).`);
+        err.require_pin = true;
+        throw err;
+    }
+
+    let empRes;
+    if (id_employe) {
+        empRes = await clientDB.query('SELECT id_employe, nom, code_pin FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+    } else if (nom_operateur && nom_operateur.trim() !== '') {
+        empRes = await clientDB.query('SELECT id_employe, nom, code_pin FROM employes WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1', [nom_operateur.trim(), id_salon]);
+    } else {
+        const err = new Error("Veuillez sélectionner le collaborateur qui effectue l'opération et saisir son code PIN.");
+        err.require_pin = true;
+        throw err;
+    }
+
+    if (!empRes || empRes.rowCount === 0) {
+        throw new Error("Collaborateur introuvable dans ce salon.");
+    }
+
+    const emp = empRes.rows[0];
+    let pinMatch = false;
+    if (emp.code_pin && emp.code_pin.startsWith('$2')) {
+        pinMatch = await bcrypt.compare(String(code_pin), emp.code_pin);
+    } else {
+        pinMatch = (emp.code_pin === String(code_pin));
+    }
+
+    if (!pinMatch) {
+        await enregistrerJET(id_salon, 'PIN_ACTION_SENSIBLE_ECHOUE', { action: action_label, collaborateur: emp.nom });
+        const err = new Error(`Code PIN incorrect pour ${emp.nom}.`);
+        err.require_pin = true;
+        throw err;
+    }
+
+    return { autorise: true, id_employe: emp.id_employe, nom: emp.nom };
+}
+
 app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "Accès réservé à la caisse du salon ou au gérant." });
-    const { type_mouvement, montant, motif, id_employe, categorie_comptable } = req.body;
+    const { type_mouvement, montant, motif, id_employe, nom_operateur, code_pin, categorie_comptable } = req.body;
     if (!['ENTREE', 'SORTIE'].includes(type_mouvement)) return res.status(400).json({ erreur: "Type de mouvement invalide." });
     if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
     if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
+        const operateurValide = await verifierPinActionSensibleSalon(clientDB, req, {
+            id_employe,
+            nom_operateur,
+            code_pin,
+            action_label: `Mouvement de caisse (${type_mouvement})`
+        });
         const scelle = await enregistrerMouvementCaisseScelle(clientDB, {
             id_salon: req.user.id_salon,
-            id_employe: id_employe || null,
+            id_employe: operateurValide.id_employe || id_employe || null,
             type_mouvement,
             montant: parseFloat(montant),
             motif: motif.trim(),
             categorie_comptable: categorie_comptable || null
         });
-        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, type_mouvement, categorie_comptable: scelle.categorie_comptable, montant: parseFloat(montant), motif: motif.trim(), hash_mouvement: scelle.hash_mouvement }, clientDB);
+        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, operateur: operateurValide.nom, type_mouvement, categorie_comptable: scelle.categorie_comptable, montant: parseFloat(montant), motif: motif.trim(), hash_mouvement: scelle.hash_mouvement }, clientDB);
         await clientDB.query('COMMIT');
         res.status(201).json({ message: "Mouvement de caisse enregistré et scellé." });
     } catch (e) {
         await clientDB.query('ROLLBACK');
-        res.status(400).json({ erreur: e.message || "Erreur lors de la sauvegarde." });
+        res.status(e.require_pin ? 401 : 400).json({ erreur: e.message || "Erreur lors de la sauvegarde.", require_pin: !!e.require_pin });
     } finally { clientDB.release(); }
 });
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "La clôture Z est réservée au gérant ou au poste Salon." });
     const id_salon = req.user.id_salon;
-    const { ferme_par, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
+    const { ferme_par, id_employe, code_pin, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
@@ -2041,6 +2098,14 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         // Verrouillage transactionnel strict NF525 sur le salon
         await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
         await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+
+        const operateurCloture = await verifierPinActionSensibleSalon(clientDB, req, {
+            id_employe,
+            nom_operateur: ferme_par,
+            code_pin,
+            action_label: 'Clôture journalière Z'
+        });
+        const operateurFinalNom = operateurCloture.nom || ferme_par || 'Gérant';
 
         const jourRes = await clientDB.query(
             `SELECT MIN(DATE(t.date_creation)) as jour_non_cloture
@@ -2108,7 +2173,7 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         await clientDB.query(
             `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, numero_z_salon) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant', fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null, nextZ]
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, operateurFinalNom, fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null, nextZ]
         );
 
         await enregistrerJET(id_salon, 'CLOTURE_Z', { numero_z: nextZ, date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
@@ -2199,10 +2264,16 @@ app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => 
 });
 
 app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
-    const { id_cloture, montant_reel, id_employe } = req.body;
+    const { id_cloture, montant_reel, id_employe, nom_operateur, code_pin } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
+        const operateurRegul = await verifierPinActionSensibleSalon(clientDB, req, {
+            id_employe,
+            nom_operateur,
+            code_pin,
+            action_label: 'Régularisation matinale de caisse'
+        });
         const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE FOR UPDATE", [id_cloture, req.user.id_salon]);
         if (clotureRes.rowCount === 0) throw new Error("Clôture automatique introuvable ou déjà régularisée.");
         
