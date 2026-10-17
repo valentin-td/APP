@@ -793,22 +793,30 @@ function App() {
       // On lit le corps de la réponse en premier pour voir s'il y a des détails
       const data = await res.json().catch(() => ({})); 
 
-      // Si c'est un problème de forfait (Upsell), on ne déconnecte SURTOUT PAS
+      // 1. Problème de Forfait (Upsell) -> Affiche la pop-up sans déconnecter
       if (res.status === 403 && data.require_upsell) {
           throw new Error("Forfait insuffisant");
       }
+      
+      // 2. Problème de Droits (Accès Refusé) -> Le token est valide, mais le rôle (Salon/Employé) ne permet pas d'accéder à cette ressource.
+      // Il ne faut surtout PAS déconnecter l'utilisateur. On rejette l'erreur silencieusement.
+      if (res.status === 403 && !data.require_upsell) {
+          throw new Error(data.erreur || "Accès refusé");
+      }
 
-      // Si c'est un vrai problème d'authentification, là on déconnecte
-      if (res.status === 401 || (res.status === 403 && !data.require_upsell)) { 
+      // 3. Problème d'Authentification (Token expiré, invalide, ou manquant) -> Là on déconnecte !
+      if (res.status === 401) { 
           seDeconnecter(); 
           throw new Error("Session expirée"); 
       } 
       
+      // 4. Problème de Paiement Stripe
       if (res.status === 402) { 
           setIsAbonnementInactif(true); 
           throw new Error("Abonnement inactif"); 
       } 
       
+      // Toute autre erreur classique (400, 404, 500)
       if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); 
       return data; 
   };
