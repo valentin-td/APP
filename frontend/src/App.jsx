@@ -2112,6 +2112,8 @@ function App() {
   // --- Garde-Fou : Régularisation Matinale (Blind Close) ---
   const [reguCloture, setReguCloture] = useState(null);
   const [reguMontant, setReguMontant] = useState('');
+  const [reguEmployeId, setReguEmployeId] = useState('');
+  const [reguCodePin, setReguCodePin] = useState('');
 
   const verifierRegularisationMatinale = async () => {
       if (!token) return;
@@ -2128,11 +2130,17 @@ function App() {
 
   const soumettreRegularisation = async () => {
       if (!reguMontant || isNaN(reguMontant)) return showToast("Veuillez saisir le montant réel.", "error");
+      const currentRole = decodeToken(token)?.role;
+      if (currentRole === 'salon' && configSalon.securite_pin_salon_active !== false) {
+          if (!reguEmployeId) return showToast("Veuillez sélectionner le collaborateur qui ouvre la caisse.", "error");
+          if (!reguCodePin || reguCodePin.trim().length < 4) return showToast("Veuillez saisir votre code PIN personnel.", "error");
+      }
       try {
           const payload = { 
               id_cloture: reguCloture.id_cloture, 
               montant_reel: parseFloat(reguMontant), 
-              id_employe: decodeToken(token)?.role === 'employe' ? decodeToken(token).id_employe : null 
+              id_employe: currentRole === 'employe' ? decodeToken(token).id_employe : (reguEmployeId || null),
+              code_pin: currentRole === 'salon' ? reguCodePin : undefined
           };
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/regulariser', {
               method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload)
@@ -2141,6 +2149,8 @@ function App() {
           showToast("Caisse ouverte et régularisée !", "success");
           setReguCloture(null);
           setReguMontant('');
+          setReguEmployeId('');
+          setReguCodePin('');
           if (typeof chargerMouvementsCaisse === 'function') chargerMouvementsCaisse();
       } catch (e) { showToast(e.message, "error"); }
   };
@@ -5815,17 +5825,17 @@ function App() {
       {/* MODALE GARDE-FOU (RÉGULARISATION MATINALE OBLIGATOIRE) */}
       {reguCloture && (
           <div className="modal-overlay" style={{ zIndex: 999999, background: 'var(--bg-app)' }}>
-              <div className="modal-content" style={{ maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
+              <div className="modal-content" style={{ maxWidth: '420px', textAlign: 'center', padding: '32px' }}>
                   <div style={{ color: 'var(--color-info)', display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
                       <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                   </div>
                   <h2 style={{ margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px' }}>Ouverture de Caisse</h2>
-                  <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5' }}>
+                  <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: '1.5' }}>
                       La caisse a été fermée automatiquement hier soir par le système avec un solde théorique estimé à <strong>{parseFloat(reguCloture.total_especes_theorique).toFixed(2)} €</strong>.<br/><br/>
                       Quel est votre <strong>Fond de Caisse Réel</strong> (espèces physiquement présentes) ce matin ?
                   </p>
                   
-                  <div style={{ position: 'relative', marginBottom: '24px' }}>
+                  <div style={{ position: 'relative', marginBottom: '16px' }}>
                       <input 
                           type="number" 
                           placeholder="Ex: 150.00" 
@@ -5837,9 +5847,38 @@ function App() {
                       <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }}>€</span>
                   </div>
 
+                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
+                      <div style={{ textAlign: 'left', background: 'var(--bg-app)', padding: '14px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
+                          <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Collaborateur à l'ouverture</label>
+                          <select
+                              className="input-fournisseur"
+                              value={reguEmployeId}
+                              onChange={e => setReguEmployeId(e.target.value)}
+                              style={{ marginBottom: '10px' }}
+                          >
+                              <option value="">-- Sélectionnez votre nom --</option>
+                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                          </select>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                              Code PIN personnel
+                          </label>
+                          <input
+                              type="password"
+                              inputMode="numeric"
+                              maxLength="10"
+                              className="input-fournisseur"
+                              placeholder="Saisissez votre code PIN"
+                              value={reguCodePin}
+                              onChange={e => setReguCodePin(e.target.value.replace(/\D/g, ''))}
+                              style={{ margin: 0, letterSpacing: '0.15em', textAlign: 'center', fontWeight: 'bold' }}
+                          />
+                      </div>
+                  )}
+
                   <button 
                       onClick={soumettreRegularisation} 
-                      disabled={!reguMontant} 
+                      disabled={!reguMontant || (role === 'salon' && configSalon.securite_pin_salon_active !== false && (!reguEmployeId || reguCodePin.length < 4))} 
                       className="btn-action" 
                       style={{ width: '100%', padding: '16px', fontSize: '16px' }}
                   >
@@ -5855,7 +5894,7 @@ function App() {
               <div className="modal-content" style={{ maxWidth: '400px', padding: 0, overflow: 'hidden' }}>
                   <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)' }}>
                       <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Mouvement de Caisse</h3>
-                      <button onClick={() => { setShowMouvementModal(false); setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: ''}); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                      <button onClick={() => { setShowMouvementModal(false); setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: '', code_pin: ''}); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
                   </div>
@@ -5949,21 +5988,40 @@ function App() {
                                   onClick={() => setNewMouvement({ ...newMouvement, motif: "Achat fournitures (Café, etc.)" })}
                                   style={{
                                       fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
-                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
+                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '5px'
                                   }}
                               >
-                                  ☕ Achats / Frais
+                                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                                  Achats / Frais
                               </span>
                           </div>
                       </div>
 
-                      <div style={{ marginBottom: '24px' }}>
+                      <div style={{ marginBottom: role === 'salon' && configSalon.securite_pin_salon_active !== false ? '14px' : '24px' }}>
                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Collaborateur responsable</label>
                           <select value={newMouvement.id_employe} onChange={(e) => setNewMouvement({...newMouvement, id_employe: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
-                              <option value="">Moi-même (Gérant)</option>
+                              <option value="">{role === 'salon' ? '-- Sélectionnez votre nom --' : 'Moi-même (Gérant)'}</option>
                               {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                           </select>
                       </div>
+
+                      {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
+                          <div style={{ marginBottom: '24px' }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                  Code PIN personnel
+                              </label>
+                              <input
+                                  type="password"
+                                  inputMode="numeric"
+                                  maxLength="10"
+                                  placeholder="Saisissez votre code PIN"
+                                  value={newMouvement.code_pin || ''}
+                                  onChange={(e) => setNewMouvement({ ...newMouvement, code_pin: e.target.value.replace(/\D/g, '') })}
+                                  style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '15px', fontWeight: 'bold', letterSpacing: '0.15em', textAlign: 'center' }}
+                              />
+                          </div>
+                      )}
 
                       <button onClick={ajouterMouvementCaisse} className="btn-action" style={{ width: '100%', padding: '14px', borderRadius: '12px', fontSize: '16px' }}>
                           Valider l'opération
@@ -5984,20 +6042,41 @@ function App() {
                               <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Comptage physique obligatoire (Loi NF525)</span>
                           </div>
                       </div>
-                      <button onClick={() => { setZDialogOuvert(false); setZEmployeSelect(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                      <button onClick={() => { setZDialogOuvert(false); setZEmployeSelect(''); setZCodePin(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
                   </div>
                   
                   <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
                       {role === 'salon' && (
-                          <div style={{ marginBottom: '24px' }}>
-                              <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Responsable de la fermeture</label>
-                              <select className="input-fournisseur" value={zEmployeSelect} onChange={e => setZEmployeSelect(e.target.value)} style={{ margin: 0 }}>
-                                  <option value="">-- Sélectionnez votre nom --</option>
-                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
-                                  <option value="Gérant">Le Gérant</option>
-                              </select>
+                          <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
+                              <div style={{ display: 'flex', gap: '12px', flexDirection: isMobile ? 'column' : 'row' }}>
+                                  <div style={{ flex: 1 }}>
+                                      <label style={{ display: 'block', marginBottom: '8px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Responsable de la fermeture</label>
+                                      <select className="input-fournisseur" value={zEmployeSelect} onChange={e => setZEmployeSelect(e.target.value)} style={{ margin: 0 }}>
+                                          <option value="">-- Sélectionnez votre nom --</option>
+                                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
+                                      </select>
+                                  </div>
+                                  {configSalon.securite_pin_salon_active !== false && (
+                                      <div style={{ flex: 1 }}>
+                                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                              Code PIN personnel
+                                          </label>
+                                          <input
+                                              type="password"
+                                              inputMode="numeric"
+                                              maxLength="10"
+                                              className="input-fournisseur"
+                                              placeholder="Votre code PIN"
+                                              value={zCodePin}
+                                              onChange={e => setZCodePin(e.target.value.replace(/\D/g, ''))}
+                                              style={{ margin: 0, letterSpacing: '0.15em', textAlign: 'center', fontWeight: 'bold' }}
+                                          />
+                                      </div>
+                                  )}
+                              </div>
                           </div>
                       )}
 
@@ -6055,8 +6134,9 @@ function App() {
                       
                       {ecartDetecte !== null && (
                           <div style={{ background: 'var(--bg-danger)', padding: '16px', borderRadius: '12px', border: '1px solid var(--color-danger)', marginBottom: '16px', textAlign: 'left', animation: 'fadeIn 0.3s ease' }}>
-                              <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold', color: 'var(--color-danger)' }}>
-                                  ⚠️ Écart de caisse détecté : {ecartDetecte > 0 ? '+' : ''}{ecartDetecte.toFixed(2)} €
+                              <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                  Écart de caisse détecté : {ecartDetecte > 0 ? '+' : ''}{ecartDetecte.toFixed(2)} €
                               </p>
                               <label style={{ display: 'block', fontSize: '12px', color: 'var(--color-danger)', marginBottom: '8px' }}>Pour valider la clôture NF525, une justification est obligatoire :</label>
                               <textarea 
@@ -6072,7 +6152,7 @@ function App() {
 
                       <button 
                           onClick={() => executerZDeCaisse(zEmployeSelect)} 
-                          disabled={!zEmployeSelect || !fondCaisseMatin || (ecartDetecte !== null && !justificationEcart.trim())} 
+                          disabled={!zEmployeSelect || !fondCaisseMatin || (role === 'salon' && configSalon.securite_pin_salon_active !== false && zCodePin.length < 4) || (ecartDetecte !== null && !justificationEcart.trim())} 
                           className="btn-action" 
                           style={{ width: '100%', padding: '16px', fontSize: '16px', background: (ecartDetecte !== null && !justificationEcart.trim()) ? 'var(--text-muted)' : (ecartDetecte !== null ? 'var(--color-danger)' : 'var(--text-main)') }}
                       >
