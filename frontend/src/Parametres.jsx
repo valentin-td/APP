@@ -25,6 +25,8 @@ const ICONS = {
   file: ico(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 13"/></>),
   shield: ico(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></>),
   link: ico(<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></>),
+  lock: ico(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>),
+  key: ico(<><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></>),
   logout: ico(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>),
   back: ico(<><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>),
   chevron: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
@@ -33,6 +35,7 @@ const ICONS = {
 
 const TITRES = {
   identite: 'Identité & Légal (NF525)',
+  securite: 'Sécurité & Codes PIN',
   fidelite: 'Programme de fidélité',
   sms: 'Fidélisation (SMS Auto)',
   horaires: "Horaires de l'agenda",
@@ -71,6 +74,7 @@ export default function Parametres({
     ] },
     { titre: 'Salon', lignes: [
       { id: 'identite', icone: ICONS.shield, label: 'Identité & Légal', valeur: statut(configSalon.siret) },
+      { id: 'securite', icone: ICONS.lock, label: 'Sécurité', valeur: configSalon.securite_pin_salon_active !== false ? 'Activée' : 'Désactivée' },
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
       { id: 'alertes', icone: ICONS.bell, label: 'Alertes urgences', valeur: statut(configSalon.alertes_sms_actives, 'Activées', 'Désactivées') },
     ] },
@@ -316,6 +320,84 @@ const groupesBas = [
                   </div>
         {carteSauvegarde}
       </>);
+      case 'securite': {
+          const pinSensibleActif = configSalon.securite_pin_salon_active !== false;
+          const actionsProtegees = [
+              { titre: 'Clôture journalière (Z de caisse)', desc: 'Authentifie formellement le collaborateur qui compte les espèces et scelle le Z (champ opérateur NF525).', icone: ICONS.shield },
+              { titre: 'Mouvements du tiroir-caisse & Régularisations', desc: 'Demande le code PIN personnel lors des apports de monnaie, retraits d\'espèces ou régularisations matinales.', icone: ICONS.card },
+              { titre: 'Pointeuse numérique & Présence', desc: 'Empêche un collaborateur de pointer une entrée, une pause ou une sortie à la place d\'un collègue.', icone: ICONS.person },
+          ];
+          return (<>
+              <div className="carte scan-carte">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ width: '42px', height: '42px', minWidth: '42px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)' }}>
+                              <span style={{ width: '20px', height: '20px', display: 'flex' }}>{ICONS.lock}</span>
+                          </div>
+                          <div>
+                              <h3 style={{ margin: '0 0 2px 0', fontSize: '15px', color: 'var(--text-main)', fontWeight: '600' }}>Code PIN sur les actions sensibles</h3>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Appliqué uniquement sur l'interface partagée « Salon »</span>
+                          </div>
+                      </div>
+                      <button
+                          type="button"
+                          role="switch"
+                          aria-checked={pinSensibleActif}
+                          onClick={() => setConfigSalon({ ...configSalon, securite_pin_salon_active: !pinSensibleActif })}
+                          style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                      >
+                          <span className={`st-switch${pinSensibleActif ? ' on' : ''}`}></span>
+                      </button>
+                  </div>
+
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: '0 0 18px 0' }}>
+                      Lorsque cette protection est activée, chaque collaborateur utilisant la tablette commune du salon doit saisir son code PIN personnel pour valider une opération critique. Votre session « Gérant » reste exemptée de code PIN.
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', opacity: pinSensibleActif ? 1 : 0.55, transition: 'opacity 0.2s ease' }}>
+                      {actionsProtegees.map((act, idx) => (
+                          <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '10px' }}>
+                              <span style={{ width: '18px', height: '18px', minWidth: '18px', color: 'var(--text-main)', marginTop: '2px', display: 'flex' }}>{act.icone}</span>
+                              <div style={{ flex: 1 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '2px' }}>
+                                      <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-main)' }}>{act.titre}</span>
+                                      <span style={{ fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '2px 7px', borderRadius: '6px', background: pinSensibleActif ? 'var(--bg-hover, rgba(0,0,0,0.06))' : 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
+                                          {pinSensibleActif ? 'PIN requis' : 'Libre'}
+                                      </span>
+                                  </div>
+                                  <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', lineHeight: '1.4', display: 'block' }}>{act.desc}</span>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+
+              <div className="carte scan-carte" style={{ marginTop: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                      <div style={{ width: '38px', height: '38px', minWidth: '38px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)' }}>
+                          <span style={{ width: '18px', height: '18px', display: 'flex' }}>{ICONS.key}</span>
+                      </div>
+                      <div>
+                          <h4 style={{ fontSize: '14px', color: 'var(--text-main)', margin: '0 0 2px 0', fontWeight: '600' }}>Code PIN d'ouverture du poste « Salon »</h4>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Connexion initiale à la tablette d'accueil partagée</span>
+                      </div>
+                  </div>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '12px', lineHeight: '1.4' }}>
+                      Ce code PIN permet d'ouvrir la session commune du salon le matin (Caisse, Stock, Agenda, Académie, Messagerie, Clôture). Laissez ce champ vide si vous ne souhaitez pas modifier le code actuel.
+                  </span>
+                  <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength="10"
+                      className="input-fournisseur"
+                      placeholder="Nouveau code PIN du poste Salon (ex: 2580)"
+                      value={configSalon.pin_salon || ''}
+                      onChange={e => setConfigSalon({ ...configSalon, pin_salon: e.target.value.replace(/\D/g, '') })}
+                  />
+              </div>
+              {carteSauvegarde}
+          </>);
+      }
       case 'horaires': return (<>
                   <div className="carte scan-carte">
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
@@ -330,13 +412,6 @@ const groupesBas = [
                       </div>
                     </div>
                   </div>
-                  {role === 'gerant' && (
-                      <div className="carte scan-carte">
-                          <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 8px 0'}}>Accès "Salon" (poste partagé)</h4>
-                          <span style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '12px'}}>Ce code PIN permet de se connecter au poste d'accueil du salon (Caisse, Stock, Agenda, Académie, Messagerie, Clôture).</span>
-                          <input type="text" inputMode="numeric" maxLength="10" className="input-fournisseur" placeholder="Code PIN du salon" value={configSalon.pin_salon || ''} onChange={e => setConfigSalon({...configSalon, pin_salon: e.target.value.replace(/\D/g, '')})} />
-                      </div>
-                  )}
         {carteSauvegarde}
       </>);
       case 'alertes': return (<>
@@ -347,7 +422,10 @@ const groupesBas = [
                     
                     <div style={{borderBottom: '1px solid var(--border-color)', margin: '0 -24px 24px -24px'}}></div>
                     
-                    <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: '0 0 16px 0'}}>📱 Alertes SMS (Secours)</h4>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 16px 0'}}>
+                        <span style={{width: '16px', height: '16px', display: 'flex', color: 'var(--text-main)'}}>{ICONS.sms}</span>
+                        <h4 style={{fontSize: '13px', color: 'var(--text-main)', margin: 0}}>Alertes SMS (Secours)</h4>
+                    </div>
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Recevez un SMS si une tâche de votre Centre d'Action arrive à expiration.</span>
                     
                     <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--bg-app)', padding: '16px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)'}}>
