@@ -115,6 +115,26 @@ const groupesBas = [
       )}
     </div>
   );
+ const telechargerDossierNF525 = async () => {
+    try {
+        const response = await fetch('/api/admin/dossier-technique-nf525/pdf', {
+            method: 'GET',
+            credentials: 'include',
+        });
+        if (!response.ok) throw new Error("Erreur lors de la génération du Dossier Technique NF525.");
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Dossier_Technique_Attestation_NF525_STACK.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (err) {
+        alert(err.message);
+    }
+  };
 
   const renderSection = (id) => {
     switch (id) {
