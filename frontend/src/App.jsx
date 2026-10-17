@@ -246,6 +246,7 @@ function App() {
       });
   };
 
+
   // 2. Vérification réseau automatique (déclenchée dès que le 4ème chiffre est tapé)
   useEffect(() => {
       if (pointeuse.open && pointeuse.step === 2 && pointeuse.pin.length === 4) {
@@ -254,9 +255,18 @@ function App() {
                   const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ id_salon: decodeToken(token)?.id_salon, nom_employe: pointeuse.employe.nom, code_pin: pointeuse.pin })
+                      body: JSON.stringify({
+                          id_salon: decodeToken(token)?.id_salon,
+                          id_employe: pointeuse.employe.id_employe,
+                          nom_employe: pointeuse.employe.nom,
+                          code_pin: pointeuse.pin,
+                          is_pointeuse: true
+                      })
                   });
-                  if (!resAuth.ok) throw new Error("Code PIN incorrect");
+                  const dataAuth = await resAuth.json().catch(() => ({}));
+                  if (!resAuth.ok) {
+                      throw new Error(dataAuth.erreur || "Code PIN incorrect");
+                  }
                   
                   // PIN validé : on bloque temporairement les boutons
                   setButtonsDisabled(true);
@@ -270,7 +280,8 @@ function App() {
                   }, 300);
                   
               } catch (e) {
-                  showToast("Code PIN incorrect", "error");
+                  if (typeof chargerTout === 'function') chargerTout();
+                  showToast(e.message || "Code PIN incorrect", "error");
                   setPointeuse(prev => ({ ...prev, pin: '' })); // On efface pour recommencer
               }
           };
@@ -2104,7 +2115,8 @@ function App() {
   };
 
   const demanderZDeCaisse = () => {
-      setZEmployeSelect(role === 'gerant' ? 'Gérant' : '');
+      const currentRole = decodeToken(token)?.role || userRole;
+      setZEmployeSelect(currentRole === 'gerant' ? 'Gérant' : '');
       setZCodePin('');
       setCompteCaisse({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
       setFondCaisseMatin('');
@@ -2142,9 +2154,11 @@ function App() {
               } 
           }
           
-          // 2. On exécute la clôture
+          // 2. On exécute la clôture (en passant l'id_employe exact pour éviter toute ambiguïté sur le nom)
+          const empObj = (employesListe || []).find(e => e.nom === employeNom || String(e.id_employe) === String(employeNom));
           const payload = {
-              ferme_par: employeNom,
+              ferme_par: empObj ? empObj.nom : (employeNom || 'Gérant'),
+              id_employe: empObj ? empObj.id_employe : undefined,
               code_pin: userRole === 'salon' ? zCodePin : undefined,
               fond_caisse_matin: parseFloat(fondCaisseMatin),
               total_especes_reel: totalReel,
@@ -6268,8 +6282,8 @@ function App() {
                       )}
 
                       <button 
-                          onClick={() => executerZDeCaisse(zEmployeSelect)} 
-                          disabled={!zEmployeSelect || !fondCaisseMatin || (role === 'salon' && configSalon.securite_pin_salon_active !== false && zCodePin.length < 4) || (ecartDetecte !== null && !justificationEcart.trim())} 
+                          onClick={() => executerZDeCaisse(role === 'gerant' ? 'Gérant' : zEmployeSelect)} 
+                          disabled={(role === 'salon' && !zEmployeSelect) || fondCaisseMatin === '' || (role === 'salon' && configSalon.securite_pin_salon_active !== false && zCodePin.length < 4) || (ecartDetecte !== null && !justificationEcart.trim())} 
                           className="btn-action" 
                           style={{ width: '100%', padding: '16px', fontSize: '16px', background: (ecartDetecte !== null && !justificationEcart.trim()) ? 'var(--text-muted)' : (ecartDetecte !== null ? 'var(--color-danger)' : 'var(--text-main)') }}
                       >
