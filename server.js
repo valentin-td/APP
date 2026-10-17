@@ -6012,6 +6012,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                     {text: fMnt(e.total_prime), w: 58, align: 'right', size: 8}
                 ]);
             }
+        });
         
         // Calcul et affichage du CA non attribué (Tickets sans employé ou employé supprimé)
         const caNonAttribue = totalHT - totalCAEmployes;
