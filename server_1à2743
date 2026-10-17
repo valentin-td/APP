@@ -1,0 +1,2743 @@
+console.log("Étape 1 : Démarrage du script...");
+require('dotenv').config();
+
+console.log("Étape 2 : Chargement des modules...");
+const express = require('express');
+const rateLimit = require('express-rate-limit');
+const cors = require('cors');   
+const { Pool } = require('pg'); 
+const PDFDocument = require('pdfkit'); 
+const nodemailer = require('nodemailer');
+const { ImapFlow } = require('imapflow');
+const simpleParser = require('mailparser').simpleParser;
+const cron = require('node-cron');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const legal = require('./legal');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const OpenAI = require('openai');
+const webpush = require('web-push');
+const pdfParse = require('pdf-parse');
+const Sentry = require('@sentry/node');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+
+// Initialisation du client Cloudflare R2
+const s3Client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.net`,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+    forcePathStyle: true // INDISPENSABLE POUR CLOUDFLARE R2
+});
+
+if (process.env.SENTRY_DSN) {
+    Sentry.init({
+        dsn: process.env.SENTRY_DSN,
+        environment: process.env.NODE_ENV || 'production',
+        tracesSampleRate: 0.1,
+    });
+    console.log("Sentry (monitoring d'erreurs) activé.");
+} else {
+    console.log("SENTRY_DSN absent : monitoring d'erreurs désactivé.");
+}
+
+process.on('uncaughtException', (e) => { console.error('[CRASH] Exception non interceptée :', e); if (process.env.SENTRY_DSN) Sentry.captureException(e); });
+process.on('unhandledRejection', (e) => { console.error('[CRASH] Promesse rejetée non interceptée :', e); if (process.env.SENTRY_DSN) Sentry.captureException(e); });
+
+const signalerErreur = (e, contexte) => { console.error(`[${contexte}]`, e); if (process.env.SENTRY_DSN) Sentry.captureException(e, { tags: { contexte } }); };
+
+let vapidPublicKey = "";
+let vapidPrivateKey = "";
+
+const groq = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: 'https://api.groq.com/openai/v1',
+});
+
+const http = require('http');
+const { Server } = require('socket.io');
+
+// 🚨 SÉCURITÉ : Vérification stricte des variables d'environnement cryptographiques
+if (!process.env.ENCRYPTION_SECRET && !process.env.JWT_SECRET) {
+    console.error("🚨 ERREUR CRITIQUE FATALE : Les variables d'environnement ENCRYPTION_SECRET ou JWT_SECRET sont manquantes.");
+    console.error("Le serveur refuse de démarrer car le chiffrement serait compromis.");
+    process.exit(1); // Force l'arrêt immédiat de l'application
+}
+
+const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET, 'salt', 32);
+const ALGORITHM = 'aes-256-cbc';
+
+function chiffrer(text) {
+    if (!text) return text;
+    try {
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return iv.toString('hex') + ':' + encrypted;
+    } catch (e) { return text; }
+}
+
+function dechiffrer(text) {
+    if (!text || !text.includes(':')) return text; 
+    try {
+        const textParts = text.split(':');
+        const iv = Buffer.from(textParts.shift(), 'hex');
+        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+        const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) { return text; }
+}
+
+function isPinWeak(pin) {
+    if (!pin) return false;
+    const strPin = String(pin);
+    const repeating = /^(\d)\1+$/.test(strPin);          // Ex: 0000, 1111, 22222...
+    const sequentialUp = '0123456789'.includes(strPin);  // Ex: 1234, 4567, 0123...
+    const sequentialDown = '9876543210'.includes(strPin);// Ex: 4321, 9876, 3210...
+    return repeating || sequentialUp || sequentialDown;
+}
+
+console.log("Étape 3 : Configuration d'Express et WebSockets...");
+const app = express();
+
+// 🚨 SÉCURITÉ : Restriction stricte des origines + Autorisation des Cookies (credentials)
+const corsOptions = {
+    origin: ['https://app-salon-caiss.onrender.com', 'http://localhost:5173', 'http://localhost:3000'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature'],
+    credentials: true
+};
+app.use(cors(corsOptions));
+
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
+    res.json({ message: "Déconnecté" });
+});
+
+// Générateur de token public (sans signature) exclusif à l'interface React
+function generateUIToken(payload) {
+    return Buffer.from(JSON.stringify({alg: "none"})).toString('base64url') + "." + 
+           Buffer.from(JSON.stringify(payload)).toString('base64url') + ".";
+}
+
+const server = http.createServer(app);
+const io = new Server(server, { cors: corsOptions });
+
+io.on('connection', (socket) => {
+    socket.on('rejoindreSalon', (id_salon) => {
+        const cookieHeader = socket.request.headers.cookie;
+        let token = null;
+        if (cookieHeader) {
+            const cookies = cookieHeader.split(';').map(c => c.trim());
+            const tokenCookie = cookies.find(c => c.startsWith('token='));
+            if (tokenCookie) token = tokenCookie.split('=')[1];
+        }
+        if (!token && socket.handshake.auth && socket.handshake.auth.token) {
+            token = socket.handshake.auth.token;
+        }
+        if (!token && socket.request.headers.authorization) {
+            token = socket.request.headers.authorization.split(' ')[1];
+        }
+        if (!token) return;
+        try {
+            const user = jwt.verify(token, process.env.JWT_SECRET);
+            if (String(user.id_salon) !== String(id_salon)) return;
+            for (const room of socket.rooms) {
+                if (room !== socket.id) socket.leave(room);
+            }
+            socket.data.user = user;
+            const salonRoom = String(user.id_salon);
+            socket.join(salonRoom);
+            if (user.role === 'gerant') socket.join(`${salonRoom}_gerant`);
+            else if (user.role === 'salon') socket.join(`${salonRoom}_salon`);
+            else if (user.role === 'employe' && user.id_employe) socket.join(`${salonRoom}_emp_${user.id_employe}`);
+        } catch (e) { /* ignoré silencieusement */ }
+    });
+});
+
+const abonnesSSE = new Map();
+
+function envoyerEvenementSSE(id_salon, nomEvenement, data = {}) {
+    const room = id_salon.toString();
+    const clients = abonnesSSE.get(room);
+    if (!clients || clients.size === 0) return;
+    const payload = `event: ${nomEvenement}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of clients) res.write(payload);
+}
+
+app.get('/api/events/:id_salon', (req, res, next) => {
+    if (!req.headers.authorization && req.query.token) {
+        req.headers.authorization = `Bearer ${req.query.token}`;
+    }
+    next();
+}, verifierToken, (req, res) => {
+    if (String(req.user.id_salon) !== String(req.params.id_salon) || req.user.role !== 'gerant') {
+        return res.status(403).end();
+    }
+    
+    const room = req.params.id_salon;
+    req.setTimeout(0); res.socket.setTimeout(0); res.socket.setNoDelay(true);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+
+    if (!abonnesSSE.has(room)) abonnesSSE.set(room, new Set());
+    abonnesSSE.get(room).add(res);
+    res.write(`event: connected\ndata: {}\n\n`);
+
+    const heartbeat = setInterval(() => { res.write(`event: heartbeat\ndata: {}\n\n`); }, 15000);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        abonnesSSE.get(room)?.delete(res);
+    });
+});
+
+app.use((req, res, next) => {
+  if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { next(); } 
+  else { express.json({ limit: '10mb' })(req, res, next); }
+});
+
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT
+});
+
+pool.query(`
+    CREATE TABLE IF NOT EXISTS ia_taches_attente (id_tache SERIAL PRIMARY KEY, id_salon INT, type_tache VARCHAR(50), donnees JSONB, statut VARCHAR(20) DEFAULT 'ATTENTE', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS taches_actions (id_tache SERIAL PRIMARY KEY, id_salon INT, titre VARCHAR(255), description TEXT, date_echeance DATE, statut VARCHAR(20) DEFAULT 'A_FAIRE', source VARCHAR(20) DEFAULT 'MANUEL', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS avis_demandes (id_demande SERIAL PRIMARY KEY, id_salon INT, telephone VARCHAR(30), prenom VARCHAR(100), token VARCHAR(64) UNIQUE, id_rdv INT, statut VARCHAR(20) DEFAULT 'EN_ATTENTE', note INT, commentaire TEXT, date_prevue TIMESTAMP DEFAULT NOW(), date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE avis_demandes ADD COLUMN IF NOT EXISTS id_employe INT;
+    ALTER TABLE taches_actions ADD COLUMN IF NOT EXISTS donnees JSONB;
+    CREATE TABLE IF NOT EXISTS sms_opt_out (id_salon INT, telephone VARCHAR(20), date_creation TIMESTAMP DEFAULT NOW(), PRIMARY KEY (id_salon, telephone));
+    CREATE TABLE IF NOT EXISTS protocoles (id_protocole SERIAL PRIMARY KEY, id_salon INT, nom_prestation VARCHAR(255), description TEXT, photo_url TEXT, delai_livraison_jours INT DEFAULT 3, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS etapes JSONB DEFAULT '[]';
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS medias JSONB DEFAULT '{}';
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS delai_livraison_jours INT DEFAULT 3;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
+    ALTER TABLE protocoles ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
+    CREATE TABLE IF NOT EXISTS recettes_articles (id_recette SERIAL PRIMARY KEY, id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE, id_article INT, quantite_necessaire NUMERIC(10,2) DEFAULT 1);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS date_naissance DATE;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS points_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS tampons_fidelite INT DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS derniere_visite DATE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_type VARCHAR(20) DEFAULT 'NONE';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_points_seuil INT DEFAULT 100;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_points_valeur VARCHAR(50) DEFAULT '10';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_tampons_seuil INT DEFAULT 10;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_recompense_type VARCHAR(20) DEFAULT 'MONTANT';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_recompense_valeur VARCHAR(50) DEFAULT '10';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_delai_sms INT DEFAULT 60;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recompense_utilisee BOOLEAN DEFAULT FALSE;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS methode_paiement VARCHAR(50) DEFAULT 'CARTE';
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS statut VARCHAR(20) DEFAULT 'VALIDE';
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS est_gerant BOOLEAN DEFAULT FALSE;
+    ALTER TABLE employes ALTER COLUMN code_pin TYPE VARCHAR(255);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS montant_pourboire NUMERIC(10, 2) DEFAULT 0.00;
+    
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS telephone_gerant VARCHAR(20);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS alertes_sms_actives BOOLEAN DEFAULT FALSE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email_comptable VARCHAR(255);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS jour_envoi_bilan INT DEFAULT 1;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS derniere_verif_stock DATE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pin_salon VARCHAR(255);
+    ALTER TABLE configuration_salon ALTER COLUMN pin_salon TYPE VARCHAR(255);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_temp_offline VARCHAR(64);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS date_synchro_hors_ligne TIMESTAMP;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_id_temp_offline ON tickets (id_salon, id_temp_offline) WHERE id_temp_offline IS NOT NULL;
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS type_contrat VARCHAR(20) DEFAULT '35H';
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS heures_mensuelles_base NUMERIC(10, 2) DEFAULT 151.67;
+
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS type_ticket VARCHAR(20) DEFAULT 'VENTE';
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS id_ticket_origine INT REFERENCES tickets(id_ticket);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS motif_annulation TEXT;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS est_compense BOOLEAN DEFAULT FALSE;
+
+    ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS nom_article_snapshot VARCHAR(255);
+    ALTER TABLE lignes_ticket ADD COLUMN IF NOT EXISTS taux_tva_snapshot NUMERIC(5,2) DEFAULT 20.00;
+    ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS taux_tva NUMERIC(5,2) DEFAULT 20.00;
+
+    CREATE TABLE IF NOT EXISTS jet_logs (id_jet SERIAL PRIMARY KEY, id_salon INT NOT NULL, action VARCHAR(50) NOT NULL, details JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP, hash_precedent VARCHAR(64), hash_jet VARCHAR(64));
+    CREATE INDEX IF NOT EXISTS idx_jet_logs_salon_date ON jet_logs (id_salon, date_creation);
+
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS id_cloture SERIAL;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS date_cloture DATE;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2);
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ferme_par VARCHAR(100) DEFAULT 'Non spécifié';
+    
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS fond_caisse_matin NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_theorique NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS total_especes_reel NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS ecart_caisse NUMERIC(10, 2) DEFAULT 0.00;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS justification_ecart TEXT;
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS est_cloture_automatique BOOLEAN DEFAULT FALSE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compteur_tickets INT DEFAULT 0;
+    
+    ALTER TABLE clotures_caisse ADD COLUMN IF NOT EXISTS numero_z_salon INT;
+    CREATE TABLE IF NOT EXISTS mouvements_caisse (
+        id_mouvement SERIAL PRIMARY KEY,
+        id_salon INT,
+        id_employe INT,
+        type_mouvement VARCHAR(50) NOT NULL, -- 'ENTREE', 'SORTIE', 'REGULARISATION'
+        montant NUMERIC(10, 2) NOT NULL,
+        motif TEXT NOT NULL,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        hash_precedent VARCHAR(64),
+        hash_mouvement VARCHAR(64)
+    );
+    ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+    ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS hash_mouvement VARCHAR(64);
+    ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS categorie_comptable VARCHAR(40) DEFAULT 'AUTRE';
+
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS siret VARCHAR(50);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS forme_juridique VARCHAR(30);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS capital_social VARCHAR(50);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS rcs_ville VARCHAR(100);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS mode_suivi_heures VARCHAR(20) DEFAULT 'MANUEL';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS tva_intra VARCHAR(50);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS adresse_salon TEXT;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS frequence_paiement VARCHAR(20) DEFAULT 'MENSUEL';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS date_fin_essai TIMESTAMP;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS sms_envoyes_mois INT DEFAULT 0;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS mois_en_cours VARCHAR(7);
+    ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS _subscription_id VARCHAR(255);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_banque VARCHAR(20) DEFAULT '512000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_caisse VARCHAR(20) DEFAULT '530000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_prestations VARCHAR(20) DEFAULT '706000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_produits VARCHAR(20) DEFAULT '707000';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_tva VARCHAR(20) DEFAULT '445710';
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pennylane_api_key VARCHAR(255);
+
+    CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS numero_facture VARCHAR(255);
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS mode_paiement VARCHAR(50) DEFAULT 'NON_SPECIFIE';
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS statut_verification VARCHAR(20) DEFAULT 'A_VALIDER';
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS justificatif_url TEXT;
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS fichier_cle_r2 TEXT;
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS date_facture DATE;
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS date_reglement DATE;
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS compte_comptable VARCHAR(20);
+
+    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+
+    CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS absences_employes (
+        id_absence SERIAL PRIMARY KEY,
+        id_salon INT NOT NULL,
+        id_employe INT NOT NULL,
+        type_demande VARCHAR(20) NOT NULL, 
+        nature_absence VARCHAR(50) NOT NULL, 
+        type_prolongation VARCHAR(20) DEFAULT 'INITIAL', 
+        date_debut DATE NOT NULL,
+        moment_debut VARCHAR(10) DEFAULT 'MATIN', 
+        date_fin DATE NOT NULL,
+        moment_fin VARCHAR(10) DEFAULT 'APRES_MIDI', 
+        heures_sortie VARCHAR(100), 
+        commentaire TEXT,
+        fichier_cle_r2 TEXT, 
+        statut VARCHAR(20) DEFAULT 'EN_ATTENTE', 
+        motif_refus TEXT,
+        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '{}';
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS vu_par JSONB DEFAULT '[]';
+    
+    CREATE TABLE IF NOT EXISTS heures_ajustements (id_ajustement SERIAL PRIMARY KEY, id_employe INT, mois_annee VARCHAR(7), heures_ajoutees NUMERIC(10,2), motif TEXT, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS liasses_mensuelles_validees (id_validation SERIAL PRIMARY KEY, id_salon INT, mois_annee VARCHAR(7), date_validation TIMESTAMP DEFAULT CURRENT_TIMESTAMP, valide_par VARCHAR(255), UNIQUE(id_salon, mois_annee));
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS total_ht NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS total_tva NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS total_ttc NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS cumul_perpetuel_ttc NUMERIC(14,2) DEFAULT 0.00;
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
+    ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS signature_hash VARCHAR(64);
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS donnees_scellees TEXT;
+    CREATE TABLE IF NOT EXISTS push_subscriptions (id_sub SERIAL PRIMARY KEY, id_salon INT, role VARCHAR(20), id_employe INT, endpoint TEXT, keys JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS pointages (id_pointage SERIAL PRIMARY KEY, id_employe INT, id_salon INT, date_jour DATE DEFAULT CURRENT_DATE, type_action VARCHAR(20), heure_action TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+`).then(async () => {
+    try {
+        await pool.query(`CREATE TABLE IF NOT EXISTS vapid_keys (id INT PRIMARY KEY, public_key TEXT, private_key TEXT)`);
+        const res = await pool.query('SELECT * FROM vapid_keys WHERE id = 1');
+        if (res.rowCount === 0) {
+            const keys = webpush.generateVAPIDKeys();
+            await pool.query('INSERT INTO vapid_keys (id, public_key, private_key) VALUES (1, $1, $2)', [keys.publicKey, keys.privateKey]);
+            vapidPublicKey = keys.publicKey;
+            vapidPrivateKey = keys.privateKey;
+            console.log(" Nouvelles clés VAPID générées et sauvegardées en BDD.");
+        } else {
+            vapidPublicKey = res.rows[0].public_key;
+            vapidPrivateKey = res.rows[0].private_key;
+            console.log("Clés VAPID (Push) chargées depuis la BDD.");
+        }
+        webpush.setVapidDetails('mailto:contact@stack.fr', vapidPublicKey, vapidPrivateKey);
+    } catch (e) { console.error("Erreur init VAPID:", e); }
+
+    try {
+        await pool.query(`ALTER TABLE clotures_caisse ALTER COLUMN date_cloture SET DEFAULT CURRENT_TIMESTAMP;`);
+        await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_cloture_salon_jour') THEN ALTER TABLE clotures_caisse ADD CONSTRAINT uq_cloture_salon_jour UNIQUE (id_salon, date_cloture); END IF; END $$;`);
+        
+        // BACKFILL STRICT NF525 : Désactivation temporaire du trigger pour garantir une séquence 1..N sans trou ni doublon par salon
+        await pool.query(`DROP TRIGGER IF EXISTS trigger_nf525_clotures ON clotures_caisse;`);
+        await pool.query(`
+            UPDATE clotures_caisse
+            SET numero_z_salon = subquery.seq
+            FROM (
+                SELECT id_cloture, ROW_NUMBER() OVER (PARTITION BY id_salon ORDER BY date_cloture ASC, id_cloture ASC) as seq
+                FROM clotures_caisse
+            ) AS subquery
+            WHERE clotures_caisse.id_cloture = subquery.id_cloture
+            AND clotures_caisse.numero_z_salon IS DISTINCT FROM subquery.seq;
+        `);
+        
+        // 🚨 SÉCURITÉ NF525 : Triggers stricts anti-altération et anti-suppression
+        await pool.query(`
+            CREATE OR REPLACE FUNCTION nf525_prevent_alteration() RETURNS TRIGGER AS $$
+            BEGIN
+                -- 🚨 SUPPRESSION DE LA PORTE DÉROBÉE : L'inaltérabilité NF525 est désormais absolue.
+                -- Aucun compte, pas même le Super-Admin, ne peut contourner ce blocage.
+
+                IF TG_OP = 'DELETE' THEN
+                    RAISE EXCEPTION 'Action bloquée (NF525) : Suppression interdite sur la table %', TG_TABLE_NAME;
+                END IF;
+                
+                IF TG_OP = 'UPDATE' THEN
+                    IF TG_TABLE_NAME = 'tickets' THEN
+                        -- Liste stricte des champs intouchables. 
+                        -- Seuls "hash_ticket" (si NULL à la base) et "est_compense" peuvent être modifiés par le code.
+                        IF OLD.total_ttc IS DISTINCT FROM NEW.total_ttc 
+                           OR OLD.numero_ticket_caisse IS DISTINCT FROM NEW.numero_ticket_caisse 
+                           OR OLD.date_creation IS DISTINCT FROM NEW.date_creation 
+                           OR OLD.methode_paiement IS DISTINCT FROM NEW.methode_paiement
+                           OR OLD.statut IS DISTINCT FROM NEW.statut
+                           OR OLD.type_ticket IS DISTINCT FROM NEW.type_ticket
+                           OR OLD.id_employe IS DISTINCT FROM NEW.id_employe
+                           OR OLD.id_client IS DISTINCT FROM NEW.id_client
+                           OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Altération des données fiscales, de paiement ou de traçabilité interdite.';
+                        END IF;
+                    ELSIF TG_TABLE_NAME = 'clotures_caisse' THEN
+                        -- Seule la levée du drapeau est_cloture_automatique (TRUE -> FALSE) lors de la régularisation matinale est autorisée.
+                        -- Toute modification des montants, dates, numéros Z ou signatures cryptographiques est strictement bloquée.
+                        IF OLD.est_cloture_automatique IS DISTINCT FROM TRUE
+                           OR NEW.est_cloture_automatique IS DISTINCT FROM FALSE
+                           OR OLD.total_encaisse IS DISTINCT FROM NEW.total_encaisse
+                           OR OLD.signature_hash IS DISTINCT FROM NEW.signature_hash
+                           OR OLD.date_cloture IS DISTINCT FROM NEW.date_cloture
+                           OR OLD.cumul_perpetuel_ttc IS DISTINCT FROM NEW.cumul_perpetuel_ttc
+                           OR OLD.hash_precedent IS DISTINCT FROM NEW.hash_precedent
+                           OR OLD.fond_caisse_matin IS DISTINCT FROM NEW.fond_caisse_matin
+                           OR OLD.total_especes_theorique IS DISTINCT FROM NEW.total_especes_theorique
+                           OR OLD.total_especes_reel IS DISTINCT FROM NEW.total_especes_reel
+                           OR OLD.ecart_caisse IS DISTINCT FROM NEW.ecart_caisse
+                           OR OLD.numero_z_salon IS DISTINCT FROM NEW.numero_z_salon THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Altération interdite sur la table clotures_caisse';
+                        END IF;
+                    ELSIF TG_TABLE_NAME = 'mouvements_caisse' THEN
+                        IF (OLD.hash_mouvement IS NOT NULL AND OLD.hash_mouvement IS DISTINCT FROM NEW.hash_mouvement)
+                           OR OLD.montant IS DISTINCT FROM NEW.montant
+                           OR OLD.type_mouvement IS DISTINCT FROM NEW.type_mouvement
+                           OR OLD.motif IS DISTINCT FROM NEW.motif
+                           OR OLD.date_creation IS DISTINCT FROM NEW.date_creation THEN
+                            RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table mouvements_caisse';
+                        END IF;
+                    ELSIF TG_TABLE_NAME IN ('lignes_ticket', 'jet_logs', 'liasses_mensuelles_validees') THEN
+                        RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table %', TG_TABLE_NAME;
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            DROP TRIGGER IF EXISTS trigger_nf525_tickets ON tickets;
+            CREATE TRIGGER trigger_nf525_tickets BEFORE DELETE OR UPDATE ON tickets FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+            
+            -- Sécurisation des lignes de vente (TVA et Articles) manquante dans la V1
+            DROP TRIGGER IF EXISTS trigger_nf525_lignes ON lignes_ticket;
+            CREATE TRIGGER trigger_nf525_lignes BEFORE DELETE OR UPDATE ON lignes_ticket FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            DROP TRIGGER IF EXISTS trigger_nf525_clotures ON clotures_caisse;
+            CREATE TRIGGER trigger_nf525_clotures BEFORE DELETE OR UPDATE ON clotures_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            DROP TRIGGER IF EXISTS trigger_nf525_jet ON jet_logs;
+            CREATE TRIGGER trigger_nf525_jet BEFORE DELETE OR UPDATE ON jet_logs FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            -- 🚨 Sécurisation NF525 de la nouvelle table de mouvements d'espèces
+            DROP TRIGGER IF EXISTS trigger_nf525_mouvements ON mouvements_caisse;
+            CREATE TRIGGER trigger_nf525_mouvements BEFORE DELETE OR UPDATE ON mouvements_caisse FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+
+            -- 🚨 Sécurisation NF525 des clôtures mensuelles
+            DROP TRIGGER IF EXISTS trigger_nf525_liasses ON liasses_mensuelles_validees;
+            CREATE TRIGGER trigger_nf525_liasses BEFORE DELETE OR UPDATE ON liasses_mensuelles_validees FOR EACH ROW EXECUTE FUNCTION nf525_prevent_alteration();
+        `);
+    } catch (e) { console.error("Erreur Triggers NF525:", e); }
+}).catch((e) => console.error("Erreur Init DB:", e));
+
+async function envoyerNotificationPush(id_salon, cible, payload) {
+    try {
+        let query = 'SELECT endpoint, keys FROM push_subscriptions WHERE id_salon = $1';
+        let params = [id_salon];
+
+        if (cible && cible.type === 'employe') {
+            query += " AND role = 'employe' AND id_employe = $2";
+            params.push(cible.id_employe);
+        } else if (cible === 'gerant') {
+            query += " AND role = 'gerant'";
+        } else if (cible === 'employes') {
+            query += " AND role = 'employe'";
+        }
+        // cible === 'salon' (message de groupe) : aucun filtre, tout le monde est notifié
+
+        const subs = await pool.query(query, params);
+        if (subs.rowCount === 0) return;
+
+        for (let sub of subs.rows) {
+            try {
+                await webpush.sendNotification({
+                    endpoint: sub.endpoint,
+                    keys: sub.keys
+                }, JSON.stringify(payload));
+            } catch (err) {
+                // Si l'abonnement n'est plus valide (ex: utilisateur a retiré la permission)
+                if (err.statusCode === 410 || err.statusCode === 404) {
+                    await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [sub.endpoint]);
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Erreur d'envoi Push :", e);
+    }
+}
+
+function verifierToken(req, res, next) {
+    const cookieHeader = req.headers.cookie;
+    let token = null;
+    if (cookieHeader) {
+        const cookies = cookieHeader.split(';').map(c => c.trim());
+        const tokenCookie = cookies.find(c => c.startsWith('token='));
+        if (tokenCookie) token = tokenCookie.split('=')[1];
+    }
+    
+    // Tolérance : on garde l'en-tête Authorization comme plan B temporaire
+    if (!token) {
+        const authHeader = req.headers['authorization'];
+        token = authHeader && authHeader.split(' ')[1]; 
+    }
+
+    if (!token) return res.status(401).json({ erreur: "Accès refusé." });
+    
+    jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
+        if (err) return res.status(403).json({ erreur: "Token expiré ou invalide." });
+        try {
+            const conf = await pool.query('SELECT plan_actuel, date_fin_essai FROM configuration_salon WHERE id_salon = $1', [user.id_salon]);
+            if (conf.rowCount > 0) {
+                user.plan_actuel = conf.rows[0].plan_actuel;
+                user.date_fin_essai = conf.rows[0].date_fin_essai;
+            }
+
+            if (user.role === 'gerant') {
+                const isTrialing = user.plan_actuel === 'PREMIUM_TRIAL';
+                const result = await pool.query('SELECT statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
+                const statutSub = result.rowCount > 0 ? result.rows[0].statut_abonnement : 'inactif';
+                
+                // On bloque l'accès UNIQUEMENT s'il n'a pas payé ET qu'il n'est plus en essai
+                if (statutSub !== 'actif' && !isTrialing) { 
+                    return res.status(402).json({ erreur: "Paiement requis.", require_payment: true }); 
+                }
+            }
+            req.user = user; 
+            next(); 
+        } catch (e) { return res.status(500).json({ erreur: "Erreur vérification." }); }
+    });
+};
+
+const verifierPlan = (plansAutorises) => {
+    return (req, res, next) => {
+        const plan = req.user.plan_actuel;
+        if (plan === 'PREMIUM_TRIAL' || plansAutorises.includes(plan)) {
+            return next();
+        }
+        return res.status(403).json({ erreur: "Accès refusé. Cette fonctionnalité nécessite un forfait supérieur.", require_upsell: true });
+    };
+};
+
+async function envoyerSMS(apiKey, senderName, telephone, contenu) {
+    try {
+        const res = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST', headers: { 'accept': 'application/json', 'api-key': apiKey, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (senderName || 'LeSalon').substring(0, 11), recipient: telephone, content: contenu })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("Erreur Envoi SMS:", e);
+        return false;
+    }
+}
+
+async function envoyerSMS_Intelligent(id_salon, apiKey, senderName, telephone, contenu) {
+    try {
+        const conf = await pool.query("SELECT plan_actuel, sms_envoyes_mois, mois_en_cours FROM configuration_salon WHERE id_salon = $1", [id_salon]);
+        if (conf.rowCount === 0) return false;
+        
+        const { plan_actuel, sms_envoyes_mois, mois_en_cours } = conf.rows[0];
+        const moisActuel = new Date().toISOString().slice(0, 7);
+        let compteur = mois_en_cours === moisActuel ? sms_envoyes_mois : 0;
+        
+        if (plan_actuel === 'ESSENTIEL' && compteur >= 100) {
+            console.log(`[SMS] Limite atteinte (100) pour le salon ${id_salon}`);
+            return false;
+        }
+
+        const res = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST', headers: { 'accept': 'application/json', 'api-key': apiKey, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (senderName || 'LeSalon').substring(0, 11), recipient: telephone, content: contenu })
+        });
+
+        if (res.ok) {
+            await pool.query("UPDATE configuration_salon SET sms_envoyes_mois = $1, mois_en_cours = $2 WHERE id_salon = $3", [compteur + 1, moisActuel, id_salon]);
+            return true;
+        }
+        return false;
+    } catch (e) {
+        console.error("Erreur Envoi SMS:", e);
+        return false;
+    }
+}
+
+async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
+    try {
+        await dbClient.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+        const dernier = await dbClient.query('SELECT hash_jet FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet DESC LIMIT 1', [id_salon]);
+        const hashPrecedent = dernier.rowCount > 0 ? dernier.rows[0].hash_jet : 'GENESIS_JET';
+        const dateISO = new Date().toISOString();
+        const detailsJSON = JSON.stringify(details || {});
+        const hashJet = crypto.createHash('sha256').update(`${id_salon}-${action}-${detailsJSON}-${dateISO}-${hashPrecedent}`).digest('hex');
+        await dbClient.query('INSERT INTO jet_logs (id_salon, action, details, date_creation, hash_precedent, hash_jet) VALUES ($1, $2, $3, $4, $5, $6)', [id_salon, action, detailsJSON, dateISO, hashPrecedent, hashJet]);
+        return hashJet;
+    } catch (e) { return null; }
+}
+
+function deduireCategorieMouvement(type_mouvement, motif, categorieExplicite = null) {
+    if (categorieExplicite && ['ACHAT_ESPECES', 'REMISE_BANQUE', 'APPORT_FONDS', 'PRELEVEMENT_GERANT', 'ECART_CAISSE', 'AUTRE'].includes(categorieExplicite)) {
+        return categorieExplicite;
+    }
+    if (type_mouvement === 'REGULARISATION') return 'ECART_CAISSE';
+    const m = String(motif || '').toLowerCase();
+    if (type_mouvement === 'ENTREE') {
+        return 'APPORT_FONDS';
+    }
+    if (m.includes('banque') || m.includes('dépôt') || m.includes('depot') || m.includes('remise') || m.includes('coffre')) {
+        return 'REMISE_BANQUE';
+    }
+    if (m.includes('facture') || m.includes('achat') || m.includes('fournisseur') || m.includes('courses') || m.includes('timbre') || m.includes('poste')) {
+        return 'ACHAT_ESPECES';
+    }
+    if (m.includes('gérant') || m.includes('gerant') || m.includes('patron') || m.includes('prélèvement') || m.includes('prelevement') || m.includes('acompte')) {
+        return 'PRELEVEMENT_GERANT';
+    }
+    return 'ACHAT_ESPECES';
+}
+
+async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe = null, type_mouvement, montant, motif, categorie_comptable = null, autoriserJourCloture = false }) {
+    await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+    if (!autoriserJourCloture && type_mouvement !== 'REGULARISATION') {
+        const zDejaFait = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
+        if (zDejaFait.rowCount > 0) {
+            throw new Error("Action bloquée (NF525) : La clôture Z d'aujourd'hui a déjà été scellée. Aucun mouvement d'espèces ne peut être ajouté sur une journée clôturée.");
+        }
+    }
+    const lastMvt = await clientDB.query('SELECT hash_mouvement FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL ORDER BY id_mouvement DESC LIMIT 1', [id_salon]);
+    const hashPrecedent = lastMvt.rowCount > 0 ? lastMvt.rows[0].hash_mouvement : 'GENESIS_MVT';
+    const montantFormate = Number(montant).toFixed(2);
+    const motifPropre = String(motif || '').trim();
+    const catFinale = deduireCategorieMouvement(type_mouvement, motifPropre, categorie_comptable);
+    const dateISO = new Date().toISOString();
+    const ins = await clientDB.query(
+        `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif, categorie_comptable, date_creation, hash_precedent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_mouvement`,
+        [id_salon, id_employe, type_mouvement, montantFormate, motifPropre, catFinale, dateISO, hashPrecedent]
+    );
+    const idMvt = ins.rows[0].id_mouvement;
+    const hashMouvement = crypto.createHash('sha256')
+        .update(`MVT-${id_salon}-${idMvt}-${type_mouvement}-${montantFormate}-${motifPropre}-${hashPrecedent}`)
+        .digest('hex');
+    await clientDB.query('UPDATE mouvements_caisse SET hash_mouvement = $1 WHERE id_mouvement = $2', [hashMouvement, idMvt]);
+    return { id_mouvement: idMvt, hash_mouvement: hashMouvement, hash_precedent: hashPrecedent, categorie_comptable: catFinale };
+}
+
+const verifierClotureZ = async (req, res, next) => {
+    const id_salon = req.user.id_salon;
+    const idTemp = req.body && req.body._id_temp ? String(req.body._id_temp).slice(0, 64) : null;
+    try {
+        let dateTicket = null; // null = ticket encaissé en direct
+        if (idTemp) {
+            if (req.body.methode_paiement === 'CARTE') return res.status(400).json({ erreur: "Un paiement par carte ne peut pas être enregistré hors-ligne." });
+            // Anti-doublon : ticket déjà synchronisé -> on répond OK sans rien recréer
+            const doublon = await pool.query('SELECT id_ticket FROM tickets WHERE id_salon = $1 AND id_temp_offline = $2', [id_salon, idTemp]);
+            if (doublon.rowCount > 0) return res.json({ message: "Ticket déjà synchronisé.", id_ticket: doublon.rows[0].id_ticket, deja_synchronise: true });
+            // On conserve la vraie date d'encaissement (max 7 jours, pas dans le futur) si son jour n'est pas déjà clôturé
+            const d = new Date(req.body.date_creation);
+            const maintenant = Date.now();
+            if (!isNaN(d) && d.getTime() <= maintenant + 5 * 60 * 1000 && d.getTime() >= maintenant - 7 * 24 * 3600 * 1000) {
+                const ferme = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE($2::timestamp)', [id_salon, d.toISOString()]);
+                if (ferme.rowCount === 0) dateTicket = d.toISOString();
+            }
+        }
+        // NF525 : Interdiction formelle d'encaisser sur une journée dont le Z est déjà scellé
+        const zCibleDejaFait = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE(COALESCE($2::timestamp, NOW()))', [id_salon, dateTicket]);
+        if (zCibleDejaFait.rowCount > 0) {
+            return res.status(423).json({ erreur: "La clôture (Z) d'aujourd'hui a déjà été effectuée. Aucun nouvel encaissement n'est autorisé sur une journée clôturée." });
+        }
+        req.dateTicketEffective = dateTicket;
+        req.idTempOffline = idTemp;
+        const jourBloquant = await pool.query(
+            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < DATE(COALESCE($2::timestamp, NOW())) AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`, [id_salon, dateTicket]
+        );
+        if (jourBloquant.rowCount > 0 && jourBloquant.rows[0].jour) {
+            return res.status(423).json({ erreur: `Clôture (Z) manquante pour le ${new Date(jourBloquant.rows[0].jour).toLocaleDateString()}. Effectuez la clôture avant d'encaisser.`, z_manquant: jourBloquant.rows[0].jour });
+        }
+        next();
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification clôture." }); }
+};
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limite stricte
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false, default: false },
+    keyGenerator: (req) => {
+        // Isole le compteur par IP, par type de connexion (route) et par cible (ID du salon ou email)
+        const cible = req.body.id_salon || req.body.email || 'global';
+        return `${req.ip}_${req.path}_${cible}`;
+    },
+    message: { erreur: "Trop de tentatives pour ce compte. Veuillez patienter 15 minutes avant de réessayer." }
+});
+
+app.post('/api/register', authLimiter, async (req, res) => {
+    const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
+    if (!email || !mot_de_passe) return res.status(400).json({ erreur: "Email et mot de passe requis." });
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const exist = await clientDB.query('SELECT 1 FROM utilisateurs WHERE email = $1', [email]);
+        if (exist.rowCount > 0) throw new Error("Cet email est déjà utilisé.");
+        const hash = await bcrypt.hash(mot_de_passe, 10);
+        
+        const salonResult = await clientDB.query(
+            "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
+            [nom_salon || 'Nouveau Salon']
+        );
+        const idNouveauSalon = salonResult.rows[0].id_salon;
+        let customerId = null;
+        try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
+        await clientDB.query('INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']); 
+        
+        const defaultPinHash = await bcrypt.hash('0000', 10);
+        await clientDB.query("INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)", [nom_gerant || 'Patron', idNouveauSalon, defaultPinHash]);
+
+        await clientDB.query('COMMIT');
+        const payload = { id_salon: idNouveauSalon, role: 'gerant', email };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 24 * 60 * 60 * 1000 });
+        
+        // IMPORTANT: Renvoie le vrai token_api nécessaire au module légal juste après
+        res.status(201).json({ message: "Inscription réussie", ui_token: generateUIToken(payload), token_api: token });
+    } catch (erreur) { await clientDB.query('ROLLBACK'); res.status(400).json({ erreur: erreur.message }); } finally { clientDB.release(); }
+});
+
+app.post('/api/login', authLimiter, async (req, res) => {
+    const { email, mot_de_passe } = req.body;
+    try {
+        const result = await pool.query('SELECT id_salon, mot_de_passe_hash, statut_abonnement FROM utilisateurs WHERE email = $1 LIMIT 1', [email]);
+        if (result.rowCount > 0) {
+            const { id_salon, mot_de_passe_hash, statut_abonnement } = result.rows[0];
+            const match = await bcrypt.compare(mot_de_passe, mot_de_passe_hash);
+             if (match) {
+                const payload = { id_salon, role: 'gerant', email };
+                const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+                res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 24 * 60 * 60 * 1000 });
+                await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { email, role: 'gerant' });
+                res.json({ message: "Connexion réussie", ui_token: generateUIToken(payload), token_api: token, statut_abonnement });
+            } else {
+                await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { email, raison: 'mot_de_passe_incorrect' });
+                res.status(401).json({ erreur: "Mot de passe incorrect." });
+            }
+        } else { res.status(401).json({ erreur: "Aucun compte trouvé avec cet e-mail." }); }
+    } catch (error) { res.status(500).json({ erreur: "Erreur serveur." }); }
+});
+
+// --- GESTION DES HEURES (AJUSTEMENTS MANUELS DU MODE PRO) ---
+app.post('/api/rh/ajustements', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut ajuster les heures." });
+    const { id_employe, mois_annee, heures_ajoutees, motif } = req.body;
+    try {
+        const empCheck = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, req.user.id_salon]);
+        if (empCheck.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable dans ce salon." });
+
+        await pool.query(
+            `INSERT INTO heures_ajustements (id_employe, mois_annee, heures_ajoutees, motif) VALUES ($1, $2, $3, $4)`,
+            [id_employe, mois_annee, heures_ajoutees, motif]
+        );
+        res.json({ message: "Ajustement enregistré avec succès" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
+});
+
+// --- GESTION DE LA POINTEUSE NUMÉRIQUE (MODE PREMIUM) ---
+
+// Nouvelle route : Récupérer le statut actuel des employés
+app.get('/api/rh/statut-pointages', verifierToken, async (req, res) => {
+    try {
+        // Récupère la dernière action de la journée pour chaque employé du salon
+        const statuts = await pool.query(`
+            SELECT DISTINCT ON (id_employe) id_employe, type_action, heure_action 
+            FROM pointages 
+            WHERE id_salon = $1 AND date_jour = CURRENT_DATE 
+            ORDER BY id_employe, heure_action DESC
+        `, [req.user.id_salon]);
+        
+        // On transforme ça en un dictionnaire { action, heure } pour le chronomètre
+        const mapStatuts = {};
+        statuts.rows.forEach(r => { mapStatuts[r.id_employe] = { action: r.type_action, heure: r.heure_action }; });
+        
+        res.json(mapStatuts);
+    } catch (e) { 
+        res.status(500).json({ erreur: "Erreur lecture statuts" }); 
+    }
+});
+
+app.post('/api/rh/pointage', verifierToken, async (req, res) => {
+    const { id_employe, type_action } = req.body; // 'ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'
+    const id_salon = req.user.id_salon;
+    const actionsValides = ['ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'];
+    if (!actionsValides.includes(type_action)) return res.status(400).json({ erreur: "Action de pointage invalide." });
+    if (req.user.role === 'employe' && Number(req.user.id_employe) !== Number(id_employe)) {
+        return res.status(403).json({ erreur: "Vous ne pouvez pointer que pour votre propre profil." });
+    }
+    try {
+        const empCheck = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        if (empCheck.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable dans ce salon." });
+
+        await pool.query(
+            `INSERT INTO pointages (id_employe, id_salon, date_jour, type_action) VALUES ($1, $2, CURRENT_DATE, $3)`,
+            [id_employe, id_salon, type_action]
+        );
+        
+        // NOTIFICATION TEMPS RÉEL (WebSockets) avec l'heure exacte
+        io.to(id_salon.toString()).emit('statutPointageUpdate', { id_employe, type_action, heure: new Date().toISOString() });
+        
+        res.json({ message: "Pointage enregistré" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
+});
+
+app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
+    const { id_salon, nom_employe, code_pin, is_pointeuse } = req.body;
+    try {
+        const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
+        if (result.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable." });
+        const emp = result.rows[0];
+        
+        let pinMatch = false;
+        if (emp.code_pin && emp.code_pin.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(code_pin, emp.code_pin);
+        } else {
+            pinMatch = (emp.code_pin === code_pin); // Fallback pour vos anciens PINs en clair
+        }
+
+        if (!pinMatch) {
+            await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { nom_employe, raison: 'pin_incorrect' });
+            return res.status(401).json({ erreur: "Code PIN invalide." });
+        }
+
+        // NOUVEAU: Si c'est juste la pointeuse qui vérifie le PIN, on s'arrête ici sans écraser le cookie
+        if (is_pointeuse) {
+            return res.json({ message: "PIN valide", employe: { id: emp.id_employe, nom: emp.nom } });
+        }
+
+        const payload = { id_salon: emp.id_salon, role: 'employe', id_employe: emp.id_employe };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '12h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 12 * 60 * 60 * 1000 });
+        await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { nom_employe: emp.nom, role: 'employe', id_employe: emp.id_employe });
+        res.json({ message: "Accès employé autorisé", ui_token: generateUIToken(payload), token_api: token, employe: { id: emp.id_employe, nom: emp.nom } });
+    } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
+});
+
+app.post('/api/salon/login-pin', authLimiter, async (req, res) => {
+    const { id_salon, pin } = req.body;
+    try {
+        const result = await pool.query('SELECT id_salon, pin_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        if (result.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
+        const salon = result.rows[0];
+        
+        let pinMatch = false;
+        if (salon.pin_salon && salon.pin_salon.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(pin, salon.pin_salon);
+        } else {
+            pinMatch = (salon.pin_salon === pin); // Fallback pour les anciens PINs
+        }
+
+        if (!salon.pin_salon || !pinMatch) {
+            await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { raison: 'pin_salon_incorrect' });
+            return res.status(401).json({ erreur: "Code PIN invalide." });
+        }
+        const payload = { id_salon: salon.id_salon, role: 'salon' };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '18h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: 18 * 60 * 60 * 1000 });
+        await enregistrerJET(id_salon, 'CONNEXION_REUSSIE', { role: 'salon' });
+        res.json({ message: "Accès salon autorisé", ui_token: generateUIToken(payload), token_api: token });
+    } catch (e) { res.status(500).json({ erreur: "Erreur serveur PIN." }); }
+});
+
+app.post('/api/forgot-password', authLimiter, async (req, res) => {
+    const { email } = req.body;
+    try {
+        if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ erreur: "Serveur mail non configuré." });
+        const result = await pool.query('SELECT id_user FROM utilisateurs WHERE email = $1', [email]);
+        if (result.rowCount === 0) return res.json({ message: "Si cet email existe, un lien a été envoyé." });
+        const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '15m' });
+        const resetLink = `https://app-salon-caiss.onrender.com/?resetToken=${resetToken}`;
+        let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
+        await transporter.sendMail({ from: `"Support SaaS Caisse" <${process.env.SMTP_USER}>`, to: email, subject: '🔐 Réinitialisation de votre mot de passe', html: `<p>Bonjour,</p><p>Cliquez sur ce lien pour choisir un nouveau mot de passe (valable 15 minutes) :</p><p><a href="${resetLink}">Réinitialiser mon accès</a></p>` });
+        res.json({ message: "Si cet email existe, un lien a été envoyé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'envoi." }); }
+});
+
+app.post('/api/reset-password', authLimiter, async (req, res) => {
+    const { token, nouveau_mot_de_passe } = req.body;
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const hash = await bcrypt.hash(nouveau_mot_de_passe, 10);
+        await pool.query('UPDATE utilisateurs SET mot_de_passe_hash = $1 WHERE email = $2', [hash, decoded.email]);
+        res.json({ message: "Mot de passe mis à jour avec succès !" });
+    } catch (e) { res.status(400).json({ erreur: "Lien expiré, corrompu ou falsifié." }); }
+});
+
+// Module légal : acceptation électronique des documents contractuels (CGV, RGPD, SEPA, NF525, prêt du TPE)
+legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, nodemailer, crypto });
+
+app.post('/api/creer-checkout', async (req, res) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; 
+    const { plan_choisi, cycle_choisi } = req.body || {};
+    
+    if (!token) return res.status(401).json({ erreur: "Accès refusé." });
+    jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
+        if (err) return res.status(403).json({ erreur: "Token invalide." });
+        try {
+            try { await pool.query('ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS _subscription_id VARCHAR(255)'); } catch(e) {}
+
+            const result = await pool.query('SELECT email, _customer_id, _subscription_id, statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
+            if (result.rowCount === 0) return res.status(404).json({ erreur: "Utilisateur introuvable." });
+            
+            const docsEnAttente = await legal.documentsEnAttente(pool, user.id_salon);
+            if (docsEnAttente.length > 0) return res.status(403).json({ erreur: "Vous devez d'abord accepter les conditions contractuelles.", require_legal: true });
+            
+            let customerId = result.rows[0]._customer_id;
+            const subId = result.rows[0]._subscription_id;
+            const statutSub = result.rows[0].statut_abonnement;
+
+            if (!customerId) {
+                // Sécurité : on vérifie que l'email est valide pour Stripe, sinon on met un email de secours
+                let emailStripe = result.rows[0].email;
+                if (!emailStripe || !emailStripe.includes('@')) {
+                    emailStripe = `salon${user.id_salon}@stack-app.fr`;
+                }
+                const customer = await stripe.customers.create({ email: emailStripe });
+                customerId = customer.id;
+                await pool.query('UPDATE utilisateurs SET _customer_id = $1 WHERE id_salon = $2', [customerId, user.id_salon]);
+            }
+
+            // On s'assure du bon format (ex: 'ESSENTIEL', 'MOIS' ou 'AN')
+            const planClean = (plan_choisi || 'PREMIUM').toUpperCase();
+            const isAnnuel = cycle_choisi === 'year' || cycle_choisi === 'Annuel' || cycle_choisi === 'ANNUEL';
+            const planKey = `${planClean}_${isAnnuel ? 'AN' : 'MOIS'}`;
+            
+            const stripePrices = {
+                'ESSENTIEL_MOIS': process.env.PRICE_ESSENTIEL_MOIS,
+                'ESSENTIEL_AN': process.env.PRICE_ESSENTIEL_AN,
+                'PRO_MOIS': process.env.PRICE_PRO_MOIS,
+                'PRO_AN': process.env.PRICE_PRO_AN,
+                'PREMIUM_MOIS': process.env.PRICE_PREMIUM_MOIS,
+                'PREMIUM_AN': process.env.PRICE_PREMIUM_AN
+            };
+            
+            const priceId = stripePrices[planKey];
+            
+            // Si la clé manque sur Render, on envoie l'erreur au client pour qu'il la voie
+            if (!priceId) {
+                return res.status(400).json({ erreur: `Le tarif Stripe n'est pas trouvé. Vérifiez que la variable ${planKey} est bien sur Render.` });
+            }
+
+            // ÉVOLUTION D'UN ABONNEMENT EXISTANT (Sans payer aujourd'hui)
+            if (statutSub === 'actif' && subId) {
+                const subscription = await stripe.subscriptions.retrieve(subId);
+                await stripe.subscriptions.update(subId, {
+                    items: [{ id: subscription.items.data[0].id, price: priceId }],
+                    proration_behavior: 'none',
+                    metadata: { id_salon: user.id_salon.toString(), plan_choisi: planClean, frequence: isAnnuel ? 'ANNUEL' : 'MENSUEL' }
+                });
+
+                await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [planClean, isAnnuel ? 'ANNUEL' : 'MENSUEL', user.id_salon]);
+                return res.json({ success: true, message: `Évolution validée vers le forfait ${planClean}.` });
+            }
+
+            // NOUVEL ABONNEMENT
+            const session = await stripe.checkout.sessions.create({
+              customer: customerId, 
+              payment_method_types: process.env.STRIPE_SEPA === 'oui' ? ['card', 'sepa_debit'] : ['card'],
+              line_items: [{ price: priceId, quantity: 1 }], 
+              mode: 'subscription',
+              metadata: { id_salon: user.id_salon.toString(), plan_choisi: planClean, frequence: isAnnuel ? 'ANNUEL' : 'MENSUEL' },
+              success_url: 'https://app-salon-caiss.onrender.com/?paiement=succes', 
+              cancel_url: 'https://app-salon-caiss.onrender.com/?paiement=annule',
+            });
+            res.json({ url: session.url });
+        } catch (e) { 
+            console.error("Erreur Checkout Stripe:", e);
+            res.status(500).json({ erreur: "Erreur interne Stripe : " + e.message }); 
+        }
+    });
+});
+
+// --- ROUTES NOTIFICATIONS PUSH ---
+app.get('/api/push/vapid-key', (req, res) => {
+    res.json({ publicKey: vapidPublicKey });
+});
+
+app.post('/api/push/subscribe', verifierToken, async (req, res) => {
+    const { subscription } = req.body;
+    const { endpoint, keys } = subscription;
+    const id_salon = req.user.id_salon;
+    const role = req.user.role;
+    const id_employe = role === 'employe' ? req.user.id_employe : null;
+
+    try {
+        const exist = await pool.query('SELECT 1 FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+        if (exist.rowCount === 0) {
+            await pool.query(
+                'INSERT INTO push_subscriptions (id_salon, role, id_employe, endpoint, keys) VALUES ($1, $2, $3, $4, $5)',
+                [id_salon, role, id_employe, endpoint, JSON.stringify(keys)]
+            );
+        }
+        res.status(201).json({ message: "Abonnement Push enregistré." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur enregistrement Push." }); }
+});
+
+app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, res) => {
+    const signature = req.headers['stripe-signature'];
+    if (!process.env.STRIPE_WEBHOOK_SECRET) return res.status(500).send("Clé secrète manquante.");
+    let event;
+    try { event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET); } 
+    catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
+    
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        const idSalon = session.metadata?.id_salon;
+        const planChoisi = session.metadata?.plan_choisi || 'PREMIUM';
+        const frequence = session.metadata?.frequence || 'MENSUEL';
+        
+        // 1. On active le statut de paiement
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', ['actif', session.subscription, session.customer]);
+        
+        // 2. On met à jour les privilèges du salon (ESSENTIEL/PRO/PREMIUM)
+        if (idSalon) {
+            await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [planChoisi, frequence, idSalon]);
+        }
+    }
+    if (event.type === 'customer.subscription.deleted') {
+        const session = event.data.object;
+        await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', ['inactif', session.id]);
+        
+        // On rétrograde le salon pour éviter qu'il garde l'accès Premium s'il ne paye plus
+        const userQuery = await pool.query('SELECT id_salon FROM utilisateurs WHERE _subscription_id = $1', [session.id]);
+        if (userQuery.rowCount > 0) {
+            await pool.query("UPDATE configuration_salon SET plan_actuel = 'ESSENTIEL' WHERE id_salon = $1", [userQuery.rows[0].id_salon]);
+        }
+    }
+    res.json({received: true});
+});
+
+app.post('/api/settings', verifierToken, async (req, res) => { 
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville } = req.body;
+    try { 
+        const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
+        if (pin_salon !== undefined && req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
+        if (pin_salon && isPinWeak(pin_salon)) return res.status(400).json({ erreur: "Le code PIN du salon est trop simple (évitez 0000, 1234...)." });
+        
+        let finalPinSalon = pin_salon;
+        if (pin_salon && !pin_salon.startsWith('$2')) {
+            finalPinSalon = await bcrypt.hash(pin_salon, 10);
+        }
+
+        const updateQuery = pin_salon !== undefined
+            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23, mode_suivi_heures = $25, nom_salon = $26, siret = $27, adresse_salon = $28, tva_intra = $29, forme_juridique = $30, capital_social = $31, rcs_ville = $32 WHERE id_salon = $16`
+            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, tva_intra = $28, forme_juridique = $29, capital_social = $30, rcs_ville = $31 WHERE id_salon = $16`; 
+            
+        const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
+        
+        if (pin_salon !== undefined) { 
+            params.push(finalPinSalon || null); 
+            params.push(pennylane_api_key || null); 
+        } else { 
+            params.push(pennylane_api_key || null); 
+        }
+        
+        params.push(mode_suivi_heures || 'MANUEL');
+        params.push(nom_salon || null);
+        params.push(siret || null);
+        params.push(adresse_salon || null);
+        params.push(tva_intra || null);
+        params.push(forme_juridique || null);
+        params.push(capital_social || null);
+        params.push(rcs_ville || null);
+        
+        await pool.query(updateQuery, params);
+        await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
+        res.json({ message: "Paramètres enregistrés avec succès !" }); 
+    } catch (erreur) { 
+        res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); 
+    }
+});
+
+app.get('/api/settings', verifierToken, async (req, res) => { 
+    try { 
+        const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); 
+        if (result.rowCount > 0) {
+            let config = result.rows[0];
+            
+            // Sécurité : Seul le gérant a le droit de voir les secrets de configuration (clés API, mots de passe mail, PIN)
+            if (req.user.role !== 'gerant') {
+                delete config.mot_de_passe_app_email;
+                delete config.brevo_api_key;
+                delete config.pennylane_api_key;
+                delete config.google_api_key;
+                delete config.pin_salon;
+            } else {
+                config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email); 
+            }
+            
+            res.json(config);
+        } else {
+            res.json({});
+        }
+    } catch (erreur) { res.status(500).json({ erreur: "Erreur lecture config." }); }
+});
+
+app.get('/api/clients/:id/history', verifierToken, async (req, res) => {
+    const id_client = req.params.id; const id_salon = req.user.id_salon;
+    try {
+        const clientRes = await pool.query('SELECT notes, telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
+        if (clientRes.rowCount === 0) return res.status(404).json({ erreur: "Client introuvable" });
+        
+        const achatsRes = await pool.query(`SELECT t.id_ticket, (CASE WHEN t.est_compense THEN 'ANNULE' ELSE 'VALIDE' END) as statut, t.date_creation, COALESCE(lt.nom_article_snapshot, c.nom) as article, lt.quantite, lt.prix_unitaire_ttc FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article WHERE t.id_client = $1 AND t.id_salon = $2 AND t.type_ticket != 'ANNULATION' ORDER BY t.date_creation DESC LIMIT 20`, [id_client, id_salon]);
+        const rdvRes = await pool.query(`SELECT date_heure_debut, prestation, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.telephone_client = $1 AND r.id_salon = $2 ORDER BY r.date_heure_debut DESC LIMIT 20`, [clientRes.rows[0].telephone, id_salon]);
+        const gainsRes = await pool.query(`SELECT date_creation, total_ttc FROM tickets WHERE id_client = $1 AND id_salon = $2 AND recompense_utilisee = TRUE AND statut != 'ANNULE' AND est_compense = FALSE ORDER BY date_creation DESC LIMIT 20`, [id_client, id_salon]);
+
+        res.json({ notes: clientRes.rows[0].notes || '', achats: achatsRes.rows, rdv: rdvRes.rows, gains: gainsRes.rows });
+    } catch (e) { res.status(500).json({ erreur: "Erreur historique." }); }
+});
+
+app.put('/api/clients/:id/notes', verifierToken, async (req, res) => {
+    try {
+        await pool.query('UPDATE clients SET notes = $1 WHERE id_client = $2 AND id_salon = $3', [req.body.notes, req.params.id, req.user.id_salon]);
+        res.json({ message: "Notes sauvegardées" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur sauvegarde." }); }
+});
+
+app.post('/api/rdv', verifierToken, async (req, res) => {
+    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes, forcer_ajout } = req.body;
+    try {
+        if (id_employe) {
+            const dateRDV = date_heure_debut.split('T')[0];
+            const absence = await pool.query(`SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`, [req.user.id_salon, id_employe, dateRDV]);
+            if (absence.rowCount > 0) return res.status(400).json({ erreur: "Impossible d'ajouter ce rdv car le collaborateur n'est pas disponible sur cette date." });
+        }
+
+        const dureeReelle = parseInt(duree_minutes) || 30;
+
+        if (id_employe && !forcer_ajout) {
+            const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+            const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+            const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
+
+            const rdvExistants = await pool.query(
+                `SELECT id_rdv FROM rendez_vous 
+                 WHERE id_salon = $1 AND id_employe = $2 
+                 AND (
+                    (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
+                    AND 
+                    (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
+                 )`,
+                [req.user.id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage]
+            );
+
+            if (rdvExistants.rowCount > 0) {
+                return res.status(409).json({ erreur: "Un rendez-vous est déjà prévu sur cette plage horaire pour ce coiffeur. Êtes-vous sûr de vouloir forcer l'ajout ?" });
+            }
+        }
+
+        await pool.query(`INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [req.user.id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, dureeReelle]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.status(201).json({ message: "RDV ajouté." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur création RDV." }); }
+});
+
+app.put('/api/rdv/:id', verifierToken, async (req, res) => {
+    const { id_employe, prestation, date_heure_debut, duree_minutes, forcer_ajout } = req.body;
+    try {
+        const dureeReelle = parseInt(duree_minutes) || 30;
+
+        if (id_employe) {
+            const dateRDV = date_heure_debut.split('T')[0];
+            const absence = await pool.query(`SELECT type_demande FROM absences_employes WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND $3 BETWEEN date_debut AND date_fin`, [req.user.id_salon, id_employe, dateRDV]);
+            if (absence.rowCount > 0) return res.status(400).json({ erreur: "Impossible de modifier ce rdv car le collaborateur n'est pas disponible sur cette date." });
+        }
+
+        if (id_employe && !forcer_ajout) {
+            const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+            const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+            const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
+
+            const rdvExistants = await pool.query(
+                `SELECT id_rdv FROM rendez_vous 
+                 WHERE id_salon = $1 AND id_employe = $2 AND id_rdv != $6
+                 AND (
+                    (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
+                    AND 
+                    (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
+                 )`,
+                [req.user.id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage, req.params.id]
+            );
+
+            if (rdvExistants.rowCount > 0) {
+                return res.status(409).json({ erreur: "Un rendez-vous est déjà prévu sur cette plage horaire pour ce coiffeur. Êtes-vous sûr de vouloir le modifier quand même ?" });
+            }
+        }
+
+        await pool.query(
+            `UPDATE rendez_vous SET id_employe = $1, prestation = $2, date_heure_debut = $3, duree_minutes = $4 WHERE id_rdv = $5 AND id_salon = $6`, 
+            [id_employe, prestation, date_heure_debut, dureeReelle, req.params.id, req.user.id_salon]
+        );
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous modifié." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur modification RDV." }); }
+});
+
+app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        io.to(req.user.id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: "Rendez-vous supprimé." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression RDV." }); }
+});
+
+// =========================================================================
+// --- EXPORT ICAL (SYNCHRONISATION PLANITY / EXTERNE) ---
+// =========================================================================
+app.get('/api/ical/:id_salon/:id_employe.ics', async (req, res) => {
+    const { id_salon, id_employe } = req.params;
+    try {
+        const empRes = await pool.query('SELECT nom FROM employes WHERE id_salon = $1 AND id_employe = $2', [id_salon, id_employe]);
+        if (empRes.rowCount === 0) return res.status(404).send("Employé introuvable");
+
+        const nomEmploye = empRes.rows[0].nom;
+
+        // RDVs futurs et passés récents
+        const rdvs = await pool.query(
+            `SELECT id_rdv, date_heure_debut, duree_minutes 
+             FROM rendez_vous 
+             WHERE id_salon = $1 AND id_employe = $2 AND date_heure_debut >= NOW() - INTERVAL '30 days'`,
+            [id_salon, id_employe]
+        );
+
+        // Absences (Congés, Maladie)
+        const absences = await pool.query(
+            `SELECT id_absence, date_debut, date_fin 
+             FROM absences_employes 
+             WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND date_fin >= CURRENT_DATE - INTERVAL '30 days'`,
+            [id_salon, id_employe]
+        );
+
+        const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+
+        // Fonction de formatage au format iCal (YYYYMMDDThhmmssZ)
+        const formatICSDate = (date) => date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        
+        // Pour les absences (Jours entiers), le format est YYYYMMDD
+        const formatICSAllDay = (dateStr, addDays = 0) => {
+            const d = new Date(dateStr);
+            d.setDate(d.getDate() + addDays);
+            return d.toISOString().split('T')[0].replace(/-/g, '');
+        };
+
+        let icsContent = "BEGIN:VCALENDAR\r\n";
+        icsContent += "VERSION:2.0\r\n";
+        icsContent += `PRODID:-//STACK//Agenda ${nomEmploye}//FR\r\n`;
+        icsContent += "CALSCALE:GREGORIAN\r\n";
+        icsContent += "METHOD:PUBLISH\r\n";
+        icsContent += `X-WR-CALNAME:STACK - ${nomEmploye}\r\n`;
+        icsContent += "X-WR-TIMEZONE:Europe/Paris\r\n";
+
+        // Ajout des Créneaux RDV
+        for (let rdv of rdvs.rows) {
+            const start = new Date(rdv.date_heure_debut);
+            const end = new Date(start.getTime() + ((rdv.duree_minutes + tempsNettoyage) * 60000));
+            
+            icsContent += "BEGIN:VEVENT\r\n";
+            icsContent += `UID:rdv-${rdv.id_rdv}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `DTSTART:${formatICSDate(start)}\r\n`;
+            icsContent += `DTEND:${formatICSDate(end)}\r\n`;
+            icsContent += "SUMMARY:Indisponible (STACK)\r\n";
+            icsContent += "STATUS:CONFIRMED\r\n";
+            icsContent += "END:VEVENT\r\n";
+        }
+
+        // Ajout des Absences
+        for (let abs of absences.rows) {
+            icsContent += "BEGIN:VEVENT\r\n";
+            icsContent += `UID:abs-${abs.id_absence}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `DTSTART;VALUE=DATE:${formatICSAllDay(abs.date_debut, 0)}\r\n`;
+            icsContent += `DTEND;VALUE=DATE:${formatICSAllDay(abs.date_fin, 1)}\r\n`; // Fin exclusive en iCal (+1 jour)
+            icsContent += "SUMMARY:Absence (STACK)\r\n";
+            icsContent += "TRANSP:OPAQUE\r\n";
+            icsContent += "END:VEVENT\r\n";
+        }
+
+        icsContent += "END:VCALENDAR\r\n";
+
+        res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="agenda-${id_employe}.ics"`);
+        res.send(icsContent);
+
+    } catch (err) {
+        res.status(500).send("Erreur génération iCal");
+    }
+});
+
+// --- ROUTE : ROBOT D'ANNULATION DE MASSE SÉLECTIVE ---
+app.post('/api/rdv/mass-cancel', verifierToken, async (req, res) => {
+    const { rdv_ids, id_employe, message_personnalise } = req.body;
+    const id_salon = req.user.id_salon;
+    if (!rdv_ids || rdv_ids.length === 0) return res.json({ message: "Aucun RDV à annuler." });
+
+    try {
+        const salonConfig = await pool.query('SELECT nom_salon, brevo_api_key, lien_google_maps FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = salonConfig.rows[0];
+
+        let countEnvoyes = 0;
+
+        for (let id_rdv of rdv_ids) {
+            const rdvRes = await pool.query('SELECT nom_client, telephone_client, date_heure_debut FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [id_rdv, id_salon]);
+            if (rdvRes.rowCount > 0) {
+                const rdv = rdvRes.rows[0];
+                await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1', [id_rdv]);
+                
+                if (config.brevo_api_key && rdv.telephone_client && rdv.telephone_client.trim().length >= 9) {
+                            // 🚨 SÉCURITÉ & RGPD : Vérification de l'opt-out avant tout envoi
+                            const optOutCheck = await pool.query(
+                                `SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = RIGHT(regexp_replace($2, '\\D', '', 'g'), 9)`, 
+                                [id_salon, rdv.telephone_client]
+                            );
+                            
+                            if (optOutCheck.rowCount === 0) {
+                                const dateRdv = new Date(rdv.date_heure_debut).toLocaleString('fr-FR', {weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit'});
+                                const prenom = rdv.nom_client ? rdv.nom_client.split(' ')[0] : 'Client';
+                                const lien = config.lien_google_maps || 'notre site internet';
+                                
+                                // Remplacement des balises dynamiques
+                                let texteSms = message_personnalise || `Bonjour [Prénom], votre RDV du [Date] est annulé. Reprogrammez ici : [Lien]`;
+                                texteSms = texteSms.replace(/\[Prénom\]/gi, prenom).replace(/\[Date\]/gi, dateRdv).replace(/\[Lien\]/gi, lien);
+                                
+                                try {
+                                    fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                                        method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+                                        body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.nom_salon || 'LeSalon').substring(0, 11), recipient: rdv.telephone_client, content: texteSms })
+                                    }).catch(()=>{}); 
+                                    countEnvoyes++;
+                                } catch (e) { console.error("Erreur SMS mass-cancel:", e); }
+                            }
+                        }
+            }
+        }
+        
+        envoyerNotificationPush(id_salon, { type: 'employe', id_employe }, { title: "Mise à jour Agenda", body: `Tes ${rdv_ids.length} RDV ont été annulés depuis le planning.`, url: '/?tab=agenda' });
+        io.to(id_salon.toString()).emit('nouveauRDV');
+        res.json({ message: `${rdv_ids.length} rendez-vous annulés (${countEnvoyes} SMS envoyés).` });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lors de l'annulation." });
+    }
+});
+app.get('/api/planning', verifierToken, async (req, res) => {
+    const startDate = req.query.startDate; 
+    const endDate = req.query.endDate;
+    
+    try {
+        // 1. Récupérer les rendez-vous normaux
+        let queryRdv = `SELECT r.*, e.nom as nom_employe FROM rendez_vous r LEFT JOIN employes e ON r.id_employe = e.id_employe WHERE r.id_salon = $1 AND DATE(r.date_heure_debut) >= $2 AND DATE(r.date_heure_debut) <= $3`;
+        const paramsRdv = [req.user.id_salon, startDate, endDate];
+        if (req.user.role === 'employe') { 
+            queryRdv += ` AND r.id_employe = $4`; 
+            paramsRdv.push(req.user.id_employe); 
+        }
+        queryRdv += ` ORDER BY r.date_heure_debut ASC`;
+        const rdvResult = await pool.query(queryRdv, paramsRdv);
+
+        // 2. Récupérer les absences (Congés validés / en attente & Arrêts maladie)
+        let queryAbs = `SELECT a.*, e.nom as nom_employe FROM absences_employes a LEFT JOIN employes e ON a.id_employe = e.id_employe WHERE a.id_salon = $1 AND a.statut != 'REFUSE' AND a.date_fin >= $2 AND a.date_debut <= $3`;
+        const paramsAbs = [req.user.id_salon, startDate, endDate];
+        if (req.user.role === 'employe') { 
+            queryAbs += ` AND a.id_employe = $4`; 
+            paramsAbs.push(req.user.id_employe); 
+        }
+        const absResult = await pool.query(queryAbs, paramsAbs);
+
+        // 3. Renvoyer les deux objets au frontend
+        res.json({
+            rendez_vous: rdvResult.rows,
+            absences: absResult.rows
+        });
+    } catch (e) { 
+        res.status(500).json({ erreur: "Erreur lecture agenda." }); 
+    }
+});
+
+// =========================================================================
+// --- L'ENCAISSEMENT & MÉTHODES DE PAIEMENT (SMART POS) ---
+// =========================================================================
+const limiteurAvisPublic = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erreur: "Trop de tentatives, réessayez plus tard." }
+});
+
+app.get('/api/avis/info/:token', limiteurAvisPublic, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT a.prenom, a.statut, a.note, a.id_salon, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1 AND a.date_creation > NOW() - INTERVAL '30 days'`, [req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou expiré." });
+        const d = r.rows[0];
+        res.json({ prenom: d.prenom, nom_salon: d.nom_salon, etape: d.statut === 'REPONDU' ? 'termine' : (d.note && d.note <= 3 ? 'commentaire' : 'notation') });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.get('/api/avis/stats', verifierToken, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE statut IN ('ENVOYE', 'REPONDU')) as nb_envoyes,
+                COUNT(*) FILTER (WHERE statut = 'REPONDU') as nb_repondus,
+                ROUND(AVG(note) FILTER (WHERE note IS NOT NULL)::numeric, 1) as note_moyenne,
+                COUNT(*) FILTER (WHERE note >= 4) as nb_positifs,
+                COUNT(*) FILTER (WHERE note IS NOT NULL AND note <= 3) as nb_negatifs
+            FROM avis_demandes WHERE id_salon = $1
+        `, [req.user.id_salon]);
+        res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ erreur: "Erreur statistiques avis." }); }
+});
+
+app.post('/api/avis/:token/stop', async (req, res) => {
+    try {
+        const r = await pool.query('SELECT id_salon, telephone FROM avis_demandes WHERE token = $1', [req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide." });
+        const { id_salon, telephone } = r.rows[0];
+        await pool.query('INSERT INTO sms_opt_out (id_salon, telephone) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id_salon, normaliserTelephone(telephone)]);
+        await pool.query(`UPDATE avis_demandes SET statut = 'ANNULE' WHERE id_salon = $1 AND telephone = $2 AND statut = 'EN_ATTENTE'`, [id_salon, telephone]);
+        res.json({ message: "Vous ne recevrez plus ce type de message." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/avis/:token/note', limiteurAvisPublic, async (req, res) => {
+    const note = parseInt(req.body.note);
+    if (!note || note < 1 || note > 5) return res.status(400).json({ erreur: "Note invalide." });
+    try {
+        const r = await pool.query(`UPDATE avis_demandes SET note = $1, statut = CASE WHEN $1 >= 4 THEN 'REPONDU' ELSE statut END WHERE token = $2 AND note IS NULL RETURNING id_salon`, [note, req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà utilisé." });
+        if (note >= 4) {
+            const salonInfo = await pool.query('SELECT lien_google_maps FROM configuration_salon WHERE id_salon = $1', [r.rows[0].id_salon]);
+            return res.json({ besoin_commentaire: false, lien_google_maps: salonInfo.rows[0]?.lien_google_maps || null });
+        }
+        res.json({ besoin_commentaire: true });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/avis/:token/commentaire', limiteurAvisPublic, async (req, res) => {
+    try {
+        const r = await pool.query(`UPDATE avis_demandes SET commentaire = $1, statut = 'REPONDU' WHERE token = $2 AND note <= 3 AND statut != 'REPONDU' RETURNING id_salon, telephone, prenom, note`, [req.body.commentaire || '', req.params.token]);
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà traité." });
+        const d = r.rows[0];
+        
+        await pool.query(
+            `INSERT INTO taches_actions (id_salon, titre, description, source, donnees) VALUES ($1, $2, $3, 'AVIS_CLIENT', $4)`,
+            [d.id_salon, `Avis client insatisfait (${d.note}★) à recontacter`, `${d.prenom || 'Un client'} (${d.telephone}) a laissé une note de ${d.note}/5 : "${req.body.commentaire || '(aucun commentaire)'}"`, JSON.stringify({ telephone: d.telephone, prenom: d.prenom })]
+        );
+        
+        envoyerNotificationPush(d.id_salon, 'gerant', { title: "Avis client à traiter", body: `Note de ${d.note}/5 reçue, un commentaire vous attend dans Actions.`, url: '/?tab=actions' });
+        res.json({ message: "Merci pour votre retour." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+});
+
+app.post('/api/sms/send', verifierToken, async (req, res) => {
+    const { telephone, message } = req.body;
+    try {
+        const salonConfig = await pool.query('SELECT brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+        const config = salonConfig.rows[0];
+        if (!config || !config.brevo_api_key) return res.status(400).json({ erreur: "SMS non configurés dans vos paramètres." });
+        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+            method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: telephone, content: message })
+        });
+        res.json({ message: "SMS de sauvetage envoyé." });
+    } catch(e) { res.status(500).json({ erreur: "Erreur d'envoi." }); }
+});
+app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé au poste Caisse/Salon ou au Gérant." });
+    const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement, pourboire, _id_temp, date_creation } = req.body;
+    const id_salon = req.user.id_salon;
+    const methode = methode_paiement || 'CARTE';
+    if (isNaN(montant) || parseFloat(montant) < 0 || !Array.isArray(lignes) || lignes.length === 0) {
+        return res.status(400).json({ erreur: "Montant ou panier invalide." });
+    }
+    
+    // --- SÉCURITÉ ANTI-FRAUDE : VÉRIFICATION DU POINTAGE ---
+    // Si la pointeuse est activée dans ce salon, on vérifie le statut du collaborateur
+    const configData = await pool.query('SELECT mode_suivi_heures FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+    if (configData.rows.length > 0 && configData.rows[0].mode_suivi_heures === 'POINTEUSE') {
+        const empData = await pool.query('SELECT role FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        if (empData.rows.length > 0 && empData.rows[0].role !== 'Gérant') {
+            const pointageData = await pool.query(`
+                SELECT type_action FROM pointages 
+                WHERE id_salon = $1 AND id_employe = $2 AND date_jour = CURRENT_DATE 
+                ORDER BY heure_action DESC LIMIT 1
+            `, [id_salon, id_employe]);
+            
+            const actionActuelle = pointageData.rows.length > 0 ? pointageData.rows[0].type_action : null;
+            if (!actionActuelle || actionActuelle === 'PAUSE_DEBUT' || actionActuelle === 'SORTIE') {
+                return res.status(403).json({ erreur: "Action refusée (Sécurité Serveur) : L'employé sélectionné n'a pas pointé son arrivée ou est en pause." });
+            }
+        }
+    }
+    // -----------------------------------------------------
+
+    const clientDB = await pool.connect();
+
+    try {
+            let reader = null;
+            let paymentIntentId = null;
+            let intentStatus = null; // Remonté pour être accessible dans le bloc catch
+
+            if (methode === 'CARTE' && montant > 0) {
+                const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+                const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
+
+                if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
+
+                const paymentIntent = await stripe.paymentIntents.create({
+                  amount: Math.round(montant * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
+                });
+                paymentIntentId = paymentIntent.id;
+                intentStatus = paymentIntent.status;
+                reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
+
+                if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
+                    try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
+                }
+
+                let attempts = 0;
+                
+                while (intentStatus === 'requires_payment_method' && attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+                    intentStatus = checkIntent.status;
+                    attempts++;
+                }
+
+                if (intentStatus !== 'requires_capture') {
+                    try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
+                    try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
+                    throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
+                }
+            }
+
+            await clientDB.query('BEGIN');
+        
+        // 🚨 VERROU TRANSACTIONNEL : On bloque la lecture/écriture du compteur pour ce salon précis
+        const configRes = await clientDB.query('SELECT compteur_tickets, tva_intra FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+        
+        // DÉTECTION FRANCHISE : Vérifie si le salon est assujetti à la TVA
+        const franchiseTVA = !configRes.rows[0].tva_intra || configRes.rows[0].tva_intra.trim() === '';
+        
+        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
+        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
+        
+        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', ''); // Ex: 202610
+        const numeroTicket = `TKT-${anneeMois}-${String(seq).padStart(6, '0')}`;
+
+        // Mise à jour du compteur pour le prochain ticket
+        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
+        
+        const pourboire = parseFloat(req.body.pourboire) || 0.00; // NOUVEAU
+
+        const ticketResult = await clientDB.query(
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne, montant_pourboire) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END, $10) RETURNING id_ticket, date_creation;`, 
+            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null, pourboire]
+        );
+        const idNouveauTicket = ticketResult.rows[0].id_ticket;
+        const dateCreationISO = new Date(ticketResult.rows[0].date_creation).toISOString();
+
+        const employeResult = await clientDB.query('SELECT * FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        const employe = employeResult.rowCount > 0 ? employeResult.rows[0] : null;
+
+        let totalTvaTicketCents = 0;
+
+        if (lignes && lignes.length > 0) {
+            // Calcul de la somme brute des lignes pour répartir au centime près toute remise éventuelle (Cohérence NF525 : Somme Lignes === Ticket TTC)
+            const targetTicketCents = Math.round((parseFloat(montant) || 0) * 100);
+            const rawLines = lignes.map(l => ({
+                ...l,
+                rawCents: Math.round((parseFloat(l.quantite) || 0) * (parseFloat(l.prix_unitaire) || 0) * 100)
+            }));
+            const sumRawCents = rawLines.reduce((acc, l) => acc + l.rawCents, 0);
+
+            let cumulAllocatedCents = 0;
+            for (let i = 0; i < rawLines.length; i++) {
+                const ligne = rawLines[i];
+                let netLineCents = ligne.rawCents;
+                if (sumRawCents > 0 && sumRawCents !== targetTicketCents) {
+                    if (i === rawLines.length - 1) {
+                        netLineCents = Math.max(0, targetTicketCents - cumulAllocatedCents);
+                    } else {
+                        netLineCents = Math.round((ligne.rawCents * targetTicketCents) / sumRawCents);
+                        cumulAllocatedCents += netLineCents;
+                    }
+                }
+                const total_ligne = Number((netLineCents / 100).toFixed(2));
+                const qteNum = parseFloat(ligne.quantite) || 1;
+                const puEffectif = Number((total_ligne / qteNum).toFixed(2));
+
+                const articleSnapshot = await clientDB.query('SELECT nom, taux_tva FROM catalogue WHERE id_article = $1 AND id_salon = $2', [ligne.id_article, id_salon]);
+                const nomSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].nom : (ligne.nom || 'Article supprimé');
+                const tvaSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].taux_tva : 20.00;
+                const tauxTvaReel = franchiseTVA ? 0 : parseFloat(tvaSnapshot);
+
+                const lineHtCents = franchiseTVA ? netLineCents : Math.round(netLineCents / (1 + (tauxTvaReel / 100)));
+                totalTvaTicketCents += (netLineCents - lineHtCents);
+
+                await clientDB.query(`INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`, 
+                [idNouveauTicket, ligne.id_article, ligne.quantite, puEffectif, total_ligne, id_salon, nomSnapshot, tvaSnapshot]);
+                
+                const updateStockQuery = `UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') RETURNING nom, stock_actuel, type_article;`;
+                const stockResult = await clientDB.query(updateStockQuery, [ligne.quantite, ligne.id_article, id_salon]);
+                let type_article = 'PRESTATION'; 
+                if (stockResult.rowCount > 0) type_article = stockResult.rows[0].type_article;
+                
+                // === DÉSTOCKAGE AUTOMATIQUE DES INGRÉDIENTS (RECETTES) ===
+                if (type_article === 'PRESTATION') {
+                    const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [nomSnapshot, id_salon]);
+                    if (protocoleRes.rowCount > 0) {
+                        const idProto = protocoleRes.rows[0].id_protocole;
+                        const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
+                        for (let ing of ingredients.rows) {
+                            const quantite_a_deduire = ing.quantite_necessaire * ligne.quantite;
+                            await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_deduire, ing.id_article, id_salon]);
+                        }
+                    }
+                }
+
+                if (employe) {
+                    const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
+                    const baseHtCommission = Number((lineHtCents / 100).toFixed(2));
+                    const montant_commission = (baseHtCommission * (taux / 100)).toFixed(2);
+                    
+                    await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon, date_creation) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, NOW()))`, 
+                    [id_employe, idNouveauTicket, baseHtCommission, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
+                }
+            }
+        }
+
+        const montantScelle = Number(montant).toFixed(2);
+        const tvaScellee = (totalTvaTicketCents / 100).toFixed(2);
+        const chaineScellee = `${idNouveauTicket}|${numeroTicket}|${dateCreationISO}|VENTE|${methode}|${montantScelle}|${tvaScellee}|${previousHash}`;
+        const newHash = crypto.createHash('sha256').update(chaineScellee).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineScellee, idNouveauTicket]);
+
+        if (id_client) {
+            const clientCheck = await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1 AND id_salon = $2 RETURNING points_fidelite, tampons_fidelite`, [id_client, id_salon]);
+            if (clientCheck.rowCount === 0) throw new Error("Client introuvable dans ce salon.");
+            const clientFidelite = clientCheck.rows[0];
+
+            const configRes = await clientDB.query(`SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1`, [id_salon]);
+            
+            if (configRes.rowCount > 0) {
+                const config = configRes.rows[0];
+                if (recompense_appliquee) {
+                    if (config.fidelite_type === 'POINTS') {
+                        if ((clientFidelite.points_fidelite || 0) < (config.fidelite_points_seuil || 0)) throw new Error("Points de fidélité insuffisants.");
+                        await clientDB.query(`UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1) WHERE id_client = $2 AND id_salon = $3`, [config.fidelite_points_seuil, id_client, id_salon]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        if ((clientFidelite.tampons_fidelite || 0) < (config.fidelite_tampons_seuil || 0)) throw new Error("Tampons de fidélité insuffisants.");
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = GREATEST(0, tampons_fidelite - $1) WHERE id_client = $2 AND id_salon = $3`, [config.fidelite_tampons_seuil, id_client, id_salon]);
+                    }
+                } else {
+                    if (config.fidelite_type === 'POINTS') {
+                        const pointsToAdd = Math.max(0, Math.floor(montant));
+                        await clientDB.query(`UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2 AND id_salon = $3`, [pointsToAdd, id_client, id_salon]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = tampons_fidelite + 1 WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
+                    }
+                }
+            }
+        }
+
+        // 🚨 SÉCURITÉ : On ne capture l'argent QUE si tout le reste en BDD s'est bien passé
+            if (methode === 'CARTE' && montant > 0 && intentStatus === 'requires_capture') {
+                await stripe.paymentIntents.capture(paymentIntentId);
+            }
+
+            await clientDB.query('COMMIT');
+            
+            let messageFinal = (methode === 'CARTE' && montant > 0) ? `En attente du TPE... (Ticket #${idNouveauTicket})` : `Paiement en ${methode} validé (Ticket #${idNouveauTicket})`;
+            io.to(id_salon.toString()).emit('paiementValide', { message: messageFinal });
+            
+            res.json({ message: messageFinal, reader, id_ticket: idNouveauTicket });
+        } catch (error) {
+            await clientDB.query('ROLLBACK');
+            
+            // 🚨 SÉCURITÉ : Si la BDD a planté, on annule l'empreinte bancaire pour éviter un double débit
+            if (paymentIntentId && intentStatus === 'requires_capture') {
+                try { 
+                    await stripe.paymentIntents.cancel(paymentIntentId); 
+                    console.log(`[STRIPE] Paiement ${paymentIntentId} annulé suite à un crash BDD.`);
+                } catch(e) { 
+                    console.error("[STRIPE] Erreur annulation:", e); 
+                }
+            }
+
+            console.error("Erreur Encaisser:", error); res.status(500).json({ erreur: "Erreur lors de l'encaissement. " + error.message });
+        } finally { clientDB.release(); }
+});
+
+app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant est habilité à annuler un ticket." });
+    const id_ticket = req.params.id;
+    const id_salon = req.user.id_salon;
+    const { motif, lignes_a_annuler } = req.body;
+    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Un motif d'annulation est obligatoire." });
+
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+
+        // NF525 : Interdiction d'émettre un ticket d'annulation sur une journée déjà clôturée (Z effectué)
+        const zAujourdHui = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
+        if (zAujourdHui.rowCount > 0) {
+            throw new Error("Action bloquée (NF525) : La clôture Z d'aujourd'hui a déjà été scellée. Impossible d'émettre un avoir d'annulation sur une journée clôturée.");
+        }
+
+        const ticketRes = await clientDB.query(
+            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION'",
+            [id_ticket, id_salon]
+        );
+        if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable.");
+        const ticket = ticketRes.rows[0];
+
+        const lignesOrigine = await clientDB.query(
+            "SELECT id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, nom_article_snapshot, taux_tva_snapshot FROM lignes_ticket WHERE id_ticket = $1",
+            [id_ticket]
+        );
+
+        // Récupérer ce qui a déjà été annulé pour ce ticket
+        const lignesDejaAnnulees = await clientDB.query("SELECT id_article, SUM(ABS(quantite)) as qte_annulee FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_ticket_origine = $1) GROUP BY id_article", [id_ticket]);
+        let mapDejaAnnule = {};
+        lignesDejaAnnulees.rows.forEach(r => mapDejaAnnule[r.id_article] = parseFloat(r.qte_annulee));
+
+        let lignesToProcess = [];
+        if (lignes_a_annuler && lignes_a_annuler.length > 0) {
+            for (let reqLigne of lignes_a_annuler) {
+                let origLigne = lignesOrigine.rows.find(l => l.id_article == reqLigne.id_article);
+                if (origLigne) {
+                    let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                    let qte = Math.min(reqLigne.quantite, maxAnnulable);
+                    if (qte > 0) {
+                        lignesToProcess.push({
+                            ...origLigne,
+                            quantite: qte,
+                            total_ligne_ttc: qte * parseFloat(origLigne.prix_unitaire_ttc)
+                        });
+                    }
+                }
+            }
+        } else {
+            // Fallback: Annulation totale de ce qui reste
+            for (let origLigne of lignesOrigine.rows) {
+                let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                if (maxAnnulable > 0) {
+                    lignesToProcess.push({
+                        ...origLigne,
+                        quantite: maxAnnulable,
+                        total_ligne_ttc: maxAnnulable * parseFloat(origLigne.prix_unitaire_ttc)
+                    });
+                }
+            }
+        }
+
+        if (lignesToProcess.length === 0) throw new Error("Ce ticket a déjà été entièrement annulé.");
+
+        const montantCompensation = -lignesToProcess.reduce((sum, l) => sum + parseFloat(l.total_ligne_ttc), 0);
+
+        // 🚨 VERROU TRANSACTIONNEL
+        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+
+        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
+        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
+        
+        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', '');
+        const numeroCompensation = `TKT-AN-${anneeMois}-${String(seq).padStart(6, '0')}`;
+
+        // Mise à jour du compteur pour le prochain ticket
+        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
+
+        const compensationResult = await clientDB.query(
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
+             VALUES ($1, $2, $3, $4, $5, FALSE, $6, 'VALIDE', 'ANNULATION', $7, $8) RETURNING id_ticket, date_creation;`,
+            [numeroCompensation, ticket.id_client, ticket.id_employe, montantCompensation, id_salon, ticket.methode_paiement, id_ticket, motif.trim()]
+        );
+        const idTicketCompensation = compensationResult.rows[0].id_ticket;
+        const dateCompISO = new Date(compensationResult.rows[0].date_creation).toISOString();
+
+        const configTvaRes = await clientDB.query('SELECT tva_intra FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const franchiseTVAAnnul = !configTvaRes.rows[0]?.tva_intra || configTvaRes.rows[0].tva_intra.trim() === '';
+        let totalTvaCompCents = 0;
+        for (const l of lignesToProcess) {
+            const lineCents = -Math.round(Math.abs(parseFloat(l.total_ligne_ttc) || 0) * 100);
+            const taux = franchiseTVAAnnul ? 0 : (parseFloat(l.taux_tva_snapshot) || 20);
+            const htCents = franchiseTVAAnnul ? lineCents : Math.round(lineCents / (1 + taux / 100));
+            totalTvaCompCents += (lineCents - htCents);
+        }
+
+        const montantCompensationScelle = Number(montantCompensation).toFixed(2);
+        const tvaCompScellee = (totalTvaCompCents / 100).toFixed(2);
+        const chaineCompScellee = `${idTicketCompensation}|${numeroCompensation}|${dateCompISO}|ANNULATION|${ticket.methode_paiement}|${montantCompensationScelle}|${tvaCompScellee}|${previousHash}`;
+        const newHash = crypto.createHash('sha256').update(chaineCompScellee).digest('hex');
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineCompScellee, idTicketCompensation]);
+
+        // Vérifier si le ticket est désormais entièrement compensé
+        const dejaCompenseRes = await clientDB.query("SELECT COALESCE(SUM(ABS(total_ttc)), 0) as deja_rembourse FROM tickets WHERE id_ticket_origine = $1 AND statut != 'ANNULE'", [id_ticket]);
+        const dejaRembourse = parseFloat(dejaCompenseRes.rows[0].deja_rembourse);
+        if (dejaRembourse >= parseFloat(ticket.total_ttc) - 0.01) {
+            await clientDB.query("UPDATE tickets SET est_compense = TRUE WHERE id_ticket = $1", [id_ticket]);
+        }
+
+        for (const ligne of lignesToProcess) {
+            await clientDB.query(
+                `INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
+                [idTicketCompensation, ligne.id_article, -ligne.quantite, ligne.prix_unitaire_ttc, -ligne.total_ligne_ttc, id_salon, ligne.nom_article_snapshot, ligne.taux_tva_snapshot]
+            );
+            await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2 AND id_salon = $3", [ligne.quantite, ligne.id_article, id_salon]);
+            
+            // REMISE EN STOCK DES RECETTES SI PRÉSENTES
+            const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [ligne.nom_article_snapshot, id_salon]);
+            if (protocoleRes.rowCount > 0) {
+                const idProto = protocoleRes.rows[0].id_protocole;
+                const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
+                for (let ing of ingredients.rows) {
+                    const quantite_a_restaurer = ing.quantite_necessaire * ligne.quantite;
+                    await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_restaurer, ing.id_article, id_salon]);
+                }
+            }
+        }
+
+        // Commissions : Proratisation basée sur le montant remboursé par rapport au ticket global
+        const commissionsOrigine = await clientDB.query("SELECT * FROM commissions WHERE id_ticket = $1", [id_ticket]);
+        if (commissionsOrigine.rowCount > 0 && parseFloat(ticket.total_ttc) > 0) {
+            const ratio = Math.abs(montantCompensation) / parseFloat(ticket.total_ttc);
+            for (const c of commissionsOrigine.rows) {
+                const commissionAnnulee = -(parseFloat(c.montant_commission) * ratio).toFixed(2);
+                const venteAnnulee = -(parseFloat(c.montant_vente) * ratio).toFixed(2);
+                await clientDB.query(
+                    `INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [c.id_employe, idTicketCompensation, venteAnnulee, commissionAnnulee, c.type_vente, id_salon]
+                );
+            }
+        }
+
+        if (ticket.id_client) {
+            const estAnnulationTotale = Math.abs(montantCompensation) >= parseFloat(ticket.total_ttc) - 0.01;
+            
+            if (!ticket.recompense_utilisee) {
+                // Le ticket avait généré des points/tampons, on les retire au prorata
+                const pointsARetirer = Math.floor(Math.abs(montantCompensation));
+                const tamponsARetirer = estAnnulationTotale ? 1 : 0;
+                await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - $2) WHERE id_client = $3", [pointsARetirer, tamponsARetirer, ticket.id_client]);
+            } else if (estAnnulationTotale) {
+                // Le ticket avait CONSOMMÉ une récompense, on la restitue au client (uniquement si annulation totale)
+                const configRes = await clientDB.query('SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+                if (configRes.rowCount > 0) {
+                    const config = configRes.rows[0];
+                    if (config.fidelite_type === 'POINTS') {
+                        await clientDB.query("UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2", [config.fidelite_points_seuil, ticket.id_client]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query("UPDATE clients SET tampons_fidelite = tampons_fidelite + $1 WHERE id_client = $2", [config.fidelite_tampons_seuil, ticket.id_client]);
+                    }
+                }
+            }
+        }
+
+        await enregistrerJET(id_salon, 'ANNULATION_TICKET', {
+            id_ticket_origine: parseInt(id_ticket),
+            id_ticket_compensation: idTicketCompensation,
+            montant: montantCompensation,
+            lignes_annulees: lignesToProcess.map(l => ({ id_article: l.id_article, quantite: l.quantite })),
+            motif: motif.trim()
+        }, clientDB);
+
+        await clientDB.query('COMMIT');
+        res.json({ message: "Remboursement validé (écriture de compensation générée). Stock et fidélité mis à jour." });
+    } catch (err) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: err.message });
+    } finally { clientDB.release(); }
+});
+
+app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
+    const { id_ticket, email, id_client, methode } = req.body;
+    const id_salon = req.user.id_salon;
+    try {
+        const salonConfig = await pool.query('SELECT nom_salon, email_reception_factures, mot_de_passe_app_email, brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        if (salonConfig.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
+        const config = salonConfig.rows[0];
+
+        const ticketData = await pool.query('SELECT numero_ticket_caisse, total_ttc, date_creation, methode_paiement FROM tickets WHERE id_ticket = $1 AND id_salon = $2', [id_ticket, id_salon]);
+        if (ticketData.rowCount === 0) return res.status(404).json({ erreur: "Ticket introuvable." });
+        const ticket = ticketData.rows[0];
+
+        const textRecap = `Merci pour votre visite chez ${config.nom_salon} !\nTicket n°${ticket.numero_ticket_caisse} du ${new Date(ticket.date_creation).toLocaleDateString()}.\nMontant total : ${parseFloat(ticket.total_ttc).toFixed(2)} € (Réglé par ${ticket.methode_paiement}).\nÀ très bientôt !`;
+
+        if (methode === 'email') {
+            if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
+            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: dechiffrer(config.mot_de_passe_app_email) } });
+            await transporter.sendMail({ from: `"${config.nom_salon}" <${config.email_reception_factures}>`, to: email, subject: `Votre reçu - ${config.nom_salon}`, text: textRecap });
+            if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
+        } else if (methode === 'sms') {
+            if (!config.brevo_api_key) return res.status(400).json({ erreur: "Clé Brevo non configurée." });
+            let telephoneEnvoi;
+            if (id_client) {
+                const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1', [id_client]);
+                if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro." });
+                telephoneEnvoi = client.rows[0].telephone;
+            } else {
+                telephoneEnvoi = (req.body.telephone || '').trim();
+                if (!telephoneEnvoi) return res.status(400).json({ erreur: "Numéro de téléphone requis." });
+            }
+            await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+                method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
+                body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: telephoneEnvoi, content: textRecap })
+            });
+
+            // Client non identifié dans la base -> on programme l'enquête de satisfaction (1h30 après l'envoi du ticket)
+            if (!id_client) {
+                const telNormalise = normaliserTelephone(telephoneEnvoi);
+                const dejaOptOut = await pool.query('SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = $2', [id_salon, telNormalise]);
+                const clientConnu = await pool.query(`SELECT 1 FROM clients WHERE id_salon = $1 AND RIGHT(regexp_replace(telephone, '\\D', '', 'g'), 9) = $2`, [id_salon, telNormalise]);
+                if (clientConnu.rowCount === 0 && dejaOptOut.rowCount === 0) {
+                    const tokenAvis = crypto.randomBytes(24).toString('hex');
+                    await pool.query(
+                        `INSERT INTO avis_demandes (id_salon, telephone, token, statut, date_prevue) VALUES ($1, $2, $3, 'EN_ATTENTE', NOW() + INTERVAL '1.5 hours')`,
+                        [id_salon, telephoneEnvoi, tokenAvis]
+                    );
+                }
+            }
+        }
+        res.json({ message: "Ticket envoyé." });
+    } catch (error) { res.status(500).json({ erreur: "Erreur envoi ticket." }); }
+});
+
+app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT m.*, e.nom as nom_employe FROM mouvements_caisse m LEFT JOIN employes e ON m.id_employe = e.id_employe WHERE m.id_salon = $1 AND DATE(m.date_creation) = CURRENT_DATE ORDER BY m.date_creation DESC`,
+            [req.user.id_salon]
+        );
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur lecture mouvements." }); }
+});
+
+app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Accès réservé à la caisse du salon ou au gérant." });
+    const { type_mouvement, montant, motif, id_employe, categorie_comptable } = req.body;
+    if (!['ENTREE', 'SORTIE'].includes(type_mouvement)) return res.status(400).json({ erreur: "Type de mouvement invalide." });
+    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
+    if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const scelle = await enregistrerMouvementCaisseScelle(clientDB, {
+            id_salon: req.user.id_salon,
+            id_employe: id_employe || null,
+            type_mouvement,
+            montant: parseFloat(montant),
+            motif: motif.trim(),
+            categorie_comptable: categorie_comptable || null
+        });
+        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, type_mouvement, categorie_comptable: scelle.categorie_comptable, montant: parseFloat(montant), motif: motif.trim(), hash_mouvement: scelle.hash_mouvement }, clientDB);
+        await clientDB.query('COMMIT');
+        res.status(201).json({ message: "Mouvement de caisse enregistré et scellé." });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(400).json({ erreur: e.message || "Erreur lors de la sauvegarde." });
+    } finally { clientDB.release(); }
+});
+
+app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "La clôture Z est réservée au gérant ou au poste Salon." });
+    const id_salon = req.user.id_salon;
+    const { ferme_par, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        
+        // Verrouillage transactionnel strict NF525 sur le salon
+        await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+
+        const jourRes = await clientDB.query(
+            `SELECT MIN(DATE(t.date_creation)) as jour_non_cloture
+             FROM tickets t
+             WHERE t.id_salon = $1
+               AND NOT EXISTS (
+                   SELECT 1 FROM clotures_caisse c
+                   WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
+               )`,
+            [id_salon]
+        );
+
+        let dateACloturerStr;
+        if (jourRes.rowCount > 0 && jourRes.rows[0].jour_non_cloture) {
+             const d = new Date(jourRes.rows[0].jour_non_cloture);
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        } else {
+             const d = new Date();
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2', [id_salon, dateACloturerStr]);
+        if (dejaCloture.rowCount > 0) throw new Error(`La caisse pour la date du ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')} a déjà été clôturée.`);
+
+        const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+        const totalJour = Number(caResult.rows[0].total).toFixed(2);
+
+        // RÈGLE D'OR NF525 : Nouveau Cumul = Ancien Cumul (du dernier Z scellé) + CA du jour (verrouillé FOR UPDATE).
+        const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1 FOR UPDATE', [id_salon]);
+        
+        const ancienCumul = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].cumul_perpetuel_ttc ? parseFloat(dernierZInfo.rows[0].cumul_perpetuel_ttc) : 0;
+        const grandTotalPerpetuel = Number((ancienCumul + parseFloat(totalJour)).toFixed(2));
+        const hashPrecedent = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].signature_hash ? dernierZInfo.rows[0].signature_hash : 'GENESIS_Z';
+        const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
+
+        // --- CALCUL NF525 DE L'ÉCART DE CAISSE (BLIND CLOSE) ---
+        const fCaisseMatin = parseFloat(fond_caisse_matin) || 0;
+        const tEspecesReel = parseFloat(total_especes_reel) || 0;
+
+        // Somme algébrique exacte (inclut le ticket d'origine + et l'éventuel ticket d'annulation - du jour)
+        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+        const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
+
+        const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE montant END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
+        const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
+
+        const tEspecesTheorique = Number((fCaisseMatin + totalEspecesVentes + totalMouvements).toFixed(2));
+        const ecartCaisse = Number((tEspecesReel - tEspecesTheorique).toFixed(2));
+
+        // 🚨 SI L'ÉCART EST > 2€ ET QU'ON N'A PAS ENCORE DE JUSTIFICATION, ON BLOQUE !
+        if (Math.abs(ecartCaisse) > 2.00 && (!justification_ecart || justification_ecart.trim() === '')) {
+            await clientDB.query('ROLLBACK');
+            return res.status(400).json({ 
+                erreur: `Un écart de caisse de ${ecartCaisse > 0 ? '+' : ''}${ecartCaisse.toFixed(2)} € a été détecté. Une justification est requise pour la loi NF525.`, 
+                require_justification: true, 
+                ecart: ecartCaisse 
+            });
+        }
+        // --------------------------------------------------------
+
+        const dateISO = new Date().toISOString();
+        
+        const signature = crypto.createHash('sha256')
+            .update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}-${dateISO}`)
+            .digest('hex');
+
+        await clientDB.query(
+            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, numero_z_salon) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, ferme_par || 'Gérant', fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null, nextZ]
+        );
+
+        await enregistrerJET(id_salon, 'CLOTURE_Z', { numero_z: nextZ, date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
+
+        // --- PHASE 4 : WEBHOOK / POUSSÉE API TEMPS RÉEL (Ex: Pennylane) ---
+        try {
+            const configRes = await clientDB.query('SELECT pennylane_api_key FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+            const apiKey = configRes.rows[0]?.pennylane_api_key;
+            
+            if (apiKey && apiKey.trim() !== '') {
+                const dateCloture = dateACloturerStr;
+                const ecrituresRes = await clientDB.query(`
+                    SELECT t.numero_ticket_caisse, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, c.type_article 
+                    FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article 
+                    WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut = 'VALIDE'
+                `, [id_salon, dateCloture]);
+
+                if (ecrituresRes.rowCount > 0) {
+                    // Construction du Payload d'Écritures Comptables (Format générique Pennylane / Comptabilité API)
+                    const payloadPennylane = {
+                        journal_code: "VT",
+                        date: dateCloture,
+                        label: `Z de Caisse du ${dateCloture}`,
+                        entries: ecrituresRes.rows.map(row => ({
+                            reference: row.numero_ticket_caisse,
+                            montant_ttc: parseFloat(row.total_ttc),
+                            methode: row.methode_paiement,
+                            lignes: [{ type: row.type_article || 'PRESTATION', ht: Number((row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100)).toFixed(2)), tva: Number((row.total_ligne_ttc - (row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100))).toFixed(2)) }]
+                        }))
+                    };
+
+                    // Poussée vers l'API externe en tâche de fond (on n'attend pas la réponse pour ne pas bloquer le frontend)
+                    fetch('https://app.pennylane.com/api/v1/customer_invoices', { // Endpoint générique modulable
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        body: JSON.stringify(payloadPennylane)
+                    }).then(r => {
+                        if (r.ok) console.log(`[API COMPTA] Z du ${dateCloture} (Salon ${id_salon}) poussé avec succès.`);
+                        else console.error(`[API COMPTA] Erreur API externe :`, r.status);
+                    }).catch(err => console.error(`[API COMPTA] Échec réseau :`, err.message));
+                }
+            }
+        } catch (apiErr) {
+            console.error("Erreur préparation Webhook Compta:", apiErr);
+        }
+        // ------------------------------------------------------------------
+
+        await clientDB.query('COMMIT');
+        res.json({ message: `Caisse clôturée avec succès pour le ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')}.`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message || "Erreur lors de la clôture." });
+    } finally { clientDB.release(); }
+});
+
+app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [req.user.id_salon]);
+        const auto = await pool.query("SELECT TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_auto FROM clotures_caisse WHERE id_salon = $1 AND est_cloture_automatique = TRUE ORDER BY id_cloture DESC LIMIT 1", [req.user.id_salon]);
+        res.json({ 
+            cloture_faite: r.rowCount > 0,
+            derniere_cloture_auto: auto.rowCount > 0 ? auto.rows[0].date_auto : null
+        });
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
+});
+
+app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => {
+    try {
+        // On cherche si la TOUTE DERNIÈRE clôture Z (globale du salon) était automatique et est toujours en attente
+        const auto = await pool.query(
+            "SELECT id_cloture, TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_cloture_fr, total_especes_theorique FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1", 
+            [req.user.id_salon]
+        );
+        
+        if (auto.rowCount > 0 && auto.rows[0].total_especes_theorique !== null) {
+            // Si c'est bien la dernière et qu'elle attend d'être régularisée
+            const derniereEstAuto = await pool.query(
+                "SELECT 1 FROM clotures_caisse WHERE id_cloture = $1 AND est_cloture_automatique = TRUE", 
+                [auto.rows[0].id_cloture]
+            );
+            
+            if (derniereEstAuto.rowCount > 0) {
+                return res.json({ necessite_regularisation: true, cloture: auto.rows[0] });
+            }
+        }
+        res.json({ necessite_regularisation: false });
+    } catch (e) { res.status(500).json({ erreur: "Erreur vérification matinale." }); }
+});
+
+app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
+    const { id_cloture, montant_reel, id_employe } = req.body;
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE FOR UPDATE", [id_cloture, req.user.id_salon]);
+        if (clotureRes.rowCount === 0) throw new Error("Clôture automatique introuvable ou déjà régularisée.");
+        
+        const cloture = clotureRes.rows[0];
+        const theorique = parseFloat(cloture.total_especes_theorique);
+        const reel = parseFloat(montant_reel);
+        const ecart = Number((reel - theorique).toFixed(2));
+
+        // Si l'équipe constate un écart par rapport au théorique de la fermeture auto, on crée un mouvement scellé
+        if (Math.abs(ecart) > 0) {
+            await enregistrerMouvementCaisseScelle(clientDB, {
+                id_salon: req.user.id_salon,
+                id_employe: id_employe || null,
+                type_mouvement: 'REGULARISATION',
+                montant: ecart,
+                motif: `Régularisation ouverture suite fermeture auto`
+            });
+        }
+        await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, theorique, reel, ecart }, clientDB);
+
+        // On lève uniquement le flag est_cloture_automatique (autorisé par le trigger NF525) sans toucher aux colonnes scellées
+        await clientDB.query("UPDATE clotures_caisse SET est_cloture_automatique = FALSE WHERE id_cloture = $1", [id_cloture]);
+        
+        await clientDB.query('COMMIT');
+        res.json({ message: "Caisse régularisée avec succès." });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(500).json({ erreur: e.message || "Erreur de régularisation." });
+    } finally { clientDB.release(); }
+});
+
+app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
+    if (!['gerant', 'salon'].includes(req.user.role)) return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
+    try {
+        await pool.query('UPDATE configuration_salon SET derniere_verif_stock = CURRENT_DATE WHERE id_salon = $1', [req.user.id_salon]);
+        res.json({ message: "Vérification des stocks enregistrée." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'enregistrement." }); }
+});
+
+// =========================================================================
+// --- AUDIT DE CONFORMITÉ NF525 (Vérification Cryptographique) ---
+// =========================================================================
+app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
+    const id_salon = req.user.id_salon;
+    
+    try {
+        let erreurs = [];
+        let alertes = [];
+        
+        // 1. Audit des TICKETS
+        const tickets = await pool.query('SELECT id_ticket, numero_ticket_caisse, total_ttc, hash_ticket, donnees_scellees FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC', [id_salon]);
+        let prevHashTicket = 'GENESIS_BLOCK';
+        
+        for (let t of tickets.rows) {
+            if (!t.hash_ticket) {
+                alertes.push(`Ticket #${t.id_ticket} non scellé (possible ticket hors-ligne en attente).`);
+                continue;
+            }
+            let hashValide = false;
+            if (t.donnees_scellees) {
+                const parts = t.donnees_scellees.split('|');
+                const prevInPayload = parts[parts.length - 1];
+                const computedEnrichi = crypto.createHash('sha256').update(t.donnees_scellees).digest('hex');
+                if (prevInPayload === prevHashTicket && computedEnrichi === t.hash_ticket) {
+                    hashValide = true;
+                }
+            } else {
+                const computedFormatted = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${Number(t.total_ttc).toFixed(2)}-${prevHashTicket}`).digest('hex');
+                const computedLegacy = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${parseFloat(t.total_ttc)}-${prevHashTicket}`).digest('hex');
+                if (computedFormatted === t.hash_ticket || computedLegacy === t.hash_ticket) {
+                    hashValide = true;
+                }
+            }
+            if (!hashValide) {
+                erreurs.push(`Rupture cryptographique sur le ticket #${t.id_ticket} (${t.numero_ticket_caisse}).`);
+                break;
+            }
+            prevHashTicket = t.hash_ticket;
+        }
+
+        // 2. Audit des CLÔTURES (Z) et continuité de numero_z_salon + cumul perpétuel
+        const clotures = await pool.query('SELECT id_cloture, numero_z_salon, total_encaisse, cumul_perpetuel_ttc, signature_hash, hash_precedent, date_cloture FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon ASC NULLS FIRST, id_cloture ASC', [id_salon]);
+        let prevHashZ = 'GENESIS_Z';
+        let expectedNumZ = 1;
+        let prevCumulZ = 0;
+        for (let c of clotures.rows) {
+            if (c.hash_precedent !== prevHashZ) {
+                erreurs.push(`Rupture de chaînage sur la clôture Z du ${new Date(c.date_cloture).toLocaleDateString('fr-FR')}.`);
+                break;
+            }
+            if (c.numero_z_salon && parseInt(c.numero_z_salon) !== expectedNumZ) {
+                erreurs.push(`Rupture de séquence sur la numérotation Z : attendu Z#${expectedNumZ}, trouvé Z#${c.numero_z_salon}.`);
+                break;
+            }
+            const cumulAttendu = Number((prevCumulZ + parseFloat(c.total_encaisse || 0)).toFixed(2));
+            const cumulStocke = Number(parseFloat(c.cumul_perpetuel_ttc || 0).toFixed(2));
+            if (Math.abs(cumulStocke - cumulAttendu) > 0.02) {
+                alertes.push(`Écart de cumul perpétuel sur Z#${c.numero_z_salon || c.id_cloture} (Attendu: ${cumulAttendu.toFixed(2)}€, Stocké: ${cumulStocke.toFixed(2)}€).`);
+            }
+            prevCumulZ = cumulStocke;
+            expectedNumZ++;
+            prevHashZ = c.signature_hash;
+        }
+
+        // 2 bis. Audit des MOUVEMENTS DE CAISSE scellés
+        const mouvements = await pool.query('SELECT id_mouvement, type_mouvement, montant, motif, hash_precedent, hash_mouvement FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL ORDER BY id_mouvement ASC', [id_salon]);
+        let prevHashMvt = 'GENESIS_MVT';
+        for (let m of mouvements.rows) {
+            const expectedMvtHash = crypto.createHash('sha256')
+                .update(`MVT-${id_salon}-${m.id_mouvement}-${m.type_mouvement}-${Number(m.montant).toFixed(2)}-${String(m.motif || '').trim()}-${prevHashMvt}`)
+                .digest('hex');
+            if (m.hash_precedent !== prevHashMvt || m.hash_mouvement !== expectedMvtHash) {
+                erreurs.push(`Rupture de chaînage sur le mouvement de caisse #${m.id_mouvement}.`);
+                break;
+            }
+            prevHashMvt = m.hash_mouvement;
+        }
+
+        // 3. Audit du Journal des Événements Techniques (JET)
+        const jetLogs = await pool.query('SELECT id_jet, hash_jet, hash_precedent, action FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet ASC', [id_salon]);
+        let prevHashJet = 'GENESIS_JET';
+        for (let j of jetLogs.rows) {
+            if (j.hash_precedent !== prevHashJet) {
+                erreurs.push(`Rupture de chaînage sur le Journal Technique (Action #${j.id_jet} - ${j.action}).`);
+                break;
+            }
+            prevHashJet = j.hash_jet;
+        }
+
+        // Traçabilité de l'audit lui-même
+        await enregistrerJET(id_salon, 'AUDIT_NF525_EXECUTE', { tickets: tickets.rowCount, clotures: clotures.rowCount, jet: jetLogs.rowCount, conforme: erreurs.length === 0 });
+
+        res.json({ 
+            conforme: erreurs.length === 0, 
+            erreurs,
+            alertes,
+            total_tickets_verifies: tickets.rowCount,
+            total_z_verifies: clotures.rowCount,
+            total_jet_verifies: jetLogs.rowCount
+        });
+    } catch (e) {
+        console.error("Erreur Audit:", e);
+        res.status(500).json({ erreur: "Erreur lors de l'audit NF525." });
+    }
+});
+
+app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const { date_debut, date_fin } = req.query;
+    if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
+
+    try {
+        const ticketsRes = await pool.query(
+            `SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.type_ticket, t.total_ttc, t.methode_paiement, t.statut, t.est_compense, t.id_ticket_origine, t.motif_annulation, t.hash_ticket,
+                    lt.id_article, COALESCE(lt.nom_article_snapshot, 'N/A') as nom_article, lt.quantite, lt.prix_unitaire_ttc, lt.taux_tva_snapshot, lt.total_ligne_ttc
+             FROM tickets t
+             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
+             WHERE t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3
+             ORDER BY t.id_ticket ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
+        const jetRes = await pool.query(
+            `SELECT id_jet, action, details, date_creation, hash_precedent, hash_jet
+             FROM jet_logs WHERE id_salon = $1 AND DATE(date_creation) BETWEEN $2 AND $3
+             ORDER BY id_jet ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
+        const echapper = (val) => {
+            if (val === null || val === undefined) return '';
+            const str = String(val).replace(/"/g, '""');
+            return `"${str}"`;
+        };
+
+        let csv = 'TICKETS\r\n';
+        csv += ['id_ticket','numero_ticket','date_creation','type_ticket','statut','est_compense','id_ticket_origine','motif_annulation','methode_paiement','total_ttc','id_article','nom_article','quantite','prix_unitaire_ttc','taux_tva','total_ligne_ttc','hash_ticket'].join(';') + '\r\n';
+        for (const r of ticketsRes.rows) {
+            csv += [r.id_ticket, r.numero_ticket_caisse, new Date(r.date_creation).toISOString(), r.type_ticket, r.statut, r.est_compense, r.id_ticket_origine || '', r.motif_annulation || '', r.methode_paiement, r.total_ttc, r.id_article || '', r.nom_article, r.quantite, r.prix_unitaire_ttc, r.taux_tva_snapshot, r.total_ligne_ttc, r.hash_ticket]
+                .map(echapper).join(';') + '\r\n';
+        }
+
+        csv += '\r\nJOURNAL_DES_EVENEMENTS_TECHNIQUES\r\n';
+        csv += ['id_jet','action','details','date_creation','hash_precedent','hash_jet'].join(';') + '\r\n';
+        for (const j of jetRes.rows) {
+            csv += [j.id_jet, j.action, JSON.stringify(j.details), new Date(j.date_creation).toISOString(), j.hash_precedent, j.hash_jet]
+                .map(echapper).join(';') + '\r\n';
+        }
+
+        const secret = process.env.ARCHIVE_SIGNING_SECRET || process.env.JWT_SECRET;
+        const signatureArchive = crypto.createHmac('sha256', secret).update(csv).digest('hex');
+        csv += `\r\nSIGNATURE_ARCHIVE;${signatureArchive}\r\n`;
+
+        await enregistrerJET(id_salon, 'EXPORT_ARCHIVE_FISCALE', { date_debut, date_fin, nb_lignes_tickets: ticketsRes.rowCount, nb_lignes_jet: jetRes.rowCount, signature: signatureArchive });
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="archive-fiscale-${id_salon}-${date_debut}_${date_fin}.csv"`);
+        res.send('\uFEFF' + csv);
+    } catch (e) {
+        console.error("❌ Erreur export archive fiscale:", e);
+        res.status(500).json({ erreur: "Erreur lors de la génération de l'archive fiscale." });
+    }
+});
+
+// =========================================================================
+// --- MOTEUR UNIFIÉ & ROUTE EXPORT FEC (Art. A.47 A-1 du LPF / NF525) ---
+// =========================================================================
+async function construireContenuFEC(id_salon, date_debut, date_fin) {
+    // 1. Récupérer la configuration comptable et fiscale (Franchise TVA + SIREN) du salon
+    const configRes = await pool.query(
+        'SELECT siret, tva_intra, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva FROM configuration_salon WHERE id_salon = $1',
+        [id_salon]
+    );
+    const config = configRes.rows[0] || {};
+    const franchiseTVA = !config.tva_intra || config.tva_intra.trim() === '';
+    const siren = config.siret ? String(config.siret).replace(/\D/g, '').substring(0, 9) : '';
+
+    const CPT_BANQUE = config.compte_banque || '512000';
+    const CPT_CAISSE = config.compte_caisse || '530000';
+    const CPT_PRESTA = config.compte_prestations || '706000';
+    const CPT_PROD = config.compte_produits || '707000';
+    const CPT_TVA_BASE = config.compte_tva || '445710';
+    const CPT_POURBOIRES = '426000';
+
+    const getCompteTvaCollectee = (taux) => {
+        if (CPT_TVA_BASE !== '445710') return CPT_TVA_BASE;
+        const t = Number(taux);
+        if (t === 20) return '445711';
+        if (t === 10) return '445712';
+        if (t === 5.5) return '445713';
+        return CPT_TVA_BASE;
+    };
+
+    // 2. Récupérer tous les tickets validés (ventes + avoirs d'annulation + pourboires) sur la période
+    const ticketsRes = await pool.query(`
+        SELECT 
+            t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, t.montant_pourboire, t.type_ticket,
+            lt.id_ligne, lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, c.nom, 'Prestation') as nom_article,
+            COALESCE(c.type_article, 'PRESTATION') as type_article,
+            cc.date_cloture
+        FROM tickets t
+        LEFT JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket
+        LEFT JOIN catalogue c ON lt.id_article = c.id_article
+        LEFT JOIN clotures_caisse cc ON cc.id_salon = t.id_salon AND cc.date_cloture = DATE(t.date_creation)
+        WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
+        ORDER BY t.date_creation ASC, t.id_ticket ASC, lt.id_ligne ASC
+    `, [id_salon, date_debut, date_fin]);
+
+    const formatDateFEC = (date) => {
+        if (!date) return '';
+        const d = new Date(date);
+        return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const formatMontant = (cents) => (Math.abs(cents) / 100).toFixed(2).replace('.', ',');
+
+    // Regroupement par ticket dans l'ordre chronologique strict
+    const ticketsList = [];
+    const ticketsMap = new Map();
+    ticketsRes.rows.forEach(r => {
+        if (!ticketsMap.has(r.id_ticket)) {
+            const tObj = {
+                id_ticket: r.id_ticket,
+                numero: r.numero_ticket_caisse || `TKT-${r.id_ticket}`,
+                date: r.date_creation,
+                date_valid: r.date_cloture || r.date_creation,
+                methode: r.methode_paiement || 'CARTE',
+                type_ticket: r.type_ticket || 'VENTE',
+                total_ttc: parseFloat(r.total_ttc) || 0,
+                pourboire: parseFloat(r.montant_pourboire) || 0,
+                lignes: []
+            };
+            ticketsMap.set(r.id_ticket, tObj);
+            ticketsList.push(tObj);
+        }
+        if (r.total_ligne_ttc !== null && r.total_ligne_ttc !== undefined) {
+            ticketsMap.get(r.id_ticket).lignes.push(r);
+        }
+    });
+
+    let totalDebitCents = 0;
+    let totalCreditCents = 0;
+    const lignesFec = [];
+    let sequenceEcriture = 1; // Numérotation continue globale sans trou (Exigence Art. A.47 A-1 LPF)
+
+    for (const t of ticketsList) {
+        const ticketCents = Math.round(t.total_ttc * 100);
+        const pourboireCents = Math.max(0, Math.round((t.pourboire || 0) * 100));
+        if (ticketCents === 0 && pourboireCents === 0) continue;
+
+        const estAvoir = ticketCents < 0 || t.type_ticket === 'ANNULATION';
+        const absTicketCents = Math.abs(ticketCents);
+        const totalEncaisseCents = estAvoir ? absTicketCents : (absTicketCents + pourboireCents);
+
+        const dateEcriture = formatDateFEC(t.date);
+        const dateValid = formatDateFEC(t.date_valid);
+        const pieceRef = String(t.numero).replace(/[\t\r\n]/g, ' ').trim();
+        const ecritureNum = `EC-${String(sequenceEcriture).padStart(6, '0')}`;
+        sequenceEcriture++;
+
+        const cptePaiement = (t.methode === 'ESPECES') ? CPT_CAISSE : CPT_BANQUE;
+        const libellePaiement = (t.methode === 'ESPECES') ? 'Caisse' : 'Banque';
+        const prefixeLib = estAvoir ? 'Avoir Annulation' : 'Encaissement';
+
+        // 1. Ligne de règlement (Débit si Vente, Crédit si Avoir/Annulation)
+        lignesFec.push({
+            JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+            CompteNum: cptePaiement, CompteLib: libellePaiement, CompAuxNum: '', CompAuxLib: '',
+            PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `${prefixeLib} ${pieceRef}`.substring(0, 40),
+            Debit: estAvoir ? '0,00' : formatMontant(totalEncaisseCents),
+            Credit: estAvoir ? formatMontant(totalEncaisseCents) : '0,00',
+            EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+        });
+        if (estAvoir) totalCreditCents += totalEncaisseCents;
+        else totalDebitCents += totalEncaisseCents;
+
+        // 1 Bis. Ligne de Pourboire éventuel (Compte 426000 - Hors TVA)
+        if (!estAvoir && pourboireCents > 0) {
+            lignesFec.push({
+                JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                CompteNum: CPT_POURBOIRES, CompteLib: 'Pourboires salaries a reverser', CompAuxNum: '', CompAuxLib: '',
+                PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `Pourboire ${pieceRef}`.substring(0, 40),
+                Debit: '0,00',
+                Credit: formatMontant(pourboireCents),
+                EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+            });
+            totalCreditCents += pourboireCents;
+        }
+
+        // 2. Préparation et proratisation au centime près des lignes de produits/prestations (pour les anciens tickets avec remise)
+        const lignesBrutes = t.lignes.length > 0
+            ? t.lignes
+            : [{ total_ligne_ttc: t.total_ttc, taux_tva_snapshot: 20.00, nom_article: 'Prestation globale', type_article: 'PRESTATION' }];
+
+        const rawLinesCents = lignesBrutes.map(l => ({
+            ...l,
+            rawCents: Math.abs(Math.round((parseFloat(l.total_ligne_ttc) || 0) * 100))
+        }));
+        const sumRawCents = rawLinesCents.reduce((s, l) => s + l.rawCents, 0);
+
+        let cumulAlloue = 0;
+        const lignesCalculees = rawLinesCents.map((l, idx) => {
+            if (sumRawCents === 0) return { ...l, absCents: idx === 0 ? absTicketCents : 0 };
+            if (sumRawCents === absTicketCents) return { ...l, absCents: l.rawCents };
+            if (idx === rawLinesCents.length - 1) {
+                return { ...l, absCents: Math.max(0, absTicketCents - cumulAlloue) };
+            }
+            const prorata = Math.round((l.rawCents * absTicketCents) / sumRawCents);
+            cumulAlloue += prorata;
+            return { ...l, absCents: prorata };
+        });
+
+        // 3. Génération des lignes de Produits (706/707) et de TVA par taux (44571x)
+        for (const ligne of lignesCalculees) {
+            if (ligne.absCents === 0) continue;
+
+            const tauxTVA = franchiseTVA ? 0 : (parseFloat(ligne.taux_tva_snapshot) ?? 20.00);
+            const ligneHTCents = franchiseTVA ? ligne.absCents : Math.round(ligne.absCents / (1 + tauxTVA / 100));
+            const ligneTVACents = franchiseTVA ? 0 : (ligne.absCents - ligneHTCents);
+
+            const cpteVente = (ligne.type_article === 'PRODUIT_REVENTE') ? CPT_PROD : CPT_PRESTA;
+            const libelleVente = (ligne.type_article === 'PRODUIT_REVENTE') ? 'Vente Produit' : 'Vente Prestation';
+            const nomNettoye = (ligne.nom_article || 'Article').substring(0, 30).replace(/[\t\r\n]/g, ' ').trim();
+
+            if (ligneHTCents > 0) {
+                lignesFec.push({
+                    JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                    CompteNum: cpteVente, CompteLib: libelleVente, CompAuxNum: '', CompAuxLib: '',
+                    PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: nomNettoye,
+                    Debit: estAvoir ? formatMontant(ligneHTCents) : '0,00',
+                    Credit: estAvoir ? '0,00' : formatMontant(ligneHTCents),
+                    EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+                });
+                if (estAvoir) totalDebitCents += ligneHTCents;
+                else totalCreditCents += ligneHTCents;
+            }
+
+            if (ligneTVACents > 0) {
+                const tauxAff = Number(tauxTVA).toString().replace('.', ',');
+                const cpteTvaSpecifique = getCompteTvaCollectee(tauxTVA);
+                lignesFec.push({
+                    JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                    CompteNum: cpteTvaSpecifique, CompteLib: `TVA Collectee ${tauxAff}%`, CompAuxNum: '', CompAuxLib: '',
+                    PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `TVA ${nomNettoye}`.substring(0, 30),
+                    Debit: estAvoir ? formatMontant(ligneTVACents) : '0,00',
+                    Credit: estAvoir ? '0,00' : formatMontant(ligneTVACents),
+                    EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+                });
+                if (estAvoir) totalDebitCents += ligneTVACents;
+                else totalCreditCents += ligneTVACents;
+            }
+        }
+    }
+
+    // 4. JOURNAL DES ACHATS (AC) : Factures fournisseurs validées sur la période
+    const achatsRes = await pool.query(`
+        SELECT id_facture, nom_fournisseur, numero_facture, COALESCE(date_facture, DATE(date_traitement)) as date_piece,
+               montant_ht, montant_tva, montant_ttc, compte_comptable
+        FROM factures_fournisseurs
+        WHERE id_salon = $1 AND statut_verification = 'VALIDE'
+          AND COALESCE(date_facture, DATE(date_traitement)) BETWEEN $2 AND $3
+        ORDER BY COALESCE(date_facture, DATE(date_traitement)) ASC, id_facture ASC
+    `, [id_salon, date_debut, date_fin]);
+
+    for (const f of achatsRes.rows) {
+        const ttcCents = Math.round((parseFloat(f.montant_ttc) || 0) * 100);
+        if (ttcCents <= 0) continue;
+
+        let htCents = franchiseTVA ? ttcCents : Math.round((parseFloat(f.montant_ht) || 0) * 100);
+        let tvaCents = franchiseTVA ? 0 : Math.round((parseFloat(f.montant_tva) || 0) * 100);
+        if (htCents + tvaCents !== ttcCents) {
+            htCents = ttcCents - tvaCents;
+        }
+
+        const datePiece = formatDateFEC(f.date_piece);
+        const pieceRef = String(f.numero_facture || `FAC-${f.id_facture}`).replace(/[\t\r\n]/g, ' ').trim();
+        const nomFourn = String(f.nom_fournisseur || 'Fournisseur').replace(/[\t\r\n]/g, ' ').trim();
+        const codeAux = 'F' + nomFourn.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8).padEnd(4, '0');
+        const cpteCharge = (f.compte_comptable ? String(f.compte_comptable).replace(/\D/g, '') : '604000').padEnd(6, '0').substring(0, 6);
+        const ecritureNum = `EC-${String(sequenceEcriture).padStart(6, '0')}`;
+        sequenceEcriture++;
+
+        // Débit Charge (6xx)
+        if (htCents > 0) {
+            lignesFec.push({
+                JournalCode: 'AC', JournalLib: 'Achats', EcritureNum: ecritureNum, EcritureDate: datePiece,
+                CompteNum: cpteCharge, CompteLib: `Achats / Charges (${cpteCharge})`, CompAuxNum: '', CompAuxLib: '',
+                PieceRef: pieceRef, PieceDate: datePiece, EcritureLib: `Facture ${nomFourn}`.substring(0, 40),
+                Debit: formatMontant(htCents), Credit: '0,00',
+                EcritureLet: '', DateLet: '', ValidDate: datePiece, Montantdevise: '', Idevise: ''
+            });
+            totalDebitCents += htCents;
+        }
+
+        // Débit TVA déductible sur autres biens et services (445660)
+        if (tvaCents > 0) {
+            lignesFec.push({
+                JournalCode: 'AC', JournalLib: 'Achats', EcritureNum: ecritureNum, EcritureDate: datePiece,
+                CompteNum: '445660', CompteLib: 'TVA deductible sur ABS', CompAuxNum: '', CompAuxLib: '',
+                PieceRef: pieceRef, PieceDate: datePiece, EcritureLib: `TVA ${nomFourn}`.substring(0, 40),
+                Debit: formatMontant(tvaCents), Credit: '0,00',
+                EcritureLet: '', DateLet: '', ValidDate: datePiece, Montantdevise: '', Idevise: ''
+            });
+            totalDebitCents += tvaCents;
+        }
+
+        // Crédit Fournisseur (401000)
+        lignesFec.push({
+            JournalCode: 'AC', JournalLib: 'Achats', EcritureNum: ecritureNum, EcritureDate: datePiece,
+            CompteNum: '401000', CompteLib: 'Fournisseurs', CompAuxNum: codeAux, CompAuxLib: nomFourn.substring(0, 30),
+            PieceRef: pieceRef, PieceDate: datePiece, EcritureLib: `Facture ${nomFourn}`.substring(0, 40),
+            Debit: '0,00', Credit: formatMontant(ttcCents),
+            EcritureLet: '', DateLet: '', ValidDate: datePiece, Montantdevise: '', Idevise: ''
+        });
+        totalCreditCents += ttcCents;
+    }
+
+    // 5. JOURNAL DE CAISSE (CA) : Mouvements d'espèces hors tickets (Remises en banque, Apports, Prélèvements, Régularisations)
+    const mvtsRes = await pool.query(`
+        SELECT id_mouvement, type_mouvement, categorie_comptable, montant, motif, date_creation
+        FROM mouvements_caisse
+        WHERE id_salon = $1 AND DATE(date_creation) BETWEEN $2 AND $3
+        ORDER BY date_creation ASC, id_mouvement ASC
+    `, [id_salon, date_debut, date_fin]);
+
+    for (const m of mvtsRes.rows) {
+        const mntCents = Math.round(Math.abs(parseFloat(m.montant) || 0) * 100);
+        if (mntCents === 0) continue;
+
+        const cat = deduireCategorieMouvement(m.type_mouvement, m.motif, m.categorie_comptable);
+        const dateMvt = formatDateFEC(m.date_creation);
+        const pieceRef = `MVT-${m.id_mouvement}`;
+        const motifClean = String(m.motif || cat).replace(/[\t\r\n]/g, ' ').trim().substring(0, 40);
+        const ecritureNum = `EC-${String(sequenceEcriture).padStart(6, '0')}`;
+        sequenceEcriture++;
+
+        let estEntreeCaisse = m.type_mouvement === 'ENTREE' || (m.type_mouvement === 'REGULARISATION' && parseFloat(m.montant) > 0);
+        let cpteContrepartie = '580000';
+        let libContrepartie = 'Virements internes';
+
+        if (cat === 'REMISE_BANQUE' || cat === 'APPORT_FONDS') {
+            cpteContrepartie = '580000';
+            libContrepartie = 'Virements internes (Banque/Caisse)';
+        } else if (cat === 'PRELEVEMENT_GERANT') {
+            cpteContrepartie = '108000';
+            libContrepartie = 'Compte de l exploitant';
+        } else if (cat === 'ACHAT_ESPECES') {
+            cpteContrepartie = '401000';
+            libContrepartie = 'Reglement especes fournisseur';
+        } else if (cat === 'ECART_CAISSE') {
+            cpteContrepartie = estEntreeCaisse ? '758000' : '658000';
+            libContrepartie = estEntreeCaisse ? 'Produits divers gestion courante (Boni)' : 'Charges diverses gestion courante (Mali)';
+        }
+
+        // Ligne Caisse (530000)
+        lignesFec.push({
+            JournalCode: 'CA', JournalLib: 'Caisse', EcritureNum: ecritureNum, EcritureDate: dateMvt,
+            CompteNum: CPT_CAISSE, CompteLib: 'Caisse', CompAuxNum: '', CompAuxLib: '',
+            PieceRef: pieceRef, PieceDate: dateMvt, EcritureLib: motifClean,
+            Debit: estEntreeCaisse ? formatMontant(mntCents) : '0,00',
+            Credit: estEntreeCaisse ? '0,00' : formatMontant(mntCents),
+            EcritureLet: '', DateLet: '', ValidDate: dateMvt, Montantdevise: '', Idevise: ''
+        });
+
+        // Ligne Contrepartie
+        lignesFec.push({
+            JournalCode: 'CA', JournalLib: 'Caisse', EcritureNum: ecritureNum, EcritureDate: dateMvt,
+            CompteNum: cpteContrepartie, CompteLib: libContrepartie, CompAuxNum: '', CompAuxLib: '',
+            PieceRef: pieceRef, PieceDate: dateMvt, EcritureLib: motifClean,
+            Debit: estEntreeCaisse ? '0,00' : formatMontant(mntCents),
+            Credit: estEntreeCaisse ? formatMontant(mntCents) : '0,00',
+            EcritureLet: '', DateLet: '', ValidDate: dateMvt, Montantdevise: '', Idevise: ''
+        });
+
+        totalDebitCents += mntCents;
+        totalCreditCents += mntCents;
+    }
+
+    if (totalDebitCents !== totalCreditCents) {
+        throw new Error(`Déséquilibre comptable détecté (Débit: ${(totalDebitCents / 100).toFixed(2)}€ / Crédit: ${(totalCreditCents / 100).toFixed(2)}€).`);
+    }
+
+    const headers = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
+    let fecContent = headers.join('\t') + '\r\n';
+    for (const row of lignesFec) {
+        fecContent += headers.map(h => row[h]).join('\t') + '\r\n';
+    }
+
+    const dateFinCompact = date_fin.replace(/-/g, '');
+    const nomFichier = siren.length === 9
+        ? `${siren}FEC${dateFinCompact}.txt`
+        : `FEC_${id_salon}_${date_debut.replace(/-/g, '')}_${dateFinCompact}.txt`;
+
+    return { fecContent, nomFichier, nbLignes: lignesFec.length, totalEquilibre: totalDebitCents / 100 };
+}
+
+app.get('/api/export-fec', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const { date_debut, date_fin } = req.query;
+    if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
+
+    try {
+        const { fecContent, nomFichier, nbLignes, totalEquilibre } = await construireContenuFEC(id_salon, date_debut, date_fin);
+
+        await enregistrerJET(id_salon, 'EXPORT_FEC_GENERE', { date_debut, date_fin, nb_lignes: nbLignes, total_equilibre: totalEquilibre });
+
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${nomFichier}"`);
+        res.send(fecContent);
+    } catch (e) {
+        console.error("❌ Erreur export FEC:", e);
+        res.status(500).json({ erreur: e.message || "Erreur lors de la génération du fichier FEC." });
+    }
