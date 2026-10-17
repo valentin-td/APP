@@ -174,6 +174,18 @@ const groupesBas = [
                   * Laissez le champ TVA vide si vous êtes en Franchise en base de TVA. Le logiciel génèrera une liasse sans TVA. Remplissez-le dès le dépassement de votre seuil majoré.
               </p>
           </div>
+
+          {/* Bloc de téléchargement du Dossier Technique & Attestation NF525 */}
+          <div className="carte scan-carte" style={{ marginTop: '16px' }}>
+              <h4 style={{ fontSize: '13px', color: 'var(--text-main)', margin: '0 0 6px 0' }}>Dossier Technique & Attestation Fiscale (NF525)</h4>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
+                Document officiel exigé par l'administration fiscale lors d'un contrôle (Art. L. 80 O du LPF). Il intègre la description complète de l'architecture cryptographique, l'état de santé en direct du salon et l'attestation individuelle pré-remplie.
+              </p>
+              <button type="button" className="btn-action" style={{ width: '100%', background: '#166534' }} onClick={telechargerDossierNF525}>
+                Télécharger le Dossier Technique & Attestation (PDF)
+              </button>
+          </div>
+
         {carteSauvegarde}
       </>);
       case 'fidelite': return (<>
