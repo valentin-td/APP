@@ -6205,7 +6205,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         console.error("Erreur génération buffer PDF :", erreur);
         reject(erreur);
     }
-    }); // Fin de la Promise
+    }; // Fin de la Promise
 } // Fin de la fonction genererBufferLiassePdf
 
 // ----------------------------------------------------------------------------------
