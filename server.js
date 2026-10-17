@@ -5959,30 +5959,6 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                     {text: heuresAffichees, w: 30, align: 'center', size: 8},
                     {text: hsAffichees, w: 30, align: 'center', size: 8},
                     {text: pourboireAffiche, w: 38, align: 'right', size: 8},
-                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right', size: 8}, 
-                    {text: '-', w: 92, align: 'right', size: 8}, 
-                    {text: '-', w: 47, align: 'center', size: 8}, 
-                    {text: '-', w: 58, align: 'right', size: 8}
-                ]);
-            } else {
-                globalPrimes = Number((globalPrimes + (parseFloat(e.total_prime) || 0)).toFixed(2));
-                const fmtBase = (n) => {
-                    const parts = (parseFloat(n) || 0).toFixed(2).split('.');
-                    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-                    return parts.join(',');
-                };
-                const tauxPresta = parseFloat(e.taux_presta || 0);
-                const tauxProduit = parseFloat(e.taux_produit || 0);
-                const regleTaux = `${tauxPresta}% / ${tauxProduit}%`;
-                const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
-                
-                if (e.est_gerant) {
-                drawRow([
-                    {text: nomComplet, w: 52, size: 8}, 
-                    {text: 'Gérant', w: 38, align: 'center', size: 8},
-                    {text: heuresAffichees, w: 30, align: 'center', size: 8},
-                    {text: hsAffichees, w: 30, align: 'center', size: 8},
-                    {text: pourboireAffiche, w: 38, align: 'right', size: 8},
                     {text: fMnt(caRealiseBaseHT), w: 56, align: 'right', size: 8}, 
                     {text: '-', w: 86, align: 'right', size: 8}, 
                     {text: '-', w: 47, align: 'center', size: 8}, 
@@ -6205,7 +6181,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         console.error("Erreur génération buffer PDF :", erreur);
         reject(erreur);
     }
-    }; // Fin de la Promise
+    }); // Fin de la Promise
 } // Fin de la fonction genererBufferLiassePdf
 
 // ----------------------------------------------------------------------------------
