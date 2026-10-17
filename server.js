@@ -852,26 +852,78 @@ app.post('/api/rh/pointage', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
 });
 
-app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
-    const { id_salon, nom_employe, code_pin, is_pointeuse } = req.body;
+app.post('/api/employes/login-pin', async (req, res) => {
+    const { id_salon, id_employe, nom_employe, code_pin, is_pointeuse } = req.body;
     try {
-        const result = await pool.query('SELECT * FROM employes WHERE nom ILIKE $1 AND id_salon = $2', [`%${nom_employe}%`, id_salon]);
+        let result;
+        if (id_employe) {
+            result = await pool.query('SELECT * FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        } else {
+            result = await pool.query('SELECT * FROM employes WHERE TRIM(nom) ILIKE TRIM($1) AND id_salon = $2 LIMIT 1', [String(nom_employe || ''), id_salon]);
+        }
         if (result.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable." });
         const emp = result.rows[0];
+
+        // Vérification du blocage définitif ou temporaire (15m -> 30m -> 1h -> Définitif)
+        if (emp.pin_bloque_definitif) {
+            return res.status(403).json({
+                erreur: `Accès PIN bloqué définitivement pour ${emp.nom}. Le gérant doit débloquer votre profil dans l'espace Équipe.`,
+                locked_permanent: true
+            });
+        }
+        if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
+            const minRestantes = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
+            return res.status(403).json({
+                erreur: `Code PIN suspendu temporairement pour ${emp.nom}. Réessayez dans ${minRestantes} minute(s).`,
+                locked_until: emp.pin_bloque_jusqua
+            });
+        }
         
         let pinMatch = false;
+        const pinSaisi = String(code_pin || '').trim();
         if (emp.code_pin && emp.code_pin.startsWith('$2')) {
-            pinMatch = await bcrypt.compare(code_pin, emp.code_pin);
+            pinMatch = await bcrypt.compare(pinSaisi, emp.code_pin);
         } else {
-            pinMatch = (emp.code_pin === code_pin); // Fallback pour vos anciens PINs en clair
+            pinMatch = (String(emp.code_pin || '').trim() === pinSaisi);
         }
 
         if (!pinMatch) {
-            await enregistrerJET(id_salon, 'CONNEXION_ECHOUEE', { nom_employe, raison: 'pin_incorrect' });
-            return res.status(401).json({ erreur: "Code PIN invalide." });
+            const nouvellesTentatives = (parseInt(emp.pin_tentatives_echouees, 10) || 0) + 1;
+            let bloqueJusqua = null;
+            let bloqueDefinitif = false;
+            let messageSanction = '';
+
+            if (nouvellesTentatives >= 9) {
+                bloqueDefinitif = true;
+                messageSanction = `Profil bloqué définitivement. Demandez au gérant de vous débloquer dans Équipe.`;
+            } else if (nouvellesTentatives === 7) {
+                bloqueJusqua = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                messageSanction = `Bloqué pendant 1 heure.`;
+            } else if (nouvellesTentatives === 5) {
+                bloqueJusqua = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+                messageSanction = `Bloqué pendant 30 minutes.`;
+            } else if (nouvellesTentatives === 3) {
+                bloqueJusqua = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+                messageSanction = `Bloqué pendant 15 minutes.`;
+            } else {
+                const prochainSeuil = nouvellesTentatives < 3 ? 3 : (nouvellesTentatives < 5 ? 5 : (nouvellesTentatives < 7 ? 7 : 9));
+                messageSanction = `${prochainSeuil - nouvellesTentatives} essai(s) restant(s) avant verrouillage.`;
+            }
+
+            await pool.query(
+                'UPDATE employes SET pin_tentatives_echouees = $1, pin_bloque_jusqua = $2, pin_bloque_definitif = $3 WHERE id_employe = $4 AND id_salon = $5',
+                [nouvellesTentatives, bloqueJusqua, bloqueDefinitif, emp.id_employe, id_salon]
+            );
+            await enregistrerJET(id_salon, bloqueDefinitif ? 'PIN_BLOCAGE_DEFINITIF' : 'CONNEXION_ECHOUEE', { nom_employe: emp.nom, tentatives: nouvellesTentatives, is_pointeuse: !!is_pointeuse });
+            return res.status(400).json({ erreur: `Code PIN incorrect. ${messageSanction}`, tentatives: nouvellesTentatives });
         }
 
-        // NOUVEAU: Si c'est juste la pointeuse qui vérifie le PIN, on s'arrête ici sans écraser le cookie
+        // Remise à zéro des tentatives en cas de succès
+        if ((emp.pin_tentatives_echouees || 0) > 0 || emp.pin_bloque_jusqua) {
+            await pool.query('UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2', [emp.id_employe, id_salon]);
+        }
+
+        // Si c'est la pointeuse qui vérifie le PIN, on s'arrête ici SANS écraser le cookie du salon !
         if (is_pointeuse) {
             return res.json({ message: "PIN valide", employe: { id: emp.id_employe, nom: emp.nom } });
         }
@@ -2023,7 +2075,7 @@ async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_o
     if (id_employe) {
         empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
     } else if (nom_operateur && nom_operateur.trim() !== '') {
-        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1', [nom_operateur.trim(), id_salon]);
+        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE TRIM(nom) ILIKE TRIM($1) AND id_salon = $2 LIMIT 1', [nom_operateur.trim(), id_salon]);
     } else {
         const err = new Error("Veuillez sélectionner le collaborateur qui effectue l'opération et saisir son code PIN.");
         err.require_pin = true;
@@ -2159,7 +2211,7 @@ app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
         res.status(201).json({ message: "Mouvement de caisse enregistré et scellé." });
     } catch (e) {
         await clientDB.query('ROLLBACK');
-        res.status(e.require_pin ? 401 : 400).json({ erreur: e.message || "Erreur lors de la sauvegarde.", require_pin: !!e.require_pin });
+        res.status(400).json({ erreur: e.message || "Erreur lors de la sauvegarde.", require_pin: !!e.require_pin });
     } finally { clientDB.release(); }
 });
 
