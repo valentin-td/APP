@@ -117,11 +117,27 @@ const groupesBas = [
   );
  const telechargerDossierNF525 = async () => {
     try {
-        const response = await fetch('/api/admin/dossier-technique-nf525/pdf', {
+        const apiBase = window.location.hostname === 'localhost'
+            ? 'http://localhost:3000'
+            : 'https://api-salon-backend.onrender.com';
+        const tokenLocal = localStorage.getItem('token_api') || localStorage.getItem('token');
+
+        const response = await fetch(`${apiBase}/api/admin/dossier-technique-nf525/pdf`, {
             method: 'GET',
             credentials: 'include',
+            headers: tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {}
         });
-        if (!response.ok) throw new Error("Erreur lors de la génération du Dossier Technique NF525.");
+
+        const contentType = response.headers.get('content-type') || '';
+        if (!response.ok || !contentType.includes('application/pdf')) {
+            let msg = "Erreur lors de la génération du Dossier Technique NF525.";
+            try {
+                const errData = await response.json();
+                if (errData.erreur) msg = errData.erreur;
+            } catch (e) { /* ignore */ }
+            throw new Error(msg);
+        }
+
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -197,12 +213,40 @@ const groupesBas = [
 
           {/* Bloc de téléchargement du Dossier Technique & Attestation NF525 */}
           <div className="carte scan-carte" style={{ marginTop: '16px' }}>
-              <h4 style={{ fontSize: '13px', color: 'var(--text-main)', margin: '0 0 6px 0' }}>Dossier Technique & Attestation Fiscale (NF525)</h4>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
-                Document officiel exigé par l'administration fiscale lors d'un contrôle (Art. L. 80 O du LPF). Il intègre la description complète de l'architecture cryptographique, l'état de santé en direct du salon et l'attestation individuelle pré-remplie.
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  <div style={{ width: '40px', height: '40px', minWidth: '40px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)' }}>
+                      <span style={{ width: '20px', height: '20px', display: 'flex' }}>{ICONS.shield}</span>
+                  </div>
+                  <div>
+                      <h4 style={{ fontSize: '14px', color: 'var(--text-main)', margin: '0 0 2px 0', fontWeight: '600' }}>Dossier Technique & Attestation (NF525)</h4>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Document officiel de contrôle fiscal (Art. L. 80 O du LPF)</span>
+                  </div>
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5' }}>
+                Génère le dossier technique descriptif de l'architecture cryptographique de STACK, l'état de scellement en direct de votre salon et votre attestation individuelle pré-remplie.
               </p>
-              <button type="button" className="btn-action" style={{ width: '100%', background: '#166534' }} onClick={telechargerDossierNF525}>
-                Télécharger le Dossier Technique & Attestation (PDF)
+              <button
+                  type="button"
+                  onClick={telechargerDossierNF525}
+                  style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      background: 'var(--bg-app)',
+                      color: 'var(--text-main)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-input, 12px)',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      transition: 'all 0.15s ease'
+                  }}
+              >
+                  <span style={{ width: '16px', height: '16px', display: 'flex' }}>{ICONS.file}</span>
+                  Télécharger le Dossier Technique & Attestation (PDF)
               </button>
           </div>
 
