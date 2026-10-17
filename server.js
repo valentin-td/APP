@@ -4787,8 +4787,8 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
                     {text: v.heure || '-', w: 28, size: 8},
                     {text: v.numero_ticket_caisse || '-', w: 82, size: 7.5},
                     {text: lignesTxt.join('\n'), w: 95, size: 8},
-                    {text: (v.methode_paiement || 'N/A').substring(0, 8), w: 38, align: 'center', size: 8},
-                    {text: (v.employe || 'Inconnu').substring(0, 12), w: 46, align: 'center', size: 8},
+                    {text: v.methode_paiement || 'N/A', w: 38, align: 'center', size: 7.5},
+                    {text: v.employe || 'Inconnu', w: 46, align: 'center', size: 8},
                     {text: fMnt(totalTicketHT), w: 52, align: 'right', size: 8},
                     {text: fMnt(totalTicketTVA), w: 48, align: 'right', size: 8},
                     {text: fMnt(totalTicketTTC), w: 56, align: 'right', size: 8}
@@ -5079,6 +5079,51 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const ajustementsRes = await pool.query(`SELECT id_employe, SUM(heures_ajoutees) as heures_supp FROM heures_ajustements WHERE mois_annee = $1 GROUP BY id_employe`, [anneeMoisAjustement]);
         const mapAjustements = {};
         ajustementsRes.rows.forEach(r => mapAjustements[r.id_employe] = parseFloat(r.heures_supp));
+
+        // 4a. REQUÊTE : Calcul exact des heures pointées sur le mois (Mode POINTEUSE)
+        const pointagesMoisRes = await pool.query(`
+            SELECT id_employe, date_jour, type_action, heure_action
+            FROM pointages
+            WHERE id_salon = $1 AND date_jour BETWEEN $2 AND $3
+            ORDER BY id_employe ASC, date_jour ASC, heure_action ASC
+        `, [id_salon, dateDebutStr, dateFinStr]);
+
+        const mapHeuresPointees = {};
+        const pointagesParEmpJour = {};
+        pointagesMoisRes.rows.forEach(pt => {
+            const cle = `${pt.id_employe}_${new Date(pt.date_jour).toISOString().slice(0, 10)}`;
+            if (!pointagesParEmpJour[cle]) pointagesParEmpJour[cle] = { id_employe: pt.id_employe, actions: [] };
+            pointagesParEmpJour[cle].actions.push({ type: pt.type_action, ts: new Date(pt.heure_action).getTime() });
+        });
+
+        Object.values(pointagesParEmpJour).forEach(jour => {
+            let debutTravail = null;
+            let debutPause = null;
+            let cumulMsJour = 0;
+
+            jour.actions.forEach(act => {
+                if (act.type === 'ENTREE') {
+                    if (debutTravail === null) debutTravail = act.ts;
+                } else if (act.type === 'PAUSE_DEBUT') {
+                    if (debutTravail !== null && debutPause === null) debutPause = act.ts;
+                } else if (act.type === 'PAUSE_FIN') {
+                    if (debutPause !== null) {
+                        debutTravail += (act.ts - debutPause);
+                        debutPause = null;
+                    }
+                } else if (act.type === 'SORTIE') {
+                    if (debutTravail !== null) {
+                        const finEffective = debutPause !== null ? debutPause : act.ts;
+                        if (finEffective > debutTravail) cumulMsJour += (finEffective - debutTravail);
+                        debutTravail = null;
+                        debutPause = null;
+                    }
+                }
+            });
+
+            const heuresJour = cumulMsJour / (1000 * 60 * 60);
+            mapHeuresPointees[jour.id_employe] = (mapHeuresPointees[jour.id_employe] || 0) + heuresJour;
+        });
 
         // 4bis. REQUÊTE : CA Réalisé par employé en HT réel
         const caEmployesRes = await pool.query(`
@@ -5542,46 +5587,84 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         
         let sumDepensesBanque = 0, sumDepensesEspeces = 0, sumDepensesInconnu = 0;
         let totalDepensesHT = 0, totalDepensesTVA = 0, totalDepensesTTC = 0;
+        const ventilationPCG = {};
+
+        const libellesComptesPCG = {
+            '6022': '6022 - Achats de fournitures et produits consommables (Bac / Technique)',
+            '6028': '6028 - Achats d\'autres approvisionnements et consommables',
+            '604': '6040 - Achats d\'études et prestations de services',
+            '6061': '6061 - Fournitures non stockables (Eau, Énergie, Électricité)',
+            '6063': '6063 - Fournitures d\'entretien et de petit équipement',
+            '6064': '6064 - Fournitures administratives',
+            '607': '6070 - Achats de marchandises (Produits destinés à la revente)',
+            '613': '6130 - Locations immobilières et mobilières (Loyers)',
+            '615': '6150 - Entretien et réparations',
+            '616': '6160 - Primes d\'assurances',
+            '6226': '6226 - Honoraires (Expert-comptable, Juridique)',
+            '623': '6230 - Publicité, publications, relations publiques',
+            '626': '6260 - Frais postaux et de télécommunications',
+            '627': '6270 - Services bancaires et assimilés'
+        };
         
         if (facturesAffichees.length === 0) {
             drawRow([{text: 'Aucune facture datée de cette période.', w: 515}]);
         } else {
             facturesAffichees.forEach(f => {
-                totalDepensesHT += f.ht; totalDepensesTVA += f.tva; totalDepensesTTC += f.ttc;
+                const fTtcCents = Math.round((parseFloat(f.ttc) || 0) * 100);
+                const fTvaCents = franchiseTVA ? 0 : Math.round((parseFloat(f.tva) || 0) * 100);
+                let fHtCents = franchiseTVA ? fTtcCents : Math.round((parseFloat(f.ht) || 0) * 100);
+                if (fHtCents + fTvaCents !== fTtcCents) fHtCents = fTtcCents - fTvaCents;
+
+                const htPropre = fHtCents / 100;
+                const tvaPropre = fTvaCents / 100;
+                const ttcPropre = fTtcCents / 100;
+
+                totalDepensesHT = Number((totalDepensesHT + htPropre).toFixed(2));
+                totalDepensesTVA = Number((totalDepensesTVA + tvaPropre).toFixed(2));
+                totalDepensesTTC = Number((totalDepensesTTC + ttcPropre).toFixed(2));
                 
-                if (f.mode_paiement === 'ESPECES') sumDepensesEspeces += f.ttc;
-                else if (!f.mode_paiement || f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') sumDepensesInconnu += f.ttc;
-                else sumDepensesBanque += f.ttc;
+                if (f.mode_paiement === 'ESPECES') sumDepensesEspeces = Number((sumDepensesEspeces + ttcPropre).toFixed(2));
+                else if (!f.mode_paiement || f.mode_paiement === 'NON_SPECIFIE' || f.mode_paiement === 'N/A') sumDepensesInconnu = Number((sumDepensesInconnu + ttcPropre).toFixed(2));
+                else sumDepensesBanque = Number((sumDepensesBanque + ttcPropre).toFixed(2));
                 
-                let compte = f.compte || '604';
-                if (!f.compte) {
+                let compte = f.compte ? String(f.compte).trim() : '';
+                if (!compte) {
                     const nomLower = f.fournisseur.toLowerCase();
                     if (nomLower.includes('l\'oréal') || nomLower.includes('wella') || nomLower.includes('schwarzkopf') || nomLower.includes('revente') || nomLower.includes('produit') || nomLower.includes('grossiste')) compte = '607';
-                    else if (nomLower.includes('edf') || nomLower.includes('eau') || nomLower.includes('urssaf') || nomLower.includes('loyer')) compte = '613';
+                    else if (nomLower.includes('edf') || nomLower.includes('engie') || nomLower.includes('eau')) compte = '6061';
+                    else if (nomLower.includes('loyer') || nomLower.includes('sci') || nomLower.includes('immo')) compte = '613';
+                    else if (nomLower.includes('assurance') || nomLower.includes('axa') || nomLower.includes('allianz')) compte = '616';
+                    else compte = '604';
                 }
+
+                if (!ventilationPCG[compte]) ventilationPCG[compte] = { nb: 0, ht: 0, tva: 0, ttc: 0 };
+                ventilationPCG[compte].nb++;
+                ventilationPCG[compte].ht = Number((ventilationPCG[compte].ht + htPropre).toFixed(2));
+                ventilationPCG[compte].tva = Number((ventilationPCG[compte].tva + tvaPropre).toFixed(2));
+                ventilationPCG[compte].ttc = Number((ventilationPCG[compte].ttc + ttcPropre).toFixed(2));
 
                 const statutColor = f.statut === 'VALIDE' ? '#16a34a' : '#ea580c';
                 const statutText = f.statut === 'VALIDE' ? 'Validé' : 'À valider';
 
-                let refFacture = f.numero ? f.numero.substring(0, 9) : 'n° inconnu';
+                let refFacture = f.numero ? String(f.numero) : 'n° inconnu';
                 let sourceDoc = f.url ? { text: 'Doc IA', link: f.url, color: '#0ea5e9' } : { text: 'Saisie' };
-                const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement.substring(0, 7);
+                const modePaiementCourt = f.mode_paiement === 'NON_SPECIFIE' ? 'N/A' : f.mode_paiement;
                 
                 const dateFAff = !isNaN(f.date_facture) ? f.date_facture.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'2-digit'}) : 'N/A';
 
                 if (currentY > 730) { doc.addPage(); currentY = 40; drawHeaderDepenses(); }
 
                 drawRow([
-                    {text: f.fournisseur.substring(0, 14), w: 62}, 
-                    {text: refFacture, w: 43}, 
-                    {text: sourceDoc.text, link: sourceDoc.link, color: sourceDoc.color, w: 32, align: 'center'},
-                    {text: dateFAff, w: 40, align: 'center'},
-                    {text: modePaiementCourt, w: 38, align: 'center'}, 
-                    {text: statutText, w: 38, align: 'center', color: statutColor},
-                    {text: compte, w: 24, align: 'center'}, 
-                    {text: fMnt(f.ht), w: 48, align: 'right'},
-                    {text: fMnt(f.tva), w: 45, align: 'right'}, 
-                    {text: fMnt(f.ttc), w: 55, align: 'right'}
+                    {text: f.fournisseur, w: 62, size: 7.5}, 
+                    {text: refFacture, w: 43, size: 7.5}, 
+                    {text: sourceDoc.text, link: sourceDoc.link, color: sourceDoc.color, w: 32, align: 'center', size: 8},
+                    {text: dateFAff, w: 40, align: 'center', size: 8},
+                    {text: modePaiementCourt, w: 38, align: 'center', size: 7.5}, 
+                    {text: statutText, w: 38, align: 'center', color: statutColor, size: 8},
+                    {text: compte, w: 24, align: 'center', size: 8}, 
+                    {text: fMnt(htPropre), w: 48, align: 'right', size: 8},
+                    {text: fMnt(tvaPropre), w: 45, align: 'right', size: 8}, 
+                    {text: fMnt(ttcPropre), w: 55, align: 'right', size: 8}
                 ]);
             });
         }
@@ -5625,7 +5708,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES PAR BANQUE (CB, Prélèvement, Virement)', w: 450}, {text: fMnt(sumDepensesBanque), w: 55, align: 'right'}], false, true);
         drawRow([{text: 'TOTAL DÉPENSES PAYÉES EN ESPÈCES (Déduites de la caisse)', w: 450}, {text: fMnt(sumDepensesEspeces), w: 55, align: 'right'}], false, true);
-        drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (À compléter)', w: 450}, {text: fMnt(sumDepensesInconnu), w: 55, align: 'right'}], false, true);
+        drawRow([{text: 'TOTAL DÉPENSES NON RÉGLÉES OU MODE INCONNU (Compte 401)', w: 450}, {text: fMnt(sumDepensesInconnu), w: 55, align: 'right'}], false, true);
         drawRow([
             {text: 'TOTAL GÉNÉRAL DES DÉPENSES', w: 337},
             {text: fMnt(totalDepensesHT), w: 48, align: 'right'},
@@ -5637,6 +5720,73 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             currentY += 4;
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* En franchise en base de TVA, la TVA sur achats n'est pas récupérable. La charge réelle retenue en comptabilité est le montant TTC.", 40, currentY); 
             currentY += 12;
+        }
+
+        // --- 3 BIS. VENTILATION DES ACHATS PAR COMPTE COMPTABLE (PCG CLASSE 6) ---
+        const comptesTries = Object.keys(ventilationPCG).sort();
+        if (comptesTries.length > 0) {
+            if (currentY > 650) { doc.addPage(); currentY = 40; }
+            drawTableTitle("3 BIS. VENTILATION COMPTABLE DES CHARGES PAR COMPTE (PCG)");
+            // Largeurs : 240 + 45 + 60 + 60 + 70 = 475 + 4*10 = 515 pt
+            drawRow([
+                {text: 'Compte PCG & Intitulé', w: 240},
+                {text: 'Pièces', w: 45, align: 'center'},
+                {text: 'Base HT', w: 60, align: 'right'},
+                {text: 'TVA (44566)', w: 60, align: 'right'},
+                {text: 'Total TTC', w: 70, align: 'right'}
+            ], true);
+
+            comptesTries.forEach(cpte => {
+                const v = ventilationPCG[cpte];
+                const intitule = libellesComptesPCG[cpte] || `${cpte} - Autres achats et charges externes`;
+                drawRow([
+                    {text: intitule, w: 240},
+                    {text: String(v.nb), w: 45, align: 'center'},
+                    {text: fMnt(v.ht), w: 60, align: 'right'},
+                    {text: fMnt(v.tva), w: 60, align: 'right'},
+                    {text: fMnt(v.ttc), w: 70, align: 'right'}
+                ]);
+            });
+            drawRow([
+                {text: 'TOTAL VENTILATION CLASSE 6', w: 295},
+                {text: fMnt(totalDepensesHT), w: 60, align: 'right'},
+                {text: fMnt(totalDepensesTVA), w: 60, align: 'right'},
+                {text: fMnt(totalDepensesTTC), w: 70, align: 'right'}
+            ], false, true);
+        }
+
+        // --- 3 TER. SYNTHÈSE DE TVA (PRÉPARATION DÉCLARATION CA3 / CA12) ---
+        if (!franchiseTVA) {
+            if (currentY > 630) { doc.addPage(); currentY = 40; }
+            drawTableTitle("3 TER. SYNTHÈSE DE TVA DU MOIS (Aide à la déclaration CA3)");
+            // Largeurs : 265 + 115 + 115 = 495 + 2*10 = 515 pt
+            drawRow([
+                {text: 'Poste de TVA & Compte PCG', w: 265},
+                {text: 'Base HT', w: 115, align: 'right'},
+                {text: 'Montant TVA', w: 115, align: 'right'}
+            ], true);
+
+            drawRow([
+                {text: 'TVA Collectée sur Chiffre d\'Affaires (Compte 44571x) (+)', w: 265},
+                {text: fMnt(totalHT), w: 115, align: 'right'},
+                {text: fMnt(totalTVA), w: 115, align: 'right'}
+            ]);
+            drawRow([
+                {text: 'TVA Déductible sur Achats de biens et services (Compte 445660) (-)', w: 265},
+                {text: fMnt(totalDepensesHT), w: 115, align: 'right'},
+                {text: fMnt(totalDepensesTVA), w: 115, align: 'right'}
+            ]);
+
+            const tvaNette = Number((totalTVA - totalDepensesTVA).toFixed(2));
+            const libelleTvaNette = tvaNette >= 0
+                ? 'TVA NETTE À DÉCAISSER AU TRÉSOR PUBLIC (Compte 445510) (=)'
+                : 'CRÉDIT DE TVA REPORTABLE SUR LE MOIS SUIVANT (Compte 445670) (=)';
+            const couleurTvaNette = tvaNette >= 0 ? MAIN_COLOR : '#16a34a';
+
+            drawRow([
+                {text: libelleTvaNette, w: 390, color: couleurTvaNette},
+                {text: fMnt(Math.abs(tvaNette)), w: 115, align: 'right', color: couleurTvaNette}
+            ], false, true);
         }
 
         // --- ANNEXES : HORS PÉRIODE, DOUBLONS ET À PAYER ---
@@ -5732,8 +5882,19 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 hsAffichees = 'N/A';
                 pourboireAffiche = 'N/A';
             } else if (salonConfig.mode_suivi_heures === 'POINTEUSE') {
-                heuresAffichees = '-';
-                hsAffichees = '-';
+                const baseContrat = parseFloat(e.heures_mensuelles_base || 151.67);
+                const heuresPointees = mapHeuresPointees[e.id_employe] || 0;
+                const heuresAjust = mapAjustements[e.id_employe] || 0;
+                const totalEffectif = Number((heuresPointees + heuresAjust).toFixed(2));
+
+                if (totalEffectif > 0) {
+                    heuresAffichees = `${totalEffectif.toFixed(1)}h`;
+                    const diffHeures = Number((totalEffectif - baseContrat).toFixed(1));
+                    hsAffichees = diffHeures > 0 ? `+${diffHeures}h` : `${diffHeures}h`;
+                } else {
+                    heuresAffichees = `${baseContrat.toFixed(0)}h*`;
+                    hsAffichees = heuresAjust !== 0 ? (heuresAjust > 0 ? `+${heuresAjust}h` : `${heuresAjust}h`) : '0h';
+                }
             } else {
                 const baseContrat = parseFloat(e.heures_mensuelles_base || 151.67);
                 const heuresAjust = mapAjustements[e.id_employe] || 0;
@@ -5749,18 +5910,18 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
             if (e.est_gerant) {
                 drawRow([
-                    {text: nomComplet.substring(0, 11), w: 52}, 
-                    {text: 'Gérant', w: 38, align: 'center'},
-                    {text: heuresAffichees, w: 30, align: 'center'},
-                    {text: hsAffichees, w: 30, align: 'center'},
-                    {text: pourboireAffiche, w: 38, align: 'right'},
-                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
-                    {text: '-', w: 92, align: 'right'}, 
-                    {text: '-', w: 47, align: 'center'}, 
-                    {text: '-', w: 58, align: 'right'}
+                    {text: nomComplet, w: 52, size: 8}, 
+                    {text: 'Gérant', w: 38, align: 'center', size: 8},
+                    {text: heuresAffichees, w: 30, align: 'center', size: 8},
+                    {text: hsAffichees, w: 30, align: 'center', size: 8},
+                    {text: pourboireAffiche, w: 38, align: 'right', size: 8},
+                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right', size: 8}, 
+                    {text: '-', w: 92, align: 'right', size: 8}, 
+                    {text: '-', w: 47, align: 'center', size: 8}, 
+                    {text: '-', w: 58, align: 'right', size: 8}
                 ]);
             } else {
-                globalPrimes += parseFloat(e.total_prime || 0);
+                globalPrimes = Number((globalPrimes + (parseFloat(e.total_prime) || 0)).toFixed(2));
                 const fmtBase = (n) => {
                     const parts = (parseFloat(n) || 0).toFixed(2).split('.');
                     parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -5772,15 +5933,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
                 
                 drawRow([
-                    {text: nomComplet.substring(0, 11), w: 52}, 
-                    {text: 'Salarié', w: 38, align: 'center'},
-                    {text: heuresAffichees, w: 30, align: 'center'},
-                    {text: hsAffichees, w: 30, align: 'center'},
-                    {text: pourboireAffiche, w: 38, align: 'right'},
-                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right'}, 
-                    {text: basesConcat, w: 92, align: 'right'}, 
-                    {text: regleTaux, w: 47, align: 'center'}, 
-                    {text: fMnt(e.total_prime), w: 58, align: 'right'}
+                    {text: nomComplet, w: 52, size: 8}, 
+                    {text: 'Salarié', w: 38, align: 'center', size: 8},
+                    {text: heuresAffichees, w: 30, align: 'center', size: 8},
+                    {text: hsAffichees, w: 30, align: 'center', size: 8},
+                    {text: pourboireAffiche, w: 38, align: 'right', size: 8},
+                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right', size: 8}, 
+                    {text: basesConcat, w: 92, align: 'right', size: 8}, 
+                    {text: regleTaux, w: 47, align: 'center', size: 8}, 
+                    {text: fMnt(e.total_prime), w: 58, align: 'right', size: 8}
                 ]);
             }
         });
@@ -5887,7 +6048,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 
                 let operator = z.ferme_par || 'Non spécifié';
                 let isAuto = Boolean(z.est_cloture_automatique);
-                operator = isAuto ? 'Clôture Auto.' : operator.substring(0, 12);
+                operator = isAuto ? 'Clôture Auto.' : operator;
                 let especesReel = isAuto ? 'À régul.' : fMnt(z.total_especes_reel);
                 
                 // Césure stricte sur 2 lignes de 32 caractères avec '\n' pour éviter tout chevauchement
