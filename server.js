@@ -6111,7 +6111,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                     {text: fMnt(z.ca_ttc), w: 48, align: 'right'},
                     {text: fMnt(cumulActuel), w: 55, align: 'right'},
                     {text: especesReel, w: 52, align: 'right'},
-                    {text: hashAffiche, w: 130, align: 'right', font: 'Courier', size: 6, color: SEC_COLOR}
+                    // On passe la taille à 7.5 et on ajoute un interligne naturel
+                    {text: hashAffiche, w: 130, align: 'right', font: 'Courier', size: 7.5, color: SEC_COLOR}
                 ]);
             });
             
@@ -6121,7 +6122,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 drawRow([
                     {text: 'CA hors clôture (En attente de Z)', w: 190}, 
                     {text: fMnt(caNonCloture), w: 48, align: 'right'}, 
-                    {text: 'Journées non clôturées', w: 257, align: 'left'}
+                    {text: '', w: 257, align: 'left'}
                 ], false, true);
             }
         }
