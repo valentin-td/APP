@@ -1683,6 +1683,16 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         const newHash = crypto.createHash('sha256').update(chaineScellee).digest('hex');
         await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineScellee, idNouveauTicket]);
 
+        await enregistrerJET(id_salon, req.idTempOffline ? 'ENCAISSEMENT_TICKET_OFFLINE_SYNC' : 'ENCAISSEMENT_TICKET', {
+            id_ticket: idNouveauTicket,
+            numero_ticket: numeroTicket,
+            montant_ttc: montantScelle,
+            tva_ttc: tvaScellee,
+            methode_paiement: methode,
+            id_temp_offline: req.idTempOffline || null,
+            hash_ticket: newHash
+        }, clientDB);
+
         if (id_client) {
             const clientCheck = await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1 AND id_salon = $2 RETURNING points_fidelite, tampons_fidelite`, [id_client, id_salon]);
             if (clientCheck.rowCount === 0) throw new Error("Client introuvable dans ce salon.");
@@ -1750,14 +1760,21 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
     try {
         await clientDB.query('BEGIN');
 
-        // NF525 : Interdiction d'émettre un ticket d'annulation sur une journée déjà clôturée (Z effectué)
+        // NF525 : Interdiction d'émettre un ticket d'annulation sur une journée déjà clôturée ou si un Z passé est manquant
         const zAujourdHui = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
         if (zAujourdHui.rowCount > 0) {
             throw new Error("Action bloquée (NF525) : La clôture Z d'aujourd'hui a déjà été scellée. Impossible d'émettre un avoir d'annulation sur une journée clôturée.");
         }
+        const zPasseManquant = await clientDB.query(
+            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < CURRENT_DATE AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`,
+            [id_salon]
+        );
+        if (zPasseManquant.rowCount > 0 && zPasseManquant.rows[0].jour) {
+            throw new Error(`Action bloquée (NF525) : Clôture Z manquante pour le ${new Date(zPasseManquant.rows[0].jour).toLocaleDateString('fr-FR')}. Clôturez d'abord cette journée avant d'émettre un avoir.`);
+        }
 
         const ticketRes = await clientDB.query(
-            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION'",
+            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION' FOR UPDATE",
             [id_ticket, id_salon]
         );
         if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable.");
@@ -2084,10 +2101,8 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         }
         // --------------------------------------------------------
 
-        const dateISO = new Date().toISOString();
-        
         const signature = crypto.createHash('sha256')
-            .update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}-${dateISO}`)
+            .update(`Z-${id_salon}-${nextZ}-${dateACloturerStr}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}`)
             .digest('hex');
 
         await clientDB.query(
@@ -2275,8 +2290,10 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
         let expectedNumZ = 1;
         let prevCumulZ = 0;
         for (let c of clotures.rows) {
+            const dCloture = new Date(c.date_cloture);
+            const dateClotureYMD = `${dCloture.getFullYear()}-${String(dCloture.getMonth() + 1).padStart(2, '0')}-${String(dCloture.getDate()).padStart(2, '0')}`;
             if (c.hash_precedent !== prevHashZ) {
-                erreurs.push(`Rupture de chaînage sur la clôture Z du ${new Date(c.date_cloture).toLocaleDateString('fr-FR')}.`);
+                erreurs.push(`Rupture de chaînage sur la clôture Z du ${dCloture.toLocaleDateString('fr-FR')}.`);
                 break;
             }
             if (c.numero_z_salon && parseInt(c.numero_z_salon) !== expectedNumZ) {
@@ -2286,7 +2303,15 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
             const cumulAttendu = Number((prevCumulZ + parseFloat(c.total_encaisse || 0)).toFixed(2));
             const cumulStocke = Number(parseFloat(c.cumul_perpetuel_ttc || 0).toFixed(2));
             if (Math.abs(cumulStocke - cumulAttendu) > 0.02) {
-                alertes.push(`Écart de cumul perpétuel sur Z#${c.numero_z_salon || c.id_cloture} (Attendu: ${cumulAttendu.toFixed(2)}€, Stocké: ${cumulStocke.toFixed(2)}€).`);
+                erreurs.push(`Altération du cumul perpétuel sur Z#${c.numero_z_salon || c.id_cloture} (Attendu: ${cumulAttendu.toFixed(2)}€, Stocké: ${cumulStocke.toFixed(2)}€).`);
+                break;
+            }
+            const expectedHashZ = crypto.createHash('sha256')
+                .update(`Z-${id_salon}-${c.numero_z_salon || expectedNumZ}-${dateClotureYMD}-${Number(c.total_encaisse || 0).toFixed(2)}-${cumulStocke.toFixed(2)}-${prevHashZ}`)
+                .digest('hex');
+            if (c.signature_hash && c.signature_hash !== expectedHashZ) {
+                // Tolérance legacy si le Z a été généré avant le correctif déterministe, signalé en alerte
+                alertes.push(`Z#${c.numero_z_salon || expectedNumZ} (${dateClotureYMD}) signé avec l'ancien format d'horodatage dynamique.`);
             }
             prevCumulZ = cumulStocke;
             expectedNumZ++;
@@ -2364,10 +2389,24 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
             return `"${str}"`;
         };
 
+        const cloturesRes = await pool.query(
+            `SELECT id_cloture, numero_z_salon, date_cloture, total_encaisse, cumul_perpetuel_ttc, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, ferme_par, hash_precedent, signature_hash
+             FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3
+             ORDER BY numero_z_salon ASC NULLS LAST, id_cloture ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
         let csv = 'TICKETS\r\n';
         csv += ['id_ticket','numero_ticket','date_creation','type_ticket','statut','est_compense','id_ticket_origine','motif_annulation','methode_paiement','total_ttc','id_article','nom_article','quantite','prix_unitaire_ttc','taux_tva','total_ligne_ttc','hash_ticket'].join(';') + '\r\n';
         for (const r of ticketsRes.rows) {
             csv += [r.id_ticket, r.numero_ticket_caisse, new Date(r.date_creation).toISOString(), r.type_ticket, r.statut, r.est_compense, r.id_ticket_origine || '', r.motif_annulation || '', r.methode_paiement, r.total_ttc, r.id_article || '', r.nom_article, r.quantite, r.prix_unitaire_ttc, r.taux_tva_snapshot, r.total_ligne_ttc, r.hash_ticket]
+                .map(echapper).join(';') + '\r\n';
+        }
+
+        csv += '\r\nCLOTURES_Z\r\n';
+        csv += ['id_cloture','numero_z_salon','date_cloture','total_encaisse','cumul_perpetuel_ttc','fond_caisse_matin','total_especes_theorique','total_especes_reel','ecart_caisse','justification_ecart','ferme_par','hash_precedent','signature_hash'].join(';') + '\r\n';
+        for (const z of cloturesRes.rows) {
+            csv += [z.id_cloture, z.numero_z_salon, new Date(z.date_cloture).toISOString().split('T')[0], z.total_encaisse, z.cumul_perpetuel_ttc, z.fond_caisse_matin, z.total_especes_theorique, z.total_especes_reel, z.ecart_caisse, z.justification_ecart || '', z.ferme_par, z.hash_precedent, z.signature_hash]
                 .map(echapper).join(';') + '\r\n';
         }
 
@@ -3127,8 +3166,16 @@ app.get('/api/caisse/tickets/:id/pdf', verifierToken, async (req, res) => {
             currentY += 10;
         });
 
-        currentY += 10;
-        doc.font('Courier').fontSize(7).fillColor('#9ca3af').text(`Trace NF525 : Algorithme SHA-256 | Hash = ${ticket.hash_ticket || 'Génération en cours'}`, 50, currentY);
+        currentY += 8;
+        const hashFacture = ticket.hash_ticket && ticket.hash_ticket.length === 64
+            ? `${ticket.hash_ticket.substring(0, 32)}\n${ticket.hash_ticket.substring(32, 64)}`
+            : (ticket.hash_ticket || 'Génération en cours');
+        doc.font('Courier').fontSize(7).fillColor('#6b7280').text(`Trace NF525 (SHA-256) :\n${hashFacture}`, 50, currentY, { width: 495 });
+        currentY += 22;
+        doc.font('Helvetica-Oblique').fontSize(7).fillColor('#6b7280').text(
+            "Logiciel STACK v1.0 — Attestation individuelle de conformité fiscale (Art. 286 I-3° bis du CGI - Norme NF525).",
+            50, currentY, { width: 495 }
+        );
 
         doc.end();
 
@@ -4809,17 +4856,10 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         drawTableTitle("6. CHAÎNAGE CRYPTOGRAPHIQUE NF525 ET CUMUL PERPÉTUEL");
 
         // Règle NF525 stricte : Nouveau Cumul = Ancien Cumul (du dernier Z scellé) + CA du jour
-        let cumulAvant = numZSalon === 1 ? 0 : cumulAvantBdd;
-        let cumulApres = Number((cumulAvant + caTotal).toFixed(2));
-        if (clotureData && clotureData.cumul_perpetuel_ttc != null) {
-            const cumulStocke = parseFloat(clotureData.cumul_perpetuel_ttc) || 0;
-            if (numZSalon > 1 && Math.abs(cumulStocke - (cumulAvant + caTotal)) < 0.05) {
-                cumulApres = cumulStocke;
-            } else if (numZSalon > 1 && cumulStocke >= caTotal) {
-                cumulApres = cumulStocke;
-                cumulAvant = Number((cumulStocke - caTotal).toFixed(2));
-            }
-        }
+        const cumulAvant = numZSalon === 1 ? 0 : Number(cumulAvantBdd.toFixed(2));
+        const cumulApres = Number((cumulAvant + caTotal).toFixed(2));
+        const ecartCumulDetecte = clotureData && clotureData.cumul_perpetuel_ttc != null
+            && Math.abs((parseFloat(clotureData.cumul_perpetuel_ttc) || 0) - cumulApres) > 0.02;
 
         const hashActuel = clotureData ? (clotureData.signature_hash || 'NON-SIGNE') : 'EN ATTENTE DE CLÔTURE (TICKET X)';
         const hashPrec = (numZSalon === 1) ? 'GENESIS_Z' : (clotureData ? (clotureData.hash_precedent || hashPrecedentFallback) : hashPrecedentFallback);
@@ -4843,7 +4883,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
         ], false, true);
         drawRow([
             {text: 'Contrôle mathématique (Après = Avant + CA du jour)', w: 260},
-            {text: `Conforme : ${fMnt(cumulApres)} = ${fMnt(cumulAvant)} + ${fMnt(caTotal)}`, w: 245, align: 'right', color: '#16a34a'}
+            {text: ecartCumulDetecte ? `ANOMALIE CUMUL STOCKÉ (${fMnt(clotureData.cumul_perpetuel_ttc)})` : `Conforme : ${fMnt(cumulApres)} = ${fMnt(cumulAvant)} + ${fMnt(caTotal)}`, w: 245, align: 'right', color: ecartCumulDetecte ? '#dc2626' : '#16a34a'}
         ], false, true);
         drawRow([
             {text: 'Algorithme et dispositif de signature', w: 260},
@@ -4933,11 +4973,12 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const statutDocument = estMoisCloture ? "DÉFINITIF (CLÔTURÉ ET SIGNÉ)" : "BROUILLON PROVISOIRE - NON SIGNÉ";
         
         let signatureArchive = '';
+        let fullHashArchive = '';
         let numeroArchive = 'NON-APPLICABLE-MOIS-EN-COURS';
         if (estMoisCloture) {
             const dateValISO = validationRes.rows[0].date_validation ? new Date(validationRes.rows[0].date_validation).toISOString() : dateFinStr;
-            const fullHash = validationRes.rows[0].signature_hash || crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${validationRes.rows[0].valide_par}-${dateValISO}`).digest('hex');
-            signatureArchive = fullHash.substring(0, 16).toUpperCase();
+            fullHashArchive = validationRes.rows[0].signature_hash || crypto.createHash('sha256').update(`LIASSE-${id_salon}-${dateFinStr}-${validationRes.rows[0].valide_par}-${dateValISO}`).digest('hex');
+            signatureArchive = fullHashArchive.substring(0, 16).toUpperCase();
             numeroArchive = `ARCH-${id_salon}-${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}-${signatureArchive}`;
         }
 
@@ -5192,12 +5233,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         currentY += 15;
         if (estMoisCloture) {
             // Encadré d'attestation individuelle (Conformité Loi de Finances)
-            doc.rect(40, currentY - 5, 515, 65).fillAndStroke('#f0fdf4', '#16a34a');
+            const hashLiasseSplit = fullHashArchive && fullHashArchive.length === 64
+                ? `${fullHashArchive.substring(0, 32)}\n${fullHashArchive.substring(32, 64)}`
+                : fullHashArchive;
+            doc.rect(40, currentY - 5, 515, 75).fillAndStroke('#f0fdf4', '#16a34a');
             currentY += 5;
             doc.font('Helvetica-Bold').fontSize(10).fillColor('#16a34a').text(`✓ CLÔTURE MENSUELLE N° ${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}`, 50, currentY);
             currentY += 14;
-            doc.font('Courier').fontSize(8).fillColor('#111827').text(`Hash de validation : ${signatureArchive}`, 50, currentY);
-            currentY += 12;
+            doc.font('Courier').fontSize(7.5).fillColor('#111827').text(`Hash SHA-256 :\n${hashLiasseSplit}`, 50, currentY);
+            currentY += 20;
             doc.font('Helvetica').fontSize(8).text(`Réf. Archive : ${numeroArchive}`, 50, currentY);
             currentY += 12;
             doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text(`Logiciel STACK v1.0 - Attestation individuelle de conformité (CGI, art. 286, I-3° bis)`, 50, currentY);
@@ -5850,15 +5894,15 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         // --- 4. VARIABLES DE PAIE ---
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
         
-        // Largeurs calibrées sur le gap de 10pt de drawRow : 52+38+30+30+38+50+92+47+58 = 435pt + (8 * 10pt) = 515pt exacts
+        // Largeurs calibrées sur le gap de 10pt de drawRow : 52+38+30+30+38+56+86+47+58 = 435pt + (8 * 10pt) = 515pt exacts
         drawRow([
             {text: 'Employé(e)', w: 52}, 
             {text: 'Statut', w: 38, align: 'center'},
             {text: 'Heures', w: 30, align: 'center'},
             {text: 'HS/HC', w: 30, align: 'center'},
             {text: 'Pourb.', w: 38, align: 'right'},
-            {text: 'CA HT', w: 50, align: 'right'}, 
-            {text: 'Base HT (Prs/Prd)', w: 92, align: 'right'}, 
+            {text: 'CA HT', w: 56, align: 'right'}, 
+            {text: 'Base HT (Prs/Prd)', w: 86, align: 'right'}, 
             {text: 'Taux (P/P)', w: 47, align: 'center'}, 
             {text: 'Prime Brute', w: 58, align: 'right'}
         ], true);
@@ -5932,14 +5976,38 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 const regleTaux = `${tauxPresta}% / ${tauxProduit}%`;
                 const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
                 
+                if (e.est_gerant) {
+                drawRow([
+                    {text: nomComplet, w: 52, size: 8}, 
+                    {text: 'Gérant', w: 38, align: 'center', size: 8},
+                    {text: heuresAffichees, w: 30, align: 'center', size: 8},
+                    {text: hsAffichees, w: 30, align: 'center', size: 8},
+                    {text: pourboireAffiche, w: 38, align: 'right', size: 8},
+                    {text: fMnt(caRealiseBaseHT), w: 56, align: 'right', size: 8}, 
+                    {text: '-', w: 86, align: 'right', size: 8}, 
+                    {text: '-', w: 47, align: 'center', size: 8}, 
+                    {text: '-', w: 58, align: 'right', size: 8}
+                ]);
+            } else {
+                globalPrimes = Number((globalPrimes + (parseFloat(e.total_prime) || 0)).toFixed(2));
+                const fmtBase = (n) => {
+                    const parts = (parseFloat(n) || 0).toFixed(2).split('.');
+                    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                    return parts.join(',');
+                };
+                const tauxPresta = parseFloat(e.taux_presta || 0);
+                const tauxProduit = parseFloat(e.taux_produit || 0);
+                const regleTaux = `${tauxPresta}% / ${tauxProduit}%`;
+                const basesConcat = `${fmtBase(basePrestaHT)} / ${fmtBase(baseProduitHT)}`;
+                
                 drawRow([
                     {text: nomComplet, w: 52, size: 8}, 
                     {text: 'Salarié', w: 38, align: 'center', size: 8},
                     {text: heuresAffichees, w: 30, align: 'center', size: 8},
                     {text: hsAffichees, w: 30, align: 'center', size: 8},
                     {text: pourboireAffiche, w: 38, align: 'right', size: 8},
-                    {text: fMnt(caRealiseBaseHT), w: 50, align: 'right', size: 8}, 
-                    {text: basesConcat, w: 92, align: 'right', size: 8}, 
+                    {text: fMnt(caRealiseBaseHT), w: 56, align: 'right', size: 8}, 
+                    {text: basesConcat, w: 86, align: 'right', size: 8}, 
                     {text: regleTaux, w: 47, align: 'center', size: 8}, 
                     {text: fMnt(e.total_prime), w: 58, align: 'right', size: 8}
                 ]);
@@ -5955,8 +6023,8 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 {text: '-', w: 30, align: 'center'},
                 {text: '-', w: 30, align: 'center'},
                 {text: '-', w: 38, align: 'right'},
-                {text: fMnt(caNonAttribue), w: 50, align: 'right'}, 
-                {text: '-', w: 92, align: 'right'}, 
+                {text: fMnt(caNonAttribue), w: 56, align: 'right'}, 
+                {text: '-', w: 86, align: 'right'}, 
                 {text: '-', w: 47, align: 'center'}, 
                 {text: '-', w: 58, align: 'right'}
             ]);
@@ -6970,10 +7038,9 @@ async function executerClotureFantome() {
                     const tEspecesTheorique = Number((fCaisseMatin + totalEspecesVentes + totalMouvements).toFixed(2));
                     // -----------------------------------------
 
-                    const dateISO = new Date(j.jour); 
-                    dateISO.setHours(23, 59, 59); // On scelle le robot à 23:59:59 de la veille
-                    
-                    const signature = crypto.createHash('sha256').update(`Z-${id_salon}-${nextZ}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}-${dateISO.toISOString()}`).digest('hex');
+                    const signature = crypto.createHash('sha256')
+                        .update(`Z-${id_salon}-${nextZ}-${dateACloturerStr}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}`)
+                        .digest('hex');
 
                     await clientDB.query(
                         `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique, numero_z_salon) 
@@ -7289,9 +7356,12 @@ app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, asyn
         await clientDB.query('DELETE FROM absences_employes WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM recettes_articles WHERE id_protocole IN (SELECT id_protocole FROM protocoles WHERE id_salon = $1)', [id]);
         await clientDB.query('DELETE FROM protocoles WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM catalogue WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM employes WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM clients WHERE id_salon = $1', [id]);
+        // Anonymisation RGPD des fiches liées à des pièces fiscales (tickets/commissions) et suppression des fiches non liées
+        await clientDB.query('DELETE FROM catalogue WHERE id_salon = $1 AND id_article NOT IN (SELECT DISTINCT id_article FROM lignes_ticket WHERE id_salon = $1 AND id_article IS NOT NULL)', [id]);
+        await clientDB.query("UPDATE employes SET nom = 'Collaborateur Anonymisé #' || id_employe, code_pin = NULL, photo_url = NULL WHERE id_salon = $1 AND id_employe IN (SELECT DISTINCT id_employe FROM tickets WHERE id_salon = $1 AND id_employe IS NOT NULL UNION SELECT DISTINCT id_employe FROM commissions WHERE id_salon = $1 AND id_employe IS NOT NULL)", [id]);
+        await clientDB.query('DELETE FROM employes WHERE id_salon = $1 AND id_employe NOT IN (SELECT DISTINCT id_employe FROM tickets WHERE id_salon = $1 AND id_employe IS NOT NULL UNION SELECT DISTINCT id_employe FROM commissions WHERE id_salon = $1 AND id_employe IS NOT NULL)', [id]);
+        await clientDB.query("UPDATE clients SET nom = 'Client Anonymisé #' || id_client, prenom = '', telephone = NULL, email = NULL, notes = NULL, date_naissance = NULL WHERE id_salon = $1 AND id_client IN (SELECT DISTINCT id_client FROM tickets WHERE id_salon = $1 AND id_client IS NOT NULL)", [id]);
+        await clientDB.query('DELETE FROM clients WHERE id_salon = $1 AND id_client NOT IN (SELECT DISTINCT id_client FROM tickets WHERE id_salon = $1 AND id_client IS NOT NULL)', [id]);
         await clientDB.query('DELETE FROM avis_demandes WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM taches_actions WHERE id_salon = $1', [id]);
         await clientDB.query('DELETE FROM ia_taches_attente WHERE id_salon = $1', [id]);
