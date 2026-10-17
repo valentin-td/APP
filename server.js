@@ -251,6 +251,9 @@ pool.query(`
     ALTER TABLE employes ADD COLUMN IF NOT EXISTS photo_url TEXT;
     ALTER TABLE employes ADD COLUMN IF NOT EXISTS est_gerant BOOLEAN DEFAULT FALSE;
     ALTER TABLE employes ALTER COLUMN code_pin TYPE VARCHAR(255);
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS pin_tentatives_echouees INT DEFAULT 0;
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS pin_bloque_jusqua TIMESTAMP NULL;
+    ALTER TABLE employes ADD COLUMN IF NOT EXISTS pin_bloque_definitif BOOLEAN DEFAULT FALSE;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS montant_pourboire NUMERIC(10, 2) DEFAULT 0.00;
     
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS telephone_gerant VARCHAR(20);
@@ -2016,17 +2019,11 @@ async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_o
     const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
     if (!protectionActive) return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Salon' };
 
-    if (!code_pin || String(code_pin).trim() === '') {
-        const err = new Error(`Code PIN personnel requis pour valider cette opération (${action_label}).`);
-        err.require_pin = true;
-        throw err;
-    }
-
     let empRes;
     if (id_employe) {
-        empRes = await clientDB.query('SELECT id_employe, nom, code_pin FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
     } else if (nom_operateur && nom_operateur.trim() !== '') {
-        empRes = await clientDB.query('SELECT id_employe, nom, code_pin FROM employes WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1', [nom_operateur.trim(), id_salon]);
+        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE nom ILIKE $1 AND id_salon = $2 LIMIT 1', [nom_operateur.trim(), id_salon]);
     } else {
         const err = new Error("Veuillez sélectionner le collaborateur qui effectue l'opération et saisir son code PIN.");
         err.require_pin = true;
@@ -2038,6 +2035,30 @@ async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_o
     }
 
     const emp = empRes.rows[0];
+
+    // 1. Vérification du blocage définitif
+    if (emp.bloque_definitif) {
+        const err = new Error(`Accès bloqué définitivement pour ${emp.nom} suite à de trop nombreuses tentatives. Le gérant doit débloquer votre profil dans l'espace Équipe.`);
+        err.require_pin = true;
+        err.locked_permanent = true;
+        throw err;
+    }
+
+    // 2. Vérification du blocage temporaire (15m / 30m / 1h)
+    if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
+        const minRestantes = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
+        const err = new Error(`Actions sensibles temporairement verrouillées pour ${emp.nom}. Réessayez dans ${minRestantes} minute(s).`);
+        err.require_pin = true;
+        err.locked_until = emp.pin_bloque_jusqua;
+        throw err;
+    }
+
+    if (!code_pin || String(code_pin).trim() === '') {
+        const err = new Error(`Code PIN personnel requis pour valider cette opération (${action_label}).`);
+        err.require_pin = true;
+        throw err;
+    }
+
     let pinMatch = false;
     if (emp.code_pin && emp.code_pin.startsWith('$2')) {
         pinMatch = await bcrypt.compare(String(code_pin), emp.code_pin);
@@ -2045,11 +2066,66 @@ async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_o
         pinMatch = (emp.code_pin === String(code_pin));
     }
 
+    // 3. Gestion de l'échec : Paliers 3 essais (15m) -> 5 essais (30m) -> 7 essais (1h) -> 9 essais (Définitif)
     if (!pinMatch) {
-        await enregistrerJET(id_salon, 'PIN_ACTION_SENSIBLE_ECHOUE', { action: action_label, collaborateur: emp.nom });
-        const err = new Error(`Code PIN incorrect pour ${emp.nom}.`);
+        const nouvellesTentatives = parseInt(emp.tentatives, 10) + 1;
+        let bloqueJusqua = null;
+        let bloqueDefinitif = false;
+        let messageSanction = '';
+
+        if (nouvellesTentatives >= 9) {
+            bloqueDefinitif = true;
+            messageSanction = `Profil verrouillé définitivement. Le gérant doit vous débloquer depuis l'espace Équipe.`;
+        } else if (nouvellesTentatives === 7) {
+            bloqueJusqua = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+            messageSanction = `Actions sensibles bloquées pendant 1 heure (2 derniers essais restants avant blocage définitif).`;
+        } else if (nouvellesTentatives === 5) {
+            bloqueJusqua = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+            messageSanction = `Actions sensibles bloquées pendant 30 minutes.`;
+        } else if (nouvellesTentatives === 3) {
+            bloqueJusqua = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+            messageSanction = `Actions sensibles bloquées pendant 15 minutes.`;
+        } else {
+            const prochainSeuil = nouvellesTentatives < 3 ? 3 : (nouvellesTentatives < 5 ? 5 : (nouvellesTentatives < 7 ? 7 : 9));
+            const restants = prochainSeuil - nouvellesTentatives;
+            messageSanction = `${restants} essai(s) restant(s) avant verrouillage.`;
+        }
+
+        // Exécuté sur pool (hors transaction clientDB) pour persister malgré le ROLLBACK
+        await pool.query(
+            'UPDATE employes SET pin_tentatives_echouees = $1, pin_bloque_jusqua = $2, pin_bloque_definitif = $3 WHERE id_employe = $4 AND id_salon = $5',
+            [nouvellesTentatives, bloqueJusqua, bloqueDefinitif, emp.id_employe, id_salon]
+        );
+        await enregistrerJET(id_salon, bloqueDefinitif ? 'PIN_BLOCAGE_DEFINITIF' : 'PIN_ACTION_SENSIBLE_ECHOUE', {
+            action: action_label,
+            collaborateur: emp.nom,
+            tentatives: nouvellesTentatives,
+            bloque_jusqua: bloqueJusqua,
+            bloque_definitif: bloqueDefinitif
+        }, pool);
+
+        if (bloqueDefinitif) {
+            envoyerNotificationPush(id_salon, 'gerant', {
+                title: "Alerte Sécurité PIN",
+                body: `Le code PIN de ${emp.nom} a été bloqué définitivement après 9 échecs. Déblocage requis dans Équipe.`,
+                url: '/?tab=equipe'
+            });
+        }
+
+        const err = new Error(`Code PIN incorrect pour ${emp.nom}. ${messageSanction}`);
         err.require_pin = true;
+        err.tentatives = nouvellesTentatives;
+        err.locked_until = bloqueJusqua;
+        err.locked_permanent = bloqueDefinitif;
         throw err;
+    }
+
+    // 4. Succès : Remise à zéro du compteur d'échecs
+    if (emp.tentatives > 0 || emp.pin_bloque_jusqua) {
+        await pool.query(
+            'UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2',
+            [emp.id_employe, id_salon]
+        );
     }
 
     return { autorise: true, id_employe: emp.id_employe, nom: emp.nom };
@@ -3644,11 +3720,24 @@ app.delete('/api/clients/:id', verifierToken, async (req, res) => {
 app.get('/api/employes', verifierToken, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT e.id_employe, e.nom, e.role, e.taux_commission_prestation, e.taux_commission_produit, e.photo_url, e.est_gerant, e.type_contrat, e.heures_mensuelles_base, e.id_salon, EXISTS(SELECT 1 FROM pointages p WHERE p.id_employe = e.id_employe AND p.date_jour = CURRENT_DATE) as a_pointe_aujourdhui FROM employes e WHERE e.id_salon = $1 ORDER BY e.nom ASC',
+            'SELECT e.id_employe, e.nom, e.role, e.taux_commission_prestation, e.taux_commission_produit, e.photo_url, e.est_gerant, e.type_contrat, e.heures_mensuelles_base, e.id_salon, COALESCE(e.pin_tentatives_echouees, 0) as pin_tentatives_echouees, e.pin_bloque_jusqua, COALESCE(e.pin_bloque_definitif, FALSE) as pin_bloque_definitif, EXISTS(SELECT 1 FROM pointages p WHERE p.id_employe = e.id_employe AND p.date_jour = CURRENT_DATE) as a_pointe_aujourdhui FROM employes e WHERE e.id_salon = $1 ORDER BY e.nom ASC',
             [req.user.id_salon]
         );
         res.json(result.rows);
     } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }
+});
+
+app.put('/api/employes/:id/debloquer-pin', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut débloquer le code PIN d'un collaborateur." });
+    try {
+        const r = await pool.query(
+            'UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2 RETURNING nom',
+            [req.params.id, req.user.id_salon]
+        );
+        if (r.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable." });
+        await enregistrerJET(req.user.id_salon, 'DEBLOCAGE_PIN_EMPLOYE', { id_employe: parseInt(req.params.id, 10), nom: r.rows[0].nom, debloque_par: 'gerant' });
+        res.json({ message: `Accès PIN débloqué pour ${r.rows[0].nom}.` });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors du déblocage." }); }
 });
 app.post('/api/employes', verifierToken, async (req, res) => { 
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut ajouter un employé." });
@@ -3684,7 +3773,7 @@ app.put('/api/employes/:id', verifierToken, async (req, res) => {
         if (code_pin && code_pin.trim() !== '') {
             if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
             const hashPin = await bcrypt.hash(code_pin, 10);
-            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3, code_pin = $4 WHERE id_employe = $5 AND id_salon = $6', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, req.params.id, req.user.id_salon]);
+            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3, code_pin = $4, pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $5 AND id_salon = $6', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, req.params.id, req.user.id_salon]);
         } else {
             await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3 WHERE id_employe = $4 AND id_salon = $5', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, req.params.id, req.user.id_salon]);
         }
