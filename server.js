@@ -306,6 +306,7 @@ pool.query(`
     );
     ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS hash_precedent VARCHAR(64);
     ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS hash_mouvement VARCHAR(64);
+    ALTER TABLE mouvements_caisse ADD COLUMN IF NOT EXISTS categorie_comptable VARCHAR(40) DEFAULT 'AUTRE';
 
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(20) DEFAULT 'PREMIUM_TRIAL';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS siret VARCHAR(50);
@@ -332,6 +333,9 @@ pool.query(`
     ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS mode_paiement VARCHAR(50) DEFAULT 'NON_SPECIFIE';
     ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS statut_verification VARCHAR(20) DEFAULT 'A_VALIDER';
     ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS justificatif_url TEXT;
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS fichier_cle_r2 TEXT;
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS date_facture DATE;
+    ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS date_reglement DATE;
     ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS compte_comptable VARCHAR(20);
 
     CREATE TABLE IF NOT EXISTS messages (id_message SERIAL PRIMARY KEY, id_salon INT, id_expediteur INT, id_destinataire INT, contenu TEXT, fichier_url TEXT, reactions JSONB DEFAULT '{}', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
@@ -631,7 +635,28 @@ async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
     } catch (e) { return null; }
 }
 
-async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe = null, type_mouvement, montant, motif, autoriserJourCloture = false }) {
+function deduireCategorieMouvement(type_mouvement, motif, categorieExplicite = null) {
+    if (categorieExplicite && ['ACHAT_ESPECES', 'REMISE_BANQUE', 'APPORT_FONDS', 'PRELEVEMENT_GERANT', 'ECART_CAISSE', 'AUTRE'].includes(categorieExplicite)) {
+        return categorieExplicite;
+    }
+    if (type_mouvement === 'REGULARISATION') return 'ECART_CAISSE';
+    const m = String(motif || '').toLowerCase();
+    if (type_mouvement === 'ENTREE') {
+        return 'APPORT_FONDS';
+    }
+    if (m.includes('banque') || m.includes('dépôt') || m.includes('depot') || m.includes('remise') || m.includes('coffre')) {
+        return 'REMISE_BANQUE';
+    }
+    if (m.includes('facture') || m.includes('achat') || m.includes('fournisseur') || m.includes('courses') || m.includes('timbre') || m.includes('poste')) {
+        return 'ACHAT_ESPECES';
+    }
+    if (m.includes('gérant') || m.includes('gerant') || m.includes('patron') || m.includes('prélèvement') || m.includes('prelevement') || m.includes('acompte')) {
+        return 'PRELEVEMENT_GERANT';
+    }
+    return 'ACHAT_ESPECES';
+}
+
+async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe = null, type_mouvement, montant, motif, categorie_comptable = null, autoriserJourCloture = false }) {
     await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
     if (!autoriserJourCloture && type_mouvement !== 'REGULARISATION') {
         const zDejaFait = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
@@ -643,18 +668,19 @@ async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe
     const hashPrecedent = lastMvt.rowCount > 0 ? lastMvt.rows[0].hash_mouvement : 'GENESIS_MVT';
     const montantFormate = Number(montant).toFixed(2);
     const motifPropre = String(motif || '').trim();
+    const catFinale = deduireCategorieMouvement(type_mouvement, motifPropre, categorie_comptable);
     const dateISO = new Date().toISOString();
     const ins = await clientDB.query(
-        `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif, date_creation, hash_precedent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_mouvement`,
-        [id_salon, id_employe, type_mouvement, montantFormate, motifPropre, dateISO, hashPrecedent]
+        `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif, categorie_comptable, date_creation, hash_precedent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_mouvement`,
+        [id_salon, id_employe, type_mouvement, montantFormate, motifPropre, catFinale, dateISO, hashPrecedent]
     );
     const idMvt = ins.rows[0].id_mouvement;
     const hashMouvement = crypto.createHash('sha256')
         .update(`MVT-${id_salon}-${idMvt}-${type_mouvement}-${montantFormate}-${motifPropre}-${hashPrecedent}`)
         .digest('hex');
     await clientDB.query('UPDATE mouvements_caisse SET hash_mouvement = $1 WHERE id_mouvement = $2', [hashMouvement, idMvt]);
-    return { id_mouvement: idMvt, hash_mouvement: hashMouvement, hash_precedent: hashPrecedent };
+    return { id_mouvement: idMvt, hash_mouvement: hashMouvement, hash_precedent: hashPrecedent, categorie_comptable: catFinale };
 }
 
 const verifierClotureZ = async (req, res, next) => {
@@ -1963,7 +1989,7 @@ app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => 
 
 app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "Accès réservé à la caisse du salon ou au gérant." });
-    const { type_mouvement, montant, motif, id_employe } = req.body;
+    const { type_mouvement, montant, motif, id_employe, categorie_comptable } = req.body;
     if (!['ENTREE', 'SORTIE'].includes(type_mouvement)) return res.status(400).json({ erreur: "Type de mouvement invalide." });
     if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
     if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
@@ -1975,14 +2001,15 @@ app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
             id_employe: id_employe || null,
             type_mouvement,
             montant: parseFloat(montant),
-            motif: motif.trim()
+            motif: motif.trim(),
+            categorie_comptable: categorie_comptable || null
         });
-        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, type_mouvement, montant: parseFloat(montant), motif: motif.trim(), hash_mouvement: scelle.hash_mouvement }, clientDB);
+        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, type_mouvement, categorie_comptable: scelle.categorie_comptable, montant: parseFloat(montant), motif: motif.trim(), hash_mouvement: scelle.hash_mouvement }, clientDB);
         await clientDB.query('COMMIT');
         res.status(201).json({ message: "Mouvement de caisse enregistré et scellé." });
     } catch (e) {
         await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: "Erreur lors de la sauvegarde." });
+        res.status(400).json({ erreur: e.message || "Erreur lors de la sauvegarde." });
     } finally { clientDB.release(); }
 });
 
@@ -2383,12 +2410,22 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
     const CPT_CAISSE = config.compte_caisse || '530000';
     const CPT_PRESTA = config.compte_prestations || '706000';
     const CPT_PROD = config.compte_produits || '707000';
-    const CPT_TVA = config.compte_tva || '445710';
+    const CPT_TVA_BASE = config.compte_tva || '445710';
+    const CPT_POURBOIRES = '426000';
 
-    // 2. Récupérer tous les tickets validés (ventes + avoirs d'annulation) sur la période
+    const getCompteTvaCollectee = (taux) => {
+        if (CPT_TVA_BASE !== '445710') return CPT_TVA_BASE;
+        const t = Number(taux);
+        if (t === 20) return '445711';
+        if (t === 10) return '445712';
+        if (t === 5.5) return '445713';
+        return CPT_TVA_BASE;
+    };
+
+    // 2. Récupérer tous les tickets validés (ventes + avoirs d'annulation + pourboires) sur la période
     const ticketsRes = await pool.query(`
         SELECT 
-            t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, t.type_ticket,
+            t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.methode_paiement, t.total_ttc, t.montant_pourboire, t.type_ticket,
             lt.id_ligne, lt.total_ligne_ttc, lt.taux_tva_snapshot, COALESCE(lt.nom_article_snapshot, c.nom, 'Prestation') as nom_article,
             COALESCE(c.type_article, 'PRESTATION') as type_article,
             cc.date_cloture
@@ -2420,6 +2457,7 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
                 methode: r.methode_paiement || 'CARTE',
                 type_ticket: r.type_ticket || 'VENTE',
                 total_ttc: parseFloat(r.total_ttc) || 0,
+                pourboire: parseFloat(r.montant_pourboire) || 0,
                 lignes: []
             };
             ticketsMap.set(r.id_ticket, tObj);
@@ -2433,19 +2471,21 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
     let totalDebitCents = 0;
     let totalCreditCents = 0;
     const lignesFec = [];
-    let sequenceEcriture = 1; // Numérotation continue sans trou propre au salon (Exigence Art. A.47 A-1 LPF)
+    let sequenceEcriture = 1; // Numérotation continue globale sans trou (Exigence Art. A.47 A-1 LPF)
 
     for (const t of ticketsList) {
         const ticketCents = Math.round(t.total_ttc * 100);
-        if (ticketCents === 0) continue;
+        const pourboireCents = Math.max(0, Math.round((t.pourboire || 0) * 100));
+        if (ticketCents === 0 && pourboireCents === 0) continue;
 
         const estAvoir = ticketCents < 0 || t.type_ticket === 'ANNULATION';
         const absTicketCents = Math.abs(ticketCents);
+        const totalEncaisseCents = estAvoir ? absTicketCents : (absTicketCents + pourboireCents);
 
         const dateEcriture = formatDateFEC(t.date);
         const dateValid = formatDateFEC(t.date_valid);
         const pieceRef = String(t.numero).replace(/[\t\r\n]/g, ' ').trim();
-        const ecritureNum = `VT-${String(sequenceEcriture).padStart(6, '0')}`;
+        const ecritureNum = `EC-${String(sequenceEcriture).padStart(6, '0')}`;
         sequenceEcriture++;
 
         const cptePaiement = (t.methode === 'ESPECES') ? CPT_CAISSE : CPT_BANQUE;
@@ -2457,35 +2497,50 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
             JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
             CompteNum: cptePaiement, CompteLib: libellePaiement, CompAuxNum: '', CompAuxLib: '',
             PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `${prefixeLib} ${pieceRef}`.substring(0, 40),
-            Debit: estAvoir ? '0,00' : formatMontant(absTicketCents),
-            Credit: estAvoir ? formatMontant(absTicketCents) : '0,00',
+            Debit: estAvoir ? '0,00' : formatMontant(totalEncaisseCents),
+            Credit: estAvoir ? formatMontant(totalEncaisseCents) : '0,00',
             EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
         });
-        if (estAvoir) totalCreditCents += absTicketCents;
-        else totalDebitCents += absTicketCents;
+        if (estAvoir) totalCreditCents += totalEncaisseCents;
+        else totalDebitCents += totalEncaisseCents;
 
-        // 2. Préparation et équilibrage au centime près des lignes de produits/prestations
+        // 1 Bis. Ligne de Pourboire éventuel (Compte 426000 - Hors TVA)
+        if (!estAvoir && pourboireCents > 0) {
+            lignesFec.push({
+                JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
+                CompteNum: CPT_POURBOIRES, CompteLib: 'Pourboires salaries a reverser', CompAuxNum: '', CompAuxLib: '',
+                PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `Pourboire ${pieceRef}`.substring(0, 40),
+                Debit: '0,00',
+                Credit: formatMontant(pourboireCents),
+                EcritureLet: '', DateLet: '', ValidDate: dateValid, Montantdevise: '', Idevise: ''
+            });
+            totalCreditCents += pourboireCents;
+        }
+
+        // 2. Préparation et proratisation au centime près des lignes de produits/prestations (pour les anciens tickets avec remise)
         const lignesBrutes = t.lignes.length > 0
             ? t.lignes
             : [{ total_ligne_ttc: t.total_ttc, taux_tva_snapshot: 20.00, nom_article: 'Prestation globale', type_article: 'PRESTATION' }];
 
-        let cumulLignesCents = 0;
-        const lignesCalculees = lignesBrutes.map((l) => {
-            const c = Math.abs(Math.round((parseFloat(l.total_ligne_ttc) || 0) * 100));
-            cumulLignesCents += c;
-            return { ...l, absCents: c };
+        const rawLinesCents = lignesBrutes.map(l => ({
+            ...l,
+            rawCents: Math.abs(Math.round((parseFloat(l.total_ligne_ttc) || 0) * 100))
+        }));
+        const sumRawCents = rawLinesCents.reduce((s, l) => s + l.rawCents, 0);
+
+        let cumulAlloue = 0;
+        const lignesCalculees = rawLinesCents.map((l, idx) => {
+            if (sumRawCents === 0) return { ...l, absCents: idx === 0 ? absTicketCents : 0 };
+            if (sumRawCents === absTicketCents) return { ...l, absCents: l.rawCents };
+            if (idx === rawLinesCents.length - 1) {
+                return { ...l, absCents: Math.max(0, absTicketCents - cumulAlloue) };
+            }
+            const prorata = Math.round((l.rawCents * absTicketCents) / sumRawCents);
+            cumulAlloue += prorata;
+            return { ...l, absCents: prorata };
         });
 
-        // Ajustement automatique sur la dernière ligne en cas de remise fidélité ou écart de centime sur le ticket
-        const ecartTicketCents = absTicketCents - cumulLignesCents;
-        if (ecartTicketCents !== 0 && lignesCalculees.length > 0) {
-            const lastIdx = lignesCalculees.length - 1;
-            if (lignesCalculees[lastIdx].absCents + ecartTicketCents >= 0) {
-                lignesCalculees[lastIdx].absCents += ecartTicketCents;
-            }
-        }
-
-        // 3. Génération des lignes de Produits (706/707) et de TVA (445710 uniquement si assujetti)
+        // 3. Génération des lignes de Produits (706/707) et de TVA par taux (44571x)
         for (const ligne of lignesCalculees) {
             if (ligne.absCents === 0) continue;
 
@@ -2512,9 +2567,10 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
 
             if (ligneTVACents > 0) {
                 const tauxAff = Number(tauxTVA).toString().replace('.', ',');
+                const cpteTvaSpecifique = getCompteTvaCollectee(tauxTVA);
                 lignesFec.push({
                     JournalCode: 'VT', JournalLib: 'Ventes', EcritureNum: ecritureNum, EcritureDate: dateEcriture,
-                    CompteNum: CPT_TVA, CompteLib: `TVA Collectee ${tauxAff}%`, CompAuxNum: '', CompAuxLib: '',
+                    CompteNum: cpteTvaSpecifique, CompteLib: `TVA Collectee ${tauxAff}%`, CompAuxNum: '', CompAuxLib: '',
                     PieceRef: pieceRef, PieceDate: dateEcriture, EcritureLib: `TVA ${nomNettoye}`.substring(0, 30),
                     Debit: estAvoir ? formatMontant(ligneTVACents) : '0,00',
                     Credit: estAvoir ? '0,00' : formatMontant(ligneTVACents),
@@ -2524,6 +2580,130 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
                 else totalCreditCents += ligneTVACents;
             }
         }
+    }
+
+    // 4. JOURNAL DES ACHATS (AC) : Factures fournisseurs validées sur la période
+    const achatsRes = await pool.query(`
+        SELECT id_facture, nom_fournisseur, numero_facture, COALESCE(date_facture, DATE(date_traitement)) as date_piece,
+               montant_ht, montant_tva, montant_ttc, compte_comptable
+        FROM factures_fournisseurs
+        WHERE id_salon = $1 AND statut_verification = 'VALIDE'
+          AND COALESCE(date_facture, DATE(date_traitement)) BETWEEN $2 AND $3
+        ORDER BY COALESCE(date_facture, DATE(date_traitement)) ASC, id_facture ASC
+    `, [id_salon, date_debut, date_fin]);
+
+    for (const f of achatsRes.rows) {
+        const ttcCents = Math.round((parseFloat(f.montant_ttc) || 0) * 100);
+        if (ttcCents <= 0) continue;
+
+        let htCents = franchiseTVA ? ttcCents : Math.round((parseFloat(f.montant_ht) || 0) * 100);
+        let tvaCents = franchiseTVA ? 0 : Math.round((parseFloat(f.montant_tva) || 0) * 100);
+        if (htCents + tvaCents !== ttcCents) {
+            htCents = ttcCents - tvaCents;
+        }
+
+        const datePiece = formatDateFEC(f.date_piece);
+        const pieceRef = String(f.numero_facture || `FAC-${f.id_facture}`).replace(/[\t\r\n]/g, ' ').trim();
+        const nomFourn = String(f.nom_fournisseur || 'Fournisseur').replace(/[\t\r\n]/g, ' ').trim();
+        const codeAux = 'F' + nomFourn.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8).padEnd(4, '0');
+        const cpteCharge = (f.compte_comptable ? String(f.compte_comptable).replace(/\D/g, '') : '604000').padEnd(6, '0').substring(0, 6);
+        const ecritureNum = `EC-${String(sequenceEcriture).padStart(6, '0')}`;
+        sequenceEcriture++;
+
+        // Débit Charge (6xx)
+        if (htCents > 0) {
+            lignesFec.push({
+                JournalCode: 'AC', JournalLib: 'Achats', EcritureNum: ecritureNum, EcritureDate: datePiece,
+                CompteNum: cpteCharge, CompteLib: `Achats / Charges (${cpteCharge})`, CompAuxNum: '', CompAuxLib: '',
+                PieceRef: pieceRef, PieceDate: datePiece, EcritureLib: `Facture ${nomFourn}`.substring(0, 40),
+                Debit: formatMontant(htCents), Credit: '0,00',
+                EcritureLet: '', DateLet: '', ValidDate: datePiece, Montantdevise: '', Idevise: ''
+            });
+            totalDebitCents += htCents;
+        }
+
+        // Débit TVA déductible sur autres biens et services (445660)
+        if (tvaCents > 0) {
+            lignesFec.push({
+                JournalCode: 'AC', JournalLib: 'Achats', EcritureNum: ecritureNum, EcritureDate: datePiece,
+                CompteNum: '445660', CompteLib: 'TVA deductible sur ABS', CompAuxNum: '', CompAuxLib: '',
+                PieceRef: pieceRef, PieceDate: datePiece, EcritureLib: `TVA ${nomFourn}`.substring(0, 40),
+                Debit: formatMontant(tvaCents), Credit: '0,00',
+                EcritureLet: '', DateLet: '', ValidDate: datePiece, Montantdevise: '', Idevise: ''
+            });
+            totalDebitCents += tvaCents;
+        }
+
+        // Crédit Fournisseur (401000)
+        lignesFec.push({
+            JournalCode: 'AC', JournalLib: 'Achats', EcritureNum: ecritureNum, EcritureDate: datePiece,
+            CompteNum: '401000', CompteLib: 'Fournisseurs', CompAuxNum: codeAux, CompAuxLib: nomFourn.substring(0, 30),
+            PieceRef: pieceRef, PieceDate: datePiece, EcritureLib: `Facture ${nomFourn}`.substring(0, 40),
+            Debit: '0,00', Credit: formatMontant(ttcCents),
+            EcritureLet: '', DateLet: '', ValidDate: datePiece, Montantdevise: '', Idevise: ''
+        });
+        totalCreditCents += ttcCents;
+    }
+
+    // 5. JOURNAL DE CAISSE (CA) : Mouvements d'espèces hors tickets (Remises en banque, Apports, Prélèvements, Régularisations)
+    const mvtsRes = await pool.query(`
+        SELECT id_mouvement, type_mouvement, categorie_comptable, montant, motif, date_creation
+        FROM mouvements_caisse
+        WHERE id_salon = $1 AND DATE(date_creation) BETWEEN $2 AND $3
+        ORDER BY date_creation ASC, id_mouvement ASC
+    `, [id_salon, date_debut, date_fin]);
+
+    for (const m of mvtsRes.rows) {
+        const mntCents = Math.round(Math.abs(parseFloat(m.montant) || 0) * 100);
+        if (mntCents === 0) continue;
+
+        const cat = deduireCategorieMouvement(m.type_mouvement, m.motif, m.categorie_comptable);
+        const dateMvt = formatDateFEC(m.date_creation);
+        const pieceRef = `MVT-${m.id_mouvement}`;
+        const motifClean = String(m.motif || cat).replace(/[\t\r\n]/g, ' ').trim().substring(0, 40);
+        const ecritureNum = `EC-${String(sequenceEcriture).padStart(6, '0')}`;
+        sequenceEcriture++;
+
+        let estEntreeCaisse = m.type_mouvement === 'ENTREE' || (m.type_mouvement === 'REGULARISATION' && parseFloat(m.montant) > 0);
+        let cpteContrepartie = '580000';
+        let libContrepartie = 'Virements internes';
+
+        if (cat === 'REMISE_BANQUE' || cat === 'APPORT_FONDS') {
+            cpteContrepartie = '580000';
+            libContrepartie = 'Virements internes (Banque/Caisse)';
+        } else if (cat === 'PRELEVEMENT_GERANT') {
+            cpteContrepartie = '108000';
+            libContrepartie = 'Compte de l exploitant';
+        } else if (cat === 'ACHAT_ESPECES') {
+            cpteContrepartie = '401000';
+            libContrepartie = 'Reglement especes fournisseur';
+        } else if (cat === 'ECART_CAISSE') {
+            cpteContrepartie = estEntreeCaisse ? '758000' : '658000';
+            libContrepartie = estEntreeCaisse ? 'Produits divers gestion courante (Boni)' : 'Charges diverses gestion courante (Mali)';
+        }
+
+        // Ligne Caisse (530000)
+        lignesFec.push({
+            JournalCode: 'CA', JournalLib: 'Caisse', EcritureNum: ecritureNum, EcritureDate: dateMvt,
+            CompteNum: CPT_CAISSE, CompteLib: 'Caisse', CompAuxNum: '', CompAuxLib: '',
+            PieceRef: pieceRef, PieceDate: dateMvt, EcritureLib: motifClean,
+            Debit: estEntreeCaisse ? formatMontant(mntCents) : '0,00',
+            Credit: estEntreeCaisse ? '0,00' : formatMontant(mntCents),
+            EcritureLet: '', DateLet: '', ValidDate: dateMvt, Montantdevise: '', Idevise: ''
+        });
+
+        // Ligne Contrepartie
+        lignesFec.push({
+            JournalCode: 'CA', JournalLib: 'Caisse', EcritureNum: ecritureNum, EcritureDate: dateMvt,
+            CompteNum: cpteContrepartie, CompteLib: libContrepartie, CompAuxNum: '', CompAuxLib: '',
+            PieceRef: pieceRef, PieceDate: dateMvt, EcritureLib: motifClean,
+            Debit: estEntreeCaisse ? '0,00' : formatMontant(mntCents),
+            Credit: estEntreeCaisse ? formatMontant(mntCents) : '0,00',
+            EcritureLet: '', DateLet: '', ValidDate: dateMvt, Montantdevise: '', Idevise: ''
+        });
+
+        totalDebitCents += mntCents;
+        totalCreditCents += mntCents;
     }
 
     if (totalDebitCents !== totalCreditCents) {
@@ -3478,7 +3658,7 @@ CAS 3 - ABSENCE : Un employé sera absent. -> Renvoie {"type": "ABSENCE", "donne
 CAS 4 - ACTION : Facture générale (EDF, Urssaf) ou urgence. -> Renvoie {"type": "ACTION", "donnees": {"titre": "Urssaf", "description": "...", "date_echeance": "YYYY-MM-DD"}}
 CAS 5 - AUTRE : -> Renvoie {"type": "NONE"}`;
 
-async function analyserEmailAvecIA(sujet, texte, pdfUrl = null) {
+async function analyserEmailAvecIA(sujet, texte, pdfUrl = null, fichierCleR2 = null) {
     if (!process.env.GROQ_API_KEY) return [];
 
     // On augmente la limite pour pouvoir traiter le texte extrait des PDF (souvent assez long)
@@ -3523,7 +3703,8 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null) {
                     mode_paiement: analyse.donnees.mode_paiement || 'NON_SPECIFIE',
                     compte_comptable: analyse.donnees.compte_comptable || null,
                     produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
-                    pdf_url: pdfUrl // On attache le lien du PDF pour le Split-Screen
+                    pdf_url: pdfUrl, // On attache le lien du PDF pour le Split-Screen
+                    fichier_cle_r2: fichierCleR2 || null
                 }
             }];
         }
@@ -3606,8 +3787,9 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
         const isImage = mime_type && mime_type.startsWith('image/');
         const extension = isImage ? (mime_type.includes('png') ? 'png' : 'jpg') : 'pdf';
 
-        // 1. Sauvegarde sur Cloudflare R2 (pour l'affichage futur dans le Split-Screen)
+        // 1. Sauvegarde sur Cloudflare R2 (avec conservation de la clé permanente R2 pour la liasse comptable)
         let urlCloudflare = null;
+        let cleR2Facture = null;
         try {
             const nomFichierUnique = `factures/${id_salon}/${Date.now()}_upload_manuel.${extension}`;
             await s3Client.send(new PutObjectCommand({
@@ -3616,6 +3798,7 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
                 Body: buffer,
                 ContentType: mime_type || 'application/pdf'
             }));
+            cleR2Facture = nomFichierUnique;
             const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
             urlCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
         } catch (erreurR2) {
@@ -3677,6 +3860,7 @@ app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
                 compte_comptable: analyse.donnees.compte_comptable || null,
                 produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
                 pdf_url: urlCloudflare,
+                fichier_cle_r2: cleR2Facture,
                 mime_type: mime_type || 'application/pdf'
             };
 
@@ -3734,15 +3918,18 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
             const numFacture = donnees.numero_facture || null;
             const modePaiement = donnees.mode_paiement || 'NON_SPECIFIE';
             const justifUrl = donnees.pdf_url || null;
+            const fichierCleR2 = donnees.fichier_cle_r2 || null;
             const compteComptable = donnees.compte_comptable || null;
             const fournisseur = donnees.fournisseur || 'Fournisseur Inconnu';
+            const dateFactureISO = dateFacture.toISOString().split('T')[0];
+            const dateReglementISO = (modePaiement !== 'NON_SPECIFIE' && modePaiement !== 'N/A') ? (donnees.date_reglement || dateFactureISO) : null;
 
             await clientDB.query(
-                `INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon, date_traitement, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'VALIDE', $9, $10)`,
-                [fournisseur, ht, tva, ttc, id_salon, dateFacture.toISOString(), numFacture, modePaiement, justifUrl, compteComptable]
+                `INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon, date_traitement, date_facture, date_reglement, numero_facture, mode_paiement, statut_verification, justificatif_url, fichier_cle_r2, compte_comptable) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'VALIDE', $11, $12, $13)`,
+                [fournisseur, ht, tva, ttc, id_salon, dateFacture.toISOString(), dateFactureISO, dateReglementISO, numFacture, modePaiement, justifUrl, fichierCleR2, compteComptable]
             );
 
-            // 1 Bis. SYNCHRONISATION CAISSE (NF525) : Sortie d'espèces automatique scellée
+            // 1 Bis. SYNCHRONISATION CAISSE (NF525) : Sortie d'espèces automatique scellée et catégorisée ACHAT_ESPECES
             if (modePaiement.toUpperCase() === 'ESPECES' && ttc > 0) {
                 const motifSortie = numFacture 
                     ? `Paiement Facture ${numFacture} - ${fournisseur}` 
@@ -3753,7 +3940,8 @@ app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
                     id_employe: null,
                     type_mouvement: 'SORTIE',
                     montant: ttc,
-                    motif: motifSortie
+                    motif: motifSortie,
+                    categorie_comptable: 'ACHAT_ESPECES'
                 });
                 
                 // On trace l'événement dans le journal technique pour l'inaltérabilité
@@ -4810,11 +4998,18 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         `, [id_salon, dateDebutStr, dateFinStr]);
 
         const mouvementsRes = await pool.query(`
-            SELECT type_mouvement, montant, motif, TO_CHAR(date_creation, 'DD/MM/YYYY') as date_mvt 
+            SELECT type_mouvement, categorie_comptable, montant, motif, DATE(date_creation) as date_brute, TO_CHAR(date_creation, 'DD/MM/YYYY') as date_mvt 
             FROM mouvements_caisse 
             WHERE id_salon = $1 AND type_mouvement IN ('ENTREE', 'SORTIE') AND DATE(date_creation) BETWEEN $2 AND $3 
             ORDER BY date_creation ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
+
+        const pourboiresMoisRes = await pool.query(`
+            SELECT COALESCE(SUM(montant_pourboire), 0) as total_pourboires
+            FROM tickets
+            WHERE id_salon = $1 AND statut = 'VALIDE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE AND DATE(date_creation) BETWEEN $2 AND $3
+        `, [id_salon, dateDebutStr, dateFinStr]);
+        const totalPourboiresMois = parseFloat(pourboiresMoisRes.rows[0]?.total_pourboires) || 0;
 
         // --- Cumul annuel pour la Franchise en Base (basé sur l'année de referenceDate) ---
         const firstDayOfYear = new Date(referenceDate.getFullYear(), 0, 1);
@@ -4831,10 +5026,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             GROUP BY COALESCE(c.type_article, 'PRESTATION')
         `, [id_salon, dateDebutAnneeStr, dateFinStr]);
 
-        // REQUÊTE : Historique des Z du mois (CA exact via c.total_encaisse et nombre de tickets du jour)
+        // REQUÊTE : Historique des Z du mois (CA exact via c.total_encaisse, booléen est_cloture_automatique et nombre de tickets du jour)
         const zMoisRes = await pool.query(`
             SELECT c.id_cloture, COALESCE(c.numero_z_salon, c.id_cloture) as num_z_final, TO_CHAR(c.date_cloture, 'DD/MM/YYYY') as date_z, 
-                   c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc,
+                   c.total_especes_reel, c.ferme_par, c.est_cloture_automatique, c.signature_hash, c.cumul_perpetuel_ttc,
                    COUNT(t.id_ticket) FILTER (WHERE t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE) as nb_tickets,
                    COALESCE(c.total_encaisse, SUM(t.total_ttc), 0) as ca_ttc
             FROM clotures_caisse c
@@ -4842,7 +5037,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                                 AND DATE(t.date_creation) = DATE(c.date_cloture)
                                 AND t.statut = 'VALIDE'
             WHERE c.id_salon = $1 AND DATE(c.date_cloture) BETWEEN $2 AND $3 
-            GROUP BY c.id_cloture, c.numero_z_salon, c.date_cloture, c.total_especes_reel, c.ferme_par, c.signature_hash, c.cumul_perpetuel_ttc, c.total_encaisse
+            GROUP BY c.id_cloture, c.numero_z_salon, c.date_cloture, c.total_especes_reel, c.ferme_par, c.est_cloture_automatique, c.signature_hash, c.cumul_perpetuel_ttc, c.total_encaisse
             ORDER BY c.numero_z_salon ASC NULLS LAST, c.date_cloture ASC, c.id_cloture ASC
         `, [id_salon, dateDebutStr, dateFinStr]);
 
@@ -5074,12 +5269,19 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         // PRÉPARATION DES DONNÉES FACTURES (Nécessaire pour la Section 2 et 3)
         // =========================================================================
         const iaFacturesRes = await pool.query(`SELECT id_tache, donnees, date_creation FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
-        const facturesMoisEtendues = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable, date_traitement as date_facture_brute, date_traitement as date_paiement_brute, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND date_traitement >= NOW() - INTERVAL '1 year'`, [id_salon]);
+        const facturesMoisEtendues = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, fichier_cle_r2, compte_comptable, COALESCE(date_facture, DATE(date_traitement)) as date_facture_brute, COALESCE(date_reglement, DATE(date_traitement)) as date_paiement_brute, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND COALESCE(date_facture, DATE(date_traitement)) >= CURRENT_DATE - INTERVAL '1 year'`, [id_salon]);
 
         let toutesFactures = [];
         
-        // 1. Ajout des factures validées
-        facturesMoisEtendues.rows.forEach(f => {
+        // 1. Ajout des factures validées (avec régénération à la volée des URLs R2 pour éviter tout lien expiré)
+        for (const f of facturesMoisEtendues.rows) {
+            let freshUrl = f.justificatif_url;
+            if (f.fichier_cle_r2 && process.env.R2_BUCKET_NAME) {
+                try {
+                    const cmd = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: f.fichier_cle_r2 });
+                    freshUrl = await getSignedUrl(s3Client, cmd, { expiresIn: 604800 });
+                } catch (e) {}
+            }
             toutesFactures.push({
                 fournisseur: f.nom_fournisseur || 'Inconnu',
                 numero: f.numero_facture || null,
@@ -5091,10 +5293,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 ht: parseFloat(f.montant_ht) || 0,
                 tva: parseFloat(f.montant_tva) || 0,
                 ttc: parseFloat(f.montant_ttc) || 0,
-                url: f.justificatif_url,
-                source: f.justificatif_url ? 'IA' : 'Saisie'
+                url: freshUrl,
+                source: (freshUrl || f.fichier_cle_r2) ? 'IA' : 'Saisie'
             });
-        });
+        }
 
         // 2. Ajout des factures IA en attente
         iaFacturesRes.rows.forEach(t => {
@@ -5167,13 +5369,42 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         });
         
         const panierMoyen = statsRes.rows[0].nb_tickets > 0 ? (totalEncaissementsReel / statsRes.rows[0].nb_tickets) : 0;
-        drawRow([{text: `Total Encaissements (${statsRes.rows[0].nb_tickets} tickets, Panier Moyen : ${fMnt(panierMoyen)})`, w: 290}, {text: fMnt(totalEncaissementsReel), w: 215, align: 'right'}], false, true);
+        drawRow([{text: `Total Encaissements CA (${statsRes.rows[0].nb_tickets} tickets, Panier Moyen : ${fMnt(panierMoyen)})`, w: 290}, {text: fMnt(totalEncaissementsReel), w: 215, align: 'right'}], false, true);
+        if (totalPourboiresMois > 0) {
+            drawRow([{text: 'Pourboires encaissés pour le compte des salariés (Compte 426 - Hors TVA)', w: 290}, {text: fMnt(totalPourboiresMois), w: 215, align: 'right'}]);
+            drawRow([{text: 'TOTAL TRÉSORERIE ENCAISSÉE (CA TTC + Pourboires)', w: 290}, {text: fMnt(totalEncaissementsReel + totalPourboiresMois), w: 215, align: 'right'}], false, true);
+        }
         
         currentY += 10;
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* Ce tableau facilite le rapprochement avec votre relevé bancaire.", 40, currentY); currentY += 12;
 
-        drawRow([{text: 'Remises en banque (Espèces & Chèques) à pointer :', w: 290}, {text: 'Non renseigné', w: 215, align: 'right'}]);
-        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 290}, {text: 'Non renseigné', w: 215, align: 'right'}]);
+        // Ventilation intelligente des mouvements d'espèces par catégorie comptable (PCG)
+        const hasValidZ = Boolean(lastZRes.rows[0].date_max);
+        const datePivotZ = hasValidZ ? new Date(lastZRes.rows[0].date_max) : null;
+        if (datePivotZ) datePivotZ.setHours(23, 59, 59, 999);
+
+        let sumRemisesBanqueZ = 0;
+        let sumAchatsEspecesZ = 0;
+        let sumPrelevementsGerantZ = 0;
+
+        mouvementsRes.rows.forEach(mvt => {
+            const dM = new Date(mvt.date_brute);
+            const cat = deduireCategorieMouvement(mvt.type_mouvement, mvt.motif, mvt.categorie_comptable);
+            const mnt = parseFloat(mvt.montant) || 0;
+            if (!datePivotZ || dM <= datePivotZ) {
+                if (mvt.type_mouvement === 'SORTIE') {
+                    if (cat === 'REMISE_BANQUE') sumRemisesBanqueZ += mnt;
+                    else if (cat === 'PRELEVEMENT_GERANT') sumPrelevementsGerantZ += mnt;
+                    else sumAchatsEspecesZ += mnt;
+                }
+            }
+        });
+
+        const totalChequesMois = parseFloat(mapPaiements['CHEQUE']?.total || 0);
+        const totalRemisesAPointer = sumRemisesBanqueZ + totalChequesMois;
+
+        drawRow([{text: 'Remises en banque déclarées (Dépôts espèces 580 + Chèques) :', w: 290}, {text: totalRemisesAPointer > 0 ? fMnt(totalRemisesAPointer) : '0,00 €', w: 215, align: 'right'}]);
+        drawRow([{text: 'Commissions bancaires (Frais CB, Stripe, etc.) :', w: 290}, {text: 'À pointer sur relevé', w: 215, align: 'right'}]);
         
         const fondDebut = parseFloat(caisseRes.rows[0].fond_debut_mois) || 0;
         const fondFin = parseFloat(caisseRes.rows[0].fond_fin_mois) || 0;
@@ -5185,90 +5416,92 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const caisseCalculee = fondDebut + especesEncaisseesZ + apportsZ - retraitsZ + ecartsZ;
         
         currentY += 5;
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text(`CONTRÔLE DE CAISSE (Arrêté au dernier Z du ${lastZDateStr})`, 40, currentY); currentY += 14;
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text(`CONTRÔLE DE CAISSE (Arrêté au dernier Z : ${lastZDateStr})`, 40, currentY); currentY += 14;
         
         drawRow([{text: 'Fond de caisse au 1er du mois (Ouverture)', w: 290}, {text: fMnt(fondDebut), w: 215, align: 'right'}]);
         drawRow([{text: `Espèces encaissées (Jusqu'au ${lastZDateStr}) (+)`, w: 290}, {text: fMnt(especesEncaisseesZ), w: 215, align: 'right'}]);
-        drawRow([{text: 'Apports de caisse (+)', w: 290}, {text: fMnt(apportsZ), w: 215, align: 'right'}]);
-        drawRow([{text: 'Retraits et Dépenses en espèces (-)', w: 290}, {text: fMnt(retraitsZ), w: 215, align: 'right'}]);
-        drawRow([{text: 'Remises en banque non déclarées dans l\'App (-)', w: 290}, {text: '0,00 €', w: 215, align: 'right'}]);
-        drawRow([{text: 'Régularisations et Écarts constatés (±)', w: 290}, {text: fMnt(ecartsZ), w: 215, align: 'right'}]);
+        drawRow([{text: 'Apports de fonds en caisse (Compte 580/108) (+)', w: 290}, {text: fMnt(apportsZ), w: 215, align: 'right'}]);
+        drawRow([{text: 'Achats et dépenses payés en espèces (Compte 6xx/401) (-)', w: 290}, {text: fMnt(sumAchatsEspecesZ), w: 215, align: 'right'}]);
+        drawRow([{text: 'Remises d\'espèces en banque (Compte 580) (-)', w: 290}, {text: fMnt(sumRemisesBanqueZ), w: 215, align: 'right'}]);
+        if (sumPrelevementsGerantZ > 0) {
+            drawRow([{text: 'Prélèvements de l\'exploitant / Gérant (Compte 108) (-)', w: 290}, {text: fMnt(sumPrelevementsGerantZ), w: 215, align: 'right'}]);
+        }
+        drawRow([{text: 'Régularisations et Écarts constatés (Compte 658/758) (±)', w: 290}, {text: fMnt(ecartsZ), w: 215, align: 'right'}]);
         
         drawRow([{text: 'ESPÈCES THÉORIQUES (Calculées)', w: 290}, {text: fMnt(caisseCalculee), w: 215, align: 'right'}], false, true);
         
-        let especesCompteesTexte = fMnt(fondFin);
+        let especesCompteesTexte = hasValidZ ? fMnt(fondFin) : 'Aucun Z clôturé';
         if (zMoisRes.rowCount > 0) {
             const dernierZMois = zMoisRes.rows[zMoisRes.rowCount - 1];
-            let opZ = dernierZMois.ferme_par || 'Non spécifié';
-            let isAutoZ = opZ.toLowerCase().includes('robot') || opZ.toLowerCase().includes('auto') || opZ === 'Non spécifié';
-            if (isAutoZ) especesCompteesTexte = 'Non compté';
+            const isAutoZ = Boolean(dernierZMois.est_cloture_automatique);
+            if (isAutoZ) especesCompteesTexte = 'Non compté (Clôture Auto. à régulariser)';
         }
         
         drawRow([{text: `ESPÈCES COMPTÉES (Lors du Z du ${lastZDateStr})`, w: 290}, {text: especesCompteesTexte, w: 215, align: 'right'}], false, true);
-        // --- VÉRIFICATION DE LA COHÉRENCE ESPÈCES (Factures vs Retraits) ---
-        // On calcule le total des factures du mois payées en espèces (issues du bas de page)
+
+        // --- VÉRIFICATION DE LA COHÉRENCE ESPÈCES (Factures espèces vs Sorties ACHAT_ESPECES uniquement) ---
         let totalFacturesEspecesMois = 0;
         facturesAffichees.forEach(f => {
             if (f.mode_paiement === 'ESPECES') totalFacturesEspecesMois += f.ttc;
         });
 
-        const ecartDepensesCaisse = totalFacturesEspecesMois - retraitsZ;
+        const ecartDepensesCaisse = totalFacturesEspecesMois - sumAchatsEspecesZ;
         
         if (Math.abs(ecartDepensesCaisse) > 0.01) {
             currentY += 5;
             doc.font('Helvetica-Bold').fontSize(8).fillColor('#ea580c').text(
-                `ALERTE COMPTABLE : Désynchronisation Caisse / Dépenses.`, 40, currentY
+                `ALERTE COMPTABLE : Désynchronisation Caisse / Factures réglées en espèces.`, 40, currentY
             );
             currentY += 12;
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text(
-                `La section "3. Dépenses" totalise ${fMnt(totalFacturesEspecesMois)} de factures payées en espèces ce mois-ci, mais seuls ${fMnt(retraitsZ)} ont été officiellement retirés de la caisse durant cette même période. (Ex: Une facture de fin de mois a pu être réglée sur la caisse du mois suivant).`, 
+                `La section "3. Dépenses" totalise ${fMnt(totalFacturesEspecesMois)} de factures payées en espèces ce mois-ci, contre ${fMnt(sumAchatsEspecesZ)} de sorties d'achats en espèces enregistrées en caisse sur la période clôturée.`, 
                 40, currentY, { width: 515, lineGap: 2 }
             );
-            currentY += 20; // Plus d'espace si le texte prend 2 lignes
+            currentY += 20;
         }
 
-        // Détail des mouvements de caisse (Apports/Retraits)
+        // Détail des mouvements de caisse (Apports/Retraits) sans bug lorsque aucun Z n'est présent
         if (mouvementsRes.rowCount > 0) {
-            currentY += 5;
-            doc.font('Helvetica-Bold').fontSize(9).fillColor(SEC_COLOR).text(`Détail des Apports et Retraits (Inclus jusqu'au Z du ${lastZDateStr}) :`, 40, currentY); currentY += 14;
-            
-            const partsZ = lastZDateStr.split('/');
-            const dZ = new Date(partsZ[2], partsZ[1] - 1, partsZ[0]);
-            let aPosteriors = false;
+            const mvtsAvantZ = [];
+            const mvtsApresZ = [];
 
             mouvementsRes.rows.forEach(mvt => {
-                const partsM = mvt.date_mvt.split('/');
-                const dM = new Date(partsM[2], partsM[1] - 1, partsM[0]);
-                
-                if (dM <= dZ) {
-                    const typeMvt = mvt.type_mouvement === 'ENTREE' ? 'Apport (+)' : 'Retrait/Dép. (-)';
+                const dM = new Date(mvt.date_brute);
+                if (datePivotZ && dM <= datePivotZ) mvtsAvantZ.push(mvt);
+                else mvtsApresZ.push(mvt);
+            });
+
+            const formatLabelCat = (mvt) => {
+                const cat = deduireCategorieMouvement(mvt.type_mouvement, mvt.motif, mvt.categorie_comptable);
+                if (mvt.type_mouvement === 'ENTREE') return 'Apport (580)';
+                if (cat === 'REMISE_BANQUE') return 'Dépôt Banque (580)';
+                if (cat === 'PRELEVEMENT_GERANT') return 'Prélèv. (108)';
+                return 'Achat Esp. (6xx)';
+            };
+
+            if (mvtsAvantZ.length > 0) {
+                currentY += 5;
+                doc.font('Helvetica-Bold').fontSize(9).fillColor(SEC_COLOR).text(`Détail des Mouvements d'espèces (Inclus jusqu'au Z du ${lastZDateStr}) :`, 40, currentY); currentY += 14;
+                mvtsAvantZ.forEach(mvt => {
                     drawRow([
                         {text: mvt.date_mvt, w: 65, align: 'center'}, 
-                        {text: typeMvt, w: 90}, 
+                        {text: formatLabelCat(mvt), w: 90}, 
                         {text: mvt.motif || 'Non renseigné', w: 215}, 
                         {text: fMnt(mvt.montant), w: 115, align: 'right'}
                     ]);
-                } else {
-                    aPosteriors = true;
-                }
-            });
+                });
+            }
 
-            if (aPosteriors) {
+            if (mvtsApresZ.length > 0) {
                 currentY += 5;
-                doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`Mouvements postérieurs au dernier Z (Non inclus dans le contrôle ci-dessus) :`, 40, currentY); currentY += 14;
-                mouvementsRes.rows.forEach(mvt => {
-                    const partsM = mvt.date_mvt.split('/');
-                    const dM = new Date(partsM[2], partsM[1] - 1, partsM[0]);
-                    
-                    if (dM > dZ) {
-                        const typeMvt = mvt.type_mouvement === 'ENTREE' ? 'Apport (+)' : 'Retrait/Dép. (-)';
-                        drawRow([
-                            {text: mvt.date_mvt, w: 65, align: 'center'}, 
-                            {text: typeMvt, w: 90}, 
-                            {text: mvt.motif || 'Non renseigné', w: 215}, 
-                            {text: fMnt(mvt.montant), w: 115, align: 'right'}
-                        ]);
-                    }
+                doc.font('Helvetica-Bold').fontSize(9).fillColor('#ea580c').text(`Mouvements en attente de clôture Z (Non inclus dans l'arrêté Z ci-dessus) :`, 40, currentY); currentY += 14;
+                mvtsApresZ.forEach(mvt => {
+                    drawRow([
+                        {text: mvt.date_mvt, w: 65, align: 'center'}, 
+                        {text: formatLabelCat(mvt), w: 90}, 
+                        {text: mvt.motif || 'Non renseigné', w: 215}, 
+                        {text: fMnt(mvt.montant), w: 115, align: 'right'}
+                    ]);
                 });
             }
         }
@@ -5653,9 +5886,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 let cumulActuel = parseFloat(z.cumul_perpetuel_ttc) || 0;
                 
                 let operator = z.ferme_par || 'Non spécifié';
-                let isAuto = operator.toLowerCase().includes('robot') || operator.toLowerCase().includes('auto') || operator === 'Non spécifié';
+                let isAuto = Boolean(z.est_cloture_automatique);
                 operator = isAuto ? 'Clôture Auto.' : operator.substring(0, 12);
-                let especesReel = isAuto ? 'N/A' : fMnt(z.total_especes_reel);
+                let especesReel = isAuto ? 'À régul.' : fMnt(z.total_especes_reel);
                 
                 // Césure stricte sur 2 lignes de 32 caractères avec '\n' pour éviter tout chevauchement
                 let hashAffiche = 'NON-SIGNE';
@@ -5818,6 +6051,7 @@ async function executerRobotComptable() {
                         let texteEmail = mailParsi.text || mailParsi.html || ""; 
                         const sujetEmail = mailParsi.subject || "Sans Sujet";
                         let urlPdfCloudflare = null;
+                        let cleR2Email = null;
                         
                         console.log(`\n=========================================`);
                         console.log(`📧 EMAIL DÉTECTÉ (Salon ${salon.id_salon}) : "${sujetEmail}"`);
@@ -5839,6 +6073,7 @@ async function executerRobotComptable() {
                                         Body: pieceJointePdf.content,
                                         ContentType: 'application/pdf'
                                     }));
+                                    cleR2Email = nomFichierUnique;
                                     
                                     // 3. On génère le lien de lecture (Valable 7 jours)
                                     const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
@@ -5851,7 +6086,7 @@ async function executerRobotComptable() {
                         }
                         
                         // 🚨 L'ancienne insertion "aveugle" (matchTTC) est retirée car c'est désormais l'IA qui pré-valide la facture
-                        const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail, urlPdfCloudflare);
+                        const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail, urlPdfCloudflare, cleR2Email);
                         for (let t of tachesTrouvees) {
                             await clientDB.query(
                                 `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
@@ -6284,12 +6519,12 @@ async function envoyerBilanComptable(id_salon, mois_annee) {
                 { filename: `Liasse_Comptable_${numeroArchive}.pdf`, content: buffer }
             ];
             
-            // Le fichier texte FEC est conservé et joint à l'email comme avant
+            // Le fichier texte FEC normé DGFiP (SIRENFECYYYYMMDD.txt en UTF-8) est joint à l'email
             if (fecContent) {
                 attachments.push({
-                    filename: `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`,
+                    filename: nomFichierFec,
                     content: fecContent,
-                    contentType: 'text/plain; charset=windows-1252'
+                    contentType: 'text/plain; charset=utf-8'
                 });
             }
 
