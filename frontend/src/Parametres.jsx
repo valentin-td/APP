@@ -350,9 +350,15 @@ const groupesBas = [
                       </button>
                   </div>
 
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: '0 0 18px 0' }}>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: '0 0 14px 0' }}>
                       Lorsque cette protection est activée, chaque collaborateur utilisant la tablette commune du salon doit saisir son code PIN personnel pour valider une opération critique. Votre session « Gérant » reste exemptée de code PIN.
                   </p>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '10px', marginBottom: '16px', fontSize: '11.5px', color: 'var(--text-secondary)', lineHeight: '1.45' }}>
+                      <span style={{ width: '16px', height: '16px', minWidth: '16px', color: 'var(--text-main)', marginTop: '1px', display: 'flex' }}>{ICONS.shield}</span>
+                      <span>
+                          <strong style={{ color: 'var(--text-main)' }}>Protection anti-forçage :</strong> Après 3 essais erronés, les actions sensibles du collaborateur sont suspendues pendant 15 min, puis 30 min (+2 essais), 1 h (+2 essais), avant blocage définitif nécessitant votre déblocage manuel dans l'onglet Équipe.
+                      </span>
+                  </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', opacity: pinSensibleActif ? 1 : 0.55, transition: 'opacity 0.2s ease' }}>
                       {actionsProtegees.map((act, idx) => (
