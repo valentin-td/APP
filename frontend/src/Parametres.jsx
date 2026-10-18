@@ -90,6 +90,10 @@ export default function Parametres({
       { id: 'suivi_heures', icone: ICONS.person, label: 'Suivi des heures', valeur: configSalon.mode_suivi_heures === 'POINTEUSE' ? 'Pointeuse (Premium)' : 'Semi-Auto (Pro)' },
     ] },
   ] : role === 'salon' ? [
+    { titre: 'Salon', lignes: [
+      { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
+    ] },
+  ] : [];
 
 const groupesBas = [
     { titre: 'Informations légales', lignes: [
