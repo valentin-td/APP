@@ -2171,7 +2171,8 @@ function App() {
           if (!res.ok) {
               if (data.require_justification) {
                   setEcartDetecte(data.ecart);
-                  return; // On bloque la fermeture de la modale pour forcer la justification
+                  showToast(data.erreur || "Écart de caisse détecté : veuillez saisir une justification ci-dessous.", "error");
+                  return;
               }
               throw new Error(data.erreur || "Erreur de clôture.");
           }
