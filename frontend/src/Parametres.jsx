@@ -77,11 +77,11 @@ export default function Parametres({
       { id: 'securite', icone: ICONS.lock, label: 'Sécurité', valeur: configSalon.securite_pin_salon_active !== false ? 'Activée' : 'Désactivée' },
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
       { id: 'alertes', icone: ICONS.bell, label: 'Alertes urgences', valeur: statut(configSalon.alertes_sms_actives, 'Activées', 'Désactivées') },
+      { id: 'mail', icone: ICONS.mail, label: 'Boîtes mail du salon', valeur: `${(Array.isArray(configSalon.comptes_emails) ? configSalon.comptes_emails : []).filter(c => c.email).length} / 5` },
     ] },
     { titre: 'Intégrations & Comptabilité', lignes: [
       { id: 'google', icone: ICONS.star, label: 'Google My Business', valeur: statut(configSalon.google_api_key) },
       { id: 'sync_planity', icone: ICONS.link, label: 'Synchronisation Planity (iCal)', valeur: '' },
-      { id: 'mail', icone: ICONS.mail, label: 'Boîte mail du salon', valeur: statut(configSalon.email_factures) },
       { id: 'export_compta', icone: ICONS.send, label: 'Envoi Bilan Comptable', valeur: statut(configSalon.email_comptable) },
       { id: 'config_compta', icone: ICONS.file, label: 'Configuration Comptable (FEC)' },
       { id: 'tpe', icone: ICONS.card, label: 'TPE physique', valeur: statut(configSalon.stripe_reader_id) },
@@ -90,10 +90,6 @@ export default function Parametres({
       { id: 'suivi_heures', icone: ICONS.person, label: 'Suivi des heures', valeur: configSalon.mode_suivi_heures === 'POINTEUSE' ? 'Pointeuse (Premium)' : 'Semi-Auto (Pro)' },
     ] },
   ] : role === 'salon' ? [
-    { titre: 'Salon', lignes: [
-      { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
-    ] },
-  ] : [];
 
 const groupesBas = [
     { titre: 'Informations légales', lignes: [
@@ -456,14 +452,103 @@ const groupesBas = [
                   </div>
         {carteSauvegarde}
       </>);
-      case 'mail': return (<>
-                  <div className="carte scan-carte">
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', display: 'block'}}>Connectez la boîte mail de votre salon. L'IA analysera vos factures fournisseurs et cette adresse servira d'expéditeur.</span>
-                    <input type="email" className="input-fournisseur" placeholder="Email du salon (ex: contact@monsalon.com)" value={configSalon.email_factures || ''} onChange={(e) => setConfigSalon({...configSalon, email_factures: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="password" className="input-fournisseur" placeholder="Mot de passe d'application" value={configSalon.mot_de_passe_email || ''} onChange={(e) => setConfigSalon({...configSalon, mot_de_passe_email: e.target.value})} />
+      case 'mail': {
+          let comptes = Array.isArray(configSalon.comptes_emails) ? [...configSalon.comptes_emails] : [];
+          if (comptes.length === 0 && configSalon.email_factures) {
+              comptes = [{ email: configSalon.email_factures, mot_de_passe: configSalon.mot_de_passe_email || '' }];
+          }
+          if (comptes.length === 0) {
+              comptes = [{ email: '', mot_de_passe: '' }];
+          }
+
+          return (<>
+              <div className="carte scan-carte">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text-main)', fontWeight: '600' }}>Adresses e-mail connectées (Max 5)</span>
+                      <span className="badge-discret" style={{ background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>{comptes.length} / 5</span>
                   </div>
-        {carteSauvegarde}
-      </>);
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: '1.4' }}>
+                      L'IA de STACK scrute ces boîtes mail pour alimenter automatiquement votre comptabilité (factures, reçus) et votre agenda (rendez-vous).
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '20px' }}>
+                      {comptes.map((compte, idx) => (
+                          <div key={idx} style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '12px', border: '1px solid var(--border-color)', position: 'relative' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Boîte mail #{idx + 1}</span>
+                                  {comptes.length > 1 && (
+                                      <button 
+                                          type="button" 
+                                          onClick={() => {
+                                              const updated = comptes.filter((_, i) => i !== idx);
+                                              setConfigSalon({
+                                                  ...configSalon,
+                                                  comptes_emails: updated,
+                                                  email_factures: updated[0]?.email || '',
+                                                  mot_de_passe_email: updated[0]?.mot_de_passe || ''
+                                              });
+                                          }} 
+                                          style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                      >
+                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                          Supprimer
+                                      </button>
+                                  )}
+                              </div>
+                              <input 
+                                  type="email" 
+                                  className="input-fournisseur" 
+                                  placeholder="Ex: comptabilite@monsalon.fr" 
+                                  value={compte.email || ''} 
+                                  onChange={e => {
+                                      const updated = [...comptes];
+                                      updated[idx] = { ...updated[idx], email: e.target.value };
+                                      setConfigSalon({
+                                          ...configSalon,
+                                          comptes_emails: updated,
+                                          email_factures: idx === 0 ? e.target.value : configSalon.email_factures,
+                                          mot_de_passe_email: idx === 0 ? updated[0]?.mot_de_passe : configSalon.mot_de_passe_email
+                                      });
+                                  }} 
+                                  style={{ marginBottom: '10px' }}
+                              />
+                              <input 
+                                  type="password" 
+                                  className="input-fournisseur" 
+                                  placeholder="Mot de passe d'application (fournisseur mail)" 
+                                  value={compte.mot_de_passe || ''} 
+                                  onChange={e => {
+                                      const updated = [...comptes];
+                                      updated[idx] = { ...updated[idx], mot_de_passe: e.target.value };
+                                      setConfigSalon({
+                                          ...configSalon,
+                                          comptes_emails: updated,
+                                          mot_de_passe_email: idx === 0 ? e.target.value : configSalon.mot_de_passe_email
+                                      });
+                                  }} 
+                                  style={{ marginBottom: 0 }}
+                              />
+                          </div>
+                      ))}
+                  </div>
+
+                  {comptes.length < 5 && (
+                      <button 
+                          type="button" 
+                          onClick={() => {
+                              const updated = [...comptes, { email: '', mot_de_passe: '' }];
+                              setConfigSalon({ ...configSalon, comptes_emails: updated });
+                          }} 
+                          style={{ width: '100%', padding: '12px', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px dashed var(--border-color)', borderRadius: '12px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                      >
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                          Ajouter une autre boîte mail (+1 max 5)
+                      </button>
+                  )}
+              </div>
+              {carteSauvegarde}
+          </>);
+      }
       case 'export_compta': return (<>
                   <div className="carte scan-carte">
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Le bilan mensuel sera envoyé automatiquement à cette adresse tous les mois. (La Boîte mail du salon doit être configurée au-dessus).</span>
