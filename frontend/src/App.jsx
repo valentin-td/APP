@@ -221,7 +221,24 @@ function App() {
   const [sauvetageClient, setSauvetageClient] = useState(null);
   const [smsSauvetage, setSmsSauvetage] = useState('');
   const [rhSortBy, setRhSortBy] = useState('ca');
+  const [rhPeriodeHeures, setRhPeriodeHeures] = useState('mois');
   const [rhAvisExpanded, setRhAvisExpanded] = useState({});
+  const [isStockMergeMode, setIsStockMergeMode] = useState(false);
+  const [selectedStocksToMerge, setSelectedStocksToMerge] = useState([]);
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeForm, setMergeForm] = useState({ nom: '', reference: '', prix: '', type_article: 'PRODUIT_REVENTE', delai_livraison_jours: 3, id_employe: '', code_pin: '' });
+  const [showSaisieManuelleFacture, setShowSaisieManuelleFacture] = useState(false);
+  const [formFactureManuelle, setFormFactureManuelle] = useState({
+      nom_fournisseur: '',
+      numero_facture: '',
+      date_facture: new Date().toISOString().split('T')[0],
+      montant_ht: '',
+      montant_tva: '',
+      montant_ttc: '',
+      mode_paiement: 'CARTE',
+      compte_comptable: '607'
+  });
+  const [erreurAnalyseIA, setErreurAnalyseIA] = useState(null);
   
   const envoyerSmsSauvetage = async () => {
       try {
@@ -1029,7 +1046,8 @@ function App() {
                 google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
                 fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
                 telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null, pin_salon: d?.pin_salon || '', temps_nettoyage_minutes: d?.temps_nettoyage_minutes || 0,
-                plan_actuel: d?.plan_actuel || 'PREMIUM_TRIAL', date_fin_essai: d?.date_fin_essai || null, pennylane_api_key: d?.pennylane_api_key || '', mode_suivi_heures: d?.mode_suivi_heures || 'MANUEL'
+                plan_actuel: d?.plan_actuel || 'PREMIUM_TRIAL', date_fin_essai: d?.date_fin_essai || null, pennylane_api_key: d?.pennylane_api_key || '', mode_suivi_heures: d?.mode_suivi_heures || 'MANUEL',
+                comptes_emails: Array.isArray(d?.comptes_emails) ? d.comptes_emails : (d?.email_reception_factures ? [{ email: d.email_reception_factures, mot_de_passe: d.mot_de_passe_app_email || '' }] : [])
             };
             setConfigSalon(config);
             await localforage.setItem('configSalon', config);
@@ -1623,21 +1641,23 @@ function App() {
 
   const sousTotalCaisse = (panierCaisse || []).reduce((acc, item) => acc + ((item.prix_unitaire || 0) * (item.quantite || 0)), 0);
   let totalCaisse = sousTotalCaisse;
-  // --- VÉRIFICATION DU STATUT DE L'EMPLOYÉ (POUR LA CAISSE) ---
-  const employeCaisseSelectionne = (employesListe || []).find(e => e.id_employe === posEmploye);
-  const isPointeuseActive = configSalon.mode_suivi_heures === 'POINTEUSE';
-  const statutActuelEmploye = posEmploye ? statutsEquipe[posEmploye] : null;
-  
-  // L'employé est bloqué s'il n'est pas gérant ET que la pointeuse est active ET qu'il est en pause (ou n'a pas commencé / a terminé)
-  const isEmployeCaisseBloque = posEmploye && !employeCaisseSelectionne?.est_gerant && isPointeuseActive && 
-      (!statutActuelEmploye || statutActuelEmploye === 'PAUSE_DEBUT' || statutActuelEmploye === 'SORTIE');
+  // --- VÉRIFICATION STRICTE DU STATUT DE POINTAGE (POUR LA CAISSE) ---
+  const getStatutPointageEmploye = (emp) => {
+      if (!emp) return { bloque: true, code: 'INCONNU', label: 'Indisponible' };
+      if (emp.est_gerant || configSalon.mode_suivi_heures !== 'POINTEUSE') {
+          return { bloque: false, code: 'EN_SERVICE', label: 'En service' };
+      }
+      const stObj = statutsEquipe[emp.id_employe];
+      const action = typeof stObj === 'string' ? stObj : stObj?.action;
+      if (!action) return { bloque: true, code: 'NON_POINTE', label: 'Pas pointé' };
+      if (action === 'PAUSE_DEBUT') return { bloque: true, code: 'EN_PAUSE', label: 'En pause' };
+      if (action === 'SORTIE') return { bloque: true, code: 'TERMINE', label: 'Service terminé' };
+      return { bloque: false, code: 'EN_SERVICE', label: 'En service' };
+  };
 
-  let messageBlocageCaisse = null;
-  if (isEmployeCaisseBloque) {
-      if (!statutActuelEmploye) messageBlocageCaisse = `${employeCaisseSelectionne?.prenom || 'Ce collaborateur'} n'a pas encore pointé son arrivée aujourd'hui.`;
-      else if (statutActuelEmploye === 'PAUSE_DEBUT') messageBlocageCaisse = `${employeCaisseSelectionne?.prenom || 'Ce collaborateur'} est actuellement en pause.`;
-      else if (statutActuelEmploye === 'SORTIE') messageBlocageCaisse = `Le service de ${employeCaisseSelectionne?.prenom || 'ce collaborateur'} est terminé.`;
-  }
+  const employeCaisseSelectionne = (employesListe || []).find(e => e.id_employe === posEmploye);
+  const statutCaisseCourant = posEmploye ? getStatutPointageEmploye(employeCaisseSelectionne) : { bloque: false, label: '' };
+  const isEmployeCaisseBloque = Boolean(posEmploye && statutCaisseCourant.bloque);
   
   if (remiseAppliquee) {
       if (configSalon.fidelite_type === 'POINTS') {
@@ -1995,18 +2015,47 @@ function App() {
       e.target.value = null; // Réinitialise l'input
 
       if (tachesAnalysees.length > 0) {
+          setErreurAnalyseIA(null);
           setFileAttenteIA(tachesAnalysees);
-          setModalIA(tachesAnalysees[0]); // Ouvre immédiatement le 1er document du lot
+          setModalIA(tachesAnalysees[0]);
 
           if (erreursCount > 0) {
-              showToast(`${tachesAnalysees.length} document(s) prêt(s), ${erreursCount} échec(s).`, "info");
+              showToast(`${tachesAnalysees.length} document(s) prêt(s), ${erreursCount} non reconnu(s).`, "info");
           } else if (tachesAnalysees.length > 1) {
               showToast(`${tachesAnalysees.length} documents prêts pour validation.`, "success");
           } else {
-              showToast("Analyse de l'IA terminée !", "success");
+              showToast("Analyse de l'IA terminée.", "success");
           }
       } else {
-          showToast("Aucun document valide n'a pu être extrait du lot.", "error");
+          setErreurAnalyseIA("Aucune facture ou dépense exploitable n'a été détectée dans ce document. Vérifiez que le fichier est bien lisible ou utilisez la Saisie Manuelle.");
+      }
+  };
+
+  const enregistrerFactureManuelle = async () => {
+      if (!formFactureManuelle.nom_fournisseur.trim()) return showToast("Veuillez renseigner le fournisseur.", "error");
+      if (!formFactureManuelle.montant_ttc || parseFloat(formFactureManuelle.montant_ttc) <= 0) return showToast("Veuillez saisir un montant TTC valide.", "error");
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/factures/saisie-manuelle', {
+              method: 'POST',
+              headers: getAuthHeaders(true),
+              body: JSON.stringify(formFactureManuelle)
+          });
+          const data = await handleFetchError(res);
+          showToast(data.message || "Facture enregistrée.", "success");
+          setShowSaisieManuelleFacture(false);
+          setFormFactureManuelle({
+              nom_fournisseur: '',
+              numero_facture: '',
+              date_facture: new Date().toISOString().split('T')[0],
+              montant_ht: '',
+              montant_tva: '',
+              montant_ttc: '',
+              mode_paiement: 'CARTE',
+              compte_comptable: '607'
+          });
+          chargerTout();
+      } catch (e) {
+          showToast(e.message || "Erreur lors de l'enregistrement.", "error");
       }
   };
 
@@ -3683,37 +3732,48 @@ function App() {
                                 ) : (
                                     <div className="grid-collaborateurs">
                                         {(employesListe || []).map((emp, index) => {
-                                            const bloque = configSalon.mode_suivi_heures === 'POINTEUSE' && !emp.a_pointe_aujourdhui && !emp.est_gerant;
+                                            const st = getStatutPointageEmploye(emp);
+                                            const bloque = st.bloque;
                                             return (
                                                 <div key={emp.id_employe} 
                                                     onClick={(e) => {
                                                         if (bloque) {
                                                             e.preventDefault();
                                                             e.stopPropagation();
-                                                            alert("Accès refusé : Veuillez pointer dans l'onglet Agenda avant de pouvoir encaisser un client.");
-                                                            showToast("Veuillez pointer avant de pouvoir encaisser", "error");
+                                                            showToast(`Encaissement verrouillé : ${(emp.nom || '').split(' ')[0]} (${st.label}). Pointage requis dans l'Agenda.`, "error");
                                                             return;
                                                         }
                                                         handleSelectEmployeCaisse(emp.id_employe);
                                                     }} 
                                                     className={bloque ? "" : "hover-lift"}
                                                     style={{ 
-                                                        background: bloque ? 'repeating-linear-gradient(45deg, var(--bg-hover), var(--bg-hover) 10px, var(--border-color) 10px, var(--border-color) 20px)' : COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], 
-                                                        color: bloque ? 'var(--text-secondary)' : '#111827', 
-                                                        padding: '24px 12px', 
+                                                        background: bloque ? 'var(--bg-app)' : COULEURS_EMPLOYES[index % COULEURS_EMPLOYES.length], 
+                                                        color: bloque ? 'var(--text-muted)' : '#111827', 
+                                                        padding: '20px 12px', 
                                                         borderRadius: 'var(--radius-card)', 
+                                                        border: bloque ? '1px dashed var(--border-color)' : '1px solid transparent',
                                                         fontSize: '16px', 
                                                         fontWeight: '600', 
                                                         textAlign: 'center', 
-                                                        cursor: 'pointer', 
+                                                        cursor: bloque ? 'not-allowed' : 'pointer', 
                                                         boxShadow: bloque ? 'none' : 'var(--shadow-sm)', 
                                                         transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-                                                        opacity: bloque ? 0.8 : 1,
-                                                        textDecoration: bloque ? 'line-through' : 'none',
+                                                        opacity: bloque ? 0.65 : 1,
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px',
                                                         userSelect: 'none',
                                                         WebkitUserSelect: 'none'
                                                     }}>
-                                                    {(emp.nom || 'Inconnu').split(' ')[0]}
+                                                    <span>{(emp.nom || 'Inconnu').split(' ')[0]}</span>
+                                                    {bloque && (
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: '600', color: 'var(--color-danger)', background: 'var(--bg-danger)', padding: '2px 8px', borderRadius: '999px' }}>
+                                                            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                                            {st.label}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             );
                                         })}
@@ -3811,18 +3871,6 @@ function App() {
                                 </div>
 
                                 <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
-                                    {/* BANDEAU DE BLOCAGE POINTEUSE */}
-                                    {isEmployeCaisseBloque && (
-                                        <div style={{background: 'var(--bg-danger)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid var(--color-danger)'}}>
-                                            <div style={{display: 'flex', gap: '8px', alignItems: 'flex-start'}}>
-                                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--color-danger)', marginTop: '2px'}}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                                                <div>
-                                                    <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--color-danger)', display: 'block'}}>{messageBlocageCaisse}</span>
-                                                    <span style={{fontSize: '12px', color: 'var(--color-danger)'}}>Un pointage est requis pour encaisser sur ce profil.</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
 
                                     {isEligibleFidelite && (
                                         <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
@@ -3897,8 +3945,17 @@ function App() {
 
                                     {notificationCaisse && <div style={{padding: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 'bold'}}>{notificationCaisse}</div>}
                                     
-                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye || isEmployeCaisseBloque}>
-                                        {notificationCaisse && notificationCaisse.includes('⏳') ? "En attente du TPE..." : `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`}
+                                    <button onClick={validerEncaisser} className="btn-action" style={{width: '100%', padding: '16px', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}} disabled={!!notificationCaisse || (panierCaisse || []).length === 0 || !posEmploye || isEmployeCaisseBloque}>
+                                        {isEmployeCaisseBloque ? (
+                                            <>
+                                                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                                <span>Pointage requis ({statutCaisseCourant.label})</span>
+                                            </>
+                                        ) : notificationCaisse && notificationCaisse.includes('Envoi') ? (
+                                            "En attente du TPE..."
+                                        ) : (
+                                            `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`
+                                        )}
                                     </button>
                                 </div>
                             </>
