@@ -4003,6 +4003,78 @@ function App() {
 
                   {/* ZONE DÉFILANTE */}
                   <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                  {role === 'gerant' && (
+                      <>
+                          <div className="carte scan-carte" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+                              <div style={{ flex: '1 1 240px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-main)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                                      <h3 style={{ margin: 0, color: 'var(--text-main)', fontSize: '15px' }}>Factures & Dépenses</h3>
+                                  </div>
+                                  <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Alimentez la comptabilité par saisie manuelle ou analyse automatique IA.</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', flex: '1 1 300px', justifyContent: 'flex-end' }}>
+                                  <button
+                                      type="button"
+                                      onClick={() => setShowSaisieManuelleFacture(true)}
+                                      className="btn-action"
+                                      style={{ flex: 1, minWidth: '145px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 14px', fontSize: '13px' }}
+                                  >
+                                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                      Saisie Manuelle
+                                  </button>
+
+                                  {aLeNiveau('PREMIUM') ? (
+                                      <>
+                                          <input
+                                              type="file"
+                                              id="upload-facture-actions-ia"
+                                              accept="application/pdf, image/jpeg, image/png, image/jpg"
+                                              multiple
+                                              style={{ display: 'none' }}
+                                              onChange={handleUploadFactureManuel}
+                                          />
+                                          <button
+                                              type="button"
+                                              onClick={() => document.getElementById('upload-facture-actions-ia').click()}
+                                              disabled={isUploadingFacture}
+                                              className="btn-action"
+                                              style={{ flex: 1, minWidth: '175px', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 14px', fontSize: '13px' }}
+                                          >
+                                              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                                              {isUploadingFacture ? "Analyse IA..." : "Saisie Automatique (IA)"}
+                                          </button>
+                                      </>
+                                  ) : (
+                                      <button
+                                          type="button"
+                                          onClick={() => setShowPricingModal(true)}
+                                          style={{ flex: 1, minWidth: '175px', background: 'var(--bg-app)', color: 'var(--text-muted)', border: '1px solid var(--border-color)', padding: '10px 14px', borderRadius: 'var(--radius-input)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: 0.65 }}
+                                          title="Fonctionnalité réservée au forfait PREMIUM"
+                                      >
+                                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                          Saisie Automatique (IA)
+                                      </button>
+                                  )}
+                              </div>
+                          </div>
+
+                          {erreurAnalyseIA && (
+                              <div className="carte" style={{ background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', marginBottom: '16px', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                                  <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', color: 'var(--color-danger)' }}>
+                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                      <div>
+                                          <strong style={{ display: 'block', marginBottom: '2px', fontSize: '13px' }}>Document non reconnu par l'IA</strong>
+                                          <span style={{ fontSize: '12.5px', lineHeight: '1.4' }}>{erreurAnalyseIA}</span>
+                                      </div>
+                                  </div>
+                                  <button onClick={() => setErreurAnalyseIA(null)} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                  </button>
+                              </div>
+                          )}
+                      </>
+                  )}
                   <div className="carte scan-carte">
                       {role === 'gerant' && (
                           <select className="input-fournisseur" style={{marginBottom: '12px'}} value={nouvelleTache.proprietaire || 'gerant'} onChange={e => setNouvelleTache({...nouvelleTache, proprietaire: e.target.value})}>
@@ -4041,7 +4113,7 @@ function App() {
                           <>
                               <div className="section-label">À traiter ({tachesAFaire.length})</div>
                               {tachesAFaire.length === 0 ? (
-                                  <div className="empty-state"><p>Toutes vos actions sont à jour ! 🎉</p></div>
+                                  <div className="empty-state"><p>Toutes vos actions sont à jour.</p></div>
                               ) : (
                                   <div className="list-group">
                                       {tachesAFaire.map(tache => (
@@ -5441,41 +5513,67 @@ function App() {
                       )}
                   </div>
 
-                  {/* IMPORT MANUEL FACTURE (IA PRÉ-COMPTABLE) */}
+                  {/* IMPORT MANUEL FACTURE & SAISIE MANUELLE (GESTION FORFAITS PRO / PREMIUM) */}
                   <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)', flexWrap: 'wrap', gap: '16px'}}>
-                      <div>
+                      <div style={{ flex: '1 1 260px' }}>
                           <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--btn-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                              <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '15px'}}>Saisie automatique (IA)</h3>
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--btn-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                              <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '15px'}}>Factures & Dépenses Fournisseurs</h3>
                           </div>
-                          <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Prenez en photo un ticket ou importez un PDF pour générer la ligne comptable et les stocks.</span>
+                          <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Ajoutez une dépense manuellement ou laissez le robot IA analyser vos factures (PDF / Photo).</span>
                       </div>
                       
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: '1', minWidth: '250px', maxWidth: '350px' }}>
-                          <input 
-                              type="file" 
-                              id="upload-facture-manuelle-salon" 
-                              accept="application/pdf, image/jpeg, image/png, image/jpg" 
-                              multiple
-                              style={{display: 'none'}} 
-                              onChange={handleUploadFactureManuel} 
-                          />
-                          <button 
-                              onClick={() => document.getElementById('upload-facture-manuelle-salon').click()} 
-                              disabled={isUploadingFacture} 
-                              className="btn-action" 
-                              style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexShrink: 0, width: '100%', padding: '10px 16px'}}
-                          >
-                              {isUploadingFacture ? (
-                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{animation: 'spin 1s linear infinite'}}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: '1 1 320px', maxWidth: '460px' }}>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <button 
+                                  type="button"
+                                  onClick={() => setShowSaisieManuelleFacture(true)}
+                                  className="btn-action"
+                                  style={{ flex: 1, minWidth: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 14px', fontSize: '13px' }}
+                              >
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                  Saisie Manuelle
+                              </button>
+
+                              {aLeNiveau('PREMIUM') ? (
+                                  <>
+                                      <input 
+                                          type="file" 
+                                          id="upload-facture-manuelle-salon" 
+                                          accept="application/pdf, image/jpeg, image/png, image/jpg" 
+                                          multiple
+                                          style={{display: 'none'}} 
+                                          onChange={handleUploadFactureManuel} 
+                                      />
+                                      <button 
+                                          type="button"
+                                          onClick={() => document.getElementById('upload-facture-manuelle-salon').click()} 
+                                          disabled={isUploadingFacture} 
+                                          className="btn-action" 
+                                          style={{ flex: 1, minWidth: '180px', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', padding: '10px 14px', fontSize: '13px' }}
+                                      >
+                                          {isUploadingFacture ? (
+                                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{animation: 'spin 1s linear infinite'}}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                                          ) : (
+                                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                                          )}
+                                          {isUploadingFacture 
+                                              ? (progressionBatch.total > 1 ? `Analyse (${progressionBatch.actuel}/${progressionBatch.total})...` : "Analyse en cours...") 
+                                              : "Saisie Automatique (IA)"}
+                                      </button>
+                                  </>
                               ) : (
-                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                                  <button 
+                                      type="button"
+                                      onClick={() => setShowPricingModal(true)} 
+                                      style={{ flex: 1, minWidth: '180px', background: 'var(--bg-app)', color: 'var(--text-muted)', border: '1px solid var(--border-color)', padding: '10px 14px', borderRadius: 'var(--radius-input)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: 0.65 }}
+                                      title="Fonctionnalité réservée au forfait PREMIUM"
+                                  >
+                                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                      Saisie Automatique (IA)
+                                  </button>
                               )}
-                              
-                              {isUploadingFacture 
-                                  ? (progressionBatch.total > 1 ? `Analyse du lot (${progressionBatch.actuel}/${progressionBatch.total})...` : "Analyse en cours...") 
-                                  : "Scanner un ou plusieurs documents"}
-                          </button>
+                          </div>
 
                           {isUploadingFacture && progressionBatch.total > 1 && (
                               <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
@@ -5492,6 +5590,21 @@ function App() {
                           )}
                       </div>
                   </div>
+
+                  {erreurAnalyseIA && (
+                      <div className="carte" style={{ background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', marginBottom: '24px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', color: 'var(--color-danger)' }}>
+                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                              <div>
+                                  <strong style={{ display: 'block', marginBottom: '2px', fontSize: '14px' }}>Document non reconnu par l'IA</strong>
+                                  <span style={{ fontSize: '13px', lineHeight: '1.4' }}>{erreurAnalyseIA}</span>
+                              </div>
+                          </div>
+                          <button onClick={() => setErreurAnalyseIA(null)} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                      </div>
+                  )}
                   <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)'}}>
                      <div><h3 style={{margin: '0 0 4px 0', color: 'var(--text-main)', fontSize: '15px'}}>Clôture Journalière (Z)</h3><span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Obligatoire chaque soir pour sceller les encaissements.</span></div>
                      <button onClick={demanderZDeCaisse} className="btn-action">Générer le Z</button>
