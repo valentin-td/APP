@@ -1831,11 +1831,15 @@ function App() {
       if(configSalon.pin_salon && isPinWeak(configSalon.pin_salon)) return showToast("Le code PIN du salon est trop simple (évitez 0000, 1234...).", "error");
       showToast("Sauvegarde en cours...");
       try { 
-          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(configSalon) }); 
+          const payload = { ...configSalon };
+          // Sécurité stricte pour forcer le boolean côté client
+          payload.securite_pin_salon_active = configSalon.securite_pin_salon_active !== false; 
+          
+          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) }); 
           const data = await handleFetchError(response); 
-          showToast(data.message, "success"); 
+          showToast(data.message || "Paramètres enregistrés avec succès !", "success"); 
           chargerTout(); 
-          setTimeout(() => { setActiveTab('accueil'); }, 1000); 
+          // On retire la redirection automatique pour que l'utilisateur voit bien la notification
       } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
   };
 
@@ -2233,6 +2237,7 @@ function App() {
           setZCodePin('');
       } catch(e) { 
           if (typeof chargerTout === 'function') chargerTout();
+          setZCodePin(''); // 🚨 Vide le champ PIN pour obliger la ressaisie
           showToast(e.message || "Erreur lors de la clôture.", "error"); 
       }
   };
@@ -3567,48 +3572,6 @@ function App() {
                                   </div>
                               </div>
 
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
-                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
-                                      <div className="rank-list">
-                                          {(() => {
-                                              const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
-                                              return (dashboardData.top_3_prestations || []).map((p, i) => {
-                                                  const val = parseFloat(p.total_genere || 0);
-                                                  return (
-                                                      <div key={i} className="rank-row">
-                                                          <span className="rank-badge">{i + 1}</span>
-                                                          <div className="rank-info">
-                                                              <div className="rank-info-top">
-                                                                  <span className="rank-name">{p.nom}</span>
-                                                                  <span className="rank-value">{val.toFixed(2)} €</span>
-                                                              </div>
-                                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{width: `${(val / maxVal) * 100}%`}}></div></div>
-                                                          </div>
-                                                      </div>
-                                                  );
-                                              });
-                                          })()}
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
-                              </div>
-
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
-                                  {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
-                                          <div style={{textAlign: 'center'}}>
-                                              <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
-                                              <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
-                                          </div>
-                                          <div style={{flex: 1}}>
-                                              <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
-                                              {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
-                                          </div>
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres pour afficher les avis.</p>}
-                              </div>
-
                               {/* WIDGET : L'ÉQUIPE EN DIRECT (POUR LE GÉRANT) */}
                               {configSalon.mode_suivi_heures === 'POINTEUSE' && (
                                   <div className="carte" style={{flex: 1, minWidth: '300px', alignSelf: 'flex-start'}}>
@@ -3669,6 +3632,50 @@ function App() {
                                       </div>
                                   </div>
                               )}
+
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
+                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
+                                      <div className="rank-list">
+                                          {(() => {
+                                              const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
+                                              return (dashboardData.top_3_prestations || []).map((p, i) => {
+                                                  const val = parseFloat(p.total_genere || 0);
+                                                  return (
+                                                      <div key={i} className="rank-row">
+                                                          <span className="rank-badge">{i + 1}</span>
+                                                          <div className="rank-info">
+                                                              <div className="rank-info-top">
+                                                                  <span className="rank-name">{p.nom}</span>
+                                                                  <span className="rank-value">{val.toFixed(2)} €</span>
+                                                              </div>
+                                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{width: `${(val / maxVal) * 100}%`}}></div></div>
+                                                          </div>
+                                                      </div>
+                                                  );
+                                              });
+                                          })()}
+                                      </div>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
+                              </div>
+
+                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
+                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
+                                  {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
+                                          <div style={{textAlign: 'center'}}>
+                                              <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
+                                              <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
+                                          </div>
+                                          <div style={{flex: 1}}>
+                                              <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
+                                              {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
+                                          </div>
+                                      </div>
+                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres pour afficher les avis.</p>}
+                              </div>
+
+                              
 
                           </div>
                       </>
