@@ -6817,10 +6817,9 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         doc.addPage();
         currentY = 40;
 
-        // --- 4. VARIABLES DE PAIE ---
+        // 4. VARIABLES DE PAIE (Calcul fiable et exact Heures & H.S.)
         drawTableTitle("4. VARIABLES DE PAIE (À transmettre au comptable)");
         
-        // Largeurs calibrées sur le gap de 10pt de drawRow : 52+38+30+30+38+56+86+47+58 = 435pt + (8 * 10pt) = 515pt exacts
         drawRow([
             {text: 'Employé(e)', w: 52}, 
             {text: 'Statut', w: 38, align: 'center'},
@@ -6851,31 +6850,18 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                 heuresAffichees = 'N/A';
                 hsAffichees = 'N/A';
                 pourboireAffiche = 'N/A';
-            } else if (salonConfig.mode_suivi_heures === 'POINTEUSE') {
-                const baseContrat = parseFloat(e.heures_mensuelles_base || 151.67);
-                const heuresPointees = mapHeuresPointees[e.id_employe] || 0;
-                const heuresAjust = mapAjustements[e.id_employe] || 0;
-                const totalEffectif = Number((heuresPointees + heuresAjust).toFixed(2));
-
-                if (totalEffectif > 0) {
-                    heuresAffichees = `${totalEffectif.toFixed(1)}h`;
-                    const diffHeures = Number((totalEffectif - baseContrat).toFixed(1));
-                    hsAffichees = diffHeures > 0 ? `+${diffHeures}h` : `${diffHeures}h`;
-                } else {
-                    heuresAffichees = `${baseContrat.toFixed(0)}h*`;
-                    hsAffichees = heuresAjust !== 0 ? (heuresAjust > 0 ? `+${heuresAjust}h` : `${heuresAjust}h`) : '0h';
-                }
             } else {
                 const baseContrat = parseFloat(e.heures_mensuelles_base || 151.67);
-                const heuresAjust = mapAjustements[e.id_employe] || 0;
+                const heuresPointeesCalc = mapHeuresPointees[e.id_employe] || 0;
+                const heuresAjustManuel = mapAjustements[e.id_employe] || 0;
                 
-                heuresAffichees = `${baseContrat.toFixed(0)}h`;
+                // Si la pointeuse a été utilisée ce mois-ci, on prend le pointage réel, sinon on se base sur le contrat de base
+                const totalHeuresTravaillees = heuresPointeesCalc > 0 ? heuresPointeesCalc : baseContrat;
+                const totalAvecAjust = Number((totalHeuresTravaillees + heuresAjustManuel).toFixed(2));
                 
-                if (heuresAjust !== 0) {
-                    hsAffichees = heuresAjust > 0 ? `+${heuresAjust}h` : `${heuresAjust}h`;
-                } else {
-                    hsAffichees = '0h';
-                }
+                heuresAffichees = `${totalAvecAjust.toFixed(1)}h`;
+                const diffHsHc = Number((totalAvecAjust - baseContrat).toFixed(1));
+                hsAffichees = diffHsHc > 0 ? `+${diffHsHc}h` : (diffHsHc < 0 ? `${diffHsHc}h` : '0h');
             }
 
             if (e.est_gerant) {
