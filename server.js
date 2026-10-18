@@ -2064,18 +2064,18 @@ app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => 
     } catch (e) { res.status(500).json({ erreur: "Erreur lecture mouvements." }); }
 });
 
-async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_operateur, code_pin, action_label }) {
+async function verifierPinActionSensibleSalon(req, { id_employe, nom_operateur, code_pin, action_label }) {
     if (req.user.role !== 'salon') return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Gérant' };
     const id_salon = req.user.id_salon;
-    const confRes = await clientDB.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+    const confRes = await pool.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
     const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
     if (!protectionActive) return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Salon' };
 
     let empRes;
     if (id_employe) {
         empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-    } else if (nom_operateur && nom_operateur.trim() !== '') {
-        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE TRIM(nom) ILIKE TRIM($1) AND id_salon = $2 LIMIT 1', [nom_operateur.trim(), id_salon]);
+    } else if (nom_operateur && String(nom_operateur).trim() !== '') {
+        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE TRIM(nom) ILIKE TRIM($1) AND id_salon = $2 LIMIT 1', [String(nom_operateur).trim(), id_salon]);
     } else {
         const err = new Error("Veuillez sélectionner le collaborateur qui effectue l'opération et saisir son code PIN.");
         err.require_pin = true;
@@ -2111,16 +2111,17 @@ async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_o
         throw err;
     }
 
+    const pinSaisi = String(code_pin).trim();
     let pinMatch = false;
     if (emp.code_pin && emp.code_pin.startsWith('$2')) {
-        pinMatch = await bcrypt.compare(String(code_pin), emp.code_pin);
+        pinMatch = await bcrypt.compare(pinSaisi, emp.code_pin);
     } else {
-        pinMatch = (emp.code_pin === String(code_pin));
+        pinMatch = (String(emp.code_pin || '').trim() === pinSaisi);
     }
 
     // 3. Gestion de l'échec : Paliers 3 essais (15m) -> 5 essais (30m) -> 7 essais (1h) -> 9 essais (Définitif)
     if (!pinMatch) {
-        const nouvellesTentatives = parseInt(emp.tentatives, 10) + 1;
+        const nouvellesTentatives = (parseInt(emp.tentatives, 10) || 0) + 1;
         let bloqueJusqua = null;
         let bloqueDefinitif = false;
         let messageSanction = '';
@@ -2143,7 +2144,6 @@ async function verifierPinActionSensibleSalon(clientDB, req, { id_employe, nom_o
             messageSanction = `${restants} essai(s) restant(s) avant verrouillage.`;
         }
 
-        // Exécuté sur pool (hors transaction clientDB) pour persister malgré le ROLLBACK
         await pool.query(
             'UPDATE employes SET pin_tentatives_echouees = $1, pin_bloque_jusqua = $2, pin_bloque_definitif = $3 WHERE id_employe = $4 AND id_salon = $5',
             [nouvellesTentatives, bloqueJusqua, bloqueDefinitif, emp.id_employe, id_salon]
@@ -2189,15 +2189,23 @@ app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
     if (!['ENTREE', 'SORTIE'].includes(type_mouvement)) return res.status(400).json({ erreur: "Type de mouvement invalide." });
     if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
     if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
-    const clientDB = await pool.connect();
+
+    // Vérification du PIN AVANT d'ouvrir la transaction (évite tout blocage SQL)
+    let operateurValide;
     try {
-        await clientDB.query('BEGIN');
-        const operateurValide = await verifierPinActionSensibleSalon(clientDB, req, {
+        operateurValide = await verifierPinActionSensibleSalon(req, {
             id_employe,
             nom_operateur,
             code_pin,
             action_label: `Mouvement de caisse (${type_mouvement})`
         });
+    } catch (pinErr) {
+        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+    }
+
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
         const scelle = await enregistrerMouvementCaisseScelle(clientDB, {
             id_salon: req.user.id_salon,
             id_employe: operateurValide.id_employe || id_employe || null,
@@ -2219,6 +2227,21 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "La clôture Z est réservée au gérant ou au poste Salon." });
     const id_salon = req.user.id_salon;
     const { ferme_par, id_employe, code_pin, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
+
+    // 1. Vérification du code PIN HORS transaction (évite le Deadlock SQL avec pg_advisory_xact_lock)
+    let operateurCloture;
+    try {
+        operateurCloture = await verifierPinActionSensibleSalon(req, {
+            id_employe,
+            nom_operateur: ferme_par,
+            code_pin,
+            action_label: 'Clôture journalière Z'
+        });
+    } catch (pinErr) {
+        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+    }
+    const operateurFinalNom = operateurCloture.nom || ferme_par || 'Gérant';
+
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
@@ -2226,14 +2249,6 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         // Verrouillage transactionnel strict NF525 sur le salon
         await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
         await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
-
-        const operateurCloture = await verifierPinActionSensibleSalon(clientDB, req, {
-            id_employe,
-            nom_operateur: ferme_par,
-            code_pin,
-            action_label: 'Clôture journalière Z'
-        });
-        const operateurFinalNom = operateurCloture.nom || ferme_par || 'Gérant';
 
         const jourRes = await clientDB.query(
             `SELECT MIN(DATE(t.date_creation)) as jour_non_cloture
@@ -2393,15 +2408,19 @@ app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => 
 
 app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
     const { id_cloture, montant_reel, id_employe, nom_operateur, code_pin } = req.body;
-    const clientDB = await pool.connect();
     try {
-        await clientDB.query('BEGIN');
-        const operateurRegul = await verifierPinActionSensibleSalon(clientDB, req, {
+        await verifierPinActionSensibleSalon(req, {
             id_employe,
             nom_operateur,
             code_pin,
             action_label: 'Régularisation matinale de caisse'
         });
+    } catch (pinErr) {
+        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+    }
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
         const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE FOR UPDATE", [id_cloture, req.user.id_salon]);
         if (clotureRes.rowCount === 0) throw new Error("Clôture automatique introuvable ou déjà régularisée.");
         
