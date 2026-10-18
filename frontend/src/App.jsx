@@ -4925,12 +4925,68 @@ function App() {
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
                           <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
-                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                          <div style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
                               <ThemeToggle />
+                              <button 
+                                  onClick={() => {
+                                      setIsStockMergeMode(!isStockMergeMode);
+                                      setSelectedStocksToMerge([]);
+                                  }} 
+                                  className="theme-toggle-btn" 
+                                  style={{ background: isStockMergeMode ? 'var(--btn-primary)' : 'var(--bg-app)', color: isStockMergeMode ? 'var(--btn-text)' : 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', borderRadius: '50%', border: '1px solid var(--border-color)' }}
+                                  title="Unifier les doublons de stock"
+                              >
+                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
+                              </button>
                               <button onClick={() => setShowAddProduit(!showAddProduit)} className="btn-action" style={{width: '40px', height: '40px', borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouveau Produit">+</button>
                           </div>
                       </div>
                   </div>
+
+                  {isStockMergeMode && (
+                      <div className="carte" style={{ background: 'var(--bg-info)', border: '1px solid #bfdbfe', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--color-info)' }}>
+                              Mode sélection multiple actif : cochez les doublons à fusionner ({selectedStocksToMerge.length} sélectionné{selectedStocksToMerge.length > 1 ? 's' : ''})
+                          </span>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                              <button 
+                                  onClick={() => {
+                                      setIsStockMergeMode(false);
+                                      setSelectedStocksToMerge([]);
+                                  }} 
+                                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              >
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                  Annuler
+                              </button>
+                              <button 
+                                  onClick={() => {
+                                      if (selectedStocksToMerge.length < 2) {
+                                          showToast("Sélectionnez au moins 2 produits à unifier.", "error");
+                                          return;
+                                      }
+                                      const premier = stocksData.find(s => s.id_article === selectedStocksToMerge[0]);
+                                      setMergeForm({
+                                          nom: premier?.nom || '',
+                                          reference: '',
+                                          prix: '',
+                                          type_article: premier?.type_article || 'PRODUIT_REVENTE',
+                                          delai_livraison_jours: 3,
+                                          id_employe: '',
+                                          code_pin: ''
+                                      });
+                                      setShowMergeModal(true);
+                                  }} 
+                                  disabled={selectedStocksToMerge.length < 2}
+                                  className="btn-action"
+                                  style={{ padding: '6px 14px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', opacity: selectedStocksToMerge.length < 2 ? 0.5 : 1 }}
+                              >
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                  Valider la fusion
+                              </button>
+                          </div>
+                      </div>
+                  )}
 
                   {/* ZONE DÉFILANTE */}
                   <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
@@ -4976,13 +5032,43 @@ function App() {
                                     .map((produit) => {
                                     const status = getStockStatus(produit.stock_actuel);
                                     const tendance = getTendanceStock(produit);
+                                    const isSelectedForMerge = selectedStocksToMerge.includes(produit.id_article);
                                     return (
-                                      <div className="stock-item" key={produit.id_article} style={{position: 'relative'}}>
-                                        <div className="stock-info"><div className="stock-details"><span className="stock-nom">{produit.nom}</span><span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>{tendance && <span className="badge-discret" style={{ backgroundColor: 'var(--bg-info)', color: tendance.couleur }} title={tendance.date ? `Rupture estimée le ${new Date(tendance.date).toLocaleDateString()}` : ''}>{tendance.texte}</span>}</div></div>
-                                        <div className="stock-quantite-container" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                                            <span className="stock-quantite">{produit.stock_actuel}</span>
-                                            <button onClick={(e) => { e.stopPropagation(); setStockMenuOuvert(stockMenuOuvert === produit.id_article ? null : produit.id_article); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1}}>⋮</button>
-                                        </div>
+                                        <div 
+                                            className="stock-item" 
+                                            key={produit.id_article} 
+                                            onClick={() => {
+                                                if (isStockMergeMode) {
+                                                    if (isSelectedForMerge) {
+                                                        setSelectedStocksToMerge(selectedStocksToMerge.filter(id => id !== produit.id_article));
+                                                    } else {
+                                                        setSelectedStocksToMerge([...selectedStocksToMerge, produit.id_article]);
+                                                    }
+                                                }
+                                            }}
+                                            style={{ position: 'relative', cursor: isStockMergeMode ? 'pointer' : 'default', background: isSelectedForMerge ? 'var(--bg-info)' : 'var(--bg-card)' }}
+                                        >
+                                            <div className="stock-info">
+                                                <div className="stock-details">
+                                                    {isStockMergeMode && (
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={isSelectedForMerge} 
+                                                            onChange={() => {}} 
+                                                            style={{ width: '18px', height: '18px', accentColor: 'var(--btn-primary)', cursor: 'pointer', marginRight: '4px' }} 
+                                                        />
+                                                    )}
+                                                    <span className="stock-nom">{produit.nom}</span>
+                                                    <span className="badge-discret" style={{ backgroundColor: status.bg, color: status.text }}>{status.label}</span>
+                                                    {tendance && <span className="badge-discret" style={{ backgroundColor: 'var(--bg-info)', color: tendance.couleur }} title={tendance.date ? `Rupture estimée le ${new Date(tendance.date).toLocaleDateString()}` : ''}>{tendance.texte}</span>}
+                                                </div>
+                                            </div>
+                                            <div className="stock-quantite-container" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                                <span className="stock-quantite">{produit.stock_actuel}</span>
+                                                {!isStockMergeMode && (
+                                                    <button onClick={(e) => { e.stopPropagation(); setStockMenuOuvert(stockMenuOuvert === produit.id_article ? null : produit.id_article); }} style={{background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', fontSize: '18px', fontWeight: 'bold', lineHeight: 1}}>⋮</button>
+                                                )}
+                                            </div>
                                         {stockMenuOuvert === produit.id_article && (
                                             <>
                                                 <div onClick={() => setStockMenuOuvert(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
@@ -5009,9 +5095,14 @@ function App() {
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   {/* EN-TÊTE FIXE */}
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div><h1 style={{margin: 0}}>Ressources Humaines</h1><span className="date-subtitle" style={{margin: 0}}>Suivi des primes et performances</span></div>
-                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px'}}>
+                          <div><h1 style={{margin: 0}}>Équipe & Suivi des heures</h1><span className="date-subtitle" style={{margin: 0}}>Performances, primes et temps de travail</span></div>
+                          <div style={{display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap'}}>
+                              <select className="input-fournisseur" style={{marginBottom: 0, width: 'auto', padding: '8px', fontSize: '12px'}} value={rhPeriodeHeures} onChange={e => setRhPeriodeHeures(e.target.value)}>
+                                  <option value="aujourdhui">Heures : Aujourd'hui</option>
+                                  <option value="semaine">Heures : Cette semaine</option>
+                                  <option value="mois">Heures : Ce mois-ci</option>
+                              </select>
                               <select className="input-fournisseur" style={{marginBottom: 0, width: 'auto', padding: '8px', fontSize: '12px'}} value={rhSortBy} onChange={e => setRhSortBy(e.target.value)}>
                                   <option value="ca">Tri : CA généré</option>
                                   <option value="note">Tri : Palmarès (Note client)</option>
@@ -5206,32 +5297,42 @@ function App() {
                               </div>
                           </div>
 
-                          {/* SECTION AJUSTEMENTS HEURES */}
-                          <div style={{padding: '0 20px 20px 20px'}}>
-                              <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px'}}>
-                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
-                                      <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>Suivi des heures</span>
-                                      <span style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'var(--bg-card)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold'}}>{employe.type_contrat === 'PARTIEL' ? 'Temps Partiel' : 'Temps Plein'}</span>
-                                  </div>
-                                  <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-                                      <input type="number" id={`heures_supp_${employe.id_employe}`} placeholder={employe.type_contrat === 'PARTIEL' ? "H. Complémentaires (ex: +3)" : "H. Supplémentaires (ex: +3)"} className="input-fournisseur" style={{flex: 1, marginBottom: 0, padding: '8px', fontSize: '13px'}} />
-                                      <button onClick={async () => {
-                                          const input = document.getElementById(`heures_supp_${employe.id_employe}`);
-                                          const hAjust = parseFloat(input.value);
-                                          if (!hAjust) return showToast("Veuillez saisir un nombre d'heures.", "error");
-                                          try {
-                                              const moisStr = new Date().toISOString().substring(0, 7);
-                                              const res = await fetch('https://api-salon-backend.onrender.com/api/rh/ajustements', {
-                                                  method: 'POST', headers: getAuthHeaders(true),
-                                                  body: JSON.stringify({ id_employe: employe.id_employe, mois_annee: moisStr, heures_ajoutees: hAjust, motif: 'Ajustement manuel' })
-                                              });
-                                              if (res.ok) { showToast("Heures ajoutées !", "success"); input.value = ''; }
-                                              else showToast("Erreur d'ajout", "error");
-                                          } catch (e) { showToast("Erreur serveur", "error"); }
-                                      }} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '8px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px'}}>Valider</button>
-                                  </div>
-                              </div>
-                          </div>
+                          {/* SECTION SUIVI DES HEURES EN DIRECT (FILTRÉ) */}
+                        <div style={{padding: '0 20px 20px 20px'}}>
+                            <div style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '16px'}}>
+                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
+                                    <span style={{fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em'}}>
+                                        Heures ({rhPeriodeHeures === 'aujourdhui' ? "Aujourd'hui" : (rhPeriodeHeures === 'semaine' ? 'Cette semaine' : 'Ce mois-ci')})
+                                    </span>
+                                    <span style={{fontSize: '13px', fontWeight: '900', color: 'var(--btn-primary)'}}>
+                                        {rhPeriodeHeures === 'aujourdhui' ? `${employe.heures_effectuees?.aujourdhui || 0}h` : (rhPeriodeHeures === 'semaine' ? `${employe.heures_effectuees?.semaine || 0}h` : `${employe.heures_effectuees?.mois || 0}h`)}
+                                    </span>
+                                </div>
+                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '11px', color: 'var(--text-muted)'}}>
+                                    <span>Base contrat : {employe.heures_mensuelles_base || 151.67}h /mois</span>
+                                    {employe.heures_effectuees?.ajustements_mois !== 0 && (
+                                        <span style={{color: 'var(--color-success)', fontWeight: 'bold'}}>Ajustement : {employe.heures_effectuees?.ajustements_mois > 0 ? `+${employe.heures_effectuees?.ajustements_mois}` : employe.heures_effectuees?.ajustements_mois}h</span>
+                                    )}
+                                </div>
+                                <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                                    <input type="number" id={`heures_supp_${employe.id_employe}`} placeholder="Ajustement (ex: +3)" className="input-fournisseur" style={{flex: 1, marginBottom: 0, padding: '8px', fontSize: '12px', background: 'var(--bg-card)'}} />
+                                    <button onClick={async () => {
+                                        const input = document.getElementById(`heures_supp_${employe.id_employe}`);
+                                        const hAjust = parseFloat(input.value);
+                                        if (!hAjust) return showToast("Veuillez saisir un nombre d'heures.", "error");
+                                        try {
+                                            const moisStr = new Date().toISOString().substring(0, 7);
+                                            const res = await fetch('https://api-salon-backend.onrender.com/api/rh/ajustements', {
+                                                method: 'POST', headers: getAuthHeaders(true),
+                                                body: JSON.stringify({ id_employe: employe.id_employe, mois_annee: moisStr, heures_ajoutees: hAjust, motif: 'Ajustement manuel' })
+                                            });
+                                            if (res.ok) { showToast("Ajustement enregistré !", "success"); input.value = ''; chargerTout(); }
+                                            else showToast("Erreur d'ajout", "error");
+                                        } catch (e) { showToast("Erreur serveur", "error"); }
+                                    }} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '8px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px'}}>Ajuster</button>
+                                </div>
+                            </div>
+                        </div>
                           
                           {/* 3. TIROIR DES AVIS (Inchangé sur le design des commentaires) */}
                           {employe.derniers_avis && employe.derniers_avis.length > 0 && (
@@ -6818,6 +6919,158 @@ function App() {
                 )}
             </div>
         </div>
+      )}
+
+            {/* MODALE DE FUSION DES STOCKS */}
+      {showMergeModal && (
+          <div className="modal-overlay">
+              <div className="modal-content" style={{ maxWidth: '420px' }}>
+                  <div className="modal-header">
+                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Unifier les doublons de stock</h3>
+                      <button className="modal-close-btn" onClick={() => setShowMergeModal(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  </div>
+                  
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
+                      Cette opération additionnera les quantités de {selectedStocksToMerge.length} produits sélectionnés dans le produit final et supprimera les doublons.
+                  </p>
+
+                  <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Nom final du produit unifié</label>
+                      <input type="text" className="input-fournisseur" value={mergeForm.nom} onChange={e => setMergeForm({...mergeForm, nom: e.target.value})} style={{ marginBottom: 0 }} />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                      <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Référence</label>
+                          <input type="text" className="input-fournisseur" placeholder="Optionnel" value={mergeForm.reference} onChange={e => setMergeForm({...mergeForm, reference: e.target.value})} style={{ marginBottom: 0 }} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Prix (€)</label>
+                          <input type="number" step="0.01" className="input-fournisseur" placeholder="0.00" value={mergeForm.prix} onChange={e => setMergeForm({...mergeForm, prix: e.target.value})} style={{ marginBottom: 0 }} />
+                      </div>
+                  </div>
+
+                  <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
+                      <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => setMergeForm({...mergeForm, id_employe: e.target.value})} style={{ marginBottom: 0 }}>
+                          <option value="">-- Sélectionnez le collaborateur --</option>
+                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                      </select>
+                  </div>
+
+                  <div style={{ marginBottom: '20px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Code PIN personnel (Validation NF525)</label>
+                      <input type="password" inputMode="numeric" maxLength="10" className="input-fournisseur" placeholder="Votre code PIN" value={mergeForm.code_pin} onChange={e => setMergeForm({...mergeForm, code_pin: e.target.value})} style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold' }} />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                      <button onClick={() => setShowMergeModal(false)} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
+                      <button onClick={async () => {
+                          if (!mergeForm.nom.trim()) return showToast("Le nom du produit est requis.", "error");
+                          if (!mergeForm.id_employe) return showToast("Veuillez choisir l'employé responsable.", "error");
+                          if (!mergeForm.code_pin || mergeForm.code_pin.length < 4) return showToast("Le code PIN personnel est obligatoire.", "error");
+                          try {
+                              const res = await fetch('https://api-salon-backend.onrender.com/api/stocks/fusionner', {
+                                  method: 'POST',
+                                  headers: getAuthHeaders(true),
+                                  body: JSON.stringify({
+                                      ids_articles: selectedStocksToMerge,
+                                      nom: mergeForm.nom,
+                                      reference: mergeForm.reference,
+                                      prix: mergeForm.prix,
+                                      type_article: mergeForm.type_article,
+                                      id_employe: mergeForm.id_employe,
+                                      code_pin: mergeForm.code_pin
+                                  })
+                              });
+                              const data = await handleFetchError(res);
+                              showToast(data.message || "Stocks unifiés avec succès !", "success");
+                              setShowMergeModal(false);
+                              setIsStockMergeMode(false);
+                              setSelectedStocksToMerge([]);
+                              chargerTout();
+                          } catch (e) {
+                              showToast(e.message || "Erreur lors de la fusion", "error");
+                          }
+                      }} className="btn-action" style={{ flex: 2 }}>Confirmer et additionner</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* MODALE SAISIE MANUELLE FACTURE */}
+      {showSaisieManuelleFacture && (
+          <div className="modal-overlay">
+              <div className="modal-content" style={{ maxWidth: '440px' }}>
+                  <div className="modal-header">
+                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Saisie manuelle d'une dépense</h3>
+                      <button className="modal-close-btn" onClick={() => setShowSaisieManuelleFacture(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  </div>
+
+                  <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Fournisseur</label>
+                      <input type="text" className="input-fournisseur" placeholder="Ex: L'Oréal, EDF, Loyer..." value={formFactureManuelle.nom_fournisseur} onChange={e => setFormFactureManuelle({...formFactureManuelle, nom_fournisseur: e.target.value})} style={{ marginBottom: 0 }} />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                      <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>N° Facture</label>
+                          <input type="text" className="input-fournisseur" placeholder="Optionnel" value={formFactureManuelle.numero_facture} onChange={e => setFormFactureManuelle({...formFactureManuelle, numero_facture: e.target.value})} style={{ marginBottom: 0 }} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Date</label>
+                          <input type="date" className="input-fournisseur" value={formFactureManuelle.date_facture} onChange={e => setFormFactureManuelle({...formFactureManuelle, date_facture: e.target.value})} style={{ marginBottom: 0 }} />
+                      </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                      <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Moyen de paiement</label>
+                          <select className="input-fournisseur" value={formFactureManuelle.mode_paiement} onChange={e => setFormFactureManuelle({...formFactureManuelle, mode_paiement: e.target.value})} style={{ marginBottom: 0 }}>
+                              <option value="CARTE">Carte / TPE</option>
+                              <option value="ESPECES">Espèces (Caisse)</option>
+                              <option value="VIREMENT">Virement</option>
+                              <option value="PRELEVEMENT">Prélèvement</option>
+                              <option value="CHEQUE">Chèque</option>
+                          </select>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Compte comptable</label>
+                          <select className="input-fournisseur" value={formFactureManuelle.compte_comptable} onChange={e => setFormFactureManuelle({...formFactureManuelle, compte_comptable: e.target.value})} style={{ marginBottom: 0 }}>
+                              <option value="607">607 - Revente</option>
+                              <option value="604">604 - Prestations</option>
+                              <option value="6028">6028 - Consommables</option>
+                              <option value="613">613 - Loyer</option>
+                              <option value="6061">6061 - Énergie / Eau</option>
+                          </select>
+                      </div>
+                  </div>
+
+                  <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
+                          <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Montant HT</label>
+                              <input type="number" step="0.01" className="input-fournisseur" placeholder="Auto" value={formFactureManuelle.montant_ht} onChange={e => setFormFactureManuelle({...formFactureManuelle, montant_ht: e.target.value})} style={{ marginBottom: 0 }} />
+                          </div>
+                          <span style={{ paddingBottom: '10px', color: 'var(--text-muted)' }}>+</span>
+                          <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>TVA</label>
+                              <input type="number" step="0.01" className="input-fournisseur" placeholder="Auto" value={formFactureManuelle.montant_tva} onChange={e => setFormFactureManuelle({...formFactureManuelle, montant_tva: e.target.value})} style={{ marginBottom: 0 }} />
+                          </div>
+                          <span style={{ paddingBottom: '10px', color: 'var(--text-muted)' }}>=</span>
+                          <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>TTC (€)</label>
+                              <input type="number" step="0.01" className="input-fournisseur" placeholder="0.00" value={formFactureManuelle.montant_ttc} onChange={e => setFormFactureManuelle({...formFactureManuelle, montant_ttc: e.target.value})} style={{ marginBottom: 0, fontWeight: 'bold' }} />
+                          </div>
+                      </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                      <button onClick={() => setShowSaisieManuelleFacture(false)} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
+                      <button onClick={enregistrerFactureManuelle} className="btn-action" style={{ flex: 2 }}>Enregistrer la dépense</button>
+                  </div>
+              </div>
+          </div>
       )}
 
             {toast && (
