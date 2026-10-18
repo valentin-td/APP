@@ -3824,6 +3824,17 @@ app.get('/api/employes', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }
 });
 
+app.put('/api/employes/mon-pin', verifierToken, async (req, res) => {
+    if (req.user.role !== 'employe') return res.status(403).json({ erreur: "Réservé aux employés." });
+    const { nouveau_pin } = req.body;
+    try {
+        if (!nouveau_pin || isPinWeak(nouveau_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple ou invalide." });
+        const hashPin = await bcrypt.hash(String(nouveau_pin).trim(), 10);
+        await pool.query('UPDATE employes SET code_pin = $1 WHERE id_employe = $2 AND id_salon = $3', [hashPin, req.user.id_employe, req.user.id_salon]);
+        res.json({ message: "Code PIN mis à jour avec succès." });
+    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la mise à jour." }); }
+});
+
 app.put('/api/employes/:id/debloquer-pin', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut débloquer le code PIN d'un collaborateur." });
     try {
@@ -4035,16 +4046,48 @@ app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
     }
 
     try {
-        // Vérification stricte du code PIN pour tout employé sélectionné (même sur session gérant)
-        const empRes = await pool.query(
-            'SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2',
-            [id_employe, id_salon]
-        );
-        if (empRes.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable." });
-        const emp = empRes.rows[0];
+        let operateur = 'Gérant';
+        let idEmployeTrace = null;
 
-        if (emp.bloque_definitif) {
-            return res.status(403).json({ erreur: `Accès PIN bloqué définitivement pour ${emp.nom}.` });
+        // Si le rôle est SALON et qu'il y a une sécurité, on vérifie le PIN
+        if (req.user.role === 'salon') {
+            const confRes = await pool.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+            const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
+
+            if (protectionActive) {
+                if (id_employe === 'gerant') {
+                    const gerantRes = await pool.query("SELECT nom, code_pin FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
+                    if (gerantRes.rowCount === 0) return res.status(404).json({ erreur: "Compte gérant introuvable." });
+                    const gerant = gerantRes.rows[0];
+                    let pinMatch = false;
+                    if (gerant.code_pin && gerant.code_pin.startsWith('$2')) { pinMatch = await bcrypt.compare(String(code_pin).trim(), gerant.code_pin); } 
+                    else { pinMatch = (gerant.code_pin === String(code_pin).trim()); }
+                    if (!pinMatch) return res.status(400).json({ erreur: "Code PIN Gérant incorrect." });
+                    operateur = gerant.nom;
+                } else {
+                    const empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+                    if (empRes.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable." });
+                    const emp = empRes.rows[0];
+                    
+                    if (emp.bloque_definitif) return res.status(403).json({ erreur: `Accès PIN bloqué définitivement pour ${emp.nom}.` });
+                    if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) return res.status(403).json({ erreur: `Code PIN suspendu temporairement pour ${emp.nom}.` });
+
+                    let pinMatch = false;
+                    if (emp.code_pin && emp.code_pin.startsWith('$2')) { pinMatch = await bcrypt.compare(String(code_pin).trim(), emp.code_pin); } 
+                    else { pinMatch = (String(emp.code_pin || '').trim() === String(code_pin).trim()); }
+
+                    if (!pinMatch) {
+                        const tentatives = (parseInt(emp.tentatives, 10) || 0) + 1;
+                        await pool.query('UPDATE employes SET pin_tentatives_echouees = $1 WHERE id_employe = $2 AND id_salon = $3', [tentatives, emp.id_employe, id_salon]);
+                        return res.status(400).json({ erreur: `Code PIN incorrect pour ${emp.nom}.` });
+                    }
+                    if (emp.tentatives > 0 || emp.pin_bloque_jusqua) {
+                        await pool.query('UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2', [emp.id_employe, id_salon]);
+                    }
+                    operateur = emp.nom;
+                    idEmployeTrace = emp.id_employe;
+                }
+            }
         }
         if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
             const minRestantes = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
