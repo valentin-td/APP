@@ -1829,18 +1829,32 @@ function App() {
   const sauvegarderParametres = async () => {
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       if(configSalon.pin_salon && isPinWeak(configSalon.pin_salon)) return showToast("Le code PIN du salon est trop simple (évitez 0000, 1234...).", "error");
-      showToast("Sauvegarde en cours...");
+      
       try { 
           const payload = { ...configSalon };
-          // Sécurité stricte pour forcer le boolean côté client
+          // Sécurité stricte pour forcer le boolean côté client et garantir son écriture en base
           payload.securite_pin_salon_active = configSalon.securite_pin_salon_active !== false; 
           
-          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) }); 
+          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { 
+              method: 'POST', 
+              headers: getAuthHeaders(true), 
+              body: JSON.stringify(payload) 
+          }); 
           const data = await handleFetchError(response); 
-          showToast(data.message || "Paramètres enregistrés avec succès !", "success"); 
+          
+          // Toast de succès très visible
+          setToast({ message: "✅ Vos paramètres ont bien été enregistrés !", type: "success" });
+          setTimeout(() => setToast(null), 4000);
+          
+          // Rafraîchissement silencieux des données locales pour refléter la base de données
           chargerTout(); 
-          // On retire la redirection automatique pour que l'utilisateur voit bien la notification
-      } catch (error) { if(error.message !== "Abonnement inactif") showToast("Erreur serveur.", "error"); }
+      } catch (error) { 
+          console.error("Erreur Sauvegarde Paramètres :", error);
+          if(error.message !== "Abonnement inactif") {
+              setToast({ message: `❌ Erreur : ${error.message || "Impossible d'enregistrer"}`, type: "error" });
+              setTimeout(() => setToast(null), 5000);
+          }
+      }
   };
 
   const creerRdvManuel = async (forcer = false) => {
@@ -6221,6 +6235,7 @@ function App() {
                                   style={{ marginBottom: '12px', width: '100%', boxSizing: 'border-box' }}
                               >
                                   <option value="">-- Sélectionnez votre nom --</option>
+                                  <option value="gerant">Gérant (Moi-même)</option>
                                   {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
                               </select>
                               <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -6375,13 +6390,16 @@ function App() {
                           </div>
                       </div>
 
-                      <div style={{ marginBottom: role === 'salon' && configSalon.securite_pin_salon_active !== false ? '14px' : '24px' }}>
-                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Collaborateur responsable</label>
-                          <select value={newMouvement.id_employe} onChange={(e) => setNewMouvement({...newMouvement, id_employe: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
-                              <option value="">{role === 'salon' ? '-- Sélectionnez votre nom --' : 'Moi-même (Gérant)'}</option>
-                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                          </select>
-                      </div>
+                      {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
+                          <div style={{ marginBottom: '14px' }}>
+                              <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Collaborateur responsable</label>
+                              <select value={newMouvement.id_employe} onChange={(e) => setNewMouvement({...newMouvement, id_employe: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
+                                  <option value="">-- Sélectionnez votre nom --</option>
+                                  <option value="gerant">Gérant (Moi-même)</option>
+                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                              </select>
+                          </div>
+                      )}
 
                       {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
                           const statutPinMvt = getStatutBlocagePin(newMouvement.id_employe);
@@ -7070,25 +7088,32 @@ function App() {
                       </div>
                   </div>
 
-                  <div style={{ marginBottom: '12px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
-                      <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => setMergeForm({...mergeForm, id_employe: e.target.value})} style={{ marginBottom: 0 }}>
-                          <option value="">-- Sélectionnez le collaborateur --</option>
-                          {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                      </select>
-                  </div>
+                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
+                      <>
+                          <div style={{ marginBottom: '12px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
+                              <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => setMergeForm({...mergeForm, id_employe: e.target.value})} style={{ marginBottom: 0 }}>
+                                  <option value="">-- Sélectionnez votre nom --</option>
+                                  <option value="gerant">Gérant (Moi-même)</option>
+                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                              </select>
+                          </div>
 
-                  <div style={{ marginBottom: '20px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Code PIN personnel (Validation NF525)</label>
-                      <input type="password" inputMode="numeric" maxLength="10" className="input-fournisseur" placeholder="Votre code PIN" value={mergeForm.code_pin} onChange={e => setMergeForm({...mergeForm, code_pin: e.target.value})} style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold' }} />
-                  </div>
+                          <div style={{ marginBottom: '20px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Code PIN personnel (Validation NF525)</label>
+                              <input type="password" inputMode="numeric" maxLength="10" className="input-fournisseur" placeholder="Votre code PIN" value={mergeForm.code_pin} onChange={e => setMergeForm({...mergeForm, code_pin: e.target.value.replace(/\D/g, '')})} style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold' }} />
+                          </div>
+                      </>
+                  )}
 
-                  <div style={{ display: 'flex', gap: '12px' }}>
+                  <div style={{ display: 'flex', gap: '12px', marginTop: role === 'gerant' ? '24px' : '0' }}>
                       <button onClick={() => setShowMergeModal(false)} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
                       <button onClick={async () => {
                           if (!mergeForm.nom.trim()) return showToast("Le nom du produit est requis.", "error");
-                          if (!mergeForm.id_employe) return showToast("Veuillez choisir l'employé responsable.", "error");
-                          if (!mergeForm.code_pin || mergeForm.code_pin.length < 4) return showToast("Le code PIN personnel est obligatoire.", "error");
+                          if (role === 'salon' && configSalon.securite_pin_salon_active !== false) {
+                              if (!mergeForm.id_employe) return showToast("Veuillez choisir l'employé responsable.", "error");
+                              if (!mergeForm.code_pin || mergeForm.code_pin.length < 4) return showToast("Le code PIN personnel est obligatoire.", "error");
+                          }
                           try {
                               const res = await fetch('https://api-salon-backend.onrender.com/api/stocks/fusionner', {
                                   method: 'POST',
