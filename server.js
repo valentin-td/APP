@@ -331,6 +331,7 @@ pool.query(`
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_produits VARCHAR(20) DEFAULT '707000';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS compte_tva VARCHAR(20) DEFAULT '445710';
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS pennylane_api_key VARCHAR(255);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS comptes_emails JSONB DEFAULT '[]';
 
     CREATE TABLE IF NOT EXISTS factures_fournisseurs (id_facture SERIAL PRIMARY KEY, id_salon INT, nom_fournisseur VARCHAR(255), montant_ht NUMERIC(10,2), montant_tva NUMERIC(10,2), montant_ttc NUMERIC(10,2), date_traitement TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     ALTER TABLE factures_fournisseurs ADD COLUMN IF NOT EXISTS numero_facture VARCHAR(255);
@@ -1170,6 +1171,23 @@ app.post('/api/settings', verifierToken, async (req, res) => {
         params.push(secPinSalon);
         
         await pool.query(updateQuery, params);
+
+        if (Array.isArray(req.body.comptes_emails)) {
+            const comptesLimites = req.body.comptes_emails
+                .filter(c => c && c.email && String(c.email).trim() !== '')
+                .slice(0, 5)
+                .map(c => ({
+                    email: String(c.email).trim(),
+                    mot_de_passe: c.mot_de_passe ? chiffrer(String(c.mot_de_passe).trim()) : ''
+                }));
+            const premierEmail = comptesLimites[0]?.email || email_factures || null;
+            const premierPass = comptesLimites[0]?.mot_de_passe || passChiffre || null;
+            await pool.query(
+                'UPDATE configuration_salon SET comptes_emails = $1, email_reception_factures = $2, mot_de_passe_app_email = $3 WHERE id_salon = $4',
+                [JSON.stringify(comptesLimites), premierEmail, premierPass, req.user.id_salon]
+            );
+        }
+
         await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { champs_modifies: Object.keys(req.body) });
         res.json({ message: "Paramètres enregistrés avec succès !" }); 
     } catch (erreur) { 
@@ -1186,12 +1204,20 @@ app.get('/api/settings', verifierToken, async (req, res) => {
             // Sécurité : Seul le gérant a le droit de voir les secrets de configuration (clés API, mots de passe mail, PIN)
             if (req.user.role !== 'gerant') {
                 delete config.mot_de_passe_app_email;
+                delete config.comptes_emails;
                 delete config.brevo_api_key;
                 delete config.pennylane_api_key;
                 delete config.google_api_key;
                 delete config.pin_salon;
             } else {
-                config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email); 
+                config.mot_de_passe_app_email = dechiffrer(config.mot_de_passe_app_email);
+                let listeMails = Array.isArray(config.comptes_emails) ? config.comptes_emails : [];
+                if (listeMails.length === 0 && config.email_reception_factures) {
+                    listeMails = [{ email: config.email_reception_factures, mot_de_passe: config.mot_de_passe_app_email || '' }];
+                } else {
+                    listeMails = listeMails.map(c => ({ email: c.email, mot_de_passe: dechiffrer(c.mot_de_passe) }));
+                }
+                config.comptes_emails = listeMails;
             }
             
             res.json(config);
@@ -3989,12 +4015,220 @@ app.put('/api/stocks/:id', verifierToken, async (req, res) => {
         res.json({ message: "Stock mis à jour." });
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour du stock." }); }
 });
+
+app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "La fusion des stocks est réservée au gérant et au poste Salon." });
+    const { ids_articles, nom, reference, prix, type_article, delai_livraison_jours, id_employe, code_pin } = req.body;
+    const id_salon = req.user.id_salon;
+
+    if (!Array.isArray(ids_articles) || ids_articles.length < 2) {
+        return res.status(400).json({ erreur: "Sélectionnez au moins 2 produits à unifier." });
+    }
+    if (!id_employe) {
+        return res.status(400).json({ erreur: "Veuillez sélectionner le collaborateur responsable de la fusion." });
+    }
+    if (!code_pin || String(code_pin).trim().length < 4) {
+        return res.status(400).json({ erreur: "Le code PIN personnel est obligatoire pour confirmer l'unification." });
+    }
+    if (!nom || !String(nom).trim()) {
+        return res.status(400).json({ erreur: "Le nom du produit unifié est requis." });
+    }
+
+    try {
+        // Vérification stricte du code PIN pour tout employé sélectionné (même sur session gérant)
+        const empRes = await pool.query(
+            'SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2',
+            [id_employe, id_salon]
+        );
+        if (empRes.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable." });
+        const emp = empRes.rows[0];
+
+        if (emp.bloque_definitif) {
+            return res.status(403).json({ erreur: `Accès PIN bloqué définitivement pour ${emp.nom}.` });
+        }
+        if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
+            const minRestantes = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
+            return res.status(403).json({ erreur: `Code PIN suspendu temporairement pour ${emp.nom} (${minRestantes} min).` });
+        }
+
+        const pinSaisi = String(code_pin).trim();
+        let pinMatch = false;
+        if (emp.code_pin && emp.code_pin.startsWith('$2')) {
+            pinMatch = await bcrypt.compare(pinSaisi, emp.code_pin);
+        } else {
+            pinMatch = (String(emp.code_pin || '').trim() === pinSaisi);
+        }
+
+        if (!pinMatch) {
+            const nouvellesTentatives = (parseInt(emp.tentatives, 10) || 0) + 1;
+            let bloqueJusqua = null;
+            let bloqueDefinitif = false;
+            if (nouvellesTentatives >= 9) bloqueDefinitif = true;
+            else if (nouvellesTentatives === 7) bloqueJusqua = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+            else if (nouvellesTentatives === 5) bloqueJusqua = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+            else if (nouvellesTentatives === 3) bloqueJusqua = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+            await pool.query(
+                'UPDATE employes SET pin_tentatives_echouees = $1, pin_bloque_jusqua = $2, pin_bloque_definitif = $3 WHERE id_employe = $4 AND id_salon = $5',
+                [nouvellesTentatives, bloqueJusqua, bloqueDefinitif, emp.id_employe, id_salon]
+            );
+            return res.status(400).json({ erreur: `Code PIN incorrect pour ${emp.nom}.` });
+        }
+
+        if (emp.tentatives > 0 || emp.pin_bloque_jusqua) {
+            await pool.query('UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2', [emp.id_employe, id_salon]);
+        }
+
+        const clientDB = await pool.connect();
+        try {
+            await clientDB.query('BEGIN');
+            const idsClean = ids_articles.map(id => parseInt(id, 10)).filter(n => !isNaN(n));
+            const articlesRes = await clientDB.query(
+                'SELECT id_article, nom, stock_actuel, prix, reference, type_article, delai_livraison_jours FROM catalogue WHERE id_salon = $1 AND id_article = ANY($2::int[]) FOR UPDATE',
+                [id_salon, idsClean]
+            );
+            if (articlesRes.rowCount < 2) throw new Error("Les produits sélectionnés sont introuvables.");
+
+            const idMaitre = idsClean[0];
+            const idsDoublons = idsClean.slice(1);
+            const stockTotal = articlesRes.rows.reduce((sum, a) => sum + (parseInt(a.stock_actuel, 10) || 0), 0);
+            const artMaitre = articlesRes.rows.find(a => a.id_article === idMaitre) || articlesRes.rows[0];
+
+            const nomFinal = String(nom).trim();
+            const refFinale = reference && String(reference).trim() !== '' ? String(reference).trim() : (artMaitre.reference || null);
+            const prixFinal = (prix !== undefined && prix !== '' && !isNaN(parseFloat(prix))) ? parseFloat(String(prix).replace(',', '.')) : (parseFloat(artMaitre.prix) || 0);
+            const typeFinal = type_article || artMaitre.type_article || 'PRODUIT_REVENTE';
+            const delaiFinal = parseInt(delai_livraison_jours, 10) || artMaitre.delai_livraison_jours || 3;
+
+            // Mise à jour des recettes de l'Académie pour pointer vers l'article maître sans toucher aux lignes_ticket scellées NF525
+            await clientDB.query(
+                'UPDATE recettes_articles SET id_article = $1 WHERE id_article = ANY($2::int[])',
+                [idMaitre, idsDoublons]
+            );
+
+            // Mise à jour de l'article maître avec la somme des stocks
+            await clientDB.query(
+                'UPDATE catalogue SET nom = $1, reference = $2, prix = $3, type_article = $4, stock_actuel = $5, delai_livraison_jours = $6 WHERE id_article = $7 AND id_salon = $8',
+                [nomFinal, refFinale, prixFinal, typeFinal, stockTotal, delaiFinal, idMaitre, id_salon]
+            );
+
+            // Suppression des doublons du catalogue
+            await clientDB.query(
+                'DELETE FROM catalogue WHERE id_salon = $1 AND id_article = ANY($2::int[])',
+                [id_salon, idsDoublons]
+            );
+
+            await enregistrerJET(id_salon, 'FUSION_ARTICLES_STOCK', {
+                operateur: emp.nom,
+                id_employe: emp.id_employe,
+                id_article_maitre: idMaitre,
+                ids_supprimes: idsDoublons,
+                nom_unifie: nomFinal,
+                stock_total_unifie: stockTotal
+            }, clientDB);
+
+            await clientDB.query('COMMIT');
+            res.json({ message: `${articlesRes.rowCount} produits unifiés avec succès (Stock total : ${stockTotal}).`, stock_total: stockTotal });
+        } catch (dbErr) {
+            await clientDB.query('ROLLBACK');
+            throw dbErr;
+        } finally {
+            clientDB.release();
+        }
+    } catch (e) {
+        res.status(400).json({ erreur: e.message || "Erreur lors de la fusion des stocks." });
+    }
+});
 app.get('/api/rh', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès RH réservé au gérant." });
     const id_salon = req.user.id_salon;
     try {
-        const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role ORDER BY e.id_employe;`;
+        const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, e.type_contrat, e.heures_mensuelles_base, e.est_gerant, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role, e.type_contrat, e.heures_mensuelles_base, e.est_gerant ORDER BY e.id_employe;`;
         const rhResult = await pool.query(rhQuery, [id_salon]);
+
+        // Calcul des heures pointées (Aujourd'hui, Cette semaine, Ce mois-ci) y compris session en cours
+        const now = new Date();
+        const debutMois = new Date(now.getFullYear(), now.getMonth(), 1);
+        const jourSemaine = now.getDay();
+        const diffLundi = now.getDate() - jourSemaine + (jourSemaine === 0 ? -6 : 1);
+        const debutSemaine = new Date(now.getFullYear(), now.getMonth(), diffLundi);
+        debutSemaine.setHours(0, 0, 0, 0);
+        const debutRecherche = debutMois < debutSemaine ? debutMois : debutSemaine;
+        const formatYMDLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const aujourdhuiYMD = formatYMDLocal(now);
+
+        const pointagesRes = await pool.query(
+            `SELECT id_employe, TO_CHAR(date_jour, 'YYYY-MM-DD') as date_ymd, type_action, heure_action
+             FROM pointages
+             WHERE id_salon = $1 AND date_jour >= $2
+             ORDER BY id_employe ASC, date_jour ASC, heure_action ASC`,
+            [id_salon, formatYMDLocal(debutRecherche)]
+        );
+
+        const moisCourantStr = aujourdhuiYMD.slice(0, 7);
+        const ajustRes = await pool.query(
+            `SELECT id_employe, COALESCE(SUM(heures_ajoutees), 0) as total_ajust
+             FROM heures_ajustements
+             WHERE mois_annee = $1
+             GROUP BY id_employe`,
+            [moisCourantStr]
+        );
+        const mapAjustMois = {};
+        ajustRes.rows.forEach(r => { mapAjustMois[r.id_employe] = parseFloat(r.total_ajust) || 0; });
+
+        const parEmpJour = {};
+        pointagesRes.rows.forEach(pt => {
+            const cle = `${pt.id_employe}_${pt.date_ymd}`;
+            if (!parEmpJour[cle]) parEmpJour[cle] = { id_employe: pt.id_employe, date_ymd: pt.date_ymd, actions: [] };
+            parEmpJour[cle].actions.push({ type: pt.type_action, ts: new Date(pt.heure_action).getTime() });
+        });
+
+        const heuresParEmploye = {};
+        Object.values(parEmpJour).forEach(jour => {
+            let debutTravail = null;
+            let debutPause = null;
+            let cumulMs = 0;
+
+            jour.actions.forEach(act => {
+                if (act.type === 'ENTREE') {
+                    if (debutTravail === null) debutTravail = act.ts;
+                } else if (act.type === 'PAUSE_DEBUT') {
+                    if (debutTravail !== null && debutPause === null) debutPause = act.ts;
+                } else if (act.type === 'PAUSE_FIN') {
+                    if (debutPause !== null) {
+                        debutTravail += (act.ts - debutPause);
+                        debutPause = null;
+                    }
+                } else if (act.type === 'SORTIE') {
+                    if (debutTravail !== null) {
+                        const finEff = debutPause !== null ? debutPause : act.ts;
+                        if (finEff > debutTravail) cumulMs += (finEff - debutTravail);
+                        debutTravail = null;
+                        debutPause = null;
+                    }
+                }
+            });
+
+            // Si la session est toujours ouverte aujourd'hui, on compte le temps en direct jusqu'à maintenant
+            if (debutTravail !== null) {
+                if (jour.date_ymd === aujourdhuiYMD) {
+                    const finDirect = debutPause !== null ? debutPause : Date.now();
+                    if (finDirect > debutTravail) cumulMs += (finDirect - debutTravail);
+                } else if (debutPause !== null && debutPause > debutTravail) {
+                    cumulMs += (debutPause - debutTravail);
+                }
+            }
+
+            const hJour = cumulMs / 3600000;
+            if (!heuresParEmploye[jour.id_employe]) {
+                heuresParEmploye[jour.id_employe] = { aujourdhui: 0, semaine: 0, mois: 0 };
+            }
+            const dObj = new Date(jour.date_ymd + 'T12:00:00');
+            if (jour.date_ymd === aujourdhuiYMD) heuresParEmploye[jour.id_employe].aujourdhui += hJour;
+            if (dObj >= debutSemaine) heuresParEmploye[jour.id_employe].semaine += hJour;
+            if (dObj >= debutMois) heuresParEmploye[jour.id_employe].mois += hJour;
+        });
+
         const employesData = await Promise.all(rhResult.rows.map(async (emp) => {
             const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`;
             const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]);
@@ -4004,7 +4238,34 @@ app.get('/api/rh', verifierToken, async (req, res) => {
             const avisEmp = await pool.query(`SELECT note, commentaire, prenom, date_creation FROM avis_demandes WHERE id_salon = $2 AND id_employe = $1 AND statut = 'REPONDU' AND note IS NOT NULL ORDER BY date_creation DESC`, [emp.id_employe, id_salon]);
             const notes = avisEmp.rows.map(a => a.note);
             const moyenneNote = notes.length > 0 ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : null;
-            return { id_employe: emp.id_employe, nom: emp.nom, role: emp.role, photo_url: emp.photo_url, performances_actuelles: { clients_coiffes: parseInt(emp.clients_coiffes), produits_vendus: parseInt(emp.produits_vendus), ca_genere: parseFloat(emp.ca_genere), prime_estimee: parseFloat(emp.prime_estimee) }, historique_primes: historique.slice(-6), note_moyenne: moyenneNote, nb_avis: notes.length, derniers_avis: avisEmp.rows.slice(0, 3) };
+            const hEmp = heuresParEmploye[emp.id_employe] || { aujourdhui: 0, semaine: 0, mois: 0 };
+            const ajustMois = mapAjustMois[emp.id_employe] || 0;
+
+            return {
+                id_employe: emp.id_employe,
+                nom: emp.nom,
+                role: emp.role,
+                est_gerant: emp.est_gerant,
+                type_contrat: emp.type_contrat || '35H',
+                heures_mensuelles_base: parseFloat(emp.heures_mensuelles_base) || 151.67,
+                photo_url: emp.photo_url,
+                heures_effectuees: {
+                    aujourdhui: Number(hEmp.aujourdhui.toFixed(2)),
+                    semaine: Number(hEmp.semaine.toFixed(2)),
+                    mois: Number((hEmp.mois + ajustMois).toFixed(2)),
+                    ajustements_mois: Number(ajustMois.toFixed(2))
+                },
+                performances_actuelles: {
+                    clients_coiffes: parseInt(emp.clients_coiffes),
+                    produits_vendus: parseInt(emp.produits_vendus),
+                    ca_genere: parseFloat(emp.ca_genere),
+                    prime_estimee: parseFloat(emp.prime_estimee)
+                },
+                historique_primes: historique.slice(-6),
+                note_moyenne: moyenneNote,
+                nb_avis: notes.length,
+                derniers_avis: avisEmp.rows.slice(0, 3)
+            };
         }));
         res.json(employesData);
     } catch (erreur) {
@@ -4429,8 +4690,64 @@ app.get('/api/ia/taches', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur IA" }); }
 });
 
-// --- UPLOAD MANUEL DE FACTURE (PDF OU IMAGE) VERS L'IA ---
-app.post('/api/ia/upload-facture', verifierToken, async (req, res) => {
+// --- SAISIE MANUELLE DE FACTURE / DÉPENSE (ACCESSIBLE PRO & PREMIUM) ---
+app.post('/api/factures/saisie-manuelle', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
+    const { nom_fournisseur, numero_facture, date_facture, montant_ht, montant_tva, montant_ttc, mode_paiement, compte_comptable } = req.body;
+    const id_salon = req.user.id_salon;
+
+    if (!nom_fournisseur || !String(nom_fournisseur).trim()) {
+        return res.status(400).json({ erreur: "Le nom du fournisseur est obligatoire." });
+    }
+    const ttc = parseFloat(montant_ttc);
+    if (isNaN(ttc) || ttc <= 0) {
+        return res.status(400).json({ erreur: "Le montant TTC doit être supérieur à 0." });
+    }
+    const ht = !isNaN(parseFloat(montant_ht)) ? parseFloat(montant_ht) : Number((ttc / 1.2).toFixed(2));
+    const tva = !isNaN(parseFloat(montant_tva)) ? parseFloat(montant_tva) : Number((ttc - ht).toFixed(2));
+    const mode = mode_paiement || 'CARTE';
+    const compte = compte_comptable || '604';
+    const numFac = numero_facture && String(numero_facture).trim() !== '' ? String(numero_facture).trim() : null;
+    const dFac = date_facture ? new Date(date_facture) : new Date();
+    const dateFactureISO = !isNaN(dFac.getTime()) ? dFac.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    const dateReglementISO = (mode !== 'NON_SPECIFIE' && mode !== 'N/A') ? dateFactureISO : null;
+
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        await clientDB.query(
+            `INSERT INTO factures_fournisseurs (nom_fournisseur, montant_ht, montant_tva, montant_ttc, id_salon, date_traitement, date_facture, date_reglement, numero_facture, mode_paiement, statut_verification, compte_comptable)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'VALIDE', $11)`,
+            [String(nom_fournisseur).trim(), ht, tva, ttc, id_salon, new Date(dateFactureISO).toISOString(), dateFactureISO, dateReglementISO, numFac, mode, compte]
+        );
+
+        if (mode.toUpperCase() === 'ESPECES' && ttc > 0) {
+            const motifSortie = numFac
+                ? `Paiement Facture ${numFac} - ${String(nom_fournisseur).trim()}`
+                : `Paiement Facture - ${String(nom_fournisseur).trim()}`;
+            const scelle = await enregistrerMouvementCaisseScelle(clientDB, {
+                id_salon,
+                id_employe: null,
+                type_mouvement: 'SORTIE',
+                montant: ttc,
+                motif: motifSortie,
+                categorie_comptable: 'ACHAT_ESPECES'
+            });
+            await enregistrerJET(id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, type_mouvement: 'SORTIE', montant: ttc, motif: motifSortie, hash_mouvement: scelle.hash_mouvement }, clientDB);
+        }
+
+        await clientDB.query('COMMIT');
+        res.status(201).json({ message: "Dépense enregistrée avec succès en comptabilité." });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        res.status(400).json({ erreur: e.message || "Erreur lors de l'enregistrement de la facture." });
+    } finally {
+        clientDB.release();
+    }
+});
+
+// --- UPLOAD MANUEL DE FACTURE (PDF OU IMAGE) VERS L'IA (RÉSERVÉ PREMIUM) ---
+app.post('/api/ia/upload-facture', verifierToken, verifierPlan(['PREMIUM']), async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
     try {
         const { fichier_base64, mime_type } = req.body;
