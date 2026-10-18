@@ -7112,7 +7112,7 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
                 await transporter.sendMail({
                     from: `"${nomDuSalon}" <${salonConfig.email_reception_factures}>`, 
                     to: salonConfig.email_reception_factures, 
-                    subject: `📊 Liasse Mensuelle - ${nomDuSalon}`, 
+                    subject: `Liasse Mensuelle - ${nomDuSalon}`, 
                     text: `Bonjour,\nVeuillez trouver en pièce jointe la copie de votre liasse comptable.\nRéf. Archive NF525 : ${numeroArchive}`,
                     attachments: [{ filename: `Liasse_${numeroArchive}.pdf`, content: buffer }]
                 });
@@ -7148,81 +7148,86 @@ async function executerRobotComptable() {
 
         await clientDB.query(`DELETE FROM robot_memoire_emails WHERE date_traitement < NOW() - INTERVAL '7 days'`);
 
-        const salonsResult = await clientDB.query("SELECT id_salon, email_reception_factures, mot_de_passe_app_email FROM configuration_salon WHERE email_reception_factures IS NOT NULL AND email_reception_factures != '' AND mot_de_passe_app_email IS NOT NULL AND mot_de_passe_app_email != ''");
+        const salonsResult = await clientDB.query("SELECT id_salon, email_reception_factures, mot_de_passe_app_email, comptes_emails FROM configuration_salon");
         for (let salon of salonsResult.rows) {
-            const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) }, logger: false });
-            try {
-                await imapClient.connect();
-                let lock = await imapClient.getMailboxLock('INBOX');
+            // Construction de la liste des boîtes mail à scruter (jusqu'à 5 comptes maximum)
+            let boitesAScruter = [];
+            if (Array.isArray(salon.comptes_emails) && salon.comptes_emails.length > 0) {
+                boitesAScruter = salon.comptes_emails
+                    .filter(c => c && c.email && c.mot_de_passe)
+                    .slice(0, 5)
+                    .map(c => ({ email: String(c.email).trim(), pass: dechiffrer(c.mot_de_passe) }));
+            } else if (salon.email_reception_factures && salon.mot_de_passe_app_email) {
+                boitesAScruter = [{ email: String(salon.email_reception_factures).trim(), pass: dechiffrer(salon.mot_de_passe_app_email) }];
+            }
+
+            for (let boite of boitesAScruter) {
+                if (!boite.email || !boite.pass) continue;
+                const imapClient = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: boite.email, pass: boite.pass }, logger: false });
                 try {
-                    const dateLimite = new Date(Date.now() - 24 * 60 * 60 * 1000);
-                    
-                    for await (let message of imapClient.fetch({ since: dateLimite }, { source: true, uid: true })) {
-                        const mailParsi = await simpleParser(message.source);
-                        const idUnique = mailParsi.messageId || message.uid.toString();
+                    await imapClient.connect();
+                    let lock = await imapClient.getMailboxLock('INBOX');
+                    try {
+                        const dateLimite = new Date(Date.now() - 24 * 60 * 60 * 1000);
                         
-                        const dejaTraite = await clientDB.query('SELECT message_id FROM robot_memoire_emails WHERE message_id = $1 AND id_salon = $2', [idUnique, salon.id_salon]);
-                        if (dejaTraite.rows.length > 0) continue;
+                        for await (let message of imapClient.fetch({ since: dateLimite }, { source: true, uid: true })) {
+                            const mailParsi = await simpleParser(message.source);
+                            const idUnique = mailParsi.messageId || `${boite.email}_${message.uid.toString()}`;
+                            
+                            const dejaTraite = await clientDB.query('SELECT message_id FROM robot_memoire_emails WHERE message_id = $1 AND id_salon = $2', [idUnique, salon.id_salon]);
+                            if (dejaTraite.rows.length > 0) continue;
 
-                        await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
+                            await clientDB.query('INSERT INTO robot_memoire_emails (message_id, id_salon) VALUES ($1, $2)', [idUnique, salon.id_salon]);
 
-                        let texteEmail = mailParsi.text || mailParsi.html || ""; 
-                        const sujetEmail = mailParsi.subject || "Sans Sujet";
-                        let urlPdfCloudflare = null;
-                        let cleR2Email = null;
-                        
-                        console.log(`\n=========================================`);
-                        console.log(`📧 EMAIL DÉTECTÉ (Salon ${salon.id_salon}) : "${sujetEmail}"`);
-                        
-                        // --- NOUVEAU : EXTRACTION DE PIÈCE JOINTE PDF ---
-                        if (mailParsi.attachments && mailParsi.attachments.length > 0) {
-                            const pieceJointePdf = mailParsi.attachments.find(a => a.contentType === 'application/pdf');
-                            if (pieceJointePdf && pieceJointePdf.content) {
-                                try {
-                                    // 1. On lit le texte brut à l'intérieur du PDF pour aider l'IA
-                                    const dataPdf = await pdfParse(pieceJointePdf.content);
-                                    texteEmail += `\n\n--- CONTENU DU PDF JOINT ---\n${dataPdf.text}`;
-                                    
-                                    // 2. On sauvegarde le PDF sur le Cloud R2 (Amazon S3) pour l'afficher au Gérant
-                                    const nomFichierUnique = `factures/${salon.id_salon}/${Date.now()}_facture.pdf`;
-                                    await s3Client.send(new PutObjectCommand({
-                                        Bucket: process.env.R2_BUCKET_NAME,
-                                        Key: nomFichierUnique,
-                                        Body: pieceJointePdf.content,
-                                        ContentType: 'application/pdf'
-                                    }));
-                                    cleR2Email = nomFichierUnique;
-                                    
-                                    // 3. On génère le lien de lecture (Valable 7 jours)
-                                    const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
-                                    urlPdfCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
-                                    console.log(`📎 PDF Facture sauvegardé et analysé !`);
-                                } catch (e) {
-                                    console.error("Erreur parsing/upload PDF :", e);
+                            let texteEmail = mailParsi.text || mailParsi.html || ""; 
+                            const sujetEmail = mailParsi.subject || "Sans Sujet";
+                            let urlPdfCloudflare = null;
+                            let cleR2Email = null;
+                            
+                            if (mailParsi.attachments && mailParsi.attachments.length > 0) {
+                                const pieceJointePdf = mailParsi.attachments.find(a => a.contentType === 'application/pdf');
+                                if (pieceJointePdf && pieceJointePdf.content) {
+                                    try {
+                                        const dataPdf = await pdfParse(pieceJointePdf.content);
+                                        texteEmail += `\n\n--- CONTENU DU PDF JOINT ---\n${dataPdf.text}`;
+                                        
+                                        const nomFichierUnique = `factures/${salon.id_salon}/${Date.now()}_facture.pdf`;
+                                        await s3Client.send(new PutObjectCommand({
+                                            Bucket: process.env.R2_BUCKET_NAME,
+                                            Key: nomFichierUnique,
+                                            Body: pieceJointePdf.content,
+                                            ContentType: 'application/pdf'
+                                        }));
+                                        cleR2Email = nomFichierUnique;
+                                        
+                                        const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
+                                        urlPdfCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
+                                    } catch (e) {
+                                        console.error("Erreur parsing/upload PDF :", e);
+                                    }
                                 }
                             }
-                        }
-                        
-                        // 🚨 L'ancienne insertion "aveugle" (matchTTC) est retirée car c'est désormais l'IA qui pré-valide la facture
-                        const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail, urlPdfCloudflare, cleR2Email);
-                        for (let t of tachesTrouvees) {
-                            await clientDB.query(
-                                `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
-                                [salon.id_salon, t.type_tache || t.type, t.donnees] 
-                            );
-                            envoyerEvenementSSE(salon.id_salon, 'nouvelleTacheIA');
                             
-                            envoyerNotificationPush(salon.id_salon, 'gerant', {
-                                title: "🤖 STACK IA a détecté une info !",
-                                body: `L'IA a lu un e-mail et vous a préparé une action : ${t.type_tache || t.type}.`,
-                                url: '/?tab=agenda'
-                            });
+                            const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail, urlPdfCloudflare, cleR2Email);
+                            for (let t of tachesTrouvees) {
+                                await clientDB.query(
+                                    `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
+                                    [salon.id_salon, t.type_tache || t.type, t.donnees] 
+                                );
+                                envoyerEvenementSSE(salon.id_salon, 'nouvelleTacheIA');
+                                
+                                envoyerNotificationPush(salon.id_salon, 'gerant', {
+                                    title: "STACK IA : Nouvelle action détectée",
+                                    body: `L'IA a analysé un e-mail (${boite.email}) et préparé une action : ${t.type_tache || t.type}.`,
+                                    url: '/?tab=agenda'
+                                });
+                            }
                         }
-                    }
-                } finally { lock.release(); }
-                await imapClient.logout();
-            } catch (errConnect) {
-                console.log(`Erreur IMAP Salon ${salon.id_salon} :`, errConnect.message);
+                    } finally { lock.release(); }
+                    await imapClient.logout();
+                } catch (errConnect) {
+                    console.log(`Erreur IMAP Salon ${salon.id_salon} (${boite.email}) :`, errConnect.message);
+                }
             }
         }
     } catch (erreur) {
