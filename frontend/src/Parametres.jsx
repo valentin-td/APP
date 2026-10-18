@@ -88,10 +88,14 @@ export default function Parametres({
     ] },
     { titre: 'Ressources Humaines (RH)', lignes: [
       { id: 'suivi_heures', icone: ICONS.person, label: 'Suivi des heures', valeur: configSalon.mode_suivi_heures === 'POINTEUSE' ? 'Pointeuse (Premium)' : 'Semi-Auto (Pro)' },
-    ] },
+    ] },    
   ] : role === 'salon' ? [
     { titre: 'Salon', lignes: [
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
+    ] },
+  ] : role === 'employe' ? [
+    { titre: 'Sécurité de mon compte', lignes: [
+      { id: 'securite_employe', icone: ICONS.lock, label: 'Modifier mon code PIN personnel' },
     ] },
   ] : [];
 
@@ -404,6 +408,24 @@ const groupesBas = [
               {carteSauvegarde}
           </>);
       }
+      case 'securite_employe': return (<>
+                  <div className="carte scan-carte">
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'block'}}>Modifiez votre code PIN personnel à 4 chiffres. Ce code est strictement confidentiel.</span>
+                    <input type="password" maxLength="4" inputMode="numeric" className="input-fournisseur" placeholder="Nouveau PIN (ex: 1234)" value={configSalon.nouveau_pin_employe || ''} onChange={(e) => setConfigSalon({...configSalon, nouveau_pin_employe: e.target.value.replace(/\D/g, '')})} style={{marginBottom: '16px', letterSpacing: '0.2em', fontWeight: 'bold'}}/>
+                    <button type="button" className="btn-action" style={{ width: '100%' }} onClick={async () => {
+                        if (!configSalon.nouveau_pin_employe || configSalon.nouveau_pin_employe.length < 4) return alert("Veuillez saisir 4 chiffres.");
+                        try {
+                            const tokenApi = localStorage.getItem('api_token');
+                            const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/mon-pin`, {
+                                method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenApi}` },
+                                body: JSON.stringify({ nouveau_pin: configSalon.nouveau_pin_employe })
+                            });
+                            if(res.ok) { alert("Code PIN modifié avec succès !"); setConfigSalon({...configSalon, nouveau_pin_employe: ''}); }
+                            else alert("Erreur : Ce code PIN est trop simple ou invalide.");
+                        } catch(e) { alert("Erreur de connexion."); }
+                    }}>Enregistrer le nouveau PIN</button>
+                  </div>
+      </>);
       case 'horaires': return (<>
                   <div className="carte scan-carte">
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
