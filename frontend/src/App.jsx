@@ -236,7 +236,9 @@ function App() {
       montant_tva: '',
       montant_ttc: '',
       mode_paiement: 'CARTE',
-      compte_comptable: '607'
+      compte_comptable: '607',
+      id_employe: '',
+      code_pin: ''
   });
   const [erreurAnalyseIA, setErreurAnalyseIA] = useState(null);
   
@@ -2079,6 +2081,12 @@ function App() {
   const enregistrerFactureManuelle = async () => {
       if (!formFactureManuelle.nom_fournisseur.trim()) return showToast("Veuillez renseigner le fournisseur.", "error");
       if (!formFactureManuelle.montant_ttc || parseFloat(formFactureManuelle.montant_ttc) <= 0) return showToast("Veuillez saisir un montant TTC valide.", "error");
+      
+      if (role === 'salon' && configSalon.securite_pin_salon_active !== false) {
+          if (!formFactureManuelle.id_employe) return showToast("Veuillez choisir l'employé responsable.", "error");
+          if (!formFactureManuelle.code_pin || formFactureManuelle.code_pin.length < 4) return showToast("Le code PIN personnel est obligatoire.", "error");
+      }
+
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/factures/saisie-manuelle', {
               method: 'POST',
@@ -2096,10 +2104,15 @@ function App() {
               montant_tva: '',
               montant_ttc: '',
               mode_paiement: 'CARTE',
-              compte_comptable: '607'
+              compte_comptable: '607',
+              id_employe: '',
+              code_pin: ''
           });
+          setErreurPinAction(null);
           chargerTout();
       } catch (e) {
+          if (e.data) appliquerRetourPinLocal(formFactureManuelle.id_employe, e.data);
+          setFormFactureManuelle({ ...formFactureManuelle, code_pin: '' });
           showToast(e.message || "Erreur lors de l'enregistrement.", "error");
       }
   };
@@ -7414,9 +7427,53 @@ function App() {
                       </div>
                   </div>
 
+                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
+                      const statutPinDepense = getStatutBlocagePin(formFactureManuelle.id_employe);
+                      return (
+                          <>
+                              <div style={{ marginBottom: '12px' }}>
+                                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable</label>
+                                  <select className="input-fournisseur" value={formFactureManuelle.id_employe} onChange={e => { setFormFactureManuelle({...formFactureManuelle, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ marginBottom: 0 }}>
+                                      <option value="">-- Sélectionnez votre nom --</option>
+                                      <option value="gerant">Gérant (Moi-même)</option>
+                                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                  </select>
+                              </div>
+
+                              <div style={{ marginBottom: '20px' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>
+                                      <span>Code PIN personnel (Validation NF525)</span>
+                                      {statutPinDepense.tentatives > 0 && !statutPinDepense.bloque && (
+                                          <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', textTransform: 'none' }}>
+                                              {statutPinDepense.essaisRestants} essai{statutPinDepense.essaisRestants > 1 ? 's' : ''} restant{statutPinDepense.essaisRestants > 1 ? 's' : ''}
+                                          </span>
+                                      )}
+                                  </label>
+                                  <input
+                                      type="password"
+                                      inputMode="numeric"
+                                      maxLength="10"
+                                      disabled={statutPinDepense.bloque}
+                                      className="input-fournisseur"
+                                      placeholder={statutPinDepense.bloque ? "Accès verrouillé" : "Votre code PIN"}
+                                      value={formFactureManuelle.code_pin}
+                                      onChange={e => { setFormFactureManuelle({...formFactureManuelle, code_pin: e.target.value.replace(/\D/g, '')}); setErreurPinAction(null); }}
+                                      style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold', opacity: statutPinDepense.bloque ? 0.5 : 1, border: (statutPinDepense.bloque || erreurPinAction) ? '1px solid var(--color-danger)' : undefined }}
+                                  />
+                                  {(statutPinDepense.bloque || erreurPinAction) && (
+                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                          <span>{statutPinDepense.bloque ? statutPinDepense.message : erreurPinAction}</span>
+                                      </div>
+                                  )}
+                              </div>
+                          </>
+                      );
+                  })()}
+
                   <div style={{ display: 'flex', gap: '12px' }}>
-                      <button onClick={() => setShowSaisieManuelleFacture(false)} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
-                      <button onClick={enregistrerFactureManuelle} className="btn-action" style={{ flex: 2 }}>Enregistrer la dépense</button>
+                      <button onClick={() => { setShowSaisieManuelleFacture(false); setErreurPinAction(null); }} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
+                      <button disabled={role === 'salon' && configSalon.securite_pin_salon_active !== false && getStatutBlocagePin(formFactureManuelle.id_employe).bloque} onClick={enregistrerFactureManuelle} className="btn-action" style={{ flex: 2 }}>Enregistrer la dépense</button>
                   </div>
               </div>
           </div>
