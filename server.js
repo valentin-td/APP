@@ -1141,42 +1141,103 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, securite_pin_salon_active, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville } = req.body;
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, securite_pin_salon_active, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville, fidelite_type, fidelite_points_seuil, fidelite_points_valeur, fidelite_tampons_seuil, fidelite_recompense_type, fidelite_recompense_valeur, fidelite_delai_sms } = req.body;
     try { 
-        const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
-        if ((pin_salon !== undefined || securite_pin_salon_active !== undefined) && req.user.role !== 'gerant') {
-            return res.status(403).json({ erreur: "Seul le gérant peut modifier les paramètres de sécurité du salon." });
+        if (req.user.role === 'employe') {
+            return res.status(403).json({ erreur: "Les employés ne peuvent pas modifier les paramètres du salon." });
         }
-        if (pin_salon && isPinWeak(pin_salon)) return res.status(400).json({ erreur: "Le code PIN du salon est trop simple (évitez 0000, 1234...)." });
+
+        // Si c'est le poste Salon qui enregistre, on met uniquement à jour les paramètres opérationnels (Horaires, Fidélité, Nettoyage) sans écraser les secrets ni la sécurité du Gérant
+        if (req.user.role === 'salon') {
+            if (pin_salon && String(pin_salon).trim() !== '') {
+                return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
+            }
+            await pool.query(
+                `UPDATE configuration_salon SET 
+                    heure_ouverture = $1, heure_fermeture = $2, temps_nettoyage_minutes = $3,
+                    fidelite_type = COALESCE($4, fidelite_type),
+                    fidelite_points_seuil = COALESCE($5, fidelite_points_seuil),
+                    fidelite_points_valeur = COALESCE($6, fidelite_points_valeur),
+                    fidelite_tampons_seuil = COALESCE($7, fidelite_tampons_seuil),
+                    fidelite_recompense_type = COALESCE($8, fidelite_recompense_type),
+                    fidelite_recompense_valeur = COALESCE($9, fidelite_recompense_valeur),
+                    fidelite_delai_sms = COALESCE($10, fidelite_delai_sms)
+                 WHERE id_salon = $11`,
+                [
+                    heure_ouverture !== undefined ? parseInt(heure_ouverture, 10) : 8,
+                    heure_fermeture !== undefined ? parseInt(heure_fermeture, 10) : 20,
+                    temps_nettoyage_minutes !== undefined ? parseInt(temps_nettoyage_minutes, 10) : 0,
+                    fidelite_type || null,
+                    fidelite_points_seuil !== undefined ? parseInt(fidelite_points_seuil, 10) : null,
+                    fidelite_points_valeur !== undefined ? String(fidelite_points_valeur) : null,
+                    fidelite_tampons_seuil !== undefined ? parseInt(fidelite_tampons_seuil, 10) : null,
+                    fidelite_recompense_type || null,
+                    fidelite_recompense_valeur !== undefined ? String(fidelite_recompense_valeur) : null,
+                    fidelite_delai_sms !== undefined ? parseInt(fidelite_delai_sms, 10) : null,
+                    req.user.id_salon
+                ]
+            );
+            await enregistrerJET(req.user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { role: 'salon', champs_modifies: ['horaires', 'fidelite'] });
+            return res.json({ message: "Paramètres enregistrés avec succès !" });
+        }
+
+        const passChiffre = mot_de_passe_email ? chiffrer(mot_de_passe_email) : null; 
+        const nouveauPinFourni = pin_salon !== undefined && String(pin_salon).trim() !== '';
+        if (nouveauPinFourni && isPinWeak(String(pin_salon).trim())) {
+            return res.status(400).json({ erreur: "Le code PIN du salon est trop simple (évitez 0000, 1234...)." });
+        }
         
-        let finalPinSalon = pin_salon;
-        if (pin_salon && !pin_salon.startsWith('$2')) {
-            finalPinSalon = await bcrypt.hash(pin_salon, 10);
+        let finalPinSalon = null;
+        if (nouveauPinFourni) {
+            finalPinSalon = String(pin_salon).trim().startsWith('$2')
+                ? String(pin_salon).trim()
+                : await bcrypt.hash(String(pin_salon).trim(), 10);
         }
         const secPinSalon = securite_pin_salon_active !== undefined ? Boolean(securite_pin_salon_active) : true;
 
-        const updateQuery = pin_salon !== undefined
-            ? `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $24, pin_salon = $23, mode_suivi_heures = $25, nom_salon = $26, siret = $27, adresse_salon = $28, tva_intra = $29, forme_juridique = $30, capital_social = $31, rcs_ville = $32, securite_pin_salon_active = $33 WHERE id_salon = $16`
-            : `UPDATE configuration_salon SET google_api_key = $1, google_account_id = $2, google_location_id = $3, email_reception_factures = $4, mot_de_passe_app_email = $5, brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, tva_intra = $28, forme_juridique = $29, capital_social = $30, rcs_ville = $31, securite_pin_salon_active = $32 WHERE id_salon = $16`; 
-            
-        const params = [google_api_key, google_account_id, google_location_id, email_factures, passChiffre, brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, heure_ouverture || 8, heure_fermeture || 20, telephone_gerant, alertes_sms_actives || false, email_comptable, jour_envoi_bilan || 1, req.user.id_salon, temps_nettoyage_minutes || 0, compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', compte_produits || '707000', compte_tva || '445710'];
-        
-        if (pin_salon !== undefined) { 
-            params.push(finalPinSalon || null); 
-            params.push(pennylane_api_key || null); 
-        } else { 
-            params.push(pennylane_api_key || null); 
-        }
-        
-        params.push(mode_suivi_heures || 'MANUEL');
-        params.push(nom_salon || null);
-        params.push(siret || null);
-        params.push(adresse_salon || null);
-        params.push(tva_intra || null);
-        params.push(forme_juridique || null);
-        params.push(capital_social || null);
-        params.push(rcs_ville || null);
-        params.push(secPinSalon);
+        const updateQuery = `
+            UPDATE configuration_salon SET 
+                google_api_key = $1, google_account_id = $2, google_location_id = $3, 
+                email_reception_factures = $4, mot_de_passe_app_email = COALESCE($5, mot_de_passe_app_email), 
+                brevo_api_key = $6, sms_sender_name = $7, lien_google_maps = $8, stripe_reader_id = $9, 
+                heure_ouverture = $10, heure_fermeture = $11, telephone_gerant = $12, alertes_sms_actives = $13, 
+                email_comptable = $14, jour_envoi_bilan = $15, temps_nettoyage_minutes = $17, 
+                compte_banque = $18, compte_caisse = $19, compte_prestations = $20, compte_produits = $21, compte_tva = $22, 
+                pennylane_api_key = $23, mode_suivi_heures = $24, nom_salon = $25, siret = $26, adresse_salon = $27, 
+                tva_intra = $28, forme_juridique = $29, capital_social = $30, rcs_ville = $31, 
+                securite_pin_salon_active = $32,
+                pin_salon = CASE WHEN $33::varchar IS NOT NULL THEN $33::varchar ELSE pin_salon END,
+                fidelite_type = COALESCE($34, fidelite_type),
+                fidelite_points_seuil = COALESCE($35, fidelite_points_seuil),
+                fidelite_points_valeur = COALESCE($36, fidelite_points_valeur),
+                fidelite_tampons_seuil = COALESCE($37, fidelite_tampons_seuil),
+                fidelite_recompense_type = COALESCE($38, fidelite_recompense_type),
+                fidelite_recompense_valeur = COALESCE($39, fidelite_recompense_valeur),
+                fidelite_delai_sms = COALESCE($40, fidelite_delai_sms)
+            WHERE id_salon = $16
+        `;
+
+        const params = [
+            google_api_key, google_account_id, google_location_id, email_factures, passChiffre, 
+            brevo_api_key, sms_sender_name || 'MonSalon', lien_google_maps, stripe_reader_id, 
+            heure_ouverture !== undefined ? parseInt(heure_ouverture, 10) : 8, 
+            heure_fermeture !== undefined ? parseInt(heure_fermeture, 10) : 20, 
+            telephone_gerant, Boolean(alertes_sms_actives), email_comptable, 
+            jour_envoi_bilan || 1, req.user.id_salon, 
+            temps_nettoyage_minutes !== undefined ? parseInt(temps_nettoyage_minutes, 10) : 0, 
+            compte_banque || '512000', compte_caisse || '530000', compte_prestations || '706000', 
+            compte_produits || '707000', compte_tva || '445710', pennylane_api_key || null, 
+            mode_suivi_heures || 'MANUEL', nom_salon || null, siret || null, adresse_salon || null, 
+            tva_intra || null, forme_juridique || null, capital_social || null, rcs_ville || null, 
+            secPinSalon, finalPinSalon,
+            fidelite_type || 'NONE',
+            fidelite_points_seuil !== undefined ? parseInt(fidelite_points_seuil, 10) : 100,
+            fidelite_points_valeur !== undefined ? String(fidelite_points_valeur) : '10',
+            fidelite_tampons_seuil !== undefined ? parseInt(fidelite_tampons_seuil, 10) : 10,
+            fidelite_recompense_type || 'MONTANT',
+            fidelite_recompense_valeur !== undefined ? String(fidelite_recompense_valeur) : '10',
+            fidelite_delai_sms !== undefined ? parseInt(fidelite_delai_sms, 10) : 60
+        ];
         
         await pool.query(updateQuery, params);
 
