@@ -2185,24 +2185,6 @@ function App() {
       }));
   };
 
-  const [erreurPinAction, setErreurPinAction] = useState(null);
-
-  const appliquerRetourPinLocal = (empIdentifier, dataErr) => {
-      if (!empIdentifier || !dataErr) return;
-      setEmployesListe(prev => (prev || []).map(emp => {
-          const match = String(emp.id_employe) === String(empIdentifier)
-              || (emp.nom && emp.nom.toLowerCase() === String(empIdentifier).toLowerCase())
-              || (String(empIdentifier).toLowerCase() === 'gerant' && emp.est_gerant);
-          if (!match) return emp;
-          return {
-              ...emp,
-              pin_tentatives_echouees: dataErr.tentatives !== undefined ? dataErr.tentatives : emp.pin_tentatives_echouees,
-              pin_bloque_jusqua: dataErr.locked_until !== undefined ? dataErr.locked_until : emp.pin_bloque_jusqua,
-              pin_bloque_definitif: dataErr.locked_permanent !== undefined ? dataErr.locked_permanent : emp.pin_bloque_definitif
-          };
-      }));
-  };
-
   const getStatutBlocagePin = (empIdentifier) => {
       if (!empIdentifier) return { bloque: false, definitif: false, message: null, tentatives: 0, essaisRestants: 3 };
       const emp = (employesListe || []).find(
