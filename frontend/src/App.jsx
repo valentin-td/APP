@@ -1840,19 +1840,17 @@ function App() {
               headers: getAuthHeaders(true), 
               body: JSON.stringify(payload) 
           }); 
-          const data = await handleFetchError(response); 
+          await handleFetchError(response); 
           
-          // Toast de succès très visible
-          setToast({ message: "✅ Vos paramètres ont bien été enregistrés !", type: "success" });
-          setTimeout(() => setToast(null), 4000);
+          // Notification de succès fluide et sans emoji
+          showToast("Vos paramètres ont bien été enregistrés.", "success");
           
           // Rafraîchissement silencieux des données locales pour refléter la base de données
           chargerTout(); 
       } catch (error) { 
           console.error("Erreur Sauvegarde Paramètres :", error);
           if(error.message !== "Abonnement inactif") {
-              setToast({ message: `❌ Erreur : ${error.message || "Impossible d'enregistrer"}`, type: "error" });
-              setTimeout(() => setToast(null), 5000);
+              showToast(`Erreur : ${error.message || "Impossible d'enregistrer"}`, "error");
           }
       }
   };
@@ -5388,6 +5386,36 @@ function App() {
                                   <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--text-main)'}}>Prime estimée</span>
                                   <span style={{fontSize: '18px', fontWeight: 'bold', color: 'var(--color-success)'}}>{employe.performances_actuelles.prime_estimee.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></span>
                               </div>
+
+                              {/* --- BLOC ALERTE PIN DE DÉBLOCAGE --- */}
+                              {(() => {
+                                  const estBloqueTemp = employe.pin_bloque_jusqua && new Date(employe.pin_bloque_jusqua) > new Date();
+                                  const estBloqueDef = Boolean(employe.pin_bloque_definitif);
+                                  if (!estBloqueTemp && !estBloqueDef) return null;
+                                  const minRestantes = estBloqueTemp ? Math.max(1, Math.ceil((new Date(employe.pin_bloque_jusqua).getTime() - Date.now()) / 60000)) : 0;
+
+                                  return (
+                                      <div style={{ marginTop: '16px', padding: '12px', borderRadius: '10px', background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600' }}>
+                                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                              <span>
+                                                  {estBloqueDef
+                                                      ? "Code PIN bloqué définitivement (9 échecs)"
+                                                      : `Code PIN suspendu (${minRestantes} min)`}
+                                              </span>
+                                          </div>
+                                          <button
+                                              type="button"
+                                              onClick={() => debloquerPinEmploye(employe.id_employe)}
+                                              style={{ padding: '7px 14px', borderRadius: '8px', border: '1px solid var(--color-danger)', background: 'var(--bg-card)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                                          >
+                                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+                                              Débloquer le PIN
+                                          </button>
+                                      </div>
+                                  );
+                              })()}
+
                           </div>
 
                           {/* SECTION SUIVI DES HEURES EN DIRECT (FILTRÉ) */}
