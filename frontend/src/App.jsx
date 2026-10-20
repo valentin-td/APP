@@ -7284,10 +7284,6 @@ function App() {
                       const statutPinFusion = getStatutBlocagePin(mergeForm.id_employe);
                       return (
                           <>
-                              {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
-                      const statutPinFusion = getStatutBlocagePin(mergeForm.id_employe);
-                      return (
-                          <>
                               <div style={{ marginBottom: '12px' }}>
                                   <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
                                   <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => { setMergeForm({...mergeForm, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ marginBottom: 0 }}>
@@ -7327,7 +7323,6 @@ function App() {
                           </>
                       );
                   })()}
-                              
 
                   <div style={{ display: 'flex', gap: '12px', marginTop: role === 'gerant' ? '24px' : '0' }}>
                       <button onClick={() => { setShowMergeModal(false); setErreurPinAction(null); }} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
