@@ -2279,7 +2279,7 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
     let operateurCloture;
     try {
         operateurCloture = await verifierPinActionSensibleSalon(req, {
-            id_employe,
+            id_employe: id_employe === 'gerant' ? 'gerant' : id_employe,
             nom_operateur: ferme_par,
             code_pin,
             action_label: 'Clôture journalière Z'
@@ -2464,7 +2464,7 @@ app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
     let operateurRegu;
     try {
         operateurRegu = await verifierPinActionSensibleSalon(req, {
-            id_employe,
+            id_employe: id_employe === 'gerant' ? 'gerant' : id_employe,
             nom_operateur,
             code_pin,
             action_label: 'Régularisation matinale de caisse'
