@@ -869,6 +869,7 @@ app.post('/api/employes/login-pin', async (req, res) => {
         if (emp.pin_bloque_definitif) {
             return res.status(403).json({
                 erreur: `Accès PIN bloqué définitivement pour ${emp.nom}. Le gérant doit débloquer votre profil dans l'espace Équipe.`,
+                tentatives: parseInt(emp.pin_tentatives_echouees, 10) || 9,
                 locked_permanent: true
             });
         }
@@ -876,6 +877,7 @@ app.post('/api/employes/login-pin', async (req, res) => {
             const minRestantes = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
             return res.status(403).json({
                 erreur: `Code PIN suspendu temporairement pour ${emp.nom}. Réessayez dans ${minRestantes} minute(s).`,
+                tentatives: parseInt(emp.pin_tentatives_echouees, 10) || 3,
                 locked_until: emp.pin_bloque_jusqua
             });
         }
@@ -899,7 +901,7 @@ app.post('/api/employes/login-pin', async (req, res) => {
                 messageSanction = `Profil bloqué définitivement. Demandez au gérant de vous débloquer dans Équipe.`;
             } else if (nouvellesTentatives === 7) {
                 bloqueJusqua = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-                messageSanction = `Bloqué pendant 1 heure.`;
+                messageSanction = `Bloqué pendant 1 heure (2 essais restants ensuite avant blocage définitif).`;
             } else if (nouvellesTentatives === 5) {
                 bloqueJusqua = new Date(Date.now() + 30 * 60 * 1000).toISOString();
                 messageSanction = `Bloqué pendant 30 minutes.`;
@@ -908,7 +910,8 @@ app.post('/api/employes/login-pin', async (req, res) => {
                 messageSanction = `Bloqué pendant 15 minutes.`;
             } else {
                 const prochainSeuil = nouvellesTentatives < 3 ? 3 : (nouvellesTentatives < 5 ? 5 : (nouvellesTentatives < 7 ? 7 : 9));
-                messageSanction = `${prochainSeuil - nouvellesTentatives} essai(s) restant(s) avant verrouillage.`;
+                const restants = prochainSeuil - nouvellesTentatives;
+                messageSanction = `${restants} essai${restants > 1 ? 's' : ''} restant${restants > 1 ? 's' : ''} avant verrouillage.`;
             }
 
             await pool.query(
@@ -916,7 +919,12 @@ app.post('/api/employes/login-pin', async (req, res) => {
                 [nouvellesTentatives, bloqueJusqua, bloqueDefinitif, emp.id_employe, id_salon]
             );
             await enregistrerJET(id_salon, bloqueDefinitif ? 'PIN_BLOCAGE_DEFINITIF' : 'CONNEXION_ECHOUEE', { nom_employe: emp.nom, tentatives: nouvellesTentatives, is_pointeuse: !!is_pointeuse });
-            return res.status(400).json({ erreur: `Code PIN incorrect. ${messageSanction}`, tentatives: nouvellesTentatives });
+            return res.status(400).json({
+                erreur: `Code PIN incorrect. ${messageSanction}`,
+                tentatives: nouvellesTentatives,
+                locked_until: bloqueJusqua,
+                locked_permanent: bloqueDefinitif
+            });
         }
 
         // Remise à zéro des tentatives en cas de succès
