@@ -2172,6 +2172,24 @@ function App() {
       }));
   };
 
+  const [erreurPinAction, setErreurPinAction] = useState(null);
+
+  const appliquerRetourPinLocal = (empIdentifier, dataErr) => {
+      if (!empIdentifier || !dataErr) return;
+      setEmployesListe(prev => (prev || []).map(emp => {
+          const match = String(emp.id_employe) === String(empIdentifier)
+              || (emp.nom && emp.nom.toLowerCase() === String(empIdentifier).toLowerCase())
+              || (String(empIdentifier).toLowerCase() === 'gerant' && emp.est_gerant);
+          if (!match) return emp;
+          return {
+              ...emp,
+              pin_tentatives_echouees: dataErr.tentatives !== undefined ? dataErr.tentatives : emp.pin_tentatives_echouees,
+              pin_bloque_jusqua: dataErr.locked_until !== undefined ? dataErr.locked_until : emp.pin_bloque_jusqua,
+              pin_bloque_definitif: dataErr.locked_permanent !== undefined ? dataErr.locked_permanent : emp.pin_bloque_definitif
+          };
+      }));
+  };
+
   const getStatutBlocagePin = (empIdentifier) => {
       if (!empIdentifier) return { bloque: false, definitif: false, message: null, tentatives: 0, essaisRestants: 3 };
       const emp = (employesListe || []).find(
@@ -2190,7 +2208,7 @@ function App() {
               definitif: true,
               tentatives: tentatives || 9,
               essaisRestants: 0,
-              message: "Accès PIN bloqué définitivement (9 échecs). Déblocage requis par le gérant dans l'espace Équipe."
+              message: "Accès PIN bloqué définitivement (9 échecs)."
           };
       }
       if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
@@ -2200,7 +2218,7 @@ function App() {
               definitif: false,
               tentatives: tentatives || 3,
               essaisRestants,
-              message: `Accès PIN suspendu temporairement (${min} min restante${min > 1 ? 's' : ''}).`
+              message: `PIN suspendu temporairement (${min} min restante${min > 1 ? 's' : ''}).`
           };
       }
       return { bloque: false, definitif: false, message: null, tentatives, essaisRestants };
@@ -2223,7 +2241,7 @@ function App() {
 
   const demanderZDeCaisse = () => {
       const currentRole = decodeToken(token)?.role || userRole;
-      setZEmployeSelect(currentRole === 'gerant' ? 'Gérant' : '');
+      setZEmployeSelect(currentRole === 'gerant' ? 'gerant' : '');
       setZCodePin('');
       setErreurPinAction(null);
       setCompteCaisse({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
@@ -6311,7 +6329,7 @@ function App() {
                               <select
                                   className="input-fournisseur"
                                   value={reguEmployeId}
-                                  onChange={e => { setReguEmployeId(e.target.value); setReguCodePin(''); }}
+                                  onChange={e => { setReguEmployeId(e.target.value); setReguCodePin(''); setErreurPinAction(null); }}
                                   style={{ marginBottom: '12px', width: '100%', boxSizing: 'border-box' }}
                               >
                                   <option value="">-- Sélectionnez votre nom --</option>
@@ -6336,13 +6354,13 @@ function App() {
                                   className="input-fournisseur"
                                   placeholder={statutPin.bloque ? "Accès verrouillé" : "Saisissez votre code PIN"}
                                   value={reguCodePin}
-                                  onChange={e => setReguCodePin(e.target.value.replace(/\D/g, ''))}
-                                  style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px', fontSize: 'clamp(14px, 2.5vw, 16px)', letterSpacing: reguCodePin ? '0.2em' : 'normal', textAlign: 'center', fontWeight: '600', opacity: statutPin.bloque ? 0.5 : 1 }}
+                                  onChange={e => { setReguCodePin(e.target.value.replace(/\D/g, '')); setErreurPinAction(null); }}
+                                  style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px', fontSize: 'clamp(14px, 2.5vw, 16px)', letterSpacing: reguCodePin ? '0.2em' : 'normal', textAlign: 'center', fontWeight: '600', opacity: statutPin.bloque ? 0.5 : 1, border: (statutPin.bloque || erreurPinAction) ? '1px solid var(--color-danger)' : undefined }}
                               />
-                              {statutPin.bloque && (
-                                  <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '500', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                              {(statutPin.bloque || erreurPinAction) && (
+                                  <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
                                       <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                      <span>{statutPin.message}</span>
+                                      <span>{statutPin.bloque ? statutPin.message : erreurPinAction}</span>
                                   </div>
                               )}
                           </div>
@@ -6350,8 +6368,38 @@ function App() {
                   })()}
 
                   <button 
-                      onClick={soumettreRegularisation} 
-                      disabled={!reguMontant || (role === 'salon' && configSalon.securite_pin_salon_active !== false && (!reguEmployeId || reguCodePin.length < 4))} 
+                      onClick={async () => {
+                          if (!reguMontant || isNaN(reguMontant)) return showToast("Veuillez saisir le montant réel.", "error");
+                          const currentRole = decodeToken(token)?.role;
+                          if (currentRole === 'salon' && configSalon.securite_pin_salon_active !== false) {
+                              if (!reguEmployeId) return showToast("Veuillez sélectionner le collaborateur qui ouvre la caisse.", "error");
+                              if (!reguCodePin || reguCodePin.trim().length < 4) return showToast("Veuillez saisir votre code PIN personnel.", "error");
+                          }
+                          try {
+                              const payload = { 
+                                  id_cloture: reguCloture.id_cloture, 
+                                  montant_reel: parseFloat(reguMontant), 
+                                  id_employe: currentRole === 'employe' ? decodeToken(token).id_employe : (reguEmployeId || null),
+                                  code_pin: currentRole === 'salon' ? reguCodePin : undefined
+                              };
+                              const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/regulariser', {
+                                  method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload)
+                              });
+                              const data = await handleFetchError(res);
+                              showToast("Caisse ouverte et régularisée !", "success");
+                              setReguCloture(null);
+                              setReguMontant('');
+                              setReguEmployeId('');
+                              setReguCodePin('');
+                              setErreurPinAction(null);
+                              if (typeof chargerMouvementsCaisse === 'function') chargerMouvementsCaisse();
+                          } catch (e) { 
+                              if (e.data) appliquerRetourPinLocal(reguEmployeId, e.data);
+                              setReguCodePin('');
+                              showToast(e.message, "error"); 
+                          }
+                      }}
+                      disabled={!reguMontant || (role === 'salon' && configSalon.securite_pin_salon_active !== false && (!reguEmployeId || reguCodePin.length < 4))}
                       className="btn-action" 
                       style={{ width: '100%', padding: '16px', fontSize: '16px' }}
                   >
@@ -6473,7 +6521,7 @@ function App() {
                       {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
                           <div style={{ marginBottom: '14px' }}>
                               <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Collaborateur responsable</label>
-                              <select value={newMouvement.id_employe} onChange={(e) => setNewMouvement({...newMouvement, id_employe: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
+                              <select value={newMouvement.id_employe} onChange={(e) => { setNewMouvement({...newMouvement, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
                                   <option value="">-- Sélectionnez votre nom --</option>
                                   <option value="gerant">Gérant (Moi-même)</option>
                                   {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
@@ -6491,7 +6539,9 @@ function App() {
                                           Code PIN personnel
                                       </span>
                                       {statutPinMvt.tentatives > 0 && !statutPinMvt.bloque && (
-                                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#d97706' }}>{statutPinMvt.tentatives} échec(s)</span>
+                                          <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706' }}>
+                                              {statutPinMvt.essaisRestants} essai{statutPinMvt.essaisRestants > 1 ? 's' : ''} restant{statutPinMvt.essaisRestants > 1 ? 's' : ''}
+                                          </span>
                                       )}
                                   </label>
                                   <input
@@ -6502,20 +6552,42 @@ function App() {
                                       disabled={statutPinMvt.bloque}
                                       placeholder={statutPinMvt.bloque ? "Accès verrouillé" : "Saisissez votre code PIN"}
                                       value={newMouvement.code_pin || ''}
-                                      onChange={(e) => setNewMouvement({ ...newMouvement, code_pin: e.target.value.replace(/\D/g, '') })}
-                                      style={{ width: '100%', boxSizing: 'border-box', minHeight: '44px', padding: '12px', borderRadius: '12px', border: `1px solid ${statutPinMvt.bloque ? 'var(--color-danger)' : 'var(--border-color)'}`, background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: 'clamp(14px, 2.5vw, 16px)', fontWeight: '600', letterSpacing: newMouvement.code_pin ? '0.2em' : 'normal', textAlign: 'center', opacity: statutPinMvt.bloque ? 0.5 : 1 }}
+                                      onChange={(e) => { setNewMouvement({ ...newMouvement, code_pin: e.target.value.replace(/\D/g, '') }); setErreurPinAction(null); }}
+                                      style={{ width: '100%', boxSizing: 'border-box', minHeight: '44px', padding: '12px', borderRadius: '12px', border: `1px solid ${(statutPinMvt.bloque || erreurPinAction) ? 'var(--color-danger)' : 'var(--border-color)'}`, background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: 'clamp(14px, 2.5vw, 16px)', fontWeight: '600', letterSpacing: newMouvement.code_pin ? '0.2em' : 'normal', textAlign: 'center', opacity: statutPinMvt.bloque ? 0.5 : 1 }}
                                   />
-                                  {statutPinMvt.bloque && (
-                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '500', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                                  {(statutPinMvt.bloque || erreurPinAction) && (
+                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
                                           <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                          <span>{statutPinMvt.message}</span>
+                                          <span>{statutPinMvt.bloque ? statutPinMvt.message : erreurPinAction}</span>
                                       </div>
                                   )}
                               </div>
                           );
                       })()}
 
-                      <button onClick={ajouterMouvementCaisse} className="btn-action" style={{ width: '100%', padding: '14px', borderRadius: '12px', fontSize: '16px' }}>
+                      <button 
+                          disabled={role === 'salon' && configSalon.securite_pin_salon_active !== false && getStatutBlocagePin(newMouvement.id_employe).bloque}
+                          onClick={async () => {
+                              if (!newMouvement.motif.trim() || !newMouvement.montant) return showToast("Veuillez remplir le montant et le motif.", "error");
+                              try {
+                                  const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements', {
+                                      method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newMouvement)
+                                  });
+                                  const data = await handleFetchError(res);
+                                  showToast("Mouvement enregistré.", "success");
+                                  setShowMouvementModal(false);
+                                  setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '', code_pin: '' });
+                                  setModeCalculatrice(false);
+                                  setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
+                                  chargerMouvementsCaisse();
+                              } catch (e) { 
+                                  if (e.data) appliquerRetourPinLocal(newMouvement.id_employe, e.data);
+                                  setNewMouvement({ ...newMouvement, code_pin: '' });
+                                  showToast(e.message, "error"); 
+                              }
+                          }} 
+                          className="btn-action" style={{ width: '100%', padding: '14px', borderRadius: '12px', fontSize: '16px' }}
+                      >
                           Valider l'opération
                       </button>
                   </div>
@@ -7197,6 +7269,10 @@ function App() {
                       const statutPinFusion = getStatutBlocagePin(mergeForm.id_employe);
                       return (
                           <>
+                              {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
+                      const statutPinFusion = getStatutBlocagePin(mergeForm.id_employe);
+                      return (
+                          <>
                               <div style={{ marginBottom: '12px' }}>
                                   <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
                                   <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => { setMergeForm({...mergeForm, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ marginBottom: 0 }}>
@@ -7232,6 +7308,10 @@ function App() {
                                           <span>{statutPinFusion.bloque ? statutPinFusion.message : erreurPinAction}</span>
                                       </div>
                                   )}
+                              </div>
+                          </>
+                      );
+                  })()}
                               </div>
                           </>
                       );
