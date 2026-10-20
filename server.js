@@ -2241,7 +2241,13 @@ app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
             action_label: `Mouvement de caisse (${type_mouvement})`
         });
     } catch (pinErr) {
-        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+        return res.status(400).json({
+            erreur: pinErr.message,
+            require_pin: true,
+            tentatives: pinErr.tentatives,
+            locked_until: pinErr.locked_until,
+            locked_permanent: pinErr.locked_permanent
+        });
     }
 
     const clientDB = await pool.connect();
@@ -2279,7 +2285,13 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             action_label: 'Clôture journalière Z'
         });
     } catch (pinErr) {
-        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+        return res.status(400).json({
+            erreur: pinErr.message,
+            require_pin: true,
+            tentatives: pinErr.tentatives,
+            locked_until: pinErr.locked_until,
+            locked_permanent: pinErr.locked_permanent
+        });
     }
     const operateurFinalNom = operateurCloture.nom || ferme_par || 'Gérant';
 
@@ -2449,15 +2461,22 @@ app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => 
 
 app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
     const { id_cloture, montant_reel, id_employe, nom_operateur, code_pin } = req.body;
+    let operateurRegu;
     try {
-        await verifierPinActionSensibleSalon(req, {
+        operateurRegu = await verifierPinActionSensibleSalon(req, {
             id_employe,
             nom_operateur,
             code_pin,
             action_label: 'Régularisation matinale de caisse'
         });
     } catch (pinErr) {
-        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+        return res.status(400).json({
+            erreur: pinErr.message,
+            require_pin: true,
+            tentatives: pinErr.tentatives,
+            locked_until: pinErr.locked_until,
+            locked_permanent: pinErr.locked_permanent
+        });
     }
     const clientDB = await pool.connect();
     try {
@@ -4056,15 +4075,20 @@ app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
 
     let operateurValide;
     try {
-        // La fonction centrale exempte intelligemment le Gérant du code PIN
         operateurValide = await verifierPinActionSensibleSalon(req, {
-            id_employe: id_employe === 'gerant' ? null : id_employe,
+            id_employe: id_employe === 'gerant' ? 'gerant' : id_employe,
             nom_operateur: id_employe === 'gerant' ? 'Gérant' : null,
             code_pin,
             action_label: 'Fusion de stocks'
         });
     } catch (pinErr) {
-        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+        return res.status(400).json({
+            erreur: pinErr.message,
+            require_pin: true,
+            tentatives: pinErr.tentatives,
+            locked_until: pinErr.locked_until,
+            locked_permanent: pinErr.locked_permanent
+        });
     }
 
     try {
@@ -4089,7 +4113,7 @@ app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
             const typeFinal = type_article || artMaitre.type_article || 'PRODUIT_REVENTE';
             const delaiFinal = parseInt(delai_livraison_jours, 10) || artMaitre.delai_livraison_jours || 3;
 
-            // Mise à jour des recettes de l'Académie pour pointer vers l'article maître sans toucher aux lignes_ticket scellées NF525
+            // Mise à jour des recettes de l'Académie pour pointer vers l'article maître
             await clientDB.query(
                 'UPDATE recettes_articles SET id_article = $1 WHERE id_article = ANY($2::int[])',
                 [idMaitre, idsDoublons]
@@ -4101,15 +4125,19 @@ app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
                 [nomFinal, refFinale, prixFinal, typeFinal, stockTotal, delaiFinal, idMaitre, id_salon]
             );
 
-            // Suppression des doublons du catalogue
+            // Suppression des doublons (ou archivage hors stock si liés à d'anciennes lignes_ticket scellées NF525)
             await clientDB.query(
-                'DELETE FROM catalogue WHERE id_salon = $1 AND id_article = ANY($2::int[])',
+                'DELETE FROM catalogue WHERE id_salon = $1 AND id_article = ANY($2::int[]) AND id_article NOT IN (SELECT DISTINCT id_article FROM lignes_ticket WHERE id_salon = $1 AND id_article IS NOT NULL)',
+                [id_salon, idsDoublons]
+            );
+            await clientDB.query(
+                "UPDATE catalogue SET type_article = 'ARCHIVE_FUSION', stock_actuel = 0, reference = NULL WHERE id_salon = $1 AND id_article = ANY($2::int[])",
                 [id_salon, idsDoublons]
             );
 
             await enregistrerJET(id_salon, 'FUSION_ARTICLES_STOCK', {
-                operateur: emp.nom,
-                id_employe: emp.id_employe,
+                operateur: operateurValide.nom,
+                id_employe: operateurValide.id_employe,
                 id_article_maitre: idMaitre,
                 ids_supprimes: idsDoublons,
                 nom_unifie: nomFinal,
