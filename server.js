@@ -4774,9 +4774,27 @@ app.get('/api/ia/taches', verifierToken, async (req, res) => {
 
 // --- SAISIE MANUELLE DE FACTURE / DÉPENSE (ACCESSIBLE PRO & PREMIUM) ---
 app.post('/api/factures/saisie-manuelle', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
-    const { nom_fournisseur, numero_facture, date_facture, montant_ht, montant_tva, montant_ttc, mode_paiement, compte_comptable } = req.body;
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Accès réservé au gérant ou à la caisse." });
+    const { nom_fournisseur, numero_facture, date_facture, montant_ht, montant_tva, montant_ttc, mode_paiement, compte_comptable, id_employe, code_pin } = req.body;
     const id_salon = req.user.id_salon;
+
+    let operateurValide;
+    try {
+        operateurValide = await verifierPinActionSensibleSalon(req, {
+            id_employe: id_employe === 'gerant' ? 'gerant' : id_employe,
+            nom_operateur: id_employe === 'gerant' ? 'Gérant' : null,
+            code_pin,
+            action_label: 'Saisie manuelle de dépense'
+        });
+    } catch (pinErr) {
+        return res.status(400).json({
+            erreur: pinErr.message,
+            require_pin: true,
+            tentatives: pinErr.tentatives,
+            locked_until: pinErr.locked_until,
+            locked_permanent: pinErr.locked_permanent
+        });
+    }
 
     if (!nom_fournisseur || !String(nom_fournisseur).trim()) {
         return res.status(400).json({ erreur: "Le nom du fournisseur est obligatoire." });
