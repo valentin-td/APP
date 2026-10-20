@@ -1061,7 +1061,7 @@ function App() {
                 nom_salon: d?.nom_salon || '', forme_juridique: d?.forme_juridique || '', siret: d?.siret || '', adresse_salon: d?.adresse_salon || '', tva_intra: d?.tva_intra || '',
                 google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
                 fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
-                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null, pin_salon: d?.pin_salon || '', securite_pin_salon_active: d?.securite_pin_salon_active !== false, temps_nettoyage_minutes: d?.temps_nettoyage_minutes || 0,
+                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null, pin_salon: (d?.pin_salon && !String(d.pin_salon).startsWith('$2')) ? d.pin_salon : '', securite_pin_salon_active: d?.securite_pin_salon_active !== false, temps_nettoyage_minutes: d?.temps_nettoyage_minutes || 0,
                 plan_actuel: d?.plan_actuel || 'PREMIUM_TRIAL', date_fin_essai: d?.date_fin_essai || null, pennylane_api_key: d?.pennylane_api_key || '', mode_suivi_heures: d?.mode_suivi_heures || 'MANUEL',
                 comptes_emails: Array.isArray(d?.comptes_emails) ? d.comptes_emails : (d?.email_reception_factures ? [{ email: d.email_reception_factures, mot_de_passe: d.mot_de_passe_app_email || '' }] : [])
             };
@@ -7423,8 +7423,54 @@ function App() {
       )}
 
             {toast && (
-        <div className={`toast-notification ${toast.type}`} style={{ zIndex: 9999999 }}>
-          {toast.message}
+        <div
+          className={`toast-notification ${toast.type}`}
+          style={{
+            position: 'fixed',
+            top: isMobile ? 'calc(env(safe-area-inset-top, 12px) + 14px)' : '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 9999999,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            padding: '12px 18px',
+            borderRadius: '999px',
+            background: 'var(--bg-card)',
+            color: 'var(--text-main)',
+            border: `1px solid ${toast.type === 'error' ? 'var(--color-danger)' : toast.type === 'info' ? 'var(--color-info)' : 'var(--color-success)'}`,
+            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.18)',
+             backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            fontSize: '13.5px',
+            fontWeight: '600',
+            maxWidth: '90vw',
+            width: 'max-content',
+            pointerEvents: 'auto'
+          }}
+        >
+          <span
+            style={{
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              background: toast.type === 'error' ? 'var(--bg-danger)' : toast.type === 'info' ? 'var(--bg-info)' : 'var(--bg-success)',
+              color: toast.type === 'error' ? 'var(--color-danger)' : toast.type === 'info' ? 'var(--color-info)' : 'var(--color-success)'
+            }}
+          >
+            {toast.type === 'error' ? (
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            ) : toast.type === 'info' ? (
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            )}
+          </span>
+          <span style={{ lineHeight: '1.35' }}>{toast.message}</span>
         </div>
       )}
     </div>
