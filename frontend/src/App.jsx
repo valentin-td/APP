@@ -1849,14 +1849,20 @@ function App() {
       reader.readAsDataURL(file);
   };
 
-  const sauvegarderParametres = async () => {
+  const sauvegarderParametres = async (customConfig = null) => {
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
-      if(configSalon.pin_salon && isPinWeak(configSalon.pin_salon)) return showToast("Le code PIN du salon est trop simple (évitez 0000, 1234...).", "error");
+      const sourceConfig = (customConfig && typeof customConfig === 'object' && !customConfig.nativeEvent && !customConfig.target) ? customConfig : configSalon;
+      if(sourceConfig.pin_salon && !String(sourceConfig.pin_salon).startsWith('$2') && isPinWeak(sourceConfig.pin_salon)) {
+          return showToast("Le code PIN du salon est trop simple (évitez 0000, 1234...).", "error");
+      }
       
       try { 
-          const payload = { ...configSalon };
-          // Sécurité stricte pour forcer le boolean côté client et garantir son écriture en base
-          payload.securite_pin_salon_active = configSalon.securite_pin_salon_active !== false; 
+          const payload = { ...sourceConfig };
+          payload.securite_pin_salon_active = sourceConfig.securite_pin_salon_active !== false; 
+          if (userRole !== 'gerant') {
+              delete payload.pin_salon;
+              delete payload.securite_pin_salon_active;
+          }
           
           const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { 
               method: 'POST', 
@@ -1865,16 +1871,16 @@ function App() {
           }); 
           await handleFetchError(response); 
           
-          // Notification de succès fluide et sans emoji
+          setConfigSalon(prev => ({ ...prev, ...sourceConfig, securite_pin_salon_active: sourceConfig.securite_pin_salon_active !== false }));
           showToast("Vos paramètres ont bien été enregistrés.", "success");
-          
-          // Rafraîchissement silencieux des données locales pour refléter la base de données
           chargerTout(); 
+          return true;
       } catch (error) { 
           console.error("Erreur Sauvegarde Paramètres :", error);
           if(error.message !== "Abonnement inactif") {
               showToast(`Erreur : ${error.message || "Impossible d'enregistrer"}`, "error");
           }
+          return false;
       }
   };
 
