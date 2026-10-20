@@ -108,25 +108,54 @@ const groupesBas = [
     ];
 
   const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
   const handleSave = async () => {
       setIsSaving(true);
+      setSaveSuccess(false);
       try {
-          await onSave();
+          const ok = await onSave(configSalon);
+          if (ok !== false) {
+              setSaveSuccess(true);
+              setTimeout(() => setSaveSuccess(false), 3000);
+          }
       } finally {
           setIsSaving(false);
       }
   };
 
   const carteSauvegarde = (
-    <button 
-        type="button" 
-        className="btn-action" 
-        style={{ width: '100%', opacity: isSaving ? 0.7 : 1, cursor: isSaving ? 'wait' : 'pointer' }} 
-        onClick={handleSave} 
-        disabled={isSaving}
-    >
-        {isSaving ? "Enregistrement en cours..." : "Enregistrer la configuration"}
-    </button>
+    <div style={{ marginTop: '16px', marginBottom: '32px' }}>
+      <button 
+          type="button" 
+          className="btn-action" 
+          style={{
+              width: '100%',
+              opacity: isSaving ? 0.7 : 1,
+              cursor: isSaving ? 'wait' : 'pointer',
+              background: saveSuccess ? 'var(--color-success)' : undefined,
+              color: saveSuccess ? '#ffffff' : undefined,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease'
+          }} 
+          onClick={handleSave} 
+          disabled={isSaving}
+      >
+          {saveSuccess ? (
+              <>
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <span>Modifications enregistrées</span>
+              </>
+          ) : isSaving ? (
+              <span>Enregistrement en cours...</span>
+          ) : (
+              <span>Enregistrer la configuration</span>
+          )}
+      </button>
+    </div>
   );
 
   const pageLegale = (texte) => (
@@ -816,10 +845,46 @@ case 'tpe': return (<>
   };
 
   return (
-    <div className="st-page" key={section || 'liste'}>
-      <div className="st-header">
-        <button type="button" className="st-back" onClick={retour} aria-label="Retour">{ICONS.back}</button>
-        <h1 className="st-title">{section ? TITRES[section] : 'Paramètres'}</h1>
+    <div className="st-page" key={section || 'liste'} style={{ position: 'relative', zIndex: 20, paddingBottom: '120px' }}>
+      <div
+        className="st-header"
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 50,
+          paddingTop: 'max(12px, env(safe-area-inset-top, 12px))',
+          paddingBottom: '12px',
+          background: 'var(--bg-app)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}
+      >
+        <button
+          type="button"
+          className="st-back"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            retour();
+          }}
+          aria-label="Retour"
+          style={{
+            position: 'relative',
+            zIndex: 60,
+            minWidth: '44px',
+            minHeight: '44px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            touchAction: 'manipulation',
+            WebkitTapHighlightColor: 'transparent'
+          }}
+        >
+          {ICONS.back}
+        </button>
+        <h1 className="st-title" style={{ margin: 0 }}>{section ? TITRES[section] : 'Paramètres'}</h1>
       </div>
 
       {section === null ? (
