@@ -7327,10 +7327,7 @@ function App() {
                           </>
                       );
                   })()}
-                              </div>
-                          </>
-                      );
-                  })()}
+                              
 
                   <div style={{ display: 'flex', gap: '12px', marginTop: role === 'gerant' ? '24px' : '0' }}>
                       <button onClick={() => { setShowMergeModal(false); setErreurPinAction(null); }} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
