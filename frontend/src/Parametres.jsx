@@ -100,15 +100,33 @@ export default function Parametres({
   ] : [];
 
 const groupesBas = [
-    { titre: 'Informations légales', lignes: [
-      { id: 'cgu', icone: ICONS.file, label: 'Conditions générales' },
-      { id: 'confidentialite', icone: ICONS.shield, label: 'Politique de confidentialité' },
-      { id: 'nf525', icone: ICONS.shield, label: 'Attestation Fiscale NF525' },
-    ] },
-  ];
+      { titre: 'Informations légales', lignes: [
+        { id: 'cgu', icone: ICONS.file, label: 'Conditions générales' },
+        { id: 'confidentialite', icone: ICONS.shield, label: 'Politique de confidentialité' },
+        { id: 'nf525', icone: ICONS.shield, label: 'Attestation Fiscale NF525' },
+      ] },
+    ];
+
+  const [isSaving, setIsSaving] = useState(false);
+  const handleSave = async () => {
+      setIsSaving(true);
+      try {
+          await onSave();
+      } finally {
+          setIsSaving(false);
+      }
+  };
 
   const carteSauvegarde = (
-    <button type="button" className="btn-action" style={{ width: '100%' }} onClick={onSave}>Enregistrer la configuration</button>
+    <button 
+        type="button" 
+        className="btn-action" 
+        style={{ width: '100%', opacity: isSaving ? 0.7 : 1, cursor: isSaving ? 'wait' : 'pointer' }} 
+        onClick={handleSave} 
+        disabled={isSaving}
+    >
+        {isSaving ? "Enregistrement en cours..." : "Enregistrer la configuration"}
+    </button>
   );
 
   const pageLegale = (texte) => (
