@@ -2099,11 +2099,15 @@ app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => 
 });
 
 async function verifierPinActionSensibleSalon(req, { id_employe, nom_operateur, code_pin, action_label }) {
-    if (req.user.role !== 'salon') return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Gérant' };
     const id_salon = req.user.id_salon;
-    const confRes = await pool.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-    const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
-    if (!protectionActive) return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Salon' };
+    const doitVerifierPin = req.user.role === 'salon' || (code_pin !== undefined && code_pin !== null) || Boolean(id_employe) || Boolean(nom_operateur);
+    if (!doitVerifierPin) return { autorise: true, id_employe: null, nom: 'Gérant' };
+
+    if (req.user.role === 'salon') {
+        const confRes = await pool.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
+        if (!protectionActive && !code_pin) return { autorise: true, id_employe: (id_employe && id_employe !== 'gerant') ? id_employe : null, nom: nom_operateur || 'Salon' };
+    }
 
     let empRes;
         if (id_employe && id_employe !== 'gerant') {
