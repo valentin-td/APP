@@ -2098,19 +2098,26 @@ async function verifierPinActionSensibleSalon(req, { id_employe, nom_operateur, 
     if (!protectionActive) return { autorise: true, id_employe: id_employe || null, nom: nom_operateur || 'Salon' };
 
     let empRes;
-    if (id_employe) {
-        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-    } else if (nom_operateur && String(nom_operateur).trim() !== '') {
-        empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE TRIM(nom) ILIKE TRIM($1) AND id_salon = $2 LIMIT 1', [String(nom_operateur).trim(), id_salon]);
-    } else {
-        const err = new Error("Veuillez sélectionner le collaborateur qui effectue l'opération et saisir son code PIN.");
-        err.require_pin = true;
-        throw err;
-    }
+        if (id_employe && id_employe !== 'gerant') {
+            empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        } else if (id_employe === 'gerant' || (nom_operateur && String(nom_operateur).trim() !== '')) {
+            const searchNom = id_employe === 'gerant' ? 'Gérant' : String(nom_operateur).trim();
+            if (id_employe === 'gerant' || searchNom.toLowerCase() === 'gérant') {
+                empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE est_gerant = TRUE AND id_salon = $1 LIMIT 1', [id_salon]);
+            } else {
+                empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE TRIM(nom) ILIKE TRIM($1) AND id_salon = $2 LIMIT 1', [searchNom, id_salon]);
+            }
+        } else {
+            const err = new Error("Veuillez sélectionner le collaborateur qui effectue l'opération et saisir son code PIN.");
+            err.require_pin = true;
+            throw err;
+        }
 
-    if (!empRes || empRes.rowCount === 0) {
-        throw new Error("Collaborateur introuvable dans ce salon.");
-    }
+        if (!empRes || empRes.rowCount === 0) {
+            const err = new Error("Collaborateur introuvable dans ce salon.");
+            err.require_pin = true;
+            throw err;
+        }
 
     const emp = empRes.rows[0];
 
