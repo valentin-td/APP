@@ -853,11 +853,15 @@ function App() {
           throw new Error("Abonnement inactif"); 
       } 
       if (!res.ok) {
-          if (data.require_pin && typeof chargerTout === 'function') {
-              chargerTout();
+          if (data.require_pin) {
+              setErreurPinAction(data.erreur || "Code PIN incorrect.");
+              if (typeof chargerTout === 'function') chargerTout();
           }
-          throw new Error(data.erreur || "Erreur serveur"); 
+          const err = new Error(data.erreur || "Erreur serveur");
+          err.data = data;
+          throw err; 
       }
+      setErreurPinAction(null);
       return data; 
   };
 
@@ -2150,17 +2154,42 @@ function App() {
              ((parseInt(compteCaisse.p010)||0) * 0.10) + ((parseInt(compteCaisse.p005)||0) * 0.05) + ((parseInt(compteCaisse.p002)||0) * 0.02) + ((parseInt(compteCaisse.p001)||0) * 0.01);
   };
 
+  const [erreurPinAction, setErreurPinAction] = useState(null);
+
+  const appliquerRetourPinLocal = (empIdentifier, dataErr) => {
+      if (!empIdentifier || !dataErr) return;
+      setEmployesListe(prev => (prev || []).map(emp => {
+          const match = String(emp.id_employe) === String(empIdentifier)
+              || (emp.nom && emp.nom.toLowerCase() === String(empIdentifier).toLowerCase())
+              || (String(empIdentifier).toLowerCase() === 'gerant' && emp.est_gerant);
+          if (!match) return emp;
+          return {
+              ...emp,
+              pin_tentatives_echouees: dataErr.tentatives !== undefined ? dataErr.tentatives : emp.pin_tentatives_echouees,
+              pin_bloque_jusqua: dataErr.locked_until !== undefined ? dataErr.locked_until : emp.pin_bloque_jusqua,
+              pin_bloque_definitif: dataErr.locked_permanent !== undefined ? dataErr.locked_permanent : emp.pin_bloque_definitif
+          };
+      }));
+  };
+
   const getStatutBlocagePin = (empIdentifier) => {
-      if (!empIdentifier) return { bloque: false, definitif: false, message: null, tentatives: 0 };
+      if (!empIdentifier) return { bloque: false, definitif: false, message: null, tentatives: 0, essaisRestants: 3 };
       const emp = (employesListe || []).find(
-          e => String(e.id_employe) === String(empIdentifier) || (e.nom && e.nom.toLowerCase() === String(empIdentifier).toLowerCase())
+          e => String(e.id_employe) === String(empIdentifier)
+            || (e.nom && e.nom.toLowerCase() === String(empIdentifier).toLowerCase())
+            || (String(empIdentifier).toLowerCase() === 'gerant' && e.est_gerant)
       );
-      if (!emp) return { bloque: false, definitif: false, message: null, tentatives: 0 };
+      if (!emp) return { bloque: false, definitif: false, message: null, tentatives: 0, essaisRestants: 3 };
+      const tentatives = parseInt(emp.pin_tentatives_echouees, 10) || 0;
+      const prochainSeuil = tentatives < 3 ? 3 : (tentatives < 5 ? 5 : (tentatives < 7 ? 7 : 9));
+      const essaisRestants = Math.max(0, prochainSeuil - tentatives);
+
       if (emp.pin_bloque_definitif) {
           return {
               bloque: true,
               definitif: true,
-              tentatives: emp.pin_tentatives_echouees || 9,
+              tentatives: tentatives || 9,
+              essaisRestants: 0,
               message: "Accès PIN bloqué définitivement (9 échecs). Déblocage requis par le gérant dans l'espace Équipe."
           };
       }
@@ -2169,11 +2198,12 @@ function App() {
           return {
               bloque: true,
               definitif: false,
-              tentatives: emp.pin_tentatives_echouees || 3,
+              tentatives: tentatives || 3,
+              essaisRestants,
               message: `Accès PIN suspendu temporairement (${min} min restante${min > 1 ? 's' : ''}).`
           };
       }
-      return { bloque: false, definitif: false, message: null, tentatives: emp.pin_tentatives_echouees || 0 };
+      return { bloque: false, definitif: false, message: null, tentatives, essaisRestants };
   };
 
   const debloquerPinEmploye = async (id_employe) => {
@@ -2195,6 +2225,7 @@ function App() {
       const currentRole = decodeToken(token)?.role || userRole;
       setZEmployeSelect(currentRole === 'gerant' ? 'Gérant' : '');
       setZCodePin('');
+      setErreurPinAction(null);
       setCompteCaisse({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
       setFondCaisseMatin('');
       setEcartDetecte(null);
@@ -2204,16 +2235,16 @@ function App() {
 
   const executerZDeCaisse = async (employeNom) => {
       if(isOffline || !navigator.onLine) { setZDialogOuvert(false); return showToast("Impossible de sceller la caisse sans réseau.", "error"); }
-      if (!fondCaisseMatin || isNaN(fondCaisseMatin)) return showToast("Le fond de caisse du matin est obligatoire.", "error");
+      if (fondCaisseMatin === '' || isNaN(fondCaisseMatin)) return showToast("Le fond de caisse du matin est obligatoire.", "error");
       if (userRole === 'salon' && configSalon.securite_pin_salon_active !== false) {
           if (!employeNom) return showToast("Veuillez sélectionner le collaborateur qui clôture la caisse.", "error");
           if (!zCodePin || zCodePin.trim().length < 4) return showToast("Veuillez saisir votre code PIN personnel pour sceller la clôture.", "error");
       }
       
       const totalReel = calculerTotalCaisseReel();
+      let data = {};
       
       try {
-          // 1. On sécurise la lecture du stockage local (Contre les blocages de Navigation privée / Iframe)
           let enAttente = [];
           try {
               enAttente = await localforage.getItem('offline_tickets') || [];
@@ -2231,7 +2262,6 @@ function App() {
               } 
           }
           
-          // 2. On exécute la clôture (en passant l'id_employe exact pour éviter toute ambiguïté sur le nom)
           const empObj = (employesListe || []).find(e => e.nom === employeNom || String(e.id_employe) === String(employeNom));
           const payload = {
               ferme_par: empObj ? empObj.nom : (employeNom || 'Gérant'),
@@ -2243,25 +2273,32 @@ function App() {
           };
           
           const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          const data = await res.json().catch(() => ({}));
+          data = await res.json().catch(() => ({}));
           
           if (!res.ok) {
               if (data.require_justification) {
+                  setErreurPinAction(null);
                   setEcartDetecte(data.ecart);
                   showToast(data.erreur || "Écart de caisse détecté : veuillez saisir une justification ci-dessous.", "error");
                   return;
               }
+              if (data.require_pin) {
+                  appliquerRetourPinLocal(employeNom, data);
+                  setErreurPinAction(data.erreur || "Code PIN incorrect.");
+              }
               throw new Error(data.erreur || "Erreur de clôture.");
           }
 
+          setErreurPinAction(null);
           setZDialogOuvert(false);
           showToast(data.message, "success");
           setClotureFaiteAujourdhui(true);
           setZEmployeSelect('');
           setZCodePin('');
+          if (typeof chargerTout === 'function') chargerTout();
       } catch(e) { 
           if (typeof chargerTout === 'function') chargerTout();
-          setZCodePin(''); // 🚨 Vide le champ PIN pour obliger la ressaisie
+          setZCodePin('');
           showToast(e.message || "Erreur lors de la clôture.", "error"); 
       }
   };
@@ -6506,11 +6543,11 @@ function App() {
                       {role === 'salon' && (() => {
                           const statutPinZ = getStatutBlocagePin(zEmployeSelect);
                           return (
-                              <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: `1px solid ${statutPinZ.bloque ? 'var(--color-danger)' : 'var(--border-color)'}`, marginBottom: '20px' }}>
+                              <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: `1px solid ${(statutPinZ.bloque || erreurPinAction) ? 'var(--color-danger)' : 'var(--border-color)'}`, marginBottom: '20px' }}>
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
                                       <div style={{ flex: '1 1 210px', minWidth: 0 }}>
                                           <label style={{ display: 'block', marginBottom: '8px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Responsable de la fermeture</label>
-                                          <select className="input-fournisseur" value={zEmployeSelect} onChange={e => { setZEmployeSelect(e.target.value); setZCodePin(''); }} style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px' }}>
+                                          <select className="input-fournisseur" value={zEmployeSelect} onChange={e => { setZEmployeSelect(e.target.value); setZCodePin(''); setErreurPinAction(null); }} style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px' }}>
                                               <option value="">-- Sélectionnez votre nom --</option>
                                               {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
                                           </select>
@@ -6523,7 +6560,9 @@ function App() {
                                                       Code PIN personnel
                                                   </span>
                                                   {statutPinZ.tentatives > 0 && !statutPinZ.bloque && (
-                                                      <span style={{ fontSize: '10px', color: '#d97706', textTransform: 'none' }}>{statutPinZ.tentatives} échec(s)</span>
+                                                      <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', textTransform: 'none' }}>
+                                                          {statutPinZ.essaisRestants} essai{statutPinZ.essaisRestants > 1 ? 's' : ''} restant{statutPinZ.essaisRestants > 1 ? 's' : ''}
+                                                      </span>
                                                   )}
                                               </label>
                                               <input
@@ -6535,16 +6574,16 @@ function App() {
                                                   className="input-fournisseur"
                                                   placeholder={statutPinZ.bloque ? "Accès verrouillé" : "Votre code PIN"}
                                                   value={zCodePin}
-                                                  onChange={e => setZCodePin(e.target.value.replace(/\D/g, ''))}
+                                                  onChange={e => { setZCodePin(e.target.value.replace(/\D/g, '')); setErreurPinAction(null); }}
                                                   style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px', fontSize: 'clamp(14px, 2.5vw, 16px)', letterSpacing: zCodePin ? '0.2em' : 'normal', textAlign: 'center', fontWeight: '600', opacity: statutPinZ.bloque ? 0.5 : 1 }}
                                               />
                                           </div>
                                       )}
                                   </div>
-                                  {statutPinZ.bloque && (
-                                      <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '500', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                                  {(statutPinZ.bloque || erreurPinAction) && (
+                                      <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
                                           <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                          <span>{statutPinZ.message}</span>
+                                          <span>{statutPinZ.bloque ? statutPinZ.message : erreurPinAction}</span>
                                       </div>
                                   )}
                               </div>
@@ -7154,27 +7193,55 @@ function App() {
                       </div>
                   </div>
 
-                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
-                      <>
-                          <div style={{ marginBottom: '12px' }}>
-                              <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
-                              <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => setMergeForm({...mergeForm, id_employe: e.target.value})} style={{ marginBottom: 0 }}>
-                                  <option value="">-- Sélectionnez votre nom --</option>
-                                  <option value="gerant">Gérant (Moi-même)</option>
-                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                              </select>
-                          </div>
+                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
+                      const statutPinFusion = getStatutBlocagePin(mergeForm.id_employe);
+                      return (
+                          <>
+                              <div style={{ marginBottom: '12px' }}>
+                                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
+                                  <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => { setMergeForm({...mergeForm, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ marginBottom: 0 }}>
+                                      <option value="">-- Sélectionnez votre nom --</option>
+                                      <option value="gerant">Gérant (Moi-même)</option>
+                                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                                  </select>
+                              </div>
 
-                          <div style={{ marginBottom: '20px' }}>
-                              <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Code PIN personnel (Validation NF525)</label>
-                              <input type="password" inputMode="numeric" maxLength="10" className="input-fournisseur" placeholder="Votre code PIN" value={mergeForm.code_pin} onChange={e => setMergeForm({...mergeForm, code_pin: e.target.value.replace(/\D/g, '')})} style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold' }} />
-                          </div>
-                      </>
-                  )}
+                              <div style={{ marginBottom: '20px' }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>
+                                      <span>Code PIN personnel (Validation NF525)</span>
+                                      {statutPinFusion.tentatives > 0 && !statutPinFusion.bloque && (
+                                          <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', textTransform: 'none' }}>
+                                              {statutPinFusion.essaisRestants} essai{statutPinFusion.essaisRestants > 1 ? 's' : ''} restant{statutPinFusion.essaisRestants > 1 ? 's' : ''}
+                                          </span>
+                                      )}
+                                  </label>
+                                  <input
+                                      type="password"
+                                      inputMode="numeric"
+                                      maxLength="10"
+                                      disabled={statutPinFusion.bloque}
+                                      className="input-fournisseur"
+                                      placeholder={statutPinFusion.bloque ? "Accès verrouillé" : "Votre code PIN"}
+                                      value={mergeForm.code_pin}
+                                      onChange={e => { setMergeForm({...mergeForm, code_pin: e.target.value.replace(/\D/g, '')}); setErreurPinAction(null); }}
+                                      style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold', opacity: statutPinFusion.bloque ? 0.5 : 1, border: (statutPinFusion.bloque || erreurPinAction) ? '1px solid var(--color-danger)' : undefined }}
+                                  />
+                                  {(statutPinFusion.bloque || erreurPinAction) && (
+                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
+                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                          <span>{statutPinFusion.bloque ? statutPinFusion.message : erreurPinAction}</span>
+                                      </div>
+                                  )}
+                              </div>
+                          </>
+                      );
+                  })()}
 
                   <div style={{ display: 'flex', gap: '12px', marginTop: role === 'gerant' ? '24px' : '0' }}>
-                      <button onClick={() => setShowMergeModal(false)} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
-                      <button onClick={async () => {
+                      <button onClick={() => { setShowMergeModal(false); setErreurPinAction(null); }} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
+                      <button
+                          disabled={role === 'salon' && configSalon.securite_pin_salon_active !== false && getStatutBlocagePin(mergeForm.id_employe).bloque}
+                          onClick={async () => {
                           if (!mergeForm.nom.trim()) return showToast("Le nom du produit est requis.", "error");
                           if (role === 'salon' && configSalon.securite_pin_salon_active !== false) {
                               if (!mergeForm.id_employe) return showToast("Veuillez choisir l'employé responsable.", "error");
@@ -7201,6 +7268,7 @@ function App() {
                               setSelectedStocksToMerge([]);
                               chargerTout();
                           } catch (e) {
+                              if (e.data) appliquerRetourPinLocal(mergeForm.id_employe, e.data);
                               setMergeForm({ ...mergeForm, code_pin: '' });
                               showToast(e.message || "Erreur lors de la fusion", "error");
                           }
@@ -7286,7 +7354,7 @@ function App() {
       )}
 
             {toast && (
-        <div className={`toast-notification ${toast.type}`}>
+        <div className={`toast-notification ${toast.type}`} style={{ zIndex: 9999999 }}>
           {toast.message}
         </div>
       )}
