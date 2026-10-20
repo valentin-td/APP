@@ -2080,8 +2080,29 @@ function App() {
 
   const enregistrerFactureManuelle = async () => {
       if (!formFactureManuelle.nom_fournisseur.trim()) return showToast("Veuillez renseigner le fournisseur.", "error");
-      if (!formFactureManuelle.montant_ttc || parseFloat(formFactureManuelle.montant_ttc) <= 0) return showToast("Veuillez saisir un montant TTC valide.", "error");
       
+      const htNum = parseFloat(String(formFactureManuelle.montant_ht).replace(',', '.'));
+      const tvaNum = parseFloat(String(formFactureManuelle.montant_tva).replace(',', '.'));
+      let ttcNum = parseFloat(String(formFactureManuelle.montant_ttc).replace(',', '.'));
+
+      if ((isNaN(ttcNum) || ttcNum <= 0) && !isNaN(htNum) && htNum > 0) {
+          const tvaCalc = !isNaN(tvaNum) && tvaNum >= 0
+              ? tvaNum
+              : (formFactureManuelle.taux_tva_select !== 'PERSO' ? htNum * ((parseFloat(formFactureManuelle.taux_tva_select) || 0) / 100) : 0);
+          ttcNum = Number((htNum + tvaCalc).toFixed(2));
+      }
+
+      if (isNaN(ttcNum) || ttcNum <= 0) return showToast("Veuillez saisir un montant HT ou TTC valide.", "error");
+      
+      const finalHt = !isNaN(htNum) && htNum > 0
+          ? Number(htNum.toFixed(2))
+          : (formFactureManuelle.taux_tva_select !== 'PERSO'
+              ? Number((ttcNum / (1 + (parseFloat(formFactureManuelle.taux_tva_select) || 0) / 100)).toFixed(2))
+              : (!isNaN(tvaNum) ? Number((ttcNum - tvaNum).toFixed(2)) : Number((ttcNum / 1.2).toFixed(2))));
+      const finalTva = !isNaN(tvaNum) && tvaNum >= 0
+          ? Number(tvaNum.toFixed(2))
+          : Number(Math.max(0, ttcNum - finalHt).toFixed(2));
+
       if (role === 'salon' && configSalon.securite_pin_salon_active !== false) {
           if (!formFactureManuelle.id_employe) return showToast("Veuillez choisir l'employé responsable.", "error");
           if (!formFactureManuelle.code_pin || formFactureManuelle.code_pin.length < 4) return showToast("Le code PIN personnel est obligatoire.", "error");
@@ -2091,7 +2112,12 @@ function App() {
           const res = await fetch('https://api-salon-backend.onrender.com/api/factures/saisie-manuelle', {
               method: 'POST',
               headers: getAuthHeaders(true),
-              body: JSON.stringify(formFactureManuelle)
+              body: JSON.stringify({
+                  ...formFactureManuelle,
+                  montant_ht: finalHt,
+                  montant_tva: finalTva,
+                  montant_ttc: ttcNum
+              })
           });
           const data = await handleFetchError(res);
           showToast(data.message || "Facture enregistrée.", "success");
@@ -2101,6 +2127,7 @@ function App() {
               numero_facture: '',
               date_facture: new Date().toISOString().split('T')[0],
               montant_ht: '',
+              taux_tva_select: '20',
               montant_tva: '',
               montant_ttc: '',
               mode_paiement: 'CARTE',
@@ -5854,41 +5881,67 @@ function App() {
                       )}
                   </div>
                   
-                {/* IMPORT MANUEL FACTURE (IA PRÉ-COMPTABLE) */}
+                {/* IMPORT MANUEL FACTURE & SAISIE MANUELLE (GESTION FORFAITS PRO / PREMIUM) */}
                   <div style={{background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', padding: '24px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: 'var(--shadow-sm)', flexWrap: 'wrap', gap: '16px'}}>
-                      <div>
+                      <div style={{ flex: '1 1 260px' }}>
                           <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--btn-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                              <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '15px'}}>Saisie automatique (IA)</h3>
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--btn-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                              <h3 style={{margin: 0, color: 'var(--text-main)', fontSize: '15px'}}>Factures & Dépenses Fournisseurs</h3>
                           </div>
-                          <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Prenez en photo un ticket ou importez un PDF pour générer la ligne comptable et les stocks.</span>
+                          <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Ajoutez une dépense manuellement ou laissez le robot IA analyser vos factures (PDF / Photo).</span>
                       </div>
                       
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: '1', minWidth: '250px', maxWidth: '350px' }}>
-                          <input 
-                              type="file" 
-                              id="upload-facture-manuelle-salon" 
-                              accept="application/pdf, image/jpeg, image/png, image/jpg" 
-                              multiple
-                              style={{display: 'none'}} 
-                              onChange={handleUploadFactureManuel} 
-                          />
-                          <button 
-                              onClick={() => document.getElementById('upload-facture-manuelle-salon').click()} 
-                              disabled={isUploadingFacture} 
-                              className="btn-action" 
-                              style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, justifyContent: 'center', width: '100%'}}
-                          >
-                              {isUploadingFacture ? (
-                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{animation: 'spin 1s linear infinite'}}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: '1 1 320px', maxWidth: '460px' }}>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <button 
+                                  type="button"
+                                  onClick={() => setShowSaisieManuelleFacture(true)}
+                                  className="btn-action"
+                                  style={{ flex: 1, minWidth: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 14px', fontSize: '13px' }}
+                              >
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                  Saisie Manuelle
+                              </button>
+
+                              {aLeNiveau('PREMIUM') ? (
+                                  <>
+                                      <input 
+                                          type="file" 
+                                          id="upload-facture-manuelle-gerant" 
+                                          accept="application/pdf, image/jpeg, image/png, image/jpg" 
+                                          multiple
+                                          style={{display: 'none'}} 
+                                          onChange={handleUploadFactureManuel} 
+                                      />
+                                      <button 
+                                          type="button"
+                                          onClick={() => document.getElementById('upload-facture-manuelle-gerant').click()} 
+                                          disabled={isUploadingFacture} 
+                                          className="btn-action" 
+                                          style={{ flex: 1, minWidth: '180px', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', padding: '10px 14px', fontSize: '13px' }}
+                                      >
+                                          {isUploadingFacture ? (
+                                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{animation: 'spin 1s linear infinite'}}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                                          ) : (
+                                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                                          )}
+                                          {isUploadingFacture 
+                                              ? (progressionBatch.total > 1 ? `Analyse (${progressionBatch.actuel}/${progressionBatch.total})...` : "Analyse en cours...") 
+                                              : "Saisie Automatique (IA)"}
+                                      </button>
+                                  </>
                               ) : (
-                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                                  <button 
+                                      type="button"
+                                      onClick={() => setShowPricingModal(true)} 
+                                      style={{ flex: 1, minWidth: '180px', background: 'var(--bg-app)', color: 'var(--text-muted)', border: '1px solid var(--border-color)', padding: '10px 14px', borderRadius: 'var(--radius-input)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: 0.65 }}
+                                      title="Fonctionnalité réservée au forfait PREMIUM"
+                                  >
+                                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                      Saisie Automatique (IA)
+                                  </button>
                               )}
-                              
-                              {isUploadingFacture 
-                                  ? (progressionBatch.total > 1 ? `Analyse du lot (${progressionBatch.actuel}/${progressionBatch.total})...` : "Analyse en cours...") 
-                                  : "Scanner un ou plusieurs documents"}
-                          </button>
+                          </div>
 
                           {isUploadingFacture && progressionBatch.total > 1 && (
                               <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
@@ -5905,6 +5958,21 @@ function App() {
                           )}
                       </div>
                   </div>
+
+                  {erreurAnalyseIA && (
+                      <div className="carte" style={{ background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', marginBottom: '24px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', color: 'var(--color-danger)' }}>
+                              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                              <div>
+                                  <strong style={{ display: 'block', marginBottom: '2px', fontSize: '14px' }}>Document non reconnu par l'IA</strong>
+                                  <span style={{ fontSize: '13px', lineHeight: '1.4' }}>{erreurAnalyseIA}</span>
+                              </div>
+                          </div>
+                          <button onClick={() => setErreurAnalyseIA(null)} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                      </div>
+                  )}
 
                     
 
@@ -7363,10 +7431,10 @@ function App() {
       {/* MODALE SAISIE MANUELLE FACTURE */}
       {showSaisieManuelleFacture && (
           <div className="modal-overlay">
-              <div className="modal-content" style={{ maxWidth: '440px' }}>
+              <div className="modal-content" style={{ maxWidth: '460px' }}>
                   <div className="modal-header">
                       <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Saisie manuelle d'une dépense</h3>
-                      <button className="modal-close-btn" onClick={() => setShowSaisieManuelleFacture(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                      <button className="modal-close-btn" onClick={() => { setShowSaisieManuelleFacture(false); setErreurPinAction(null); }}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                   </div>
 
                   <div style={{ marginBottom: '12px' }}>
@@ -7409,22 +7477,137 @@ function App() {
                   </div>
 
                   <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-                          <div style={{ flex: 1 }}>
-                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Montant HT</label>
-                              <input type="number" step="0.01" className="input-fournisseur" placeholder="Auto" value={formFactureManuelle.montant_ht} onChange={e => setFormFactureManuelle({...formFactureManuelle, montant_ht: e.target.value})} style={{ marginBottom: 0 }} />
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                          <div style={{ flex: '1 1 95px' }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Montant HT (€)</label>
+                              <input
+                                  type="number"
+                                  step="0.01"
+                                  className="input-fournisseur"
+                                  placeholder="0.00"
+                                  value={formFactureManuelle.montant_ht}
+                                  onChange={e => {
+                                      const valHt = e.target.value;
+                                      const ht = parseFloat(valHt);
+                                      const tauxSel = formFactureManuelle.taux_tva_select ?? '20';
+                                      if (!isNaN(ht) && ht >= 0) {
+                                          if (tauxSel !== 'PERSO') {
+                                              const taux = parseFloat(tauxSel) || 0;
+                                              const tvaCalc = Number((ht * (taux / 100)).toFixed(2));
+                                              const ttcCalc = Number((ht + tvaCalc).toFixed(2));
+                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ht: valHt, montant_tva: tvaCalc.toFixed(2), montant_ttc: ttcCalc.toFixed(2) });
+                                          } else {
+                                              const tvaMan = parseFloat(formFactureManuelle.montant_tva) || 0;
+                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ht: valHt, montant_ttc: (ht + tvaMan).toFixed(2) });
+                                          }
+                                      } else {
+                                          setFormFactureManuelle({ ...formFactureManuelle, montant_ht: valHt });
+                                      }
+                                  }}
+                                  style={{ marginBottom: 0 }}
+                              />
                           </div>
                           <span style={{ paddingBottom: '10px', color: 'var(--text-muted)' }}>+</span>
-                          <div style={{ flex: 1 }}>
-                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>TVA</label>
-                              <input type="number" step="0.01" className="input-fournisseur" placeholder="Auto" value={formFactureManuelle.montant_tva} onChange={e => setFormFactureManuelle({...formFactureManuelle, montant_tva: e.target.value})} style={{ marginBottom: 0 }} />
+                          <div style={{ flex: '1 1 115px' }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>TVA</label>
+                              <select
+                                  className="input-fournisseur"
+                                  value={formFactureManuelle.taux_tva_select ?? '20'}
+                                  onChange={e => {
+                                      const newTauxSel = e.target.value;
+                                      const ht = parseFloat(formFactureManuelle.montant_ht);
+                                      const ttc = parseFloat(formFactureManuelle.montant_ttc);
+                                      if (newTauxSel !== 'PERSO') {
+                                          const taux = parseFloat(newTauxSel) || 0;
+                                          if (!isNaN(ht) && ht > 0) {
+                                              const tvaCalc = Number((ht * (taux / 100)).toFixed(2));
+                                              const ttcCalc = Number((ht + tvaCalc).toFixed(2));
+                                              setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: newTauxSel, montant_tva: tvaCalc.toFixed(2), montant_ttc: ttcCalc.toFixed(2) });
+                                          } else if (!isNaN(ttc) && ttc > 0) {
+                                              const htCalc = Number((ttc / (1 + taux / 100)).toFixed(2));
+                                              const tvaCalc = Number((ttc - htCalc).toFixed(2));
+                                              setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: newTauxSel, montant_ht: htCalc.toFixed(2), montant_tva: tvaCalc.toFixed(2) });
+                                          } else {
+                                              setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: newTauxSel, montant_tva: '' });
+                                          }
+                                      } else {
+                                          setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: 'PERSO' });
+                                      }
+                                  }}
+                                  style={{ marginBottom: 0 }}
+                              >
+                                  <option value="20">20 % (Normal)</option>
+                                  <option value="10">10 % (Interm.)</option>
+                                  <option value="5.5">5,5 % (Réduit)</option>
+                                  <option value="2.1">2,1 % (Partic.)</option>
+                                  <option value="0">0 % (Exonéré)</option>
+                                  <option value="PERSO">Montant libre (€)</option>
+                              </select>
                           </div>
                           <span style={{ paddingBottom: '10px', color: 'var(--text-muted)' }}>=</span>
-                          <div style={{ flex: 1 }}>
-                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>TTC (€)</label>
-                              <input type="number" step="0.01" className="input-fournisseur" placeholder="0.00" value={formFactureManuelle.montant_ttc} onChange={e => setFormFactureManuelle({...formFactureManuelle, montant_ttc: e.target.value})} style={{ marginBottom: 0, fontWeight: 'bold' }} />
+                          <div style={{ flex: '1 1 95px' }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>TTC (€)</label>
+                              <input
+                                  type="number"
+                                  step="0.01"
+                                  className="input-fournisseur"
+                                  placeholder="0.00"
+                                  value={formFactureManuelle.montant_ttc}
+                                  onChange={e => {
+                                      const valTtc = e.target.value;
+                                      const ttc = parseFloat(valTtc);
+                                      const tauxSel = formFactureManuelle.taux_tva_select ?? '20';
+                                      if (!isNaN(ttc) && ttc >= 0) {
+                                          if (tauxSel !== 'PERSO') {
+                                              const taux = parseFloat(tauxSel) || 0;
+                                              const htCalc = Number((ttc / (1 + taux / 100)).toFixed(2));
+                                              const tvaCalc = Number((ttc - htCalc).toFixed(2));
+                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ttc: valTtc, montant_ht: htCalc.toFixed(2), montant_tva: tvaCalc.toFixed(2) });
+                                          } else {
+                                              const tvaMan = parseFloat(formFactureManuelle.montant_tva) || 0;
+                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ttc: valTtc, montant_ht: Math.max(0, ttc - tvaMan).toFixed(2) });
+                                          }
+                                      } else {
+                                          setFormFactureManuelle({ ...formFactureManuelle, montant_ttc: valTtc });
+                                      }
+                                  }}
+                                  style={{ marginBottom: 0, fontWeight: 'bold' }}
+                              />
                           </div>
                       </div>
+
+                      {formFactureManuelle.taux_tva_select === 'PERSO' ? (
+                          <div style={{ marginTop: '12px' }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600' }}>Montant personnalisé de la TVA (€)</label>
+                              <input
+                                  type="number"
+                                  step="0.01"
+                                  className="input-fournisseur"
+                                  placeholder="Ex: 12.50"
+                                  value={formFactureManuelle.montant_tva}
+                                  onChange={e => {
+                                      const valTva = e.target.value;
+                                      const tva = parseFloat(valTva) || 0;
+                                      const ht = parseFloat(formFactureManuelle.montant_ht);
+                                      const ttc = parseFloat(formFactureManuelle.montant_ttc);
+                                      if (!isNaN(ht) && ht > 0) {
+                                          setFormFactureManuelle({ ...formFactureManuelle, montant_tva: valTva, montant_ttc: (ht + tva).toFixed(2) });
+                                      } else if (!isNaN(ttc) && ttc > 0) {
+                                          setFormFactureManuelle({ ...formFactureManuelle, montant_tva: valTva, montant_ht: Math.max(0, ttc - tva).toFixed(2) });
+                                      } else {
+                                          setFormFactureManuelle({ ...formFactureManuelle, montant_tva: valTva });
+                                      }
+                                  }}
+                                  style={{ marginBottom: 0 }}
+                              />
+                          </div>
+                      ) : (
+                          formFactureManuelle.montant_tva !== '' && (
+                              <div style={{ marginTop: '8px', fontSize: '11.5px', color: 'var(--text-secondary)', textAlign: 'right' }}>
+                                  Montant TVA calculé : <strong>{parseFloat(formFactureManuelle.montant_tva || 0).toFixed(2)} €</strong>
+                              </div>
+                          )
+                      )}
                   </div>
 
                   {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
