@@ -4035,93 +4035,24 @@ app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
     if (!Array.isArray(ids_articles) || ids_articles.length < 2) {
         return res.status(400).json({ erreur: "Sélectionnez au moins 2 produits à unifier." });
     }
-    if (!id_employe) {
-        return res.status(400).json({ erreur: "Veuillez sélectionner le collaborateur responsable de la fusion." });
-    }
-    if (!code_pin || String(code_pin).trim().length < 4) {
-        return res.status(400).json({ erreur: "Le code PIN personnel est obligatoire pour confirmer l'unification." });
-    }
     if (!nom || !String(nom).trim()) {
         return res.status(400).json({ erreur: "Le nom du produit unifié est requis." });
     }
 
+    let operateurValide;
     try {
-        let operateur = 'Gérant';
-        let idEmployeTrace = null;
+        // La fonction centrale exempte intelligemment le Gérant du code PIN
+        operateurValide = await verifierPinActionSensibleSalon(req, {
+            id_employe: id_employe === 'gerant' ? null : id_employe,
+            nom_operateur: id_employe === 'gerant' ? 'Gérant' : null,
+            code_pin,
+            action_label: 'Fusion de stocks'
+        });
+    } catch (pinErr) {
+        return res.status(400).json({ erreur: pinErr.message, require_pin: true });
+    }
 
-        // Si le rôle est SALON et qu'il y a une sécurité, on vérifie le PIN
-        if (req.user.role === 'salon') {
-            const confRes = await pool.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-            const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
-
-            if (protectionActive) {
-                if (id_employe === 'gerant') {
-                    const gerantRes = await pool.query("SELECT nom, code_pin FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
-                    if (gerantRes.rowCount === 0) return res.status(404).json({ erreur: "Compte gérant introuvable." });
-                    const gerant = gerantRes.rows[0];
-                    let pinMatch = false;
-                    if (gerant.code_pin && gerant.code_pin.startsWith('$2')) { pinMatch = await bcrypt.compare(String(code_pin).trim(), gerant.code_pin); } 
-                    else { pinMatch = (gerant.code_pin === String(code_pin).trim()); }
-                    if (!pinMatch) return res.status(400).json({ erreur: "Code PIN Gérant incorrect." });
-                    operateur = gerant.nom;
-                } else {
-                    const empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-                    if (empRes.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable." });
-                    const emp = empRes.rows[0];
-                    
-                    if (emp.bloque_definitif) return res.status(403).json({ erreur: `Accès PIN bloqué définitivement pour ${emp.nom}.` });
-                    if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) return res.status(403).json({ erreur: `Code PIN suspendu temporairement pour ${emp.nom}.` });
-
-                    let pinMatch = false;
-                    if (emp.code_pin && emp.code_pin.startsWith('$2')) { pinMatch = await bcrypt.compare(String(code_pin).trim(), emp.code_pin); } 
-                    else { pinMatch = (String(emp.code_pin || '').trim() === String(code_pin).trim()); }
-
-                    if (!pinMatch) {
-                        const tentatives = (parseInt(emp.tentatives, 10) || 0) + 1;
-                        await pool.query('UPDATE employes SET pin_tentatives_echouees = $1 WHERE id_employe = $2 AND id_salon = $3', [tentatives, emp.id_employe, id_salon]);
-                        return res.status(400).json({ erreur: `Code PIN incorrect pour ${emp.nom}.` });
-                    }
-                    if (emp.tentatives > 0 || emp.pin_bloque_jusqua) {
-                        await pool.query('UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2', [emp.id_employe, id_salon]);
-                    }
-                    operateur = emp.nom;
-                    idEmployeTrace = emp.id_employe;
-                }
-            }
-        }
-        if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
-            const minRestantes = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
-            return res.status(403).json({ erreur: `Code PIN suspendu temporairement pour ${emp.nom} (${minRestantes} min).` });
-        }
-
-        const pinSaisi = String(code_pin).trim();
-        let pinMatch = false;
-        if (emp.code_pin && emp.code_pin.startsWith('$2')) {
-            pinMatch = await bcrypt.compare(pinSaisi, emp.code_pin);
-        } else {
-            pinMatch = (String(emp.code_pin || '').trim() === pinSaisi);
-        }
-
-        if (!pinMatch) {
-            const nouvellesTentatives = (parseInt(emp.tentatives, 10) || 0) + 1;
-            let bloqueJusqua = null;
-            let bloqueDefinitif = false;
-            if (nouvellesTentatives >= 9) bloqueDefinitif = true;
-            else if (nouvellesTentatives === 7) bloqueJusqua = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-            else if (nouvellesTentatives === 5) bloqueJusqua = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-            else if (nouvellesTentatives === 3) bloqueJusqua = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-
-            await pool.query(
-                'UPDATE employes SET pin_tentatives_echouees = $1, pin_bloque_jusqua = $2, pin_bloque_definitif = $3 WHERE id_employe = $4 AND id_salon = $5',
-                [nouvellesTentatives, bloqueJusqua, bloqueDefinitif, emp.id_employe, id_salon]
-            );
-            return res.status(400).json({ erreur: `Code PIN incorrect pour ${emp.nom}.` });
-        }
-
-        if (emp.tentatives > 0 || emp.pin_bloque_jusqua) {
-            await pool.query('UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2', [emp.id_employe, id_salon]);
-        }
-
+    try {
         const clientDB = await pool.connect();
         try {
             await clientDB.query('BEGIN');
