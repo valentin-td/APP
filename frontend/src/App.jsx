@@ -251,15 +251,17 @@ function App() {
   const [showAddClient, setShowAddClient] = useState(false);
   const [showAddEmploye, setShowAddEmploye] = useState(false);
   // --- ÉTATS : POINTEUSE NUMÉRIQUE ---
-  const [pointeuse, setPointeuse] = useState({ open: false, step: 1, employe: null, pin: '' });
+  const [pointeuse, setPointeuse] = useState({ open: false, step: 1, employe: null, pin: '', erreurPin: null });
   const [buttonsDisabled, setButtonsDisabled] = useState(false);
   const [statutsEquipe, setStatutsEquipe] = useState({}); // Mémorise qui est en pause ou non
 
   // 1. Mise à jour de l'affichage du PIN instantanément et de façon sécurisée
   const handlePointeusePin = (digit) => {
+      const statutBlocage = getStatutBlocagePin(pointeuse.employe?.id_employe);
+      if (statutBlocage.bloque) return;
       setPointeuse(prev => {
           if (prev.pin.length >= 4) return prev; // Sécurité : on empêche de taper plus de 4 chiffres
-          return { ...prev, pin: prev.pin + digit };
+          return { ...prev, pin: prev.pin + digit, erreurPin: null };
       });
   };
 
@@ -268,6 +270,7 @@ function App() {
   useEffect(() => {
       if (pointeuse.open && pointeuse.step === 2 && pointeuse.pin.length === 4) {
           const verifierCode = async () => {
+              let dataAuth = {};
               try {
                   const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
                       method: 'POST',
@@ -280,26 +283,38 @@ function App() {
                           is_pointeuse: true
                       })
                   });
-                  const dataAuth = await resAuth.json().catch(() => ({}));
+                  dataAuth = await resAuth.json().catch(() => ({}));
                   if (!resAuth.ok) {
                       throw new Error(dataAuth.erreur || "Code PIN incorrect");
                   }
                   
-                  // PIN validé : on bloque temporairement les boutons
+                  // Succès : remise à zéro locale immédiate des tentatives
+                  setEmployesListe(prev => (prev || []).map(emp =>
+                      emp.id_employe === pointeuse.employe.id_employe
+                          ? { ...emp, pin_tentatives_echouees: 0, pin_bloque_jusqua: null, pin_bloque_definitif: false }
+                          : emp
+                  ));
+
                   setButtonsDisabled(true);
-                  
-                  // on passe à l'écran des boutons d'action
-                  setPointeuse(prev => ({ ...prev, step: 3 }));
-                  
-                  // On débloque les boutons après 300ms
+                  setPointeuse(prev => ({ ...prev, step: 3, erreurPin: null }));
                   setTimeout(() => {
                       setButtonsDisabled(false);
                   }, 300);
                   
               } catch (e) {
+                  // Mise à jour locale immédiate des compteurs et du blocage sans attendre le réseau
+                  setEmployesListe(prev => (prev || []).map(emp => {
+                      if (emp.id_employe !== pointeuse.employe?.id_employe) return emp;
+                      return {
+                          ...emp,
+                          pin_tentatives_echouees: dataAuth.tentatives !== undefined ? dataAuth.tentatives : (emp.pin_tentatives_echouees || 0) + 1,
+                          pin_bloque_jusqua: dataAuth.locked_until !== undefined ? dataAuth.locked_until : emp.pin_bloque_jusqua,
+                          pin_bloque_definitif: dataAuth.locked_permanent !== undefined ? dataAuth.locked_permanent : emp.pin_bloque_definitif
+                      };
+                  }));
                   if (typeof chargerTout === 'function') chargerTout();
                   showToast(e.message || "Code PIN incorrect", "error");
-                  setPointeuse(prev => ({ ...prev, pin: '' })); // On efface pour recommencer
+                  setPointeuse(prev => ({ ...prev, pin: '', erreurPin: e.message || "Code PIN incorrect" }));
               }
           };
           verifierCode();
@@ -1060,7 +1075,7 @@ function App() {
     fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats', 'object');
     fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
     fetchAndCache('/api/stocks', setStocksData, 'stocksData');
-    fetchAndCache('/api/rh', setRhData, 'rhData');
+    if (role === 'gerant') fetchAndCache('/api/rh', setRhData, 'rhData');
     fetchAndCache('/api/rh/absences', setAbsencesRH, 'absencesRH');
     fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
     fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
@@ -6927,7 +6942,7 @@ function App() {
                                 }
 
                                 return (
-                                <button key={emp.id_employe} onClick={() => setPointeuse({ ...pointeuse, step: 2, employe: emp })} style={{ background: 'var(--bg-app)', border: `1px solid ${ringColor !== 'transparent' ? ringColor : 'var(--border-color)'}`, borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}>
+                                <button key={emp.id_employe} onClick={() => setPointeuse({ ...pointeuse, step: 2, employe: emp, pin: '', erreurPin: null })} style={{ background: 'var(--bg-app)', border: `1px solid ${ringColor !== 'transparent' ? ringColor : 'var(--border-color)'}`, borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}>
                                     <div style={{ position: 'relative' }}>
                                         <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--btn-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold', border: `2px solid ${ringColor !== 'transparent' ? ringColor : 'transparent'}` }}>
                                             {emp.photo_url ? <img src={emp.photo_url} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}/> : emp.nom.substring(0, 2).toUpperCase()}
@@ -6944,27 +6959,50 @@ function App() {
                 )}
 
                 {/* ÉTAPE 2 : CODE PIN */}
-                {pointeuse.step === 2 && (
+                {pointeuse.step === 2 && (() => {
+                    const statutPinPointeuse = getStatutBlocagePin(pointeuse.employe?.id_employe);
+                    const prochainSeuil = statutPinPointeuse.tentatives < 3 ? 3 : (statutPinPointeuse.tentatives < 5 ? 5 : (statutPinPointeuse.tentatives < 7 ? 7 : 9));
+                    const essaisRestants = Math.max(0, prochainSeuil - statutPinPointeuse.tentatives);
+
+                    return (
                     <div style={{ animation: 'fadeIn 0.3s ease' }}>
-                        <div style={{display: 'flex', alignItems: 'center', marginBottom: '24px', gap: '12px'}}>
-                            <button onClick={() => setPointeuse({ ...pointeuse, step: 1, pin: '' })} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-main)'}}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
-                            <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-main)' }}>Code de {pointeuse.employe.nom.split(' ')[0]}</h2>
+                        <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', gap: '12px'}}>
+                            <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                <button onClick={() => setPointeuse({ ...pointeuse, step: 1, pin: '', erreurPin: null })} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-main)'}}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+                                <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-main)' }}>Code de {pointeuse.employe.nom.split(' ')[0]}</h2>
+                            </div>
+                            {statutPinPointeuse.tentatives > 0 && !statutPinPointeuse.bloque && (
+                                <span style={{ fontSize: '11px', fontWeight: '600', color: '#d97706', background: 'rgba(245, 158, 11, 0.12)', padding: '4px 10px', borderRadius: '999px' }}>
+                                    {essaisRestants} essai{essaisRestants > 1 ? 's' : ''} restant{essaisRestants > 1 ? 's' : ''}
+                                </span>
+                            )}
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '32px' }}>
+
+                        {(statutPinPointeuse.bloque || pointeuse.erreurPin) && (
+                            <div style={{ marginBottom: '20px', padding: '12px 14px', borderRadius: '10px', background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', color: 'var(--color-danger)', fontSize: '12.5px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', textAlign: 'left', lineHeight: '1.4' }}>
+                                <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                <span>{statutPinPointeuse.bloque ? statutPinPointeuse.message : pointeuse.erreurPin}</span>
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '28px', opacity: statutPinPointeuse.bloque ? 0.35 : 1 }}>
                             {[0, 1, 2, 3].map(i => (
-                                <div key={i} style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid var(--text-main)', background: pointeuse.pin.length > i ? 'var(--text-main)' : 'transparent', transition: 'all 0.2s ease' }} />
+                                <div key={i} style={{ width: '16px', height: '16px', borderRadius: '50%', border: `2px solid ${pointeuse.erreurPin ? 'var(--color-danger)' : 'var(--text-main)'}`, background: pointeuse.pin.length > i ? 'var(--text-main)' : 'transparent', transition: 'all 0.2s ease' }} />
                             ))}
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', maxWidth: '280px', margin: '0 auto' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', maxWidth: '280px', margin: '0 auto', opacity: statutPinPointeuse.bloque ? 0.4 : 1, pointerEvents: statutPinPointeuse.bloque ? 'none' : 'auto' }}>
                             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-                                <button key={num} onClick={() => handlePointeusePin(num.toString())} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: 'pointer', boxShadow: 'var(--shadow-sm)' }}>{num}</button>
+                                <button key={num} disabled={statutPinPointeuse.bloque} onClick={() => handlePointeusePin(num.toString())} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: statutPinPointeuse.bloque ? 'not-allowed' : 'pointer', boxShadow: 'var(--shadow-sm)' }}>{num}</button>
                             ))}
                             <div />
-                            <button onClick={() => handlePointeusePin('0')} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: 'pointer', boxShadow: 'var(--shadow-sm)' }}>0</button>
-                            <button onClick={() => setPointeuse(prev => ({ ...prev, pin: prev.pin.slice(0, -1) }))} className="hover-lift" style={{ padding: '16px', fontSize: '20px', fontWeight: 'bold', borderRadius: '12px', border: 'none', background: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer' }}>⌫</button>
+                            <button disabled={statutPinPointeuse.bloque} onClick={() => handlePointeusePin('0')} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: statutPinPointeuse.bloque ? 'not-allowed' : 'pointer', boxShadow: 'var(--shadow-sm)' }}>0</button>
+                            <button disabled={statutPinPointeuse.bloque} onClick={() => setPointeuse(prev => ({ ...prev, pin: prev.pin.slice(0, -1), erreurPin: null }))} className="hover-lift" style={{ padding: '16px', fontSize: '20px', fontWeight: 'bold', borderRadius: '12px', border: 'none', background: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: statutPinPointeuse.bloque ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+                            </button>
                         </div>
                     </div>
-                )}
+                    );
+                })()}
 
                 {/* ÉTAPE 3 : CHOIX DE L'ACTION (Logique Intelligente + Statut) */}
                 {pointeuse.step === 3 && (() => {
