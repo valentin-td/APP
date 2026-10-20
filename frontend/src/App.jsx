@@ -679,11 +679,14 @@ function App() {
             await handleFetchError(res);
             showToast("Mouvement enregistré.", "success");
             setShowMouvementModal(false);
-            setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
+            setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '', code_pin: '' });
             setModeCalculatrice(false);
             setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
             chargerMouvementsCaisse();
-        } catch (e) { showToast(e.message, "error"); }
+        } catch (e) { 
+            setNewMouvement({ ...newMouvement, code_pin: '' });
+            showToast(e.message, "error"); 
+        }
     };
   const [emailTicketClient, setEmailTicketClient] = useState('');
   const [telephoneTicketClient, setTelephoneTicketClient] = useState('');
@@ -818,34 +821,28 @@ function App() {
   const getAuthHeaders = (isJson = false) => { const headers = {}; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
   
   const handleFetchError = async (res) => {
-      // On lit le corps de la réponse en premier pour voir s'il y a des détails
       const data = await res.json().catch(() => ({})); 
 
-      // 1. Problème de Forfait (Upsell) -> Affiche la pop-up sans déconnecter
       if (res.status === 403 && data.require_upsell) {
           throw new Error("Forfait insuffisant");
       }
-      
-      // 2. Problème de Droits (Accès Refusé) -> Le token est valide, mais le rôle (Salon/Employé) ne permet pas d'accéder à cette ressource.
-      // Il ne faut surtout PAS déconnecter l'utilisateur. On rejette l'erreur silencieusement.
       if (res.status === 403 && !data.require_upsell) {
           throw new Error(data.erreur || "Accès refusé");
       }
-
-      // 3. Problème d'Authentification (Token expiré, invalide, ou manquant) -> Là on déconnecte !
       if (res.status === 401) { 
           seDeconnecter(); 
           throw new Error("Session expirée"); 
       } 
-      
-      // 4. Problème de Paiement Stripe
       if (res.status === 402) { 
           setIsAbonnementInactif(true); 
           throw new Error("Abonnement inactif"); 
       } 
-      
-      // Toute autre erreur classique (400, 404, 500)
-      if (!res.ok) throw new Error(data.erreur || "Erreur serveur"); 
+      if (!res.ok) {
+          if (data.require_pin && typeof chargerTout === 'function') {
+              chargerTout();
+          }
+          throw new Error(data.erreur || "Erreur serveur"); 
+      }
       return data; 
   };
 
@@ -2302,7 +2299,10 @@ function App() {
           setReguEmployeId('');
           setReguCodePin('');
           if (typeof chargerMouvementsCaisse === 'function') chargerMouvementsCaisse();
-      } catch (e) { showToast(e.message, "error"); }
+      } catch (e) { 
+          setReguCodePin('');
+          showToast(e.message, "error"); 
+      }
   };
 
   const fermerAlerte = (cle) => {
@@ -7163,6 +7163,7 @@ function App() {
                               setSelectedStocksToMerge([]);
                               chargerTout();
                           } catch (e) {
+                              setMergeForm({ ...mergeForm, code_pin: '' });
                               showToast(e.message || "Erreur lors de la fusion", "error");
                           }
                       }} className="btn-action" style={{ flex: 2 }}>Confirmer et additionner</button>
