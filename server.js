@@ -564,7 +564,7 @@ function verifierToken(req, res, next) {
             }
 
             if (user.role === 'gerant') {
-                const isTrialing = user.plan_actuel === 'PREMIUM_TRIAL';
+                const isTrialing = user.plan_actuel === 'PREMIUM_TRIAL' && (!user.date_fin_essai || new Date(user.date_fin_essai) > new Date());
                 const result = await pool.query('SELECT statut_abonnement FROM utilisateurs WHERE id_salon = $1', [user.id_salon]);
                 const statutSub = result.rowCount > 0 ? result.rows[0].statut_abonnement : 'inactif';
                 
@@ -858,7 +858,7 @@ app.post('/api/rh/pointage', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
 });
 
-app.post('/api/employes/login-pin', async (req, res) => {
+app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
     const { id_salon, id_employe, nom_employe, code_pin, is_pointeuse } = req.body;
     try {
         let result;
@@ -2189,12 +2189,12 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
             if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
             let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: dechiffrer(config.mot_de_passe_app_email) } });
             await transporter.sendMail({ from: `"${config.nom_salon}" <${config.email_reception_factures}>`, to: email, subject: `Votre reçu - ${config.nom_salon}`, text: textRecap });
-            if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [email, id_client]);
+            if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2 AND id_salon = $3', [email, id_client, id_salon]);
         } else if (methode === 'sms') {
             if (!config.brevo_api_key) return res.status(400).json({ erreur: "Clé Brevo non configurée." });
             let telephoneEnvoi;
             if (id_client) {
-                const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1', [id_client]);
+                const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
                 if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro." });
                 telephoneEnvoi = client.rows[0].telephone;
             } else {
@@ -4126,8 +4126,17 @@ app.delete('/api/employes/:id', verifierToken, async (req, res) => {
 
 app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
     if (req.user.role !== 'employe' || parseInt(req.params.id) !== req.user.id_employe) return res.status(403).json({ erreur: "Action non autorisée." });
+    const photo = req.body.photo_url || null;
+    if (photo) {
+        if (typeof photo !== 'string' || photo.length > 2000000) {
+            return res.status(400).json({ erreur: "Photo trop volumineuse (max 1.5 Mo)." });
+        }
+        if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(photo)) {
+            return res.status(400).json({ erreur: "Format de photo invalide (JPG, PNG ou WEBP requis)." });
+        }
+    }
     try {
-        await pool.query('UPDATE employes SET photo_url = $1 WHERE id_employe = $2 AND id_salon = $3', [req.body.photo_url || null, req.user.id_employe, req.user.id_salon]);
+        await pool.query('UPDATE employes SET photo_url = $1 WHERE id_employe = $2 AND id_salon = $3', [photo, req.user.id_employe, req.user.id_salon]);
         res.json({ message: "Photo mise à jour." });
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour photo." }); }
 });
@@ -4498,6 +4507,10 @@ app.post('/api/rh/absences', verifierToken, verifierPlan(['PREMIUM']), async (re
     const id_employe = req.user.role === 'employe' ? req.user.id_employe : req.body.id_employe;
 
     try {
+        const emp = await pool.query('SELECT nom FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
+        if (emp.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable dans ce salon." });
+        const nomEmploye = emp.rows[0].nom;
+
         const conflit = await pool.query(
             `SELECT 1 FROM absences_employes 
              WHERE id_salon = $1 AND id_employe = $2 AND statut != 'REFUSE' 
@@ -4512,6 +4525,9 @@ app.post('/api/rh/absences', verifierToken, verifierPlan(['PREMIUM']), async (re
         let fileKey = null;
 
         if (fichier_base64 && nom_fichier) {
+            if (typeof fichier_base64 !== 'string' || fichier_base64.length > 7000000) {
+                return res.status(400).json({ erreur: "Justificatif trop volumineux (max 5 Mo)." });
+            }
             // 🚨 SÉCURITÉ : Liste blanche stricte pour bloquer les Malwares et XSS stockés
             const allowedMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
             const extension = nom_fichier.split('.').pop().toLowerCase();
@@ -4536,15 +4552,12 @@ app.post('/api/rh/absences', verifierToken, verifierPlan(['PREMIUM']), async (re
             [id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fileKey, statutInitial]
         );
 
-        const emp = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [id_employe]);
-        const nomEmploye = emp.rows[0].nom;
-
         // --- DÉTECTION DÉTAILLÉE DES CONFLITS D'AGENDA ---
         let conflits = [];
         if (statutInitial === 'VALIDE') {
             const rdvs = await pool.query(
                 `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
-                 FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 
+                 FROM rendez_vous WHERE id_salon = $1 AND id_employe = $2 
                  AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') >= $3 
                  AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') <= $4
                  ORDER BY date_heure_debut ASC`,
@@ -8392,7 +8405,7 @@ app.get('/api/admin/forcer-robot', verifierToken, verifierSuperAdmin, async (req
         res.json({ message: "Le cycle du robot hebdomadaire est terminé ! Les autres robots tournent en fond." }); 
     } catch (e) {
         console.error("❌ ERREUR CRITIQUE DANS LA ROUTE FORCER-ROBOT :", e);
-        res.status(500).json({ erreur: e.message, stack: e.stack });
+        res.status(500).json({ erreur: "Erreur interne lors de l'exécution du robot." });
     }
 });
 
@@ -8428,8 +8441,9 @@ app.get('/api/admin/fix-siret-38', verifierToken, verifierSuperAdmin, async (req
 // =========================================================================
 async function verifierSuperAdmin(req, res, next) {
     try {
+        const superAdminEmail = process.env.SUPERADMIN_EMAIL || '2@gmail.com';
         const userRes = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [req.user.id_salon]);
-        if (userRes.rowCount === 0 || userRes.rows[0].email !== '2@gmail.com') {
+        if (userRes.rowCount === 0 || userRes.rows[0].email !== superAdminEmail) {
             return res.status(403).json({ erreur: "Accès refusé. God mode uniquement." });
         }
         next();
