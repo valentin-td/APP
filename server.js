@@ -980,9 +980,10 @@ app.post('/api/forgot-password', authLimiter, async (req, res) => {
     const { email } = req.body;
     try {
         if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ erreur: "Serveur mail non configuré." });
-        const result = await pool.query('SELECT id_user FROM utilisateurs WHERE email = $1', [email]);
+        const result = await pool.query('SELECT id_user, mot_de_passe_hash FROM utilisateurs WHERE email = $1', [email]);
         if (result.rowCount === 0) return res.json({ message: "Si cet email existe, un lien a été envoyé." });
-        const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '15m' });
+        const secretUsageUnique = process.env.JWT_SECRET + '_' + result.rows[0].mot_de_passe_hash;
+        const resetToken = jwt.sign({ email, purpose: 'password_reset' }, secretUsageUnique, { expiresIn: '15m' });
         const resetLink = `https://app-salon-caiss.onrender.com/?resetToken=${resetToken}`;
         let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
         await transporter.sendMail({ from: `"Support SaaS Caisse" <${process.env.SMTP_USER}>`, to: email, subject: '🔐 Réinitialisation de votre mot de passe', html: `<p>Bonjour,</p><p>Cliquez sur ce lien pour choisir un nouveau mot de passe (valable 15 minutes) :</p><p><a href="${resetLink}">Réinitialiser mon accès</a></p>` });
@@ -992,12 +993,23 @@ app.post('/api/forgot-password', authLimiter, async (req, res) => {
 
 app.post('/api/reset-password', authLimiter, async (req, res) => {
     const { token, nouveau_mot_de_passe } = req.body;
+    if (!token || !nouveau_mot_de_passe || String(nouveau_mot_de_passe).length < 8) {
+        return res.status(400).json({ erreur: "Un mot de passe d'au moins 8 caractères est requis." });
+    }
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const unverified = jwt.decode(token);
+        if (!unverified || !unverified.email || unverified.purpose !== 'password_reset') {
+            return res.status(400).json({ erreur: "Jeton invalide." });
+        }
+        const userRes = await pool.query('SELECT mot_de_passe_hash FROM utilisateurs WHERE email = $1', [unverified.email]);
+        if (userRes.rowCount === 0) return res.status(400).json({ erreur: "Lien expiré ou invalide." });
+
+        const secretUsageUnique = process.env.JWT_SECRET + '_' + userRes.rows[0].mot_de_passe_hash;
+        const decoded = jwt.verify(token, secretUsageUnique);
         const hash = await bcrypt.hash(nouveau_mot_de_passe, 10);
         await pool.query('UPDATE utilisateurs SET mot_de_passe_hash = $1 WHERE email = $2', [hash, decoded.email]);
         res.json({ message: "Mot de passe mis à jour avec succès !" });
-    } catch (e) { res.status(400).json({ erreur: "Lien expiré, corrompu ou falsifié." }); }
+    } catch (e) { res.status(400).json({ erreur: "Lien expiré, déjà utilisé ou falsifié." }); }
 });
 
 // Module légal : acceptation électronique des documents contractuels (CGV, RGPD, SEPA, NF525, prêt du TPE)
@@ -1659,6 +1671,7 @@ app.post('/api/avis/:token/commentaire', limiteurAvisPublic, async (req, res) =>
 });
 
 app.post('/api/sms/send', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'envoi de SMS est réservé au gérant et au poste Salon." });
     const { telephone, message } = req.body;
     try {
         const salonConfig = await pool.query('SELECT brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
@@ -1673,6 +1686,7 @@ app.post('/api/sms/send', verifierToken, async (req, res) => {
 });
 
 app.post('/api/sms/winback', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'envoi d'offres Winback est réservé au gérant et au poste Salon." });
     const id_salon = req.user.id_salon;
     const { id_client, telephone, message, remise_winback } = req.body;
 
@@ -2599,6 +2613,7 @@ app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => 
 });
 
 app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "La régularisation de caisse est réservée au gérant ou au poste Salon." });
     const { id_cloture, montant_reel, id_employe, nom_operateur, code_pin } = req.body;
     let operateurRegu;
     try {
@@ -3156,6 +3171,7 @@ app.get('/api/admin/dossier-technique-nf525/pdf', verifierToken, async (req, res
 });
 
 app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès réservé au gérant ou au poste de caisse." });
     const id_salon = req.user.id_salon;
     const { date_debut, date_fin } = req.query;
     if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
@@ -3573,6 +3589,7 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
 }
 
 app.get('/api/export-fec', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "L'export comptable FEC est strictement réservé au gérant." });
     const id_salon = req.user.id_salon;
     const { date_debut, date_fin } = req.query;
     if (!date_debut || !date_fin) return res.status(400).json({ erreur: "Les paramètres date_debut et date_fin (YYYY-MM-DD) sont requis." });
@@ -4672,7 +4689,8 @@ app.get('/api/dashboard/employe', verifierToken, async (req, res) => {
 });
 
 app.get('/api/dashboard', verifierToken, async (req, res) => {
-    const id_salon = req.user.id_salon; 
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Le tableau de bord financier global est réservé au gérant." });
+    const id_salon = req.user.id_salon;
     try { 
         const statsResult = await pool.query(`SELECT COUNT(id_ticket) as nb_ventes, COALESCE(SUM(total_ttc), 0) as chiffre_affaires FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]); 
         const nbVentes = parseInt(statsResult.rows[0].nb_ventes); 
@@ -7316,6 +7334,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 // ROUTE DE TÉLÉCHARGEMENT MANUEL (Prévisualisation du Gérant)
 // ----------------------------------------------------------------------------------
 app.get('/api/export-pdf', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "La liasse comptable mensuelle est strictement réservée au gérant." });
     try {
         // On fait appel au moteur de dessin unifié !
         const { buffer, numeroArchive, nomDuSalon, salonConfig, estMoisCloture } = await genererBufferLiassePdf(req.user.id_salon, req.query.mois_annee);
@@ -7484,11 +7503,13 @@ app.put('/api/taches/:id/statut', verifierToken, async (req, res) => {
 });
 
 app.delete('/api/taches/:id', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut supprimer une tâche." });
     try {
         await pool.query("DELETE FROM taches_actions WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
         res.json({ message: "Tâche supprimée." });
     } catch (e) { res.status(500).json({ erreur: "Erreur suppression." }); }
 });
+
 
 
 // =========================================================================
@@ -7575,6 +7596,7 @@ app.put('/api/protocoles/:id', verifierToken, verifierPlan(['PRO', 'PREMIUM']), 
 });
 
 app.delete('/api/protocoles/:id', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Suppression de protocole réservée au gérant et au poste Salon." });
     try {
         await pool.query("DELETE FROM protocoles WHERE id_protocole = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
         res.json({ message: "Protocole supprimé." });
