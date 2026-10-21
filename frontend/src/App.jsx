@@ -4017,6 +4017,27 @@ function App() {
                                         {(clientsSuggeres || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>⚡ RDV : {c.nom} {c.prenom} ({c.prestation_rdv})</option>)}
                                         {(clientsListe || []).map(c => <option key={c.id_client} value={c.id_client.toString()}>{c.nom} {c.prenom}</option>)}
                                     </select>
+
+                                    {/* AFFICHAGE DU SOLDE DE FIDÉLITÉ ET DE L'OFFRE WINBACK EN TEMPS RÉEL */}
+                                    {clientCaisseObj && (
+                                        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                            {configSalon.fidelite_type === 'POINTS' && (
+                                                <span style={{ fontSize: '12px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontWeight: '600' }}>
+                                                    Points : {clientCaisseObj.points_fidelite || 0} / {configSalon.fidelite_points_seuil}
+                                                </span>
+                                            )}
+                                            {configSalon.fidelite_type === 'TAMPONS' && (
+                                                <span style={{ fontSize: '12px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', fontWeight: '600' }}>
+                                                    Visites : {clientCaisseObj.tampons_fidelite || 0} / {configSalon.fidelite_tampons_seuil}
+                                                </span>
+                                            )}
+                                            {clientCaisseObj.remise_winback && (
+                                                <span style={{ fontSize: '12px', background: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '4px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                                     Offre Winback : {clientCaisseObj.remise_winback}
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="ticket-lignes" style={{padding: '16px'}}>
