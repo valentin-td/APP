@@ -245,10 +245,28 @@ function App() {
   
   const envoyerSmsSauvetage = async () => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/sms/send', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ telephone: sauvetageClient.telephone, message: smsSauvetage }) });
-          if (res.ok) { showToast("SMS de sauvetage envoyé !", "success"); setSauvetageClient(null); } 
-          else { const data = await res.json(); showToast(data.erreur || "Erreur", "error"); }
-      } catch(e) { showToast("Erreur réseau", "error"); }
+          const res = await fetch('https://api-salon-backend.onrender.com/api/sms/winback', { 
+              method: 'POST', 
+              headers: getAuthHeaders(true), 
+              body: JSON.stringify({ 
+                  id_client: sauvetageClient.id_client,
+                  telephone: sauvetageClient.telephone, 
+                  message: smsSauvetage,
+                  remise_winback: remiseSauvetage 
+              }) 
+          });
+          if (res.ok) { 
+              showToast("Offre de sauvetage envoyée et enregistrée !", "success"); 
+              setSauvetageClient(null); 
+              setRemiseSauvetage('');
+              chargerTout();
+          } else { 
+              const data = await res.json(); 
+              showToast(data.erreur || "Erreur d'envoi", "error"); 
+          }
+      } catch(e) { 
+          showToast("Erreur réseau", "error"); 
+      }
   };
   
   const [showAddClient, setShowAddClient] = useState(false);
@@ -1686,13 +1704,26 @@ function App() {
   const isEmployeCaisseBloque = Boolean(posEmploye && statutCaisseCourant.bloque);
   
   if (remiseAppliquee) {
-      if (configSalon.fidelite_type === 'POINTS') {
-          totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur || 0));
-      } else if (configSalon.fidelite_type === 'TAMPONS') {
-          if (configSalon.fidelite_recompense_type === 'MONTANT') {
-              totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur || 0));
-          } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
-              totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur || 0) / 100));
+      if (clientCaisseObj && clientCaisseObj.remise_winback) {
+          // Si le client a une remise Winback enregistrée sur sa fiche
+          if (clientCaisseObj.remise_winback.includes('10%')) {
+              totalCaisse = Math.max(0, sousTotalCaisse * 0.90);
+          } else if (clientCaisseObj.remise_winback.includes('20%')) {
+              totalCaisse = Math.max(0, sousTotalCaisse * 0.80);
+          } else if (clientCaisseObj.remise_winback.includes('Soin')) {
+              // Optionnel: tu pourrais aussi juste le déduire du prix total si un article "Soin" est dans le panier
+              totalCaisse = sousTotalCaisse; 
+          }
+      } else {
+          // Sinon c'est une remise fidélité classique
+          if (configSalon.fidelite_type === 'POINTS') {
+              totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur || 0));
+          } else if (configSalon.fidelite_type === 'TAMPONS') {
+              if (configSalon.fidelite_recompense_type === 'MONTANT') {
+                  totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur || 0));
+              } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
+                  totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur || 0) / 100));
+              }
           }
       }
   }
@@ -2484,18 +2515,28 @@ function App() {
   let clientCaisseObj = null;
   let isEligibleFidelite = false;
   let texteRecompense = '';
+  let isWinbackOffer = false;
 
   if (clientCaisse) {
       clientCaisseObj = (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse);
-      if (clientCaisseObj && configSalon.fidelite_type !== 'NONE') {
-          if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= (configSalon.fidelite_points_seuil || 0)) {
+      if (clientCaisseObj) {
+          // 1. Priorité absolue : l'offre de sauvetage (Winback) invisible
+          if (clientCaisseObj.remise_winback) {
               isEligibleFidelite = true;
-              texteRecompense = `-${configSalon.fidelite_points_valeur}€ offerts`;
-          } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= (configSalon.fidelite_tampons_seuil || 0)) {
-              isEligibleFidelite = true;
-              texteRecompense = configSalon.fidelite_recompense_type === 'MONTANT' ? `-${configSalon.fidelite_recompense_valeur}€ offerts` : 
-                                configSalon.fidelite_recompense_type === 'POURCENTAGE' ? `-${configSalon.fidelite_recompense_valeur}% appliqués` : 
-                                `Cadeau: ${configSalon.fidelite_recompense_valeur}`;
+              isWinbackOffer = true;
+              texteRecompense = `Offre de pardon : ${clientCaisseObj.remise_winback}`;
+          } 
+          // 2. Sinon, on vérifie la fidélité normale
+          else if (configSalon.fidelite_type !== 'NONE') {
+              if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= (configSalon.fidelite_points_seuil || 0)) {
+                  isEligibleFidelite = true;
+                  texteRecompense = `-${configSalon.fidelite_points_valeur}€ offerts`;
+              } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= (configSalon.fidelite_tampons_seuil || 0)) {
+                  isEligibleFidelite = true;
+                  texteRecompense = configSalon.fidelite_recompense_type === 'MONTANT' ? `-${configSalon.fidelite_recompense_valeur}€ offerts` : 
+                                    configSalon.fidelite_recompense_type === 'POURCENTAGE' ? `-${configSalon.fidelite_recompense_valeur}% appliqués` : 
+                                    `Cadeau: ${configSalon.fidelite_recompense_valeur}`;
+              }
           }
       }
   }
@@ -4000,12 +4041,14 @@ function App() {
                                 <div style={{padding: '16px', background: 'var(--bg-app)', borderTop: '1px solid var(--border-color)'}}>
 
                                     {isEligibleFidelite && (
-                                        <div style={{background: 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: '1px solid #bfdbfe'}}>
-                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                                <div>
-                                                    <span style={{fontSize: '13px', fontWeight: '600', color: 'var(--color-info)', display: 'block'}}>{configSalon.fidelite_type === 'POINTS' ? 'Fidélité atteinte !' : 'Carte complétée !'}</span>
-                                                    <span style={{fontSize: '12px', color: 'var(--color-info)'}}> {texteRecompense}</span>
-                                                </div>
+                                        <div style={{background: isWinbackOffer ? 'var(--bg-danger)' : 'var(--bg-info)', padding: '12px', borderRadius: 'var(--radius-input)', marginBottom: '16px', border: `1px solid ${isWinbackOffer ? 'var(--color-danger)' : '#bfdbfe'}`}}>
+                                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                              <div>
+                                                  <span style={{fontSize: '13px', fontWeight: '600', color: isWinbackOffer ? 'var(--color-danger)' : 'var(--color-info)', display: 'block'}}>
+                                                      {isWinbackOffer ? 'Offre Spéciale Client' : (configSalon.fidelite_type === 'POINTS' ? 'Fidélité atteinte !' : 'Carte complétée !')}
+                                                  </span>
+                                                  <span style={{fontSize: '12px', color: isWinbackOffer ? 'var(--color-danger)' : 'var(--color-info)'}}> {texteRecompense}</span>
+                                              </div>
                                                 {!remiseAppliquee ? (
                                                     <button onClick={() => setRemiseAppliquee(true)} style={{background: 'var(--color-info)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'}}>Appliquer</button>
                                                 ) : (
