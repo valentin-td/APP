@@ -364,10 +364,28 @@ const groupesBas = [
       </>);
       case 'sms': return (<>
                   <div className="carte scan-carte">
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Vos clients recevront un SMS de remerciement.</span>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '12px'}}>Configurez l'envoi de vos SMS automatiques (remerciement, avis Google et rappels).</span>
                     <input type="text" className="input-fournisseur" placeholder="Clé API Brevo" value={configSalon.brevo_api_key || ''} onChange={(e) => setConfigSalon({...configSalon, brevo_api_key: e.target.value})} style={{marginBottom: '12px'}}/>
                     <input type="text" className="input-fournisseur" placeholder="Nom expéditeur (ex: MonSalon)" maxLength="11" value={configSalon.sms_sender_name || ''} onChange={(e) => setConfigSalon({...configSalon, sms_sender_name: e.target.value})} style={{marginBottom: '12px'}}/>
-                    <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps" value={configSalon.lien_google_maps || ''} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} />
+                    <input type="text" className="input-fournisseur" placeholder="Lien d'avis Google Maps" value={configSalon.lien_google_maps || ''} onChange={(e) => setConfigSalon({...configSalon, lien_google_maps: e.target.value})} style={{marginBottom: '20px'}} />
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '16px', background: 'var(--bg-app)', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)' }}>
+                      <div>
+                        <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', color: 'var(--text-main)', fontWeight: '600' }}>Rappel automatique 2h avant le RDV</h4>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', lineHeight: '1.4' }}>
+                          Activez cette option si vous n'utilisez pas déjà un système externe (ex: Planity) qui envoie ses propres SMS de rappel, afin d'éviter les doublons.
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={!!configSalon.rappel_rdv_2h_actif}
+                        onClick={() => setConfigSalon({ ...configSalon, rappel_rdv_2h_actif: !configSalon.rappel_rdv_2h_actif })}
+                        style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                      >
+                        <span className={`st-switch${configSalon.rappel_rdv_2h_actif ? ' on' : ''}`}></span>
+                      </button>
+                    </div>
                   </div>
         {carteSauvegarde}
       </>);
