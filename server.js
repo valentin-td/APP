@@ -440,7 +440,8 @@ pool.query(`
                            OR OLD.type_ticket IS DISTINCT FROM NEW.type_ticket
                            OR OLD.id_employe IS DISTINCT FROM NEW.id_employe
                            OR OLD.id_client IS DISTINCT FROM NEW.id_client
-                           OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket) THEN
+                           OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket)
+                           OR (OLD.donnees_scellees IS NOT NULL AND OLD.donnees_scellees IS DISTINCT FROM NEW.donnees_scellees) THEN
                             RAISE EXCEPTION 'Action bloquée (NF525) : Altération des données fiscales, de paiement ou de traçabilité interdite.';
                         END IF;
                     ELSIF TG_TABLE_NAME = 'clotures_caisse' THEN
