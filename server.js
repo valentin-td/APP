@@ -236,7 +236,8 @@ pool.query(`
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS points_fidelite INT DEFAULT 0;
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS tampons_fidelite INT DEFAULT 0;
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS derniere_visite DATE;
-    ALTER TABLE clients ADD COLUMN remise_winback VARCHAR(100);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS remise_winback VARCHAR(100);
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS dernier_sms_relance DATE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_type VARCHAR(20) DEFAULT 'NONE';
@@ -1669,6 +1670,49 @@ app.post('/api/sms/send', verifierToken, async (req, res) => {
         res.json({ message: "SMS de sauvetage envoyé." });
     } catch(e) { res.status(500).json({ erreur: "Erreur d'envoi." }); }
 });
+
+app.post('/api/sms/winback', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const { id_client, telephone, message, remise_winback } = req.body;
+
+    if (!telephone || !message) {
+        return res.status(400).json({ erreur: "Le téléphone et le message sont requis." });
+    }
+
+    try {
+        const confRes = await pool.query('SELECT brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        if (confRes.rowCount === 0 || !confRes.rows[0].brevo_api_key) {
+            return res.status(400).json({ erreur: "SMS non configurés dans vos paramètres." });
+        }
+
+        const { brevo_api_key, sms_sender_name } = confRes.rows[0];
+        const ok = await envoyerSMS_Intelligent(id_salon, brevo_api_key, sms_sender_name || 'MonSalon', telephone, message);
+
+        if (!ok) {
+            return res.status(500).json({ erreur: "Échec de l'envoi du SMS via Brevo (vérifiez votre clé ou quota)." });
+        }
+
+        if (remise_winback && String(remise_winback).trim() !== '') {
+            const remiseClean = String(remise_winback).trim();
+            if (id_client) {
+                await pool.query('UPDATE clients SET remise_winback = $1 WHERE id_client = $2 AND id_salon = $3', [remiseClean, id_client, id_salon]);
+            } else {
+                const tel9 = String(telephone).replace(/\D/g, '').slice(-9);
+                if (tel9.length >= 8) {
+                    await pool.query(
+                        `UPDATE clients SET remise_winback = $1 WHERE id_salon = $2 AND RIGHT(regexp_replace(telephone, '\\D', '', 'g'), 9) = $3`,
+                        [remiseClean, id_salon, tel9]
+                    );
+                }
+            }
+        }
+
+        res.json({ message: "Offre de sauvetage envoyée et enregistrée sur la fiche client !" });
+    } catch (e) {
+        console.error("Erreur Winback:", e);
+        res.status(500).json({ erreur: "Erreur serveur lors de l'envoi." });
+    }
+});
 app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé au poste Caisse/Salon ou au Gérant." });
     const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement, pourboire, _id_temp, date_creation } = req.body;
@@ -1852,15 +1896,28 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         }, clientDB);
 
         if (id_client) {
-            const clientCheck = await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1 AND id_salon = $2 RETURNING points_fidelite, tampons_fidelite`, [id_client, id_salon]);
+            const clientCheck = await clientDB.query(`SELECT points_fidelite, tampons_fidelite, remise_winback FROM clients WHERE id_client = $1 AND id_salon = $2 FOR UPDATE`, [id_client, id_salon]);
             if (clientCheck.rowCount === 0) throw new Error("Client introuvable dans ce salon.");
             const clientFidelite = clientCheck.rows[0];
+
+            await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
 
             const configRes = await clientDB.query(`SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1`, [id_salon]);
             
             if (configRes.rowCount > 0) {
                 const config = configRes.rows[0];
-                if (recompense_appliquee) {
+                const utiliseWinback = Boolean(recompense_appliquee && clientFidelite.remise_winback);
+
+                if (utiliseWinback) {
+                    // On consomme la remise Winback et on crédite les points/tampons sur le montant payé
+                    await clientDB.query(`UPDATE clients SET remise_winback = NULL WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
+                    if (config.fidelite_type === 'POINTS') {
+                        const pointsToAdd = Math.max(0, Math.floor(montant));
+                        await clientDB.query(`UPDATE clients SET points_fidelite = COALESCE(points_fidelite, 0) + $1 WHERE id_client = $2 AND id_salon = $3`, [pointsToAdd, id_client, id_salon]);
+                    } else if (config.fidelite_type === 'TAMPONS') {
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = COALESCE(tampons_fidelite, 0) + 1 WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
+                    }
+                } else if (recompense_appliquee) {
                     if (config.fidelite_type === 'POINTS') {
                         if ((clientFidelite.points_fidelite || 0) < (config.fidelite_points_seuil || 0)) throw new Error("Points de fidélité insuffisants.");
                         await clientDB.query(`UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1) WHERE id_client = $2 AND id_salon = $3`, [config.fidelite_points_seuil, id_client, id_salon]);
@@ -1871,9 +1928,9 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
                 } else {
                     if (config.fidelite_type === 'POINTS') {
                         const pointsToAdd = Math.max(0, Math.floor(montant));
-                        await clientDB.query(`UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2 AND id_salon = $3`, [pointsToAdd, id_client, id_salon]);
+                        await clientDB.query(`UPDATE clients SET points_fidelite = COALESCE(points_fidelite, 0) + $1 WHERE id_client = $2 AND id_salon = $3`, [pointsToAdd, id_client, id_salon]);
                     } else if (config.fidelite_type === 'TAMPONS') {
-                        await clientDB.query(`UPDATE clients SET tampons_fidelite = tampons_fidelite + 1 WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
+                        await clientDB.query(`UPDATE clients SET tampons_fidelite = COALESCE(tampons_fidelite, 0) + 1 WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
                     }
                 }
             }
@@ -8390,6 +8447,95 @@ app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, asyn
 if (process.env.SENTRY_DSN) {
     Sentry.setupExpressErrorHandler(app);
 }
+
+// =========================================================================
+// --- ROBOT AUTOMATIQUE : RAPPEL RDV (-2H) & RELANCE INACTIVITÉ CLIENT ---
+// =========================================================================
+async function executerRobotsSmsAutomatiques() {
+    try {
+        const salonsRes = await pool.query(
+            `SELECT id_salon, nom_salon, brevo_api_key, sms_sender_name, rappel_rdv_2h_actif, fidelite_delai_sms 
+             FROM configuration_salon 
+             WHERE brevo_api_key IS NOT NULL AND TRIM(brevo_api_key) != ''`
+        );
+
+        for (const salon of salonsRes.rows) {
+            const { id_salon, nom_salon, brevo_api_key, sms_sender_name, rappel_rdv_2h_actif, fidelite_delai_sms } = salon;
+            const sender = sms_sender_name || nom_salon || 'MonSalon';
+
+            // 1. RAPPEL AUTOMATIQUE 2H AVANT LE RDV (Entre +1h45 et +2h15)
+            if (rappel_rdv_2h_actif) {
+                const rdvsRes = await pool.query(
+                    `SELECT r.id_rdv, r.nom_client, r.telephone_client, r.prestation, r.date_heure_debut, e.nom as nom_employe
+                     FROM rendez_vous r
+                     LEFT JOIN employes e ON r.id_employe = e.id_employe
+                     WHERE r.id_salon = $1
+                       AND COALESCE(r.sms_rappel_envoye, FALSE) = FALSE
+                       AND r.telephone_client IS NOT NULL AND LENGTH(TRIM(r.telephone_client)) >= 9
+                       AND r.date_heure_debut BETWEEN (NOW() + INTERVAL '105 minutes') AND (NOW() + INTERVAL '135 minutes')`,
+                    [id_salon]
+                );
+
+                for (const rdv of rdvsRes.rows) {
+                    const optOut = await pool.query(
+                        `SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = RIGHT(regexp_replace($2, '\\D', '', 'g'), 9)`,
+                        [id_salon, rdv.telephone_client]
+                    );
+                    if (optOut.rowCount > 0) {
+                        await pool.query('UPDATE rendez_vous SET sms_rappel_envoye = TRUE WHERE id_rdv = $1', [rdv.id_rdv]);
+                        continue;
+                    }
+
+                    const heureStr = new Date(rdv.date_heure_debut).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                    const prenomClient = rdv.nom_client ? rdv.nom_client.split(' ')[0] : '';
+                    const coiffeurTxt = rdv.nom_employe ? ` avec ${rdv.nom_employe.split(' ')[0]}` : '';
+                    const msgRappel = `Bonjour${prenomClient ? ' ' + prenomClient : ''}, nous vous rappelons votre RDV aujourd'hui à ${heureStr}${coiffeurTxt} chez ${nom_salon || 'votre salon'}. À tout à l'heure !`;
+
+                    const ok = await envoyerSMS_Intelligent(id_salon, brevo_api_key, sender, rdv.telephone_client, msgRappel);
+                    if (ok) {
+                        await pool.query('UPDATE rendez_vous SET sms_rappel_envoye = TRUE WHERE id_rdv = $1', [rdv.id_rdv]);
+                    }
+                }
+            }
+
+            // 2. RELANCE AUTOMATIQUE DES CLIENTS INACTIFS (1 fois par jour à 10h)
+            const heureCourante = new Date().getHours();
+            const delaiJours = parseInt(fidelite_delai_sms, 10);
+            if (heureCourante === 10 && !isNaN(delaiJours) && delaiJours > 0) {
+                const inactifsRes = await pool.query(
+                    `SELECT id_client, prenom, nom, telephone
+                     FROM clients
+                     WHERE id_salon = $1
+                       AND telephone IS NOT NULL AND LENGTH(TRIM(telephone)) >= 9
+                       AND derniere_visite IS NOT NULL
+                       AND derniere_visite = (CURRENT_DATE - ($2 || ' days')::interval)::date
+                       AND (dernier_sms_relance IS NULL OR dernier_sms_relance < CURRENT_DATE - INTERVAL '30 days')`,
+                    [id_salon, delaiJours]
+                );
+
+                for (const cli of inactifsRes.rows) {
+                    const optOut = await pool.query(
+                        `SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = RIGHT(regexp_replace($2, '\\D', '', 'g'), 9)`,
+                        [id_salon, cli.telephone]
+                    );
+                    if (optOut.rowCount > 0) continue;
+
+                    const prenom = cli.prenom || (cli.nom ? cli.nom.split(' ')[0] : '');
+                    const msgInactif = `Bonjour${prenom ? ' ' + prenom : ''}, cela fait quelque temps que nous ne vous avons pas vu(e) chez ${nom_salon || 'votre salon'} ! Toute l'équipe serait ravie de prendre soin de vous très bientôt.`;
+
+                    const ok = await envoyerSMS_Intelligent(id_salon, brevo_api_key, sender, cli.telephone, msgInactif);
+                    if (ok) {
+                        await pool.query('UPDATE clients SET dernier_sms_relance = CURRENT_DATE WHERE id_client = $1', [cli.id_client]);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Erreur Robot SMS Automatiques:", e);
+    }
+}
+
+setInterval(executerRobotsSmsAutomatiques, 10 * 60 * 1000);
 
 const PORT = process.env.PORT || 3000; 
 server.listen(PORT, () => console.log(`✅ API Multi-Tenant LÉGALE démarrée sur le port ${PORT}`));
