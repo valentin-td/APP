@@ -3138,7 +3138,6 @@ app.get('/api/admin/dossier-technique-nf525/pdf', verifierToken, async (req, res
             );
             doc.page.margins.bottom = originalBottomMargin;
         }
-
         doc.end();
     } catch (e) {
         console.error("Erreur génération PDF Dossier Technique NF525 :", e);
