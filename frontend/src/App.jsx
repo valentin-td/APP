@@ -2546,34 +2546,6 @@ function App() {
       return prop === userRole || prop === 'salon';
   }).length;
 
-  let clientCaisseObj = null;
-  let isEligibleFidelite = false;
-  let texteRecompense = '';
-  let isWinbackOffer = false;
-
-  if (clientCaisse) {
-      clientCaisseObj = (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse);
-      if (clientCaisseObj) {
-          // 1. Priorité absolue : l'offre de sauvetage (Winback) invisible
-          if (clientCaisseObj.remise_winback) {
-              isEligibleFidelite = true;
-              isWinbackOffer = true;
-              texteRecompense = `Offre de pardon : ${clientCaisseObj.remise_winback}`;
-          } 
-          // 2. Sinon, on vérifie la fidélité normale
-          else if (configSalon.fidelite_type !== 'NONE') {
-              if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= (configSalon.fidelite_points_seuil || 0)) {
-                  isEligibleFidelite = true;
-                  texteRecompense = `-${configSalon.fidelite_points_valeur}€ offerts`;
-              } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= (configSalon.fidelite_tampons_seuil || 0)) {
-                  isEligibleFidelite = true;
-                  texteRecompense = configSalon.fidelite_recompense_type === 'MONTANT' ? `-${configSalon.fidelite_recompense_valeur}€ offerts` : 
-                                    configSalon.fidelite_recompense_type === 'POURCENTAGE' ? `-${configSalon.fidelite_recompense_valeur}% appliqués` : 
-                                    `Cadeau: ${configSalon.fidelite_recompense_valeur}`;
-              }
-          }
-      }
-  }
 
   if (resetTokenUrl) {
       return (
