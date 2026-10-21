@@ -1685,6 +1685,7 @@ function App() {
 
   const sousTotalCaisse = (panierCaisse || []).reduce((acc, item) => acc + ((item.prix_unitaire || 0) * (item.quantite || 0)), 0);
   let totalCaisse = sousTotalCaisse;
+  
   // --- VÉRIFICATION STRICTE DU STATUT DE POINTAGE (POUR LA CAISSE) ---
   const getStatutPointageEmploye = (emp) => {
       if (!emp) return { bloque: true, code: 'INCONNU', label: 'Indisponible' };
@@ -1702,7 +1703,37 @@ function App() {
   const employeCaisseSelectionne = (employesListe || []).find(e => e.id_employe === posEmploye);
   const statutCaisseCourant = posEmploye ? getStatutPointageEmploye(employeCaisseSelectionne) : { bloque: false, label: '' };
   const isEmployeCaisseBloque = Boolean(posEmploye && statutCaisseCourant.bloque);
-  
+
+  // --- LOGIQUE CLIENT, FIDÉLITÉ ET OFFRE WINBACK ---
+  let clientCaisseObj = null;
+  let isEligibleFidelite = false;
+  let texteRecompense = '';
+  let isWinbackOffer = false;
+
+  if (clientCaisse) {
+      clientCaisseObj = (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse);
+      if (clientCaisseObj) {
+          // 1. Priorité absolue : l'offre de sauvetage (Winback)
+          if (clientCaisseObj.remise_winback) {
+              isEligibleFidelite = true;
+              isWinbackOffer = true;
+              texteRecompense = `Offre de pardon : ${clientCaisseObj.remise_winback}`;
+          } 
+          // 2. Sinon, on vérifie la fidélité normale
+          else if (configSalon.fidelite_type !== 'NONE') {
+              if (configSalon.fidelite_type === 'POINTS' && (clientCaisseObj.points_fidelite || 0) >= (configSalon.fidelite_points_seuil || 0)) {
+                  isEligibleFidelite = true;
+                  texteRecompense = `-${configSalon.fidelite_points_valeur}€ offerts`;
+              } else if (configSalon.fidelite_type === 'TAMPONS' && (clientCaisseObj.tampons_fidelite || 0) >= (configSalon.fidelite_tampons_seuil || 0)) {
+                  isEligibleFidelite = true;
+                  texteRecompense = configSalon.fidelite_recompense_type === 'MONTANT' ? `-${configSalon.fidelite_recompense_valeur}€ offerts` : 
+                                    configSalon.fidelite_recompense_type === 'POURCENTAGE' ? `-${configSalon.fidelite_recompense_valeur}% appliqués` : 
+                                    `Cadeau: ${configSalon.fidelite_recompense_valeur}`;
+              }
+          }
+      }
+  }
+
   if (remiseAppliquee) {
       if (clientCaisseObj && clientCaisseObj.remise_winback) {
           // Si le client a une remise Winback enregistrée sur sa fiche
@@ -1711,7 +1742,6 @@ function App() {
           } else if (clientCaisseObj.remise_winback.includes('20%')) {
               totalCaisse = Math.max(0, sousTotalCaisse * 0.80);
           } else if (clientCaisseObj.remise_winback.includes('Soin')) {
-              // Optionnel: tu pourrais aussi juste le déduire du prix total si un article "Soin" est dans le panier
               totalCaisse = sousTotalCaisse; 
           }
       } else {
@@ -1727,6 +1757,7 @@ function App() {
           }
       }
   }
+
   const montantPourboireFinal = parseFloat(pourboireCaisse) || 0;
   totalCaisse += montantPourboireFinal;
 
@@ -4079,10 +4110,10 @@ function App() {
                                         </div>
                                     )}
                                     
-                                    {remiseAppliquee && configSalon.fidelite_type !== 'NONE' && (
+                                    {remiseAppliquee && (configSalon.fidelite_type !== 'NONE' || isWinbackOffer) && (
                                         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', fontSize: '14px', color: 'var(--color-success)'}}>
-                                            <span style={{fontWeight: 'bold'}}>Remise Fidélité</span>
-                                            <span style={{fontWeight: 'bold'}}>-{Math.max(0, sousTotalCaisse - totalCaisse).toFixed(2)} €</span>
+                                            <span style={{fontWeight: 'bold'}}>{isWinbackOffer ? 'Offre Spéciale Appliquée' : 'Remise Fidélité'}</span>
+                                            <span style={{fontWeight: 'bold'}}>-{Math.max(0, sousTotalCaisse - totalCaisse + montantPourboireFinal).toFixed(2)} €</span>
                                         </div>
                                     )}
 
