@@ -220,6 +220,7 @@ function App() {
   const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
   const [sauvetageClient, setSauvetageClient] = useState(null);
   const [smsSauvetage, setSmsSauvetage] = useState('');
+  const [remiseSauvetage, setRemiseSauvetage] = useState('');
   const [rhSortBy, setRhSortBy] = useState('ca');
   const [rhPeriodeHeures, setRhPeriodeHeures] = useState('mois');
   const [rhAvisExpanded, setRhAvisExpanded] = useState({});
@@ -7046,13 +7047,36 @@ function App() {
 
       {sauvetageClient && (
           <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{maxWidth: '400px'}}>
+              <div className="modal-content" style={{maxWidth: '420px'}}>
                   <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '18px'}}>Sauver ce client</h2>
                   <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px'}}>Envoyez un SMS d'excuse avec une offre pour le faire revenir.</p>
-                  <textarea className="input-fournisseur" rows={4} value={smsSauvetage} onChange={e => setSmsSauvetage(e.target.value)} style={{width: '100%', boxSizing: 'border-box', marginBottom: '16px', fontSize: '13px', resize: 'vertical'}} />
+                  
+                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Offre ajoutée à sa fiche (Rappel en caisse)</label>
+                  <select 
+                      className="input-fournisseur" 
+                      value={remiseSauvetage} 
+                      onChange={(e) => {
+                          const val = e.target.value;
+                          setRemiseSauvetage(val);
+                          // Optionnel : auto-remplir le SMS en fonction du choix
+                          if (val === '-10% sur la prochaine visite') setSmsSauvetage("Bonjour, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -10% sur votre prochaine coupe pour nous faire pardonner. À très vite !");
+                          if (val === '-20% sur la prochaine visite') setSmsSauvetage("Bonjour, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -20% sur votre prochaine coupe pour nous faire pardonner. À très vite !");
+                          if (val === 'Soin offert à la prochaine visite') setSmsSauvetage("Bonjour, je suis le gérant du salon. Vraiment navré pour votre expérience. Un Soin vous sera offert lors de votre prochaine visite pour nous faire pardonner. À très vite !");
+                      }}
+                      style={{ marginBottom: '16px', width: '100%' }}
+                  >
+                      <option value="">Aucune (Juste un SMS d'excuse)</option>
+                      <option value="-10% sur la prochaine visite">-10% sur la prochaine visite</option>
+                      <option value="-20% sur la prochaine visite">-20% sur la prochaine visite</option>
+                      <option value="Soin offert à la prochaine visite">Soin offert à la prochaine visite</option>
+                  </select>
+
+                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Message SMS envoyé</label>
+                  <textarea className="input-fournisseur" rows={5} value={smsSauvetage} onChange={e => setSmsSauvetage(e.target.value)} style={{width: '100%', boxSizing: 'border-box', marginBottom: '20px', fontSize: '13px', resize: 'vertical'}} />
+                  
                   <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setSauvetageClient(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Annuler</button>
-                      <button onClick={envoyerSmsSauvetage} className="btn-action" style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none'}}>Envoyer le SMS</button>
+                      <button onClick={() => { setSauvetageClient(null); setRemiseSauvetage(''); }} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Annuler</button>
+                      <button onClick={envoyerSmsSauvetage} className="btn-action" style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none'}}>Envoyer l'offre</button>
                   </div>
               </div>
           </div>
