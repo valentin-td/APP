@@ -2460,16 +2460,21 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         const totalJour = Number(caResult.rows[0].total).toFixed(2);
 
         // RÈGLE D'OR NF525 : Nouveau Cumul = Ancien Cumul (du dernier Z scellé) + CA du jour (verrouillé FOR UPDATE).
-        const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1 FOR UPDATE', [id_salon]);
+        const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc, total_especes_reel FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1 FOR UPDATE', [id_salon]);
         
         const ancienCumul = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].cumul_perpetuel_ttc ? parseFloat(dernierZInfo.rows[0].cumul_perpetuel_ttc) : 0;
         const grandTotalPerpetuel = Number((ancienCumul + parseFloat(totalJour)).toFixed(2));
         const hashPrecedent = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].signature_hash ? dernierZInfo.rows[0].signature_hash : 'GENESIS_Z';
         const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
 
-        // --- CALCUL NF525 DE L'ÉCART DE CAISSE (BLIND CLOSE) ---
-        const fCaisseMatin = parseFloat(fond_caisse_matin) || 0;
-        const tEspecesReel = parseFloat(total_especes_reel) || 0;
+        // --- CALCUL NF525 DE L'ÉCART DE CAISSE (CONTINUITÉ DU FOND DE CAISSE & RATTRAPAGE) ---
+        const dNow = new Date();
+        const aujourdhuiStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+        const estRattrapageJourPasse = (dateACloturerStr < aujourdhuiStr);
+
+        const fCaisseMatin = (dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].total_especes_reel !== null)
+            ? Number(parseFloat(dernierZInfo.rows[0].total_especes_reel).toFixed(2))
+            : Number((parseFloat(fond_caisse_matin) || 0).toFixed(2));
 
         // Somme algébrique exacte (inclut le ticket d'origine + et l'éventuel ticket d'annulation - du jour)
         const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
@@ -2479,10 +2484,14 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
 
         const tEspecesTheorique = Number((fCaisseMatin + totalEspecesVentes + totalMouvements).toFixed(2));
-        const ecartCaisse = Number((tEspecesReel - tEspecesTheorique).toFixed(2));
+        const tEspecesReel = estRattrapageJourPasse ? tEspecesTheorique : Number((parseFloat(total_especes_reel) || 0).toFixed(2));
+        const ecartCaisse = estRattrapageJourPasse ? 0 : Number((tEspecesReel - tEspecesTheorique).toFixed(2));
+        const justificationFinale = estRattrapageJourPasse
+            ? (justification_ecart || 'Rattrapage de clôture antérieure (Régularisation reportée au comptage matinal)')
+            : (justification_ecart || null);
 
         // 🚨 SI L'ÉCART EST > 2€ ET QU'ON N'A PAS ENCORE DE JUSTIFICATION, ON BLOQUE !
-        if (Math.abs(ecartCaisse) > 2.00 && (!justification_ecart || justification_ecart.trim() === '')) {
+        if (!estRattrapageJourPasse && Math.abs(ecartCaisse) > 2.00 && (!justification_ecart || justification_ecart.trim() === '')) {
             await clientDB.query('ROLLBACK');
             return res.status(400).json({ 
                 erreur: `Un écart de caisse de ${ecartCaisse > 0 ? '+' : ''}${ecartCaisse.toFixed(2)} € a été détecté. Une justification est requise pour la loi NF525.`, 
@@ -2497,9 +2506,9 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             .digest('hex');
 
         await clientDB.query(
-            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, numero_z_salon) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, operateurFinalNom, fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justification_ecart || null, nextZ]
+            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique, numero_z_salon) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, operateurFinalNom, fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justificationFinale, estRattrapageJourPasse, nextZ]
         );
 
         await enregistrerJET(id_salon, 'CLOTURE_Z', { numero_z: nextZ, date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
@@ -2623,13 +2632,14 @@ app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
         if (Math.abs(ecart) > 0) {
             await enregistrerMouvementCaisseScelle(clientDB, {
                 id_salon: req.user.id_salon,
-                id_employe: id_employe || null,
+                id_employe: operateurRegu.id_employe || (id_employe && id_employe !== 'gerant' ? id_employe : null),
                 type_mouvement: 'REGULARISATION',
                 montant: ecart,
-                motif: `Régularisation ouverture suite fermeture auto`
+                motif: `Régularisation ouverture suite fermeture auto (Z#${cloture.numero_z_salon || id_cloture})`,
+                categorie_comptable: 'ECART_CAISSE'
             });
         }
-        await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, theorique, reel, ecart }, clientDB);
+        await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, numero_z: cloture.numero_z_salon, operateur: operateurRegu.nom, theorique, reel, ecart }, clientDB);
 
         // On lève uniquement le flag est_cloture_automatique (autorisé par le trigger NF525) sans toucher aux colonnes scellées
         await clientDB.query("UPDATE clotures_caisse SET est_cloture_automatique = FALSE WHERE id_cloture = $1", [id_cloture]);
@@ -4079,7 +4089,22 @@ app.put('/api/employes/:id', verifierToken, async (req, res) => {
 });
 app.delete('/api/employes/:id', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut supprimer un employé." });
-    try { await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Employé supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression employé."}); }
+    try {
+        const liePiece = await pool.query(
+            'SELECT 1 FROM tickets WHERE id_employe = $1 AND id_salon = $2 UNION SELECT 1 FROM commissions WHERE id_employe = $1 AND id_salon = $2 LIMIT 1',
+            [req.params.id, req.user.id_salon]
+        );
+        if (liePiece.rowCount > 0) {
+            await pool.query(
+                "UPDATE employes SET nom = 'Collaborateur Anonymisé #' || id_employe, code_pin = NULL, photo_url = NULL WHERE id_employe = $1 AND id_salon = $2",
+                [req.params.id, req.user.id_salon]
+            );
+            await enregistrerJET(req.user.id_salon, 'ANONYMISATION_EMPLOYE_RGPD', { id_employe: parseInt(req.params.id, 10) });
+            return res.json({ message: "Collaborateur anonymisé (conservation fiscale NF525 des tickets liés)." });
+        }
+        await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        res.json({ message: "Employé supprimé" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression employé." }); }
 });
 
 app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
