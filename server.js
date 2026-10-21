@@ -3196,6 +3196,20 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
                 .map(echapper).join(';') + '\r\n';
         }
 
+        const mouvementsArchiveRes = await pool.query(
+            `SELECT id_mouvement, id_employe, type_mouvement, categorie_comptable, montant, motif, date_creation, hash_precedent, hash_mouvement
+             FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) BETWEEN $2 AND $3
+             ORDER BY id_mouvement ASC`,
+            [id_salon, date_debut, date_fin]
+        );
+
+        csv += '\r\nMOUVEMENTS_CAISSE\r\n';
+        csv += ['id_mouvement','id_employe','type_mouvement','categorie_comptable','montant','motif','date_creation','hash_precedent','hash_mouvement'].join(';') + '\r\n';
+        for (const m of mouvementsArchiveRes.rows) {
+            csv += [m.id_mouvement, m.id_employe || '', m.type_mouvement, m.categorie_comptable || '', m.montant, m.motif, new Date(m.date_creation).toISOString(), m.hash_precedent || '', m.hash_mouvement || '']
+                .map(echapper).join(';') + '\r\n';
+        }
+
         csv += '\r\nJOURNAL_DES_EVENEMENTS_TECHNIQUES\r\n';
         csv += ['id_jet','action','details','date_creation','hash_precedent','hash_jet'].join(';') + '\r\n';
         for (const j of jetRes.rows) {
@@ -3207,7 +3221,7 @@ app.get('/api/export-archive-fiscale', verifierToken, async (req, res) => {
         const signatureArchive = crypto.createHmac('sha256', secret).update(csv).digest('hex');
         csv += `\r\nSIGNATURE_ARCHIVE;${signatureArchive}\r\n`;
 
-        await enregistrerJET(id_salon, 'EXPORT_ARCHIVE_FISCALE', { date_debut, date_fin, nb_lignes_tickets: ticketsRes.rowCount, nb_lignes_jet: jetRes.rowCount, signature: signatureArchive });
+        await enregistrerJET(id_salon, 'EXPORT_ARCHIVE_FISCALE', { date_debut, date_fin, nb_lignes_tickets: ticketsRes.rowCount, nb_lignes_mvt: mouvementsArchiveRes.rowCount, nb_lignes_jet: jetRes.rowCount, signature: signatureArchive });
 
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="archive-fiscale-${id_salon}-${date_debut}_${date_fin}.csv"`);
@@ -3975,7 +3989,19 @@ app.get('/api/clients', verifierToken, async (req, res) => { try { const result 
 app.post('/api/clients', verifierToken, async (req, res) => { const { prenom, nom, telephone, email, date_naissance } = req.body; try { await pool.query('INSERT INTO clients (prenom, nom, telephone, email, date_naissance, id_salon) VALUES ($1, $2, $3, $4, $5, $6)', [prenom || '', nom, telephone, email, date_naissance || null, req.user.id_salon]); res.status(201).json({message: "Client ajouté"}); } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }});
 app.delete('/api/clients/:id', verifierToken, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "Action non autorisée." });
-    try { await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); res.json({message: "Client supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression client."}); }
+    try {
+        const lieTicket = await pool.query('SELECT 1 FROM tickets WHERE id_client = $1 AND id_salon = $2 LIMIT 1', [req.params.id, req.user.id_salon]);
+        if (lieTicket.rowCount > 0) {
+            await pool.query(
+                "UPDATE clients SET nom = 'Client Anonymisé #' || id_client, prenom = '', telephone = NULL, email = NULL, notes = NULL, date_naissance = NULL, remise_winback = NULL WHERE id_client = $1 AND id_salon = $2",
+                [req.params.id, req.user.id_salon]
+            );
+            await enregistrerJET(req.user.id_salon, 'ANONYMISATION_CLIENT_RGPD', { id_client: parseInt(req.params.id, 10) });
+            return res.json({ message: "Client anonymisé (conservation fiscale NF525 des tickets liés)." });
+        }
+        await pool.query('DELETE FROM clients WHERE id_client = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        res.json({ message: "Client supprimé" });
+    } catch (e) { res.status(500).json({ erreur: "Erreur suppression client." }); }
 });
 
 app.get('/api/employes', verifierToken, async (req, res) => {
