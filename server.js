@@ -1801,11 +1801,11 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         // Mise à jour du compteur pour le prochain ticket
         await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
         
-        const pourboire = parseFloat(req.body.pourboire) || 0.00; // NOUVEAU
+        const montantPourboire = parseFloat(pourboire) || 0.00;
 
         const ticketResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne, montant_pourboire) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END, $10) RETURNING id_ticket, date_creation;`, 
-            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null, pourboire]
+            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null, montantPourboire]
         );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
         const dateCreationISO = new Date(ticketResult.rows[0].date_creation).toISOString();
@@ -2447,10 +2447,10 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         let dateACloturerStr;
         if (jourRes.rowCount > 0 && jourRes.rows[0].jour_non_cloture) {
              const d = new Date(jourRes.rows[0].jour_non_cloture);
-             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         } else {
              const d = new Date();
-             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         }
 
         const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2', [id_salon, dateACloturerStr]);
@@ -8050,12 +8050,9 @@ async function executerClotureFantome() {
         for (let s of salons.rows) {
             const id_salon = s.id_salon;
             
-            // Verrou transactionnel pour éviter qu'un robot et un humain clôturent le même salon en même temps
-            await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
-
-            // On cherche tous les jours (avant aujourd'hui) ayant des tickets mais aucune clôture correspondante
+            // On cherche tous les jours (avant aujourd'hui) ayant des tickets mais aucune clôture correspondante (format YYYY-MM-DD local SQL sans décalage UTC)
             const joursNonClotures = await clientDB.query(`
-                SELECT DISTINCT DATE(t.date_creation) as jour
+                SELECT DISTINCT TO_CHAR(DATE(t.date_creation), 'YYYY-MM-DD') as jour_str
                 FROM tickets t
                 WHERE t.id_salon = $1 
                   AND DATE(t.date_creation) < CURRENT_DATE
@@ -8063,15 +8060,22 @@ async function executerClotureFantome() {
                       SELECT 1 FROM clotures_caisse c
                       WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
                   )
-                ORDER BY jour ASC
+                ORDER BY jour_str ASC
             `, [id_salon]);
 
             for (let j of joursNonClotures.rows) {
-                const dateACloturerStr = new Date(j.jour).toISOString().split('T')[0];
+                const dateACloturerStr = j.jour_str;
                 
                 try {
                     await clientDB.query('BEGIN');
                     await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+                    await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
+
+                    const dejaFaitCheck = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2', [id_salon, dateACloturerStr]);
+                    if (dejaFaitCheck.rowCount > 0) {
+                        await clientDB.query('ROLLBACK');
+                        continue;
+                    }
 
                     const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
                     const totalJour = Number(caResult.rows[0].total).toFixed(2);
