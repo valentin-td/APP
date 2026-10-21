@@ -1735,13 +1735,16 @@ function App() {
   }
 
   if (remiseAppliquee) {
-      if (clientCaisseObj && clientCaisseObj.remise_winback) {
+      // On récupère la fiche client localement pour éviter le crash de la variable (Temporal Dead Zone)
+      const tempFicheClient = (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse);
+      
+      if (tempFicheClient && tempFicheClient.remise_winback) {
           // Si le client a une remise Winback enregistrée sur sa fiche
-          if (clientCaisseObj.remise_winback.includes('10%')) {
+          if (tempFicheClient.remise_winback.includes('10%')) {
               totalCaisse = Math.max(0, sousTotalCaisse * 0.90);
-          } else if (clientCaisseObj.remise_winback.includes('20%')) {
+          } else if (tempFicheClient.remise_winback.includes('20%')) {
               totalCaisse = Math.max(0, sousTotalCaisse * 0.80);
-          } else if (clientCaisseObj.remise_winback.includes('Soin')) {
+          } else if (tempFicheClient.remise_winback.includes('Soin')) {
               totalCaisse = sousTotalCaisse; 
           }
       } else {
@@ -1752,7 +1755,7 @@ function App() {
               if (configSalon.fidelite_recompense_type === 'MONTANT') {
                   totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur || 0));
               } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
-                  totalCaisse = sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur || 0) / 100));
+                  totalCaisse = Math.max(0, sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur || 0) / 100)));
               }
           }
       }
