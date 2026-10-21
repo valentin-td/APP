@@ -259,6 +259,8 @@ pool.query(`
     
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS telephone_gerant VARCHAR(20);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS alertes_sms_actives BOOLEAN DEFAULT FALSE;
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS rappel_rdv_2h_actif BOOLEAN DEFAULT FALSE;
+    ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS sms_rappel_envoye BOOLEAN DEFAULT FALSE;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email_comptable VARCHAR(255);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS jour_envoi_bilan INT DEFAULT 1;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS derniere_verif_stock DATE;
@@ -1142,13 +1144,12 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
 });
 
 app.post('/api/settings', verifierToken, async (req, res) => { 
-    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, securite_pin_salon_active, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville, fidelite_type, fidelite_points_seuil, fidelite_points_valeur, fidelite_tampons_seuil, fidelite_recompense_type, fidelite_recompense_valeur, fidelite_delai_sms } = req.body;
+    const { google_api_key, google_account_id, google_location_id, email_factures, mot_de_passe_email, brevo_api_key, sms_sender_name, lien_google_maps, stripe_reader_id, heure_ouverture, heure_fermeture, telephone_gerant, alertes_sms_actives, email_comptable, jour_envoi_bilan, pin_salon, securite_pin_salon_active, temps_nettoyage_minutes, compte_banque, compte_caisse, compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures, nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville, fidelite_type, fidelite_points_seuil, fidelite_points_valeur, fidelite_tampons_seuil, fidelite_recompense_type, fidelite_recompense_valeur, fidelite_delai_sms, rappel_rdv_2h_actif } = req.body;
     try { 
         if (req.user.role === 'employe') {
             return res.status(403).json({ erreur: "Les employés ne peuvent pas modifier les paramètres du salon." });
         }
 
-        // Si c'est le poste Salon qui enregistre, on met uniquement à jour les paramètres opérationnels (Horaires, Fidélité, Nettoyage) sans écraser les secrets ni la sécurité du Gérant
         if (req.user.role === 'salon') {
             if (pin_salon && String(pin_salon).trim() !== '') {
                 return res.status(403).json({ erreur: "Seul le gérant peut modifier le code PIN du salon." });
@@ -1214,7 +1215,8 @@ app.post('/api/settings', verifierToken, async (req, res) => {
                 fidelite_tampons_seuil = COALESCE($37, fidelite_tampons_seuil),
                 fidelite_recompense_type = COALESCE($38, fidelite_recompense_type),
                 fidelite_recompense_valeur = COALESCE($39, fidelite_recompense_valeur),
-                fidelite_delai_sms = COALESCE($40, fidelite_delai_sms)
+                fidelite_delai_sms = COALESCE($40, fidelite_delai_sms),
+                rappel_rdv_2h_actif = $41
             WHERE id_salon = $16
         `;
 
@@ -1237,7 +1239,8 @@ app.post('/api/settings', verifierToken, async (req, res) => {
             fidelite_tampons_seuil !== undefined ? parseInt(fidelite_tampons_seuil, 10) : 10,
             fidelite_recompense_type || 'MONTANT',
             fidelite_recompense_valeur !== undefined ? String(fidelite_recompense_valeur) : '10',
-            fidelite_delai_sms !== undefined ? parseInt(fidelite_delai_sms, 10) : 60
+            fidelite_delai_sms !== undefined ? parseInt(fidelite_delai_sms, 10) : 60,
+            Boolean(rappel_rdv_2h_actif)
         ];
         
         await pool.query(updateQuery, params);
@@ -1264,7 +1267,6 @@ app.post('/api/settings', verifierToken, async (req, res) => {
         res.status(500).json({ erreur: "Erreur lors de la sauvegarde." }); 
     }
 });
-
 app.get('/api/settings', verifierToken, async (req, res) => { 
     try { 
         const result = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]); 
