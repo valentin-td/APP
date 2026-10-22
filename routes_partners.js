@@ -80,8 +80,6 @@ router.post('/auth/login', async (req, res) => {
     }
 });
 
-module.exports = router;
-
 const PDFDocument = require('pdfkit');
 
 // Middleware de sécurité : Vérifie le JWT de l'agent
@@ -214,3 +212,64 @@ router.get('/factures/:id/pdf', verifierTokenPartner, async (req, res) => {
         if (!res.headersSent) res.status(500).json({ error: "Erreur génération PDF" });
     }
 });
+
+// 7. Déclarer et verrouiller un prospect (Lead Locking - 45 jours)
+router.post('/prospects', verifierTokenPartner, async (req, res) => {
+    try {
+        const { nom_salon, ville, code_postal, siret_prospect, telephone_salon, email_gerant } = req.body;
+
+        // A. Vérifier si le salon est DÉJÀ client STACK
+        const clientExist = await pool.query(`
+            SELECT s.id_salon FROM configuration_salon s
+            LEFT JOIN utilisateurs u ON u.id_salon = s.id_salon
+            WHERE u.email = $1 OR s.siret = $2
+        `, [email_gerant, siret_prospect]);
+
+        if (clientExist.rows.length > 0) {
+            return res.status(409).json({ error: "Ce salon utilise déjà STACK. Prospection impossible." });
+        }
+
+        // B. Vérifier si un autre agent protège DÉJÀ ce prospect (et que la protection n'est pas expirée)
+        const leadExist = await pool.query(`
+            SELECT id_agent FROM partner_prospects_reservations
+            WHERE (email_gerant = $1 OR siret_prospect = $2)
+            AND date_expiration_protection > CURRENT_TIMESTAMP
+        `, [email_gerant, siret_prospect]);
+
+        if (leadExist.rows.length > 0) {
+            return res.status(409).json({ error: "Ce prospect est déjà verrouillé par un autre agent." });
+        }
+
+        // C. Insérer le lead avec une protection stricte de 45 jours
+        const result = await pool.query(`
+            INSERT INTO partner_prospects_reservations
+            (id_agent, nom_salon, ville, code_postal, siret_prospect, telephone_salon, email_gerant, date_expiration_protection)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP + INTERVAL '45 days')
+            RETURNING *
+        `, [req.agent.id_agent, nom_salon, ville, code_postal, siret_prospect, telephone_salon, email_gerant]);
+
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error("Erreur protection lead:", error);
+        res.status(500).json({ error: "Erreur serveur lors de la réservation." });
+    }
+});
+
+// 8. Lister les prospects de l'agent connecté
+router.get('/prospects', verifierTokenPartner, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT *, 
+                   (date_expiration_protection > CURRENT_TIMESTAMP) as est_protege,
+                   EXTRACT(DAY FROM (date_expiration_protection - CURRENT_TIMESTAMP)) as jours_restants
+            FROM partner_prospects_reservations 
+            WHERE id_agent = $1 
+            ORDER BY date_declaration DESC
+        `, [req.agent.id_agent]);
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: "Erreur serveur." });
+    }
+});
+
+module.exports = router;
