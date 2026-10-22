@@ -413,4 +413,31 @@ router.get('/dashboard-stats', verifierTokenPartner, async (req, res) => {
     }
 });
 
+// 11. Récupérer le profil de l'agent
+router.get('/profil', verifierTokenPartner, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT nom, prenom, email, telephone, siret_agent, numero_rsac, iban, statut_compte, code_partenaire FROM partner_agents WHERE id_agent = $1', 
+            [req.agent.id_agent]
+        );
+        res.json(result.rows[0]);
+    } catch (error) { 
+        res.status(500).json({ error: "Erreur serveur" }); 
+    }
+});
+
+// 12. Mettre à jour le profil (IBAN, Téléphone, RSAC)
+router.put('/profil', verifierTokenPartner, async (req, res) => {
+    try {
+        const { telephone, numero_rsac, iban } = req.body;
+        await pool.query(
+            'UPDATE partner_agents SET telephone = $1, numero_rsac = $2, iban = $3 WHERE id_agent = $4', 
+            [telephone, numero_rsac, iban, req.agent.id_agent]
+        );
+        res.json({ message: "Profil mis à jour avec succès." });
+    } catch (error) { 
+        res.status(500).json({ error: "Erreur serveur" }); 
+    }
+});
+
 module.exports = router;
