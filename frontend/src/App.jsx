@@ -1326,6 +1326,10 @@ function App() {
     try {
       const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
       
+      const urlParams = new URLSearchParams(window.location.search);
+      const code_partenaire = urlParams.get('partner') || undefined;
+      const siret_url = urlParams.get('siret') || undefined;
+
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { 
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' }, 
@@ -1333,7 +1337,9 @@ function App() {
               email: emailInput, 
               mot_de_passe: motDePasseInput, 
               nom_salon: nomSalonInput, 
-              nom_gerant: nomCompletGerant 
+              nom_gerant: nomCompletGerant,
+              code_partenaire: code_partenaire,
+              siret: siret_url
           }) 
       });
       const data = await response.json();
