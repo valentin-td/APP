@@ -106,6 +106,7 @@ function isPinWeak(pin) {
 
 console.log("Étape 3 : Configuration d'Express et WebSockets...");
 const app = express();
+app.set('trust proxy', 1);
 
 // 🚨 SÉCURITÉ : Restriction stricte des origines + Autorisation des Cookies (credentials)
 const corsOptions = {
@@ -431,15 +432,20 @@ pool.query(`
                 IF TG_OP = 'UPDATE' THEN
                     IF TG_TABLE_NAME = 'tickets' THEN
                         -- Liste stricte des champs intouchables. 
-                        -- Seuls "hash_ticket" (si NULL à la base) et "est_compense" peuvent être modifiés par le code.
-                        IF OLD.total_ttc IS DISTINCT FROM NEW.total_ttc 
+                        -- Seuls "hash_ticket" (si NULL à la base) et "est_compense" (uniquement FALSE -> TRUE) peuvent être modifiés par le code.
+                        IF OLD.id_salon IS DISTINCT FROM NEW.id_salon
+                           OR OLD.total_ttc IS DISTINCT FROM NEW.total_ttc 
+                           OR OLD.montant_pourboire IS DISTINCT FROM NEW.montant_pourboire
                            OR OLD.numero_ticket_caisse IS DISTINCT FROM NEW.numero_ticket_caisse 
                            OR OLD.date_creation IS DISTINCT FROM NEW.date_creation 
                            OR OLD.methode_paiement IS DISTINCT FROM NEW.methode_paiement
                            OR OLD.statut IS DISTINCT FROM NEW.statut
                            OR OLD.type_ticket IS DISTINCT FROM NEW.type_ticket
+                           OR OLD.id_ticket_origine IS DISTINCT FROM NEW.id_ticket_origine
+                           OR OLD.motif_annulation IS DISTINCT FROM NEW.motif_annulation
                            OR OLD.id_employe IS DISTINCT FROM NEW.id_employe
                            OR OLD.id_client IS DISTINCT FROM NEW.id_client
+                           OR (OLD.est_compense = TRUE AND NEW.est_compense = FALSE)
                            OR (OLD.hash_ticket IS NOT NULL AND OLD.hash_ticket IS DISTINCT FROM NEW.hash_ticket)
                            OR (OLD.donnees_scellees IS NOT NULL AND OLD.donnees_scellees IS DISTINCT FROM NEW.donnees_scellees) THEN
                             RAISE EXCEPTION 'Action bloquée (NF525) : Altération des données fiscales, de paiement ou de traçabilité interdite.';
@@ -462,9 +468,12 @@ pool.query(`
                             RAISE EXCEPTION 'Action bloquée (NF525) : Altération interdite sur la table clotures_caisse';
                         END IF;
                     ELSIF TG_TABLE_NAME = 'mouvements_caisse' THEN
-                        IF (OLD.hash_mouvement IS NOT NULL AND OLD.hash_mouvement IS DISTINCT FROM NEW.hash_mouvement)
+                        IF OLD.id_salon IS DISTINCT FROM NEW.id_salon
+                           OR (OLD.hash_mouvement IS NOT NULL AND OLD.hash_mouvement IS DISTINCT FROM NEW.hash_mouvement)
+                           OR OLD.hash_precedent IS DISTINCT FROM NEW.hash_precedent
                            OR OLD.montant IS DISTINCT FROM NEW.montant
                            OR OLD.type_mouvement IS DISTINCT FROM NEW.type_mouvement
+                           OR OLD.categorie_comptable IS DISTINCT FROM NEW.categorie_comptable
                            OR OLD.motif IS DISTINCT FROM NEW.motif
                            OR OLD.date_creation IS DISTINCT FROM NEW.date_creation THEN
                             RAISE EXCEPTION 'Action bloquée (NF525) : Modification absolue interdite sur la table mouvements_caisse';
@@ -1016,8 +1025,17 @@ app.post('/api/reset-password', authLimiter, async (req, res) => {
 legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, nodemailer, crypto });
 
 app.post('/api/creer-checkout', async (req, res) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; 
+    const cookieHeader = req.headers.cookie;
+    let token = null;
+    if (cookieHeader) {
+        const cookies = cookieHeader.split(';').map(c => c.trim());
+        const tokenCookie = cookies.find(c => c.startsWith('token='));
+        if (tokenCookie) token = tokenCookie.split('=')[1];
+    }
+    if (!token) {
+        const authHeader = req.headers['authorization'];
+        token = authHeader && authHeader.split(' ')[1];
+    }
     const { plan_choisi, cycle_choisi } = req.body || {};
     
     if (!token) return res.status(401).json({ erreur: "Accès refusé." });
@@ -1424,7 +1442,7 @@ app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
 // =========================================================================
 // --- EXPORT ICAL (SYNCHRONISATION PLANITY / EXTERNE) ---
 // =========================================================================
-app.get('/api/ical/:id_salon/:id_employe.ics', async (req, res) => {
+app.get('/api/ical/:id_salon/:id_employe.ics', limiteurAvisPublic, async (req, res) => {
     const { id_salon, id_employe } = req.params;
     try {
         const empRes = await pool.query('SELECT nom FROM employes WHERE id_salon = $1 AND id_employe = $2', [id_salon, id_employe]);
@@ -2025,13 +2043,18 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
             for (let reqLigne of lignes_a_annuler) {
                 let origLigne = lignesOrigine.rows.find(l => l.id_article == reqLigne.id_article);
                 if (origLigne) {
-                    let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                    let dejaAnnuleQte = mapDejaAnnule[origLigne.id_article] || 0;
+                    let maxAnnulable = origLigne.quantite - dejaAnnuleQte;
                     let qte = Math.min(reqLigne.quantite, maxAnnulable);
                     if (qte > 0) {
+                        const totalOrigine = parseFloat(origLigne.total_ligne_ttc) || 0;
+                        const totalLigneRembourse = (qte === Number(origLigne.quantite))
+                            ? totalOrigine
+                            : Number(((totalOrigine * qte) / Number(origLigne.quantite)).toFixed(2));
                         lignesToProcess.push({
                             ...origLigne,
                             quantite: qte,
-                            total_ligne_ttc: qte * parseFloat(origLigne.prix_unitaire_ttc)
+                            total_ligne_ttc: totalLigneRembourse
                         });
                     }
                 }
@@ -2039,12 +2062,17 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
         } else {
             // Fallback: Annulation totale de ce qui reste
             for (let origLigne of lignesOrigine.rows) {
-                let maxAnnulable = origLigne.quantite - (mapDejaAnnule[origLigne.id_article] || 0);
+                let dejaAnnuleQte = mapDejaAnnule[origLigne.id_article] || 0;
+                let maxAnnulable = origLigne.quantite - dejaAnnuleQte;
                 if (maxAnnulable > 0) {
+                    const totalOrigine = parseFloat(origLigne.total_ligne_ttc) || 0;
+                    const totalLigneRembourse = (maxAnnulable === Number(origLigne.quantite))
+                        ? totalOrigine
+                        : Number(((totalOrigine * maxAnnulable) / Number(origLigne.quantite)).toFixed(2));
                     lignesToProcess.push({
                         ...origLigne,
                         quantite: maxAnnulable,
-                        total_ligne_ttc: maxAnnulable * parseFloat(origLigne.prix_unitaire_ttc)
+                        total_ligne_ttc: totalLigneRembourse
                     });
                 }
             }
@@ -2052,7 +2080,7 @@ app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
 
         if (lignesToProcess.length === 0) throw new Error("Ce ticket a déjà été entièrement annulé.");
 
-        const montantCompensation = -lignesToProcess.reduce((sum, l) => sum + parseFloat(l.total_ligne_ttc), 0);
+        const montantCompensation = Number((-lignesToProcess.reduce((sum, l) => sum + parseFloat(l.total_ligne_ttc), 0)).toFixed(2));
 
         // 🚨 VERROU TRANSACTIONNEL
         const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
@@ -2447,21 +2475,32 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
         await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
         await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
 
+        // Bloquer la clôture si la clôture précédente est une clôture automatique non régularisée
+        const autoNonRegul = await clientDB.query(
+            `SELECT TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_z FROM clotures_caisse WHERE id_salon = $1 AND est_cloture_automatique = TRUE LIMIT 1`,
+            [id_salon]
+        );
+        if (autoNonRegul.rowCount > 0) {
+            throw new Error(`Veuillez d'abord régulariser le comptage espèces de la clôture automatique du ${autoNonRegul.rows[0].date_z} avant de clôturer la caisse.`);
+        }
+
         const jourRes = await clientDB.query(
-            `SELECT MIN(DATE(t.date_creation)) as jour_non_cloture
-             FROM tickets t
-             WHERE t.id_salon = $1
-               AND NOT EXISTS (
-                   SELECT 1 FROM clotures_caisse c
-                   WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation)
-               )`,
+            `SELECT TO_CHAR(MIN(jour_activite), 'YYYY-MM-DD') as jour_non_cloture
+             FROM (
+                 SELECT DATE(t.date_creation) as jour_activite FROM tickets t WHERE t.id_salon = $1
+                 UNION
+                 SELECT DATE(m.date_creation) as jour_activite FROM mouvements_caisse m WHERE m.id_salon = $1
+             ) act
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM clotures_caisse c
+                 WHERE c.id_salon = $1 AND c.date_cloture = act.jour_activite
+             )`,
             [id_salon]
         );
 
         let dateACloturerStr;
         if (jourRes.rowCount > 0 && jourRes.rows[0].jour_non_cloture) {
-             const d = new Date(jourRes.rows[0].jour_non_cloture);
-             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+             dateACloturerStr = jourRes.rows[0].jour_non_cloture;
         } else {
              const d = new Date();
              dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -2699,8 +2738,17 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
             if (t.donnees_scellees) {
                 const parts = t.donnees_scellees.split('|');
                 const prevInPayload = parts[parts.length - 1];
+                const idInPayload = parts[0];
+                const numInPayload = parts[1];
+                const ttcInPayload = parts[5];
                 const computedEnrichi = crypto.createHash('sha256').update(t.donnees_scellees).digest('hex');
-                if (prevInPayload === prevHashTicket && computedEnrichi === t.hash_ticket) {
+                if (
+                    prevInPayload === prevHashTicket &&
+                    computedEnrichi === t.hash_ticket &&
+                    String(t.id_ticket) === idInPayload &&
+                    String(t.numero_ticket_caisse) === numInPayload &&
+                    Number(t.total_ttc).toFixed(2) === ttcInPayload
+                ) {
                     hashValide = true;
                 }
             } else {
@@ -2718,13 +2766,13 @@ app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
         }
 
         // 2. Audit des CLÔTURES (Z) et continuité de numero_z_salon + cumul perpétuel
-        const clotures = await pool.query('SELECT id_cloture, numero_z_salon, total_encaisse, cumul_perpetuel_ttc, signature_hash, hash_precedent, date_cloture FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon ASC NULLS FIRST, id_cloture ASC', [id_salon]);
+        const clotures = await pool.query("SELECT id_cloture, numero_z_salon, total_encaisse, cumul_perpetuel_ttc, signature_hash, hash_precedent, date_cloture, TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_cloture_ymd FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon ASC NULLS FIRST, id_cloture ASC", [id_salon]);
         let prevHashZ = 'GENESIS_Z';
         let expectedNumZ = 1;
         let prevCumulZ = 0;
         for (let c of clotures.rows) {
             const dCloture = new Date(c.date_cloture);
-            const dateClotureYMD = `${dCloture.getFullYear()}-${String(dCloture.getMonth() + 1).padStart(2, '0')}-${String(dCloture.getDate()).padStart(2, '0')}`;
+            const dateClotureYMD = c.date_cloture_ymd;
             if (c.hash_precedent !== prevHashZ) {
                 erreurs.push(`Rupture de chaînage sur la clôture Z du ${dCloture.toLocaleDateString('fr-FR')}.`);
                 break;
@@ -3574,10 +3622,25 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
         throw new Error(`Déséquilibre comptable détecté (Débit: ${(totalDebitCents / 100).toFixed(2)}€ / Crédit: ${(totalCreditCents / 100).toFixed(2)}€).`);
     }
 
+    // Tri chronologique strict (Art. A.47 A-1 LPF) et renumérotation séquentielle continue sans trou
+    lignesFec.sort((a, b) => {
+        if (a.EcritureDate !== b.EcritureDate) return a.EcritureDate.localeCompare(b.EcritureDate);
+        return a.EcritureNum.localeCompare(b.EcritureNum);
+    });
+    const mapNouveauNum = new Map();
+    let seqChrono = 1;
+    for (const row of lignesFec) {
+        if (!mapNouveauNum.has(row.EcritureNum)) {
+            mapNouveauNum.set(row.EcritureNum, `EC-${String(seqChrono).padStart(6, '0')}`);
+            seqChrono++;
+        }
+        row.EcritureNum = mapNouveauNum.get(row.EcritureNum);
+    }
+
     const headers = ['JournalCode', 'JournalLib', 'EcritureNum', 'EcritureDate', 'CompteNum', 'CompteLib', 'CompAuxNum', 'CompAuxLib', 'PieceRef', 'PieceDate', 'EcritureLib', 'Debit', 'Credit', 'EcritureLet', 'DateLet', 'ValidDate', 'Montantdevise', 'Idevise'];
     let fecContent = headers.join('\t') + '\r\n';
     for (const row of lignesFec) {
-        fecContent += headers.map(h => row[h]).join('\t') + '\r\n';
+        fecContent += headers.map(h => String(row[h] ?? '').replace(/[\t\r\n|]/g, ' ')).join('\t') + '\r\n';
     }
 
     const dateFinCompact = date_fin.replace(/-/g, '');
@@ -4390,11 +4453,12 @@ app.get('/api/rh', verifierToken, async (req, res) => {
 
         const moisCourantStr = aujourdhuiYMD.slice(0, 7);
         const ajustRes = await pool.query(
-            `SELECT id_employe, COALESCE(SUM(heures_ajoutees), 0) as total_ajust
-             FROM heures_ajustements
-             WHERE mois_annee = $1
-             GROUP BY id_employe`,
-            [moisCourantStr]
+            `SELECT ha.id_employe, COALESCE(SUM(ha.heures_ajoutees), 0) as total_ajust
+             FROM heures_ajustements ha
+             JOIN employes e ON e.id_employe = ha.id_employe
+             WHERE ha.mois_annee = $1 AND e.id_salon = $2
+             GROUP BY ha.id_employe`,
+            [moisCourantStr, id_salon]
         );
         const mapAjustMois = {};
         ajustRes.rows.forEach(r => { mapAjustMois[r.id_employe] = parseFloat(r.total_ajust) || 0; });
@@ -6278,7 +6342,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_presta_ht,
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') != 'PRESTATION' THEN lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100) ELSE 0 END), 0) as base_produit_ht,
                    COALESCE(SUM(CASE WHEN COALESCE(c.type_article, 'PRESTATION') = 'PRESTATION' THEN (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_prestation / 100) ELSE (lt.total_ligne_ttc / (1 + (CASE WHEN $4::boolean THEN 0 ELSE lt.taux_tva_snapshot END) / 100)) * (e.taux_commission_produit / 100) END), 0) as total_prime,
-                   (SELECT COALESCE(SUM(montant_pourboire), 0) FROM tickets t2 WHERE t2.id_employe = e.id_employe AND DATE(t2.date_creation) BETWEEN $2 AND $3 AND t2.statut = 'VALIDE') as total_pourboire
+                   (SELECT COALESCE(SUM(montant_pourboire), 0) FROM tickets t2 WHERE t2.id_employe = e.id_employe AND DATE(t2.date_creation) BETWEEN $2 AND $3 AND t2.statut = 'VALIDE' AND t2.type_ticket != 'ANNULATION' AND t2.est_compense = FALSE) as total_pourboire
             FROM employes e 
             LEFT JOIN tickets t ON t.id_employe = e.id_employe AND t.id_salon = $1 AND DATE(t.date_creation) BETWEEN $2 AND $3 AND t.statut = 'VALIDE'
             LEFT JOIN lignes_ticket lt ON lt.id_ticket = t.id_ticket
@@ -6289,7 +6353,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
 
         const anneeMoisAjustement = dateDebutStr.substring(0, 7); // Ex: "2026-10"
-        const ajustementsRes = await pool.query(`SELECT id_employe, SUM(heures_ajoutees) as heures_supp FROM heures_ajustements WHERE mois_annee = $1 GROUP BY id_employe`, [anneeMoisAjustement]);
+        const ajustementsRes = await pool.query(`SELECT ha.id_employe, SUM(ha.heures_ajoutees) as heures_supp FROM heures_ajustements ha JOIN employes e ON e.id_employe = ha.id_employe WHERE ha.mois_annee = $1 AND e.id_salon = $2 GROUP BY ha.id_employe`, [anneeMoisAjustement, id_salon]);
         const mapAjustements = {};
         ajustementsRes.rows.forEach(r => mapAjustements[r.id_employe] = parseFloat(r.heures_supp));
 
@@ -6499,7 +6563,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("* TVA non applicable, art. 293 B du CGI.", 40, currentY); currentY += 12;
             
             // Configuration des seuils légaux par année (Nouvelle réforme européenne applicable au 1er janvier 2025)
-            const anneeEnCours = today.getFullYear();
+            const anneeEnCours = referenceDate.getFullYear();
             const seuilsFranchise = {
                 2024: { presta_base: 36800, presta_majore: 39100, global_base: 91900, global_majore: 101000 },
                 2025: { presta_base: 37500, presta_majore: 41250, global_base: 85000, global_majore: 93500 },
@@ -6530,7 +6594,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         // PRÉPARATION DES DONNÉES FACTURES (Nécessaire pour la Section 2 et 3)
         // =========================================================================
         const iaFacturesRes = await pool.query(`SELECT id_tache, donnees, date_creation FROM ia_taches_attente WHERE id_salon = $1 AND type_tache = 'FACTURE_ACHAT' AND statut = 'ATTENTE'`, [id_salon]);
-        const facturesMoisEtendues = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, fichier_cle_r2, compte_comptable, COALESCE(date_facture, DATE(date_traitement)) as date_facture_brute, COALESCE(date_reglement, DATE(date_traitement)) as date_paiement_brute, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND COALESCE(date_facture, DATE(date_traitement)) >= CURRENT_DATE - INTERVAL '1 year'`, [id_salon]);
+        const facturesMoisEtendues = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, fichier_cle_r2, compte_comptable, COALESCE(date_facture, DATE(date_traitement)) as date_facture_brute, COALESCE(date_reglement, DATE(date_traitement)) as date_paiement_brute, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND (COALESCE(date_facture, DATE(date_traitement)) BETWEEN ($2::date - INTERVAL '6 months') AND ($3::date + INTERVAL '6 months'))`, [id_salon, dateDebutStr, dateFinStr]);
 
         let toutesFactures = [];
         
@@ -7306,8 +7370,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text("BON POUR TRANSMISSION COMPTABLE", 50, currentY + 10);
         
         if (estMoisCloture) {
-            doc.font('Helvetica').fontSize(10).text(`Nom du ${titreDirigeant} : ${nomGerant}`, 50, currentY + 30);
-            doc.text(`Date : ${today.toLocaleDateString('fr-FR')} à ${today.toLocaleTimeString('fr-FR')}`, 50, currentY + 45);
+            const dateValidationScellee = validationRes.rows[0].date_validation ? new Date(validationRes.rows[0].date_validation) : today;
+            const signataireScelle = validationRes.rows[0].valide_par || nomGerant;
+            doc.font('Helvetica').fontSize(10).text(`Nom du ${titreDirigeant} : ${signataireScelle}`, 50, currentY + 30);
+            doc.text(`Date : ${dateValidationScellee.toLocaleDateString('fr-FR')} à ${dateValidationScellee.toLocaleTimeString('fr-FR')}`, 50, currentY + 45);
             
             doc.font('Helvetica-Bold').text(`Signature :`, 350, currentY + 30);
             // Espace pour signer (plus large pour être bien sous "Bon pour transmission")
@@ -8181,7 +8247,7 @@ async function executerClotureFantome() {
                     const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
 
                     const lastCloseRes = await clientDB.query('SELECT total_especes_reel FROM clotures_caisse WHERE id_salon = $1 AND date_cloture < $2 ORDER BY date_cloture DESC LIMIT 1', [id_salon, dateACloturerStr]);
-                    const fCaisseMatin = lastCloseRes.rowCount > 0 ? parseFloat(lastCloseRes.rows[0].total_especes_reel) : 0;
+                    const fCaisseMatin = (lastCloseRes.rowCount > 0 && lastCloseRes.rows[0].total_especes_reel !== null) ? (parseFloat(lastCloseRes.rows[0].total_especes_reel) || 0) : 0;
 
                     const tEspecesTheorique = Number((fCaisseMatin + totalEspecesVentes + totalMouvements).toFixed(2));
                     // -----------------------------------------
