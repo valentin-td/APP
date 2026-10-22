@@ -440,4 +440,52 @@ router.put('/profil', verifierTokenPartner, async (req, res) => {
     }
 });
 
+// --- MIDDLEWARE GOD MODE ---
+const verifierSuperAdmin = async (req, res, next) => {
+    try {
+        const result = await pool.query('SELECT email FROM partner_agents WHERE id_agent = $1', [req.agent.id_agent]);
+        if (result.rows[0]?.email === 'tardy.valentin04@gmail.com') next();
+        else res.status(403).json({ error: "Accès refusé. Réservé au fondateur." });
+    } catch (err) { res.status(500).json({ error: "Erreur serveur" }); }
+};
+
+// 13. GOD MODE - Récupérer tous les agents
+router.get('/admin/agents', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM partner_agents ORDER BY id_agent DESC');
+        res.json(result.rows);
+    } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
+});
+
+// 14. GOD MODE - Valider manuellement le compte d'un agent
+router.patch('/admin/agents/:id/valider', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
+    try {
+        await pool.query("UPDATE partner_agents SET statut_compte = 'ACTIF' WHERE id_agent = $1", [req.params.id]);
+        res.json({ message: "Agent activé" });
+    } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
+});
+
+// 15. GOD MODE - Récupérer les commissions "Acquises" prêtes à être virées
+router.get('/admin/commissions', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT c.*, a.nom, a.prenom, a.iban, a.email, s.nom_salon 
+            FROM partner_commissions c
+            JOIN partner_agents a ON a.id_agent = c.id_agent
+            JOIN configuration_salon s ON s.id_salon = c.id_salon
+            WHERE c.statut_commission = 'ACQUISE_A_PAYER'
+            ORDER BY c.id_commission ASC
+        `);
+        res.json(result.rows);
+    } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
+});
+
+// 16. GOD MODE - Marquer une commission comme payée après le virement bancaire
+router.patch('/admin/commissions/:id/payer', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
+    try {
+        await pool.query("UPDATE partner_commissions SET statut_commission = 'PAYEE' WHERE id_commission = $1", [req.params.id]);
+        res.json({ message: "Commission clôturée" });
+    } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
+});
+
 module.exports = router;
