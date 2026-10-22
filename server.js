@@ -1184,30 +1184,102 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
     try { event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET); } 
     catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
     
+    // 1. Nouvel Abonnement
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const idSalon = session.metadata?.id_salon;
         const planChoisi = session.metadata?.plan_choisi || 'PREMIUM';
         const frequence = session.metadata?.frequence || 'MENSUEL';
         
-        // 1. On active le statut de paiement
         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1, _subscription_id = $2 WHERE _customer_id = $3', ['actif', session.subscription, session.customer]);
-        
-        // 2. On met à jour les privilèges du salon (ESSENTIEL/PRO/PREMIUM)
         if (idSalon) {
             await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2 WHERE id_salon = $3', [planChoisi, frequence, idSalon]);
         }
     }
+
+    // 2. Résiliation
     if (event.type === 'customer.subscription.deleted') {
         const session = event.data.object;
         await pool.query('UPDATE utilisateurs SET statut_abonnement = $1 WHERE _subscription_id = $2', ['inactif', session.id]);
         
-        // On rétrograde le salon pour éviter qu'il garde l'accès Premium s'il ne paye plus
         const userQuery = await pool.query('SELECT id_salon FROM utilisateurs WHERE _subscription_id = $1', [session.id]);
         if (userQuery.rowCount > 0) {
             await pool.query("UPDATE configuration_salon SET plan_actuel = 'ESSENTIEL' WHERE id_salon = $1", [userQuery.rows[0].id_salon]);
         }
     }
+
+    // 3. Facture Mensuelle Payée (Moteur de Commissions STACK Partners - Brique 8)
+    if (event.type === 'invoice.payment_succeeded') {
+        const invoice = event.data.object;
+        
+        // On ignore les factures à 0 € (Périodes d'essai gratuites)
+        if (invoice.amount_paid > 0) {
+            const customerId = invoice.customer;
+            
+            // Trouver si ce salon est rattaché à un agent STACK Partners
+            const agentRes = await pool.query(`
+                SELECT s.id_salon, a.id_agent, a.date_fin_commissionnement
+                FROM utilisateurs u
+                JOIN configuration_salon s ON u.id_salon = s.id_salon
+                JOIN partner_attributions_salons a ON s.id_salon = a.id_salon
+                WHERE u._customer_id = $1
+            `, [customerId]);
+
+            if (agentRes.rowCount > 0) {
+                const { id_salon, id_agent } = agentRes.rows[0];
+                let date_fin = agentRes.rows[0].date_fin_commissionnement;
+
+                // S'il s'agit du tout premier paiement, on démarre le chronomètre des 24 mois d'éligibilité
+                if (!date_fin) {
+                    const updateRes = await pool.query(`
+                        UPDATE partner_attributions_salons
+                        SET date_debut_commissionnement = CURRENT_DATE,
+                            date_fin_commissionnement = (CURRENT_DATE + INTERVAL '24 months')::DATE,
+                            statut_onboarding = 'GO_LIVE_VALIDE'
+                        WHERE id_salon = $1
+                        RETURNING date_fin_commissionnement
+                    `, [id_salon]);
+                    date_fin = updateRes.rows[0].date_fin_commissionnement;
+                }
+
+                // Vérifier que la durée d'éligibilité (24 mois max) n'est pas dépassée
+                if (new Date() <= new Date(date_fin)) {
+                    const montantBaseHT = invoice.amount_paid / 100; // Stripe gère l'argent en centimes
+                    const montantCommission = (montantBaseHT * 0.20).toFixed(2); // Calcul des 20 %
+                    const periodeMois = new Date(invoice.created * 1000).toISOString().slice(0, 7);
+
+                    // Vérifier si l'agent a atteint le seuil de 3 salons pour débloquer l'argent
+                    const seuilRes = await pool.query(`
+                        SELECT COUNT(DISTINCT s.id_salon) as nb_actifs
+                        FROM configuration_salon s
+                        JOIN utilisateurs u ON u.id_salon = s.id_salon
+                        WHERE s.id_agent_apporteur = $1 AND u.statut_abonnement = 'actif'
+                    `, [id_agent]);
+                    
+                    const nbActifs = parseInt(seuilRes.rows[0].nb_actifs) || 0;
+                    const statutCommission = nbActifs >= 3 ? 'ACQUISE_A_PAYER' : 'EN_ATTENTE_SEUIL';
+
+                    // Insérer la commission mensuelle de manière idempotente
+                    await pool.query(`
+                        INSERT INTO partner_commissions 
+                        (id_agent, id_salon, type_commission, periode_mois, montant_base_ht, taux_applique, montant_commission, statut_commission)
+                        VALUES ($1, $2, 'ABONNEMENT_RECURRENT_20_POURCENT', $3, $4, 20.00, $5, $6)
+                        ON CONFLICT (id_salon, periode_mois, type_commission) DO NOTHING
+                    `, [id_agent, id_salon, periodeMois, montantBaseHT, montantCommission, statutCommission]);
+                    
+                    // Déblocage automatique des sommes bloquées si le palier de 3 vient d'être franchi
+                    if (nbActifs >= 3) {
+                        await pool.query(`
+                            UPDATE partner_commissions
+                            SET statut_commission = 'ACQUISE_A_PAYER'
+                            WHERE id_agent = $1 AND statut_commission = 'EN_ATTENTE_SEUIL'
+                        `, [id_agent]);
+                    }
+                }
+            }
+        }
+    }
+
     res.json({received: true});
 });
 
