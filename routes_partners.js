@@ -272,4 +272,40 @@ router.get('/prospects', verifierTokenPartner, async (req, res) => {
     }
 });
 
+// 9. Lancer l'Onboarding (Génération du lien unique après paiement)
+router.post('/prospects/:id/onboarding', verifierTokenPartner, async (req, res) => {
+    try {
+        // A. Vérifier le prospect
+        const prospectRes = await pool.query(
+            'SELECT * FROM partner_prospects_reservations WHERE id_prospect = $1 AND id_agent = $2',
+            [req.params.id, req.agent.id_agent]
+        );
+        if (prospectRes.rows.length === 0) return res.status(404).json({ error: "Prospect introuvable." });
+        const prospect = prospectRes.rows[0];
+
+        // B. Verrou Métier : Vérifier que la facture de 99€ est payée pour ce SIRET
+        const factureRes = await pool.query(
+            'SELECT id_facture FROM partner_factures_installation WHERE id_agent = $1 AND siret_salon = $2 AND statut = $3',
+            [req.agent.id_agent, prospect.siret_prospect, 'PAYEE']
+        );
+        
+        if (factureRes.rows.length === 0) {
+            return res.status(403).json({ error: "Onboarding bloqué : La facture d'installation n'est pas encore marquée comme payée pour ce SIRET." });
+        }
+
+        // C. Générer le lien avec le code d'affiliation
+        const lienInscription = `https://app-salon-caiss.onrender.com/register?partner=${req.agent.code_partenaire}&siret=${prospect.siret_prospect}`;
+
+        // D. Mettre à jour le statut du prospect
+        await pool.query(
+            "UPDATE partner_prospects_reservations SET statut_prospect = 'SIGNE' WHERE id_prospect = $1",
+            [req.params.id]
+        );
+
+        res.json({ message: "Onboarding débloqué", lien: lienInscription });
+    } catch (error) {
+        res.status(500).json({ error: "Erreur serveur." });
+    }
+});
+
 module.exports = router;
