@@ -655,7 +655,7 @@ async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
 }
 
 function deduireCategorieMouvement(type_mouvement, motif, categorieExplicite = null) {
-    if (categorieExplicite && ['ACHAT_ESPECES', 'REMISE_BANQUE', 'APPORT_FONDS', 'PRELEVEMENT_GERANT', 'ECART_CAISSE', 'AUTRE'].includes(categorieExplicite)) {
+    if (categorieExplicite && ['ACHAT_ESPECES', 'REMISE_BANQUE', 'APPORT_FONDS', 'PRELEVEMENT_GERANT', 'ECART_CAISSE'].includes(categorieExplicite)) {
         return categorieExplicite;
     }
     if (type_mouvement === 'REGULARISATION') return 'ECART_CAISSE';
@@ -3494,7 +3494,7 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
         }
     }
 
-    // 4. JOURNAL DES ACHATS (AC) : Factures fournisseurs validées sur la période
+    // 4. JOURNAL DES ACHATS (AC) : Factures fournisseurs validées sur la période (avec dédoublonnage strict par fournisseur + n° facture)
     const achatsRes = await pool.query(`
         SELECT id_facture, nom_fournisseur, numero_facture, COALESCE(date_facture, DATE(date_traitement)) as date_piece,
                montant_ht, montant_tva, montant_ttc, compte_comptable
@@ -3504,7 +3504,13 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
         ORDER BY COALESCE(date_facture, DATE(date_traitement)) ASC, id_facture ASC
     `, [id_salon, date_debut, date_fin]);
 
+    const facturesVuesFec = new Set();
     for (const f of achatsRes.rows) {
+        if (f.numero_facture && String(f.numero_facture).trim() !== '') {
+            const cleUniqueFac = `${String(f.nom_fournisseur || '').trim().toLowerCase()}_${String(f.numero_facture).trim().toLowerCase()}`;
+            if (facturesVuesFec.has(cleUniqueFac)) continue;
+            facturesVuesFec.add(cleUniqueFac);
+        }
         const ttcCents = Math.round((parseFloat(f.montant_ttc) || 0) * 100);
         if (ttcCents <= 0) continue;
 
@@ -6118,8 +6124,8 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
             {text: fMnt(cumulApres), w: 245, align: 'right'}
         ], false, true);
         drawRow([
-            {text: 'Contrôle mathématique (Après = Avant + CA du jour)', w: 260},
-            {text: ecartCumulDetecte ? `ANOMALIE CUMUL STOCKÉ (${fMnt(clotureData.cumul_perpetuel_ttc)})` : `Conforme : ${fMnt(cumulApres)} = ${fMnt(cumulAvant)} + ${fMnt(caTotal)}`, w: 245, align: 'right', color: ecartCumulDetecte ? '#dc2626' : '#16a34a'}
+            {text: 'Contrôle mathématique (Après = Avant + CA du jour)', w: 240},
+            {text: ecartCumulDetecte ? `ANOMALIE CUMUL STOCKÉ (${fMnt(clotureData.cumul_perpetuel_ttc)})` : `Conforme : ${fMnt(cumulApres)} = ${fMnt(cumulAvant)} + ${fMnt(caTotal)}`, w: 265, align: 'right', size: 8, color: ecartCumulDetecte ? '#dc2626' : '#16a34a'}
         ], false, true);
         drawRow([
             {text: 'Algorithme et dispositif de signature', w: 260},
@@ -6245,19 +6251,20 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
         const nomGerant = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Gérant';
 
-        // 1. REQUÊTE : Chiffre d'Affaires détaillé (Somme algébrique incluant ventes et avoirs d'annulation)
+        // 1. REQUÊTE : Chiffre d'Affaires détaillé (Regroupé à 0% si franchise de TVA)
         const caDetailRes = await pool.query(`
             SELECT 
                 COALESCE(c.type_article, 'PRESTATION') as type_article,
-                lt.taux_tva_snapshot as taux_tva,
+                (CASE WHEN $4::boolean THEN 0 ELSE COALESCE(lt.taux_tva_snapshot, 20) END) as taux_tva,
                 SUM(lt.total_ligne_ttc) as total_ttc,
-                SUM(lt.total_ligne_ttc / (1 + (lt.taux_tva_snapshot / 100))) as total_ht
+                SUM(lt.total_ligne_ttc / (1 + ((CASE WHEN $4::boolean THEN 0 ELSE COALESCE(lt.taux_tva_snapshot, 20) END) / 100))) as total_ht
             FROM lignes_ticket lt
             JOIN tickets t ON t.id_ticket = lt.id_ticket
             LEFT JOIN catalogue c ON c.id_article = lt.id_article
             WHERE t.id_salon = $1 AND t.statut = 'VALIDE' AND DATE(t.date_creation) BETWEEN $2 AND $3
-            GROUP BY COALESCE(c.type_article, 'PRESTATION'), lt.taux_tva_snapshot
-        `, [id_salon, dateDebutStr, dateFinStr]);
+            GROUP BY COALESCE(c.type_article, 'PRESTATION'), (CASE WHEN $4::boolean THEN 0 ELSE COALESCE(lt.taux_tva_snapshot, 20) END)
+            ORDER BY type_article ASC, taux_tva DESC
+        `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
 
         // 2. REQUÊTE : Paiements et Mouvements
         const paiementsRes = await pool.query(`SELECT methode_paiement, COUNT(id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
@@ -6332,7 +6339,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         `, [id_salon, dateDebutStr, lastZDate]);
 
         // 3. REQUÊTE : Dépenses
-        const facturesRes = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3 ORDER BY date_traitement ASC`, [id_salon, dateDebutStr, dateFinStr]);
+        const facturesRes = await pool.query(`SELECT nom_fournisseur, numero_facture, mode_paiement, statut_verification, justificatif_url, compte_comptable, TO_CHAR(COALESCE(date_facture, DATE(date_traitement)), 'DD/MM/YYYY') as date_facture, montant_ht, montant_tva, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND COALESCE(date_facture, DATE(date_traitement)) BETWEEN $2 AND $3 ORDER BY COALESCE(date_facture, DATE(date_traitement)) ASC`, [id_salon, dateDebutStr, dateFinStr]);
 
         // 4. REQUÊTE : Commissions Employés & Contrats (Recalcul exact + Heures + Pourboires)
         const rhRes = await pool.query(`
@@ -6469,19 +6476,16 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         currentY += 15;
         if (estMoisCloture) {
             // Encadré d'attestation individuelle (Conformité Loi de Finances)
-            const hashLiasseSplit = fullHashArchive && fullHashArchive.length === 64
-                ? `${fullHashArchive.substring(0, 32)}\n${fullHashArchive.substring(32, 64)}`
-                : fullHashArchive;
-            doc.rect(40, currentY - 5, 515, 75).fillAndStroke('#f0fdf4', '#16a34a');
-            currentY += 5;
-            doc.font('Helvetica-Bold').fontSize(10).fillColor('#16a34a').text(`✓ CLÔTURE MENSUELLE N° ${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}`, 50, currentY);
-            currentY += 14;
-            doc.font('Courier').fontSize(7.5).fillColor('#111827').text(`Hash SHA-256 :\n${hashLiasseSplit}`, 50, currentY);
-            currentY += 20;
-            doc.font('Helvetica').fontSize(8).text(`Réf. Archive : ${numeroArchive}`, 50, currentY);
-            currentY += 12;
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text(`Logiciel STACK v1.0 - Attestation individuelle de conformité (CGI, art. 286, I-3° bis)`, 50, currentY);
+            doc.rect(40, currentY - 5, 515, 78).fillAndStroke('#f0fdf4', '#16a34a');
+            currentY += 4;
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#16a34a').text(`CLÔTURE MENSUELLE N° ${referenceDate.getFullYear()}${String(referenceDate.getMonth() + 1).padStart(2, '0')}`, 50, currentY);
             currentY += 15;
+            doc.font('Courier').fontSize(7.5).fillColor('#111827').text(`Hash SHA-256 : ${fullHashArchive}`, 50, currentY, { width: 495 });
+            currentY += 14;
+            doc.font('Helvetica-Bold').fontSize(8).fillColor('#111827').text(`Réf. Archive : ${numeroArchive}`, 50, currentY);
+            currentY += 13;
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#4b5563').text(`Logiciel STACK v1.0 - Attestation individuelle de conformité (CGI, art. 286, I-3° bis)`, 50, currentY);
+            currentY += 20;
         }
         currentY += 25;
 
@@ -7341,10 +7345,11 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             // Calcul du CA orphelin basé sur totalEncaissementsReel (inclut les remises fidélité éventuelles)
             const caNonCloture = totalEncaissementsReel - sumCaZ;
             if (Math.abs(caNonCloture) > 0.01) {
+                currentY += 4;
                 drawRow([
                     {text: 'CA hors clôture (En attente de Z)', w: 190}, 
                     {text: fMnt(caNonCloture), w: 48, align: 'right'}, 
-                    {text: '', w: 257, align: 'left'}
+                    {text: 'Non clôturé sur la période', w: 257, align: 'right', color: '#ea580c'}
                 ], false, true);
             }
         }
