@@ -759,7 +759,7 @@ const authLimiter = rateLimit({
 });
 
 app.post('/api/register', authLimiter, async (req, res) => {
-    const { email, mot_de_passe, nom_salon, nom_gerant } = req.body;
+    const { email, mot_de_passe, nom_salon, nom_gerant, code_partenaire, siret } = req.body;
     if (!email || !mot_de_passe) return res.status(400).json({ erreur: "Email et mot de passe requis." });
     const clientDB = await pool.connect();
     try {
@@ -768,11 +768,34 @@ app.post('/api/register', authLimiter, async (req, res) => {
         if (exist.rowCount > 0) throw new Error("Cet email est déjà utilisé.");
         const hash = await bcrypt.hash(mot_de_passe, 10);
         
+        // 1. Recherche de l'agent si un code partenaire est fourni via le lien d'onboarding
+        let idAgentApporteur = null;
+        if (code_partenaire) {
+            const agentRes = await clientDB.query('SELECT id_agent FROM partner_agents WHERE code_partenaire = $1', [code_partenaire]);
+            if (agentRes.rowCount > 0) {
+                idAgentApporteur = agentRes.rows[0].id_agent;
+            }
+        }
+
+        // 2. Création du salon avec l'affiliation et le SIRET (s'ils existent)
         const salonResult = await clientDB.query(
-            "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL') RETURNING id_salon", 
-            [nom_salon || 'Nouveau Salon']
+            "INSERT INTO configuration_salon (nom_salon, date_fin_essai, plan_actuel, id_agent_apporteur, siret) VALUES ($1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL', $2, $3) RETURNING id_salon", 
+            [nom_salon || 'Nouveau Salon', idAgentApporteur, siret || null]
         );
         const idNouveauSalon = salonResult.rows[0].id_salon;
+
+        // 3. Officialisation de l'attribution et MAJ du prospect si un agent est lié
+        if (idAgentApporteur) {
+            await clientDB.query(
+                "INSERT INTO partner_attributions_salons (id_salon, id_agent, mode_attribution, statut_onboarding) VALUES ($1, $2, 'LIEN_AFFILIATION', 'EN_ATTENTE_VALIDATION_STACK')",
+                [idNouveauSalon, idAgentApporteur]
+            );
+            await clientDB.query(
+                "UPDATE partner_prospects_reservations SET id_salon_converti = $1, statut_prospect = 'SIGNE' WHERE id_agent = $2 AND (email_gerant = $3 OR siret_prospect = $4)",
+                [idNouveauSalon, idAgentApporteur, email, siret]
+            );
+        }
+
         let customerId = null;
         try { const customer = await stripe.customers.create({ email: email, name: nom_salon }); customerId = customer.id; } catch(e) {}
         await clientDB.query('INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, _customer_id, statut_abonnement) VALUES ($1, $2, $3, $4, $5, $6)', [email, hash, idNouveauSalon, 'gerant', customerId, 'inactif']); 
