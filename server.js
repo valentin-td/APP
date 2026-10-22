@@ -387,6 +387,7 @@ pool.query(`
     -- TABLES PORTAIL PARTENAIRES
     CREATE TABLE IF NOT EXISTS partner_agents (id_agent SERIAL PRIMARY KEY, nom VARCHAR(100) NOT NULL, prenom VARCHAR(100) NOT NULL, email VARCHAR(255) UNIQUE NOT NULL, telephone VARCHAR(20), mot_de_passe_hash VARCHAR(255) NOT NULL, siret_agent VARCHAR(50) NOT NULL, numero_rsac VARCHAR(100), iban VARCHAR(50), code_partenaire VARCHAR(50) UNIQUE NOT NULL, statut_compte VARCHAR(30) DEFAULT 'EN_ATTENTE_VALIDATION', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS partner_stocks_tpe (numero_serie VARCHAR(100) PRIMARY KEY, id_agent INT REFERENCES partner_agents(id_agent) ON DELETE SET NULL, statut VARCHAR(50) DEFAULT 'EN_STOCK_STACK', id_salon_affecte INT, date_attribution_agent TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS partner_factures_installation (id_facture SERIAL PRIMARY KEY, id_agent INT REFERENCES partner_agents(id_agent) ON DELETE CASCADE, numero_facture VARCHAR(50) UNIQUE NOT NULL, nom_salon VARCHAR(255) NOT NULL, adresse_salon TEXT NOT NULL, siret_salon VARCHAR(50) NOT NULL, montant_ht NUMERIC(10,2) DEFAULT 99.00, statut VARCHAR(30) DEFAULT 'EN_ATTENTE_DE_PAIEMENT', date_emission TIMESTAMP DEFAULT CURRENT_TIMESTAMP, date_paiement TIMESTAMP);
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS id_agent_apporteur INT REFERENCES partner_agents(id_agent) ON DELETE SET NULL;
 `).then(async () => {
     try {
