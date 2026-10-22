@@ -391,6 +391,68 @@ pool.query(`
     CREATE TABLE IF NOT EXISTS partner_prospects_reservations (id_prospect SERIAL PRIMARY KEY, id_agent INT REFERENCES partner_agents(id_agent) ON DELETE CASCADE, nom_salon VARCHAR(255) NOT NULL, ville VARCHAR(100), code_postal VARCHAR(20), siret_prospect VARCHAR(50), telephone_salon VARCHAR(20), email_gerant VARCHAR(255) NOT NULL, statut_prospect VARCHAR(30) DEFAULT 'DECLARE', date_declaration TIMESTAMP DEFAULT CURRENT_TIMESTAMP, date_expiration_protection TIMESTAMP NOT NULL, id_salon_converti INT);
     CREATE TABLE IF NOT EXISTS partner_attributions_salons (id_attribution SERIAL PRIMARY KEY, id_salon INT UNIQUE REFERENCES configuration_salon(id_salon) ON DELETE CASCADE, id_agent INT REFERENCES partner_agents(id_agent) ON DELETE CASCADE, mode_attribution VARCHAR(50) DEFAULT 'LIEN_AFFILIATION', frais_installation_factures NUMERIC(10,2) DEFAULT 99.00, statut_onboarding VARCHAR(50) DEFAULT 'EN_ATTENTE_VALIDATION_STACK', date_debut_commissionnement DATE, date_fin_commissionnement DATE, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS partner_commissions (id_commission SERIAL PRIMARY KEY, id_agent INT REFERENCES partner_agents(id_agent) ON DELETE CASCADE, id_salon INT REFERENCES configuration_salon(id_salon) ON DELETE CASCADE, type_commission VARCHAR(50) DEFAULT 'ABONNEMENT_RECURRENT_20_POURCENT', periode_mois VARCHAR(7) NOT NULL, montant_base_ht NUMERIC(10,2) NOT NULL, taux_applique NUMERIC(5,2) DEFAULT 20.00, montant_commission NUMERIC(10,2) NOT NULL, statut_commission VARCHAR(30) DEFAULT 'EN_ATTENTE_SEUIL', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(id_salon, periode_mois, type_commission));
+
+    CREATE TABLE IF NOT EXISTS partner_conformite_dossier (
+        id_agent INT PRIMARY KEY REFERENCES partner_agents(id_agent) ON DELETE CASCADE,
+        contrat_signe BOOLEAN DEFAULT FALSE,
+        date_signature_contrat TIMESTAMP,
+        statut_contrat VARCHAR(30) DEFAULT 'MANQUANT',
+        date_naissance DATE,
+        date_expiration_identite DATE,
+        fichier_identite TEXT,
+        statut_identite VARCHAR(30) DEFAULT 'MANQUANT',
+        forme_juridique VARCHAR(50) DEFAULT 'EI',
+        date_debut_activite DATE,
+        adresse_pro TEXT,
+        statut_siret VARCHAR(30) DEFAULT 'MANQUANT',
+        greffe_rsac VARCHAR(150),
+        date_emission_rsac DATE,
+        fichier_rsac TEXT,
+        statut_rsac VARCHAR(30) DEFAULT 'MANQUANT',
+        date_emission_kbis DATE,
+        fichier_kbis TEXT,
+        statut_kbis VARCHAR(30) DEFAULT 'NON_REQUIS',
+        code_verif_urssaf VARCHAR(100),
+        date_emission_urssaf DATE,
+        date_expiration_urssaf DATE,
+        fichier_urssaf TEXT,
+        statut_urssaf VARCHAR(30) DEFAULT 'MANQUANT',
+        assureur_nom VARCHAR(150),
+        assureur_contrat VARCHAR(100),
+        assureur_plafond VARCHAR(100),
+        date_expiration_rc_pro DATE,
+        fichier_rc_pro TEXT,
+        statut_rc_pro VARCHAR(30) DEFAULT 'MANQUANT',
+        titulaire_iban VARCHAR(255),
+        statut_iban VARCHAR(30) DEFAULT 'MANQUANT',
+        regime_tva VARCHAR(50) DEFAULT 'FRANCHISE_293B',
+        numero_tva_intra VARCHAR(50),
+        statut_tva VARCHAR(30) DEFAULT 'MANQUANT',
+        honneur_aucune_interdiction BOOLEAN DEFAULT FALSE,
+        honneur_pas_exclusivite_employeur BOOLEAN DEFAULT FALSE,
+        honneur_pas_mandat_concurrent BOOLEAN DEFAULT FALSE,
+        date_declarations_honneur TIMESTAMP,
+        charte_acceptee BOOLEAN DEFAULT FALSE,
+        version_charte VARCHAR(20) DEFAULT 'v1.0',
+        date_acceptation_charte TIMESTAMP,
+        quiz_score INT DEFAULT 0,
+        formation_validee BOOLEAN DEFAULT FALSE,
+        date_validation_formation TIMESTAMP,
+        telephone_confirme BOOLEAN DEFAULT FALSE,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_conformite_historique (
+        id_historique SERIAL PRIMARY KEY,
+        id_agent INT REFERENCES partner_agents(id_agent) ON DELETE CASCADE,
+        type_piece VARCHAR(50) NOT NULL,
+        action VARCHAR(50) NOT NULL,
+        statut_resultat VARCHAR(30) NOT NULL,
+        verifie_par VARCHAR(150),
+        commentaire TEXT,
+        date_evenement TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS id_agent_apporteur INT REFERENCES partner_agents(id_agent) ON DELETE SET NULL;
 `).then(async () => {
     try {
