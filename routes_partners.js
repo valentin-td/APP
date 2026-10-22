@@ -108,11 +108,72 @@ router.get('/factures', verifierTokenPartner, async (req, res) => {
     }
 });
 
-// 4. Créer une nouvelle facture d'installation
+// Fonction centrale de vérification de conformité et d'expiration des pièces
+const evaluerConformiteAgent = async (idAgent) => {
+    await pool.query('INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING', [idAgent]);
+    const res = await pool.query(`
+        SELECT a.*, d.*
+        FROM partner_agents a
+        JOIN partner_conformite_dossier d ON d.id_agent = a.id_agent
+        WHERE a.id_agent = $1
+    `, [idAgent]);
+    if (res.rowCount === 0) return { autorise: false, motifs: ["Compte introuvable"], alertes: [] };
+    const c = res.rows[0];
+    const now = new Date();
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const motifs = [];
+    const alertes = [];
+
+    // 1. Contrat signé (avant RSAC)
+    if (!c.contrat_signe || c.statut_contrat !== 'VALIDE') motifs.push("Étape 1 : Contrat d'agent commercial non signé ou non validé.");
+
+    // 2. Identité, SIRET, RSAC, Kbis
+    if (c.statut_identite !== 'VALIDE') motifs.push("Étape 2 : Pièce d'identité non validée.");
+    if (c.date_expiration_identite && new Date(c.date_expiration_identite) < now) motifs.push("Étape 2 : Pièce d'identité expirée.");
+    if (c.statut_siret !== 'VALIDE') motifs.push("Étape 2 : Statut SIREN/SIRET (INSEE) non validé.");
+    if (!c.numero_rsac || c.statut_rsac !== 'VALIDE') motifs.push("Étape 2 : Numéro et extrait RSAC (< 3 mois) obligatoires et doivent être validés.");
+    if (c.forme_juridique === 'SOCIETE' && c.statut_kbis !== 'VALIDE') motifs.push("Étape 2 : Extrait Kbis (< 3 mois) requis pour une société.");
+
+    // 3. Vigilance URSSAF
+    if (c.statut_urssaf !== 'VALIDE') motifs.push("Étape 3 : Attestation de vigilance URSSAF non validée.");
+    if (!c.date_expiration_urssaf || new Date(c.date_expiration_urssaf) < now) {
+        motifs.push("Étape 3 : Attestation URSSAF expirée (renouvellement 6 mois obligatoire).");
+    } else if (new Date(c.date_expiration_urssaf) <= in30Days) {
+        alertes.push(`Votre attestation URSSAF expire le ${new Date(c.date_expiration_urssaf).toLocaleDateString('fr-FR')} (moins de 30 jours).`);
+    }
+
+    // 4. RC Pro, IBAN, TVA, Honneur, Charte
+    if (c.statut_rc_pro !== 'VALIDE') motifs.push("Étape 4 : Attestation d'assurance RC Pro non validée.");
+    if (!c.date_expiration_rc_pro || new Date(c.date_expiration_rc_pro) < now) {
+        motifs.push("Étape 4 : Assurance RC Pro expirée.");
+    } else if (new Date(c.date_expiration_rc_pro) <= in30Days) {
+        alertes.push(`Votre assurance RC Pro expire le ${new Date(c.date_expiration_rc_pro).toLocaleDateString('fr-FR')} (moins de 30 jours).`);
+    }
+    if (!c.iban || !c.titulaire_iban || c.statut_iban !== 'VALIDE') motifs.push("Étape 4 : IBAN et titulaire non validés.");
+    if (c.statut_tva !== 'VALIDE') motifs.push("Étape 4 : Régime de TVA non validé.");
+    if (!c.honneur_aucune_interdiction || !c.honneur_pas_exclusivite_employeur || !c.honneur_pas_mandat_concurrent) {
+        motifs.push("Étape 4 : Déclarations sur l'honneur incomplètes.");
+    }
+    if (!c.charte_acceptee) motifs.push("Étape 4 : Charte commerciale STACK non acceptée.");
+
+    // 5. Formation NF525 & Contact
+    if (!c.formation_validee || c.quiz_score < 100) motifs.push("Étape 5 : Formation et Quiz NF525 non validés.");
+    if (!c.telephone_confirme) motifs.push("Étape 5 : Numéro de téléphone et contact non confirmés.");
+
+    // 6. Validation finale Fondateur
+    if (c.statut_compte !== 'ACTIF') motifs.push("Étape 6 : En attente de l'activation finale manuelle par STACK.");
+
+    return { autorise: motifs.length === 0, motifs, alertes, dossier: c };
+};
+
+// 4. Créer une nouvelle facture d'installation (Bloquée si conformité ou RSAC incomplets)
 router.post('/factures', verifierTokenPartner, async (req, res) => {
     try {
+        const verif = await evaluerConformiteAgent(req.agent.id_agent);
+        if (!verif.autorise) {
+            return res.status(403).json({ error: `Facturation bloquée : ${verif.motifs[0]}` });
+        }
         const { nom_salon, adresse_salon, siret_salon } = req.body;
-        // Format du numéro : FAC-[ID_AGENT]-[ANNEE]-[ALEATOIRE]
         const numero_facture = `FAC-${req.agent.id_agent}-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
         
         const result = await pool.query(
@@ -160,11 +221,21 @@ router.get('/factures/:id/pdf', verifierTokenPartner, async (req, res) => {
         doc.fontSize(10).text(`Facture N° : ${facture.numero_facture}`, { align: 'right' });
         doc.text(`Date : ${new Date(facture.date_emission).toLocaleDateString('fr-FR')}`, { align: 'right' });
         
-        // Infos Agent
+        const confRes = await pool.query('SELECT * FROM partner_conformite_dossier WHERE id_agent = $1', [req.agent.id_agent]);
+        const conf = confRes.rows[0] || {};
+        if (!agent.numero_rsac) {
+            return res.status(403).json({ error: "Émission PDF refusée : Le numéro RSAC est obligatoire sur chaque facture." });
+        }
+
+        // Infos Agent (Mention RSAC obligatoire)
         doc.moveDown(2);
         doc.fontSize(14).text(`${agent.prenom} ${agent.nom}`, { align: 'left' });
-        doc.fontSize(10).text(`SIRET : ${agent.siret_agent}`);
-        if (agent.numero_rsac) doc.text(`RSAC : ${agent.numero_rsac}`);
+        if (conf.adresse_pro) doc.fontSize(10).text(conf.adresse_pro);
+        doc.fontSize(10).text(`SIRET : ${agent.siret_agent} (${conf.forme_juridique || 'EI'})`);
+        doc.fontSize(10).text(`Immatriculation RSAC : ${agent.numero_rsac}${conf.greffe_rsac ? ' - Greffe de ' + conf.greffe_rsac : ''}`);
+        if (conf.regime_tva === 'ASSUJETTI_TVA' && conf.numero_tva_intra) {
+            doc.fontSize(10).text(`N° TVA Intracommunautaire : ${conf.numero_tva_intra}`);
+        }
 
         // Infos Client
         doc.moveDown(2);
@@ -216,6 +287,10 @@ router.get('/factures/:id/pdf', verifierTokenPartner, async (req, res) => {
 // 7. Déclarer et verrouiller un prospect (Lead Locking - 45 jours)
 router.post('/prospects', verifierTokenPartner, async (req, res) => {
     try {
+        const verif = await evaluerConformiteAgent(req.agent.id_agent);
+        if (!verif.autorise) {
+            return res.status(403).json({ error: `Vente verrouillée : ${verif.motifs[0]}` });
+        }
         const { nom_salon, ville, code_postal, siret_prospect, telephone_salon, email_gerant } = req.body;
 
         // A. Vérifier si le salon est DÉJÀ client STACK
@@ -275,6 +350,10 @@ router.get('/prospects', verifierTokenPartner, async (req, res) => {
 // 9. Lancer l'Onboarding (Génération du lien unique après paiement)
 router.post('/prospects/:id/onboarding', verifierTokenPartner, async (req, res) => {
     try {
+        const verif = await evaluerConformiteAgent(req.agent.id_agent);
+        if (!verif.autorise) {
+            return res.status(403).json({ error: `Onboarding verrouillé : ${verif.motifs[0]}` });
+        }
         // A. Vérifier le prospect
         const prospectRes = await pool.query(
             'SELECT * FROM partner_prospects_reservations WHERE id_prospect = $1 AND id_agent = $2',
@@ -413,30 +492,147 @@ router.get('/dashboard-stats', verifierTokenPartner, async (req, res) => {
     }
 });
 
-// 11. Récupérer le profil de l'agent
+// 11. Récupérer le dossier complet de conformité, les alertes 30j et l'historique
 router.get('/profil', verifierTokenPartner, async (req, res) => {
     try {
-        const result = await pool.query(
-            'SELECT nom, prenom, email, telephone, siret_agent, numero_rsac, iban, statut_compte, code_partenaire FROM partner_agents WHERE id_agent = $1', 
+        const verif = await evaluerConformiteAgent(req.agent.id_agent);
+        const histRes = await pool.query(
+            'SELECT * FROM partner_conformite_historique WHERE id_agent = $1 ORDER BY date_evenement DESC LIMIT 30',
             [req.agent.id_agent]
         );
-        res.json(result.rows[0]);
-    } catch (error) { 
-        res.status(500).json({ error: "Erreur serveur" }); 
+        res.json({
+            ...verif.dossier,
+            autorise_a_vendre: verif.autorise,
+            motifs_blocage: verif.motifs,
+            alertes_expiration: verif.alertes,
+            historique: histRes.rows
+        });
+    } catch (error) {
+        console.error("Erreur GET /profil:", error);
+        res.status(500).json({ error: "Erreur serveur" });
     }
 });
 
-// 12. Mettre à jour le profil (IBAN, Téléphone, RSAC)
-router.put('/profil', verifierTokenPartner, async (req, res) => {
+// 12. Soumettre ou mettre à jour une étape du dossier de conformité (Ordre 1 à 5)
+router.put('/profil/etape', verifierTokenPartner, async (req, res) => {
+    const idAgent = req.agent.id_agent;
+    const { etape, payload } = req.body;
     try {
-        const { telephone, numero_rsac, iban } = req.body;
-        await pool.query(
-            'UPDATE partner_agents SET telephone = $1, numero_rsac = $2, iban = $3 WHERE id_agent = $4', 
-            [telephone, numero_rsac, iban, req.agent.id_agent]
-        );
-        res.json({ message: "Profil mis à jour avec succès." });
-    } catch (error) { 
-        res.status(500).json({ error: "Erreur serveur" }); 
+        await pool.query('INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING', [idAgent]);
+        const currentRes = await pool.query('SELECT * FROM partner_conformite_dossier WHERE id_agent = $1', [idAgent]);
+        const d = currentRes.rows[0];
+
+        if (etape === 1) {
+            await pool.query(`
+                UPDATE partner_conformite_dossier
+                SET contrat_signe = TRUE, date_signature_contrat = CURRENT_TIMESTAMP, statut_contrat = 'EN_ATTENTE', updated_at = CURRENT_TIMESTAMP
+                WHERE id_agent = $1
+            `, [idAgent]);
+            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'CONTRAT_MANDAT', 'SIGNATURE_AGENT', 'EN_ATTENTE', 'Agent', 'Contrat signé avec prise d''effet conditionnelle')`, [idAgent]);
+        }
+
+        if (etape === 2) {
+            if (!d.contrat_signe) return res.status(400).json({ error: "Ordre obligatoire : Vous devez d'abord signer le contrat d'agent commercial (Étape 1) avant de déposer votre immatriculation RSAC." });
+            const { date_naissance, date_expiration_identite, fichier_identite, siret_agent, forme_juridique, date_debut_activite, adresse_pro, numero_rsac, greffe_rsac, date_emission_rsac, fichier_rsac, date_emission_kbis, fichier_kbis } = payload;
+
+            await pool.query('UPDATE partner_agents SET siret_agent = COALESCE($1, siret_agent), numero_rsac = COALESCE($2, numero_rsac) WHERE id_agent = $3', [siret_agent, numero_rsac, idAgent]);
+            await pool.query(`
+                UPDATE partner_conformite_dossier
+                SET date_naissance = COALESCE($1, date_naissance),
+                    date_expiration_identite = COALESCE($2, date_expiration_identite),
+                    fichier_identite = COALESCE($3, fichier_identite),
+                    statut_identite = CASE WHEN $3 IS NOT NULL THEN 'EN_ATTENTE' ELSE statut_identite END,
+                    forme_juridique = COALESCE($4, forme_juridique),
+                    date_debut_activite = COALESCE($5, date_debut_activite),
+                    adresse_pro = COALESCE($6, adresse_pro),
+                    statut_siret = 'EN_ATTENTE',
+                    greffe_rsac = COALESCE($7, greffe_rsac),
+                    date_emission_rsac = COALESCE($8, date_emission_rsac),
+                    fichier_rsac = COALESCE($9, fichier_rsac),
+                    statut_rsac = CASE WHEN $9 IS NOT NULL THEN 'EN_ATTENTE' ELSE statut_rsac END,
+                    date_emission_kbis = COALESCE($10, date_emission_kbis),
+                    fichier_kbis = COALESCE($11, fichier_kbis),
+                    statut_kbis = CASE WHEN $4 = 'SOCIETE' THEN (CASE WHEN $11 IS NOT NULL THEN 'EN_ATTENTE' ELSE 'MANQUANT' END) ELSE 'NON_REQUIS' END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id_agent = $12
+            `, [date_naissance || null, date_expiration_identite || null, fichier_identite || null, forme_juridique || 'EI', date_debut_activite || null, adresse_pro || null, greffe_rsac || null, date_emission_rsac || null, fichier_rsac || null, date_emission_kbis || null, fichier_kbis || null, idAgent]);
+
+            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'IDENTITE_SIRET_RSAC', 'DEPOT_AGENT', 'EN_ATTENTE', 'Agent', $2)`, [idAgent, `RSAC: ${numero_rsac || 'N/A'} | Forme: ${forme_juridique || 'EI'}`]);
+        }
+
+        if (etape === 3) {
+            const { code_verif_urssaf, date_emission_urssaf, date_expiration_urssaf, fichier_urssaf } = payload;
+            await pool.query(`
+                UPDATE partner_conformite_dossier
+                SET code_verif_urssaf = COALESCE($1, code_verif_urssaf),
+                    date_emission_urssaf = COALESCE($2, date_emission_urssaf),
+                    date_expiration_urssaf = COALESCE($3, date_expiration_urssaf),
+                    fichier_urssaf = COALESCE($4, fichier_urssaf),
+                    statut_urssaf = 'EN_ATTENTE',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id_agent = $5
+            `, [code_verif_urssaf || null, date_emission_urssaf || null, date_expiration_urssaf || null, fichier_urssaf || null, idAgent]);
+
+            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'URSSAF', 'DEPOT_AGENT', 'EN_ATTENTE', 'Agent', $2)`, [idAgent, `Code vérif: ${code_verif_urssaf || ''}`]);
+        }
+
+        if (etape === 4) {
+            const { assureur_nom, assureur_contrat, assureur_plafond, date_expiration_rc_pro, fichier_rc_pro, iban, titulaire_iban, regime_tva, numero_tva_intra, honneur_aucune_interdiction, honneur_pas_exclusivite_employeur, honneur_pas_mandat_concurrent, charte_acceptee } = payload;
+            await pool.query('UPDATE partner_agents SET iban = COALESCE($1, iban) WHERE id_agent = $2', [iban, idAgent]);
+            await pool.query(`
+                UPDATE partner_conformite_dossier
+                SET assureur_nom = COALESCE($1, assureur_nom),
+                    assureur_contrat = COALESCE($2, assureur_contrat),
+                    assureur_plafond = COALESCE($3, assureur_plafond),
+                    date_expiration_rc_pro = COALESCE($4, date_expiration_rc_pro),
+                    fichier_rc_pro = COALESCE($5, fichier_rc_pro),
+                    statut_rc_pro = 'EN_ATTENTE',
+                    titulaire_iban = COALESCE($6, titulaire_iban),
+                    statut_iban = 'EN_ATTENTE',
+                    regime_tva = COALESCE($7, regime_tva),
+                    numero_tva_intra = COALESCE($8, numero_tva_intra),
+                    statut_tva = 'EN_ATTENTE',
+                    honneur_aucune_interdiction = $9,
+                    honneur_pas_exclusivite_employeur = $10,
+                    honneur_pas_mandat_concurrent = $11,
+                    date_declarations_honneur = CASE WHEN ($9 AND $10 AND $11) THEN CURRENT_TIMESTAMP ELSE date_declarations_honneur END,
+                    charte_acceptee = $12,
+                    date_acceptation_charte = CASE WHEN $12 THEN CURRENT_TIMESTAMP ELSE date_acceptation_charte END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id_agent = $13
+            `, [assureur_nom || null, assureur_contrat || null, assureur_plafond || null, date_expiration_rc_pro || null, fichier_rc_pro || null, titulaire_iban || null, regime_tva || 'FRANCHISE_293B', numero_tva_intra || null, !!honneur_aucune_interdiction, !!honneur_pas_exclusivite_employeur, !!honneur_pas_mandat_concurrent, !!charte_acceptee, idAgent]);
+
+            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'ASSURANCE_IBAN_TVA_HONNEUR', 'DEPOT_AGENT', 'EN_ATTENTE', 'Agent', 'Dépôt RC Pro, IBAN, TVA, Déclarations sur l''honneur et Charte v1.0')`, [idAgent]);
+        }
+
+        if (etape === 5) {
+            const { telephone, quiz_score, telephone_confirme } = payload;
+            const reussi = Number(quiz_score) >= 100;
+            if (telephone) await pool.query('UPDATE partner_agents SET telephone = $1 WHERE id_agent = $2', [telephone, idAgent]);
+            await pool.query(`
+                UPDATE partner_conformite_dossier
+                SET quiz_score = $1,
+                    formation_validee = $2,
+                    date_validation_formation = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE date_validation_formation END,
+                    telephone_confirme = $3,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id_agent = $4
+            `, [Number(quiz_score) || 0, reussi, !!telephone_confirme, idAgent]);
+
+            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'FORMATION_NF525_CONTACT', 'QUIZ_AGENT', $2, 'Système', $3)`, [idAgent, reussi ? 'VALIDE' : 'REFUSE', `Score Quiz NF525 : ${quiz_score}%`]);
+        }
+
+        if (etape === 'CHANGEMENT_SITUATION') {
+            const { motif_changement } = payload;
+            await pool.query("UPDATE partner_agents SET statut_compte = 'EN_ATTENTE_VALIDATION' WHERE id_agent = $1", [idAgent]);
+            await pool.query("UPDATE partner_conformite_dossier SET statut_siret = 'EN_ATTENTE', statut_rsac = 'EN_ATTENTE' WHERE id_agent = $1", [idAgent]);
+            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'CHANGEMENT_SITUATION', 'ALERTE_AGENT', 'EN_ATTENTE', 'Agent', $2)`, [idAgent, motif_changement || 'Changement de statut/adresse/forme juridique déclaré']);
+        }
+
+        res.json({ message: "Dossier mis à jour et enregistré dans l'historique." });
+    } catch (error) {
+        console.error("Erreur PUT /profil/etape:", error);
+        res.status(500).json({ error: "Erreur lors de la sauvegarde." });
     }
 });
 
@@ -449,29 +645,71 @@ const verifierSuperAdmin = async (req, res, next) => {
     } catch (err) { res.status(500).json({ error: "Erreur serveur" }); }
 };
 
-// 13. GOD MODE - Récupérer tous les agents
+// 13. GOD MODE - Récupérer tous les agents avec leur dossier de conformité complet
 router.get('/admin/agents', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM partner_agents ORDER BY id_agent DESC');
+        const result = await pool.query(`
+            SELECT a.*, d.*
+            FROM partner_agents a
+            LEFT JOIN partner_conformite_dossier d ON d.id_agent = a.id_agent
+            ORDER BY a.id_agent DESC
+        `);
         res.json(result.rows);
     } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
 });
 
-// 14. GOD MODE - Valider manuellement le compte d'un agent
-router.patch('/admin/agents/:id/valider', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
+// 14. GOD MODE - Vérifier (Valider ou Refuser) une pièce précise ou activer/suspendre l'agent
+router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
+    const idAgent = req.params.id;
+    const { champ_statut, decision, commentaire, purge_identite_rgpd } = req.body;
+    const champsAutorises = ['statut_contrat', 'statut_identite', 'statut_siret', 'statut_rsac', 'statut_kbis', 'statut_urssaf', 'statut_rc_pro', 'statut_iban', 'statut_tva'];
+
     try {
-        await pool.query("UPDATE partner_agents SET statut_compte = 'ACTIF' WHERE id_agent = $1", [req.params.id]);
-        res.json({ message: "Agent activé" });
-    } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
+        await pool.query('INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING', [idAgent]);
+
+        if (champ_statut === 'STATUT_COMPTE_FINAL') {
+            if (decision === 'ACTIF') {
+                const verif = await evaluerConformiteAgent(idAgent);
+                const erreursHorsEtape6 = verif.motifs.filter(m => !m.startsWith('Étape 6'));
+                if (erreursHorsEtape6.length > 0) {
+                    return res.status(400).json({ error: `Activation impossible tant que tout n'est pas validé : ${erreursHorsEtape6[0]}` });
+                }
+            }
+            await pool.query("UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2", [decision, idAgent]);
+        } else if (champsAutorises.includes(champ_statut)) {
+            await pool.query(`UPDATE partner_conformite_dossier SET ${champ_statut} = $1, updated_at = CURRENT_TIMESTAMP WHERE id_agent = $2`, [decision, idAgent]);
+            if (decision === 'REFUSE') {
+                // Blocage immédiat si une pièce est refusée
+                await pool.query("UPDATE partner_agents SET statut_compte = 'BLOQUE_CONFORMITE' WHERE id_agent = $1", [idAgent]);
+            }
+            if (purge_identite_rgpd && champ_statut === 'statut_identite') {
+                // Minimisation RGPD : suppression du fichier brut après validation de l'identité
+                await pool.query("UPDATE partner_conformite_dossier SET fichier_identite = 'PURGE_RGPD_APRES_CONTROLE' WHERE id_agent = $1", [idAgent]);
+            }
+        }
+
+        await pool.query(
+            `INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire)
+             VALUES ($1, $2, 'VERIFICATION_FONDATEUR', $3, 'Valentin Tardy (Fondateur)', $4)`,
+            [idAgent, champ_statut, decision, commentaire || 'Contrôle manuel effectué']
+        );
+
+        res.json({ message: "Décision enregistrée et tracée." });
+    } catch (error) {
+        console.error("Erreur vérification pièce:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
 });
 
-// 15. GOD MODE - Récupérer les commissions "Acquises" prêtes à être virées
+// 15. GOD MODE - Récupérer les commissions "Acquises" (suspendues si une pièce de l'agent est expirée ou refusée)
 router.get('/admin/commissions', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT c.*, a.nom, a.prenom, a.iban, a.email, s.nom_salon 
+            SELECT c.*, a.nom, a.prenom, a.iban, a.email, a.statut_compte, s.nom_salon,
+                   d.date_expiration_urssaf, d.date_expiration_rc_pro, d.statut_urssaf, d.statut_rc_pro
             FROM partner_commissions c
             JOIN partner_agents a ON a.id_agent = c.id_agent
+            LEFT JOIN partner_conformite_dossier d ON d.id_agent = c.id_agent
             JOIN configuration_salon s ON s.id_salon = c.id_salon
             WHERE c.statut_commission = 'ACQUISE_A_PAYER'
             ORDER BY c.id_commission ASC
@@ -480,9 +718,16 @@ router.get('/admin/commissions', verifierTokenPartner, verifierSuperAdmin, async
     } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
 });
 
-// 16. GOD MODE - Marquer une commission comme payée après le virement bancaire
+// 16. GOD MODE - Marquer une commission comme payée (bloqué si l'agent n'est plus conforme)
 router.patch('/admin/commissions/:id/payer', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
     try {
+        const comRes = await pool.query('SELECT id_agent FROM partner_commissions WHERE id_commission = $1', [req.params.id]);
+        if (comRes.rowCount > 0) {
+            const verif = await evaluerConformiteAgent(comRes.rows[0].id_agent);
+            if (!verif.autorise) {
+                return res.status(403).json({ error: `Paiement suspendu : Dossier agent non conforme (${verif.motifs[0]})` });
+            }
+        }
         await pool.query("UPDATE partner_commissions SET statut_commission = 'PAYEE' WHERE id_commission = $1", [req.params.id]);
         res.json({ message: "Commission clôturée" });
     } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
