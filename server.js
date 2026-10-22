@@ -1751,7 +1751,11 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
     const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement, pourboire, _id_temp, date_creation } = req.body;
     const id_salon = req.user.id_salon;
     const methode = methode_paiement || 'CARTE';
-    if (isNaN(montant) || parseFloat(montant) < 0 || !Array.isArray(lignes) || lignes.length === 0) {
+    const montantBasket = parseFloat(montant) || 0;
+    const montantPourboire = parseFloat(pourboire) || 0;
+    const montantTotalAEncaisser = montantBasket + montantPourboire;
+    
+    if (montantTotalAEncaisser <= 0 || !Array.isArray(lignes) || lignes.length === 0) {
         return res.status(400).json({ erreur: "Montant ou panier invalide." });
     }
     
@@ -1782,14 +1786,14 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             let paymentIntentId = null;
             let intentStatus = null; // Remonté pour être accessible dans le bloc catch
 
-            if (methode === 'CARTE' && montant > 0) {
+            if (methode === 'CARTE' && montantTotalAEncaisser > 0) {
                 const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
                 const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
 
                 if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
 
                 const paymentIntent = await stripe.paymentIntents.create({
-                  amount: Math.round(montant * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
+                  amount: Math.round(montantTotalAEncaisser * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
                 });
                 paymentIntentId = paymentIntent.id;
                 intentStatus = paymentIntent.status;
@@ -1833,11 +1837,9 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         // Mise à jour du compteur pour le prochain ticket
         await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
         
-        const montantPourboire = parseFloat(pourboire) || 0.00;
-
         const ticketResult = await clientDB.query(
             `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne, montant_pourboire) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END, $10) RETURNING id_ticket, date_creation;`, 
-            [numeroTicket, id_client || null, id_employe, montant, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null, montantPourboire]
+            [numeroTicket, id_client || null, id_employe, montantBasket, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null, montantPourboire]
         );
         const idNouveauTicket = ticketResult.rows[0].id_ticket;
         const dateCreationISO = new Date(ticketResult.rows[0].date_creation).toISOString();
@@ -1849,7 +1851,7 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 
         if (lignes && lignes.length > 0) {
             // Calcul de la somme brute des lignes pour répartir au centime près toute remise éventuelle (Cohérence NF525 : Somme Lignes === Ticket TTC)
-            const targetTicketCents = Math.round((parseFloat(montant) || 0) * 100);
+            const targetTicketCents = Math.round(montantBasket * 100);
             const rawLines = lignes.map(l => ({
                 ...l,
                 rawCents: Math.round((parseFloat(l.quantite) || 0) * (parseFloat(l.prix_unitaire) || 0) * 100)
@@ -1912,7 +1914,7 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
             }
         }
 
-        const montantScelle = Number(montant).toFixed(2);
+        const montantScelle = Number(montantBasket).toFixed(2);
         const tvaScellee = (totalTvaTicketCents / 100).toFixed(2);
         const chaineScellee = `${idNouveauTicket}|${numeroTicket}|${dateCreationISO}|VENTE|${methode}|${montantScelle}|${tvaScellee}|${previousHash}`;
         const newHash = crypto.createHash('sha256').update(chaineScellee).digest('hex');
@@ -1995,6 +1997,99 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 
             console.error("Erreur Encaisser:", error); res.status(500).json({ erreur: "Erreur lors de l'encaissement. " + error.message });
         } finally { clientDB.release(); }
+});
+
+// NOUVELLE ROUTE : ENCAISSEMENT D'UN POURBOIRE ISOLÉ (Post-Encaissement)
+app.post('/api/caisse/pourboire-isole', verifierToken, verifierClotureZ, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé à la caisse." });
+    const { montant_pourboire, id_employe, methode_paiement, id_client } = req.body;
+    const id_salon = req.user.id_salon;
+    const methode = methode_paiement || 'CARTE';
+    const montantPb = parseFloat(montant_pourboire) || 0;
+
+    if (montantPb <= 0) return res.status(400).json({ erreur: "Montant invalide." });
+
+    const clientDB = await pool.connect();
+    try {
+        let reader = null;
+        let paymentIntentId = null;
+        let intentStatus = null;
+
+        if (methode === 'CARTE') {
+            const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+            const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
+            if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
+
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: Math.round(montantPb * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
+            });
+            paymentIntentId = paymentIntent.id;
+            intentStatus = paymentIntent.status;
+            reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
+
+            if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
+                try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
+            }
+
+            let attempts = 0;
+            while (intentStatus === 'requires_payment_method' && attempts < 30) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+                intentStatus = checkIntent.status;
+                attempts++;
+            }
+
+            if (intentStatus !== 'requires_capture') {
+                try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
+                try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
+                throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
+            }
+        }
+
+        await clientDB.query('BEGIN');
+        
+        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
+        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
+        
+        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
+        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
+        
+        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', '');
+        const numeroTicket = `TKT-PB-${anneeMois}-${String(seq).padStart(6, '0')}`;
+
+        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
+        
+        const ticketResult = await clientDB.query(
+            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, date_creation, montant_pourboire) VALUES ($1, $2, $3, 0.00, $4, FALSE, $5, 'VALIDE', 'POURBOIRE', NOW(), $6) RETURNING id_ticket, date_creation;`, 
+            [numeroTicket, id_client || null, id_employe, id_salon, methode, montantPb]
+        );
+        const idNouveauTicket = ticketResult.rows[0].id_ticket;
+        const dateCreationISO = new Date(ticketResult.rows[0].date_creation).toISOString();
+
+        const chaineScellee = `${idNouveauTicket}|${numeroTicket}|${dateCreationISO}|POURBOIRE|${methode}|0.00|0.00|${previousHash}`;
+        const newHash = crypto.createHash('sha256').update(chaineScellee).digest('hex');
+        
+        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineScellee, idNouveauTicket]);
+
+        await enregistrerJET(id_salon, 'ENCAISSEMENT_POURBOIRE_ISOLE', { id_ticket: idNouveauTicket, numero_ticket: numeroTicket, montant_pourboire: montantPb, methode_paiement: methode, hash_ticket: newHash }, clientDB);
+
+        if (methode === 'CARTE' && intentStatus === 'requires_capture') {
+            await stripe.paymentIntents.capture(paymentIntentId);
+        }
+
+        await clientDB.query('COMMIT');
+        
+        let messageFinal = methode === 'CARTE' ? `Pourboire validé sur TPE (Ticket #${idNouveauTicket})` : `Pourboire validé (Ticket #${idNouveauTicket})`;
+        io.to(id_salon.toString()).emit('paiementValide', { message: messageFinal });
+        res.json({ message: messageFinal, reader, id_ticket: idNouveauTicket });
+
+    } catch (error) {
+        await clientDB.query('ROLLBACK');
+        if (paymentIntentId && intentStatus === 'requires_capture') {
+            try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
+        }
+        res.status(500).json({ erreur: "Erreur lors de l'encaissement du pourboire." });
+    } finally { clientDB.release(); }
 });
 
 app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
@@ -2529,8 +2624,8 @@ app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
             ? Number(parseFloat(dernierZInfo.rows[0].total_especes_reel).toFixed(2))
             : Number((parseFloat(fond_caisse_matin) || 0).toFixed(2));
 
-        // Somme algébrique exacte (inclut le ticket d'origine + et l'éventuel ticket d'annulation - du jour)
-        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+        // Somme algébrique exacte (inclut le ticket d'origine + et l'éventuel ticket d'annulation - du jour) + les pourboires
+        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc + COALESCE(montant_pourboire, 0)), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
         const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
 
         const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE montant END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
@@ -5561,7 +5656,7 @@ app.get('/api/export-pdf/:date', verifierToken, async (req, res) => {
 
         // Nombre et montant des encaissements par mode sur la journée
         const paiementsDetailJourRes = await pool.query(`
-            SELECT methode_paiement, COUNT(id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb, COALESCE(SUM(total_ttc), 0) as total
+            SELECT methode_paiement, COUNT(id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb, COALESCE(SUM(total_ttc + COALESCE(montant_pourboire, 0)), 0) as total
             FROM tickets t
             WHERE id_salon = $1 AND DATE(date_creation) = $2::date AND statut != 'ANNULE' ${filtreEmploye}
             GROUP BY methode_paiement
@@ -6267,7 +6362,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         `, [id_salon, dateDebutStr, dateFinStr, franchiseTVA]);
 
         // 2. REQUÊTE : Paiements et Mouvements
-        const paiementsRes = await pool.query(`SELECT methode_paiement, COUNT(id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
+        const paiementsRes = await pool.query(`SELECT methode_paiement, COUNT(id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb, COALESCE(SUM(total_ttc + COALESCE(montant_pourboire, 0)), 0) as total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
         const statsRes = await pool.query(`SELECT COUNT(DISTINCT id_ticket) FILTER (WHERE type_ticket != 'ANNULATION' AND est_compense = FALSE) as nb_tickets, COUNT(DISTINCT id_client) as nb_clients, COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
         
         const caisseRes = await pool.query(`
@@ -6332,7 +6427,7 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
 
         const controleRes = await pool.query(`
             SELECT 
-                (SELECT COALESCE(SUM(total_ttc), 0) FROM tickets WHERE id_salon = $1 AND methode_paiement = 'ESPECES' AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3) as especes_z,
+                (SELECT COALESCE(SUM(total_ttc + COALESCE(montant_pourboire, 0)), 0) FROM tickets WHERE id_salon = $1 AND methode_paiement = 'ESPECES' AND statut = 'VALIDE' AND DATE(date_creation) BETWEEN $2 AND $3) as especes_z,
                 (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'ENTREE' AND DATE(date_creation) BETWEEN $2 AND $3) as entrees_z,
                 (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'SORTIE' AND DATE(date_creation) BETWEEN $2 AND $3) as sorties_z,
                 (SELECT COALESCE(SUM(ecart_caisse), 0) FROM clotures_caisse WHERE id_salon = $1 AND DATE(date_cloture) BETWEEN $2 AND $3) + (SELECT COALESCE(SUM(montant), 0) FROM mouvements_caisse WHERE id_salon = $1 AND type_mouvement = 'REGULARISATION' AND DATE(date_creation) BETWEEN $2 AND $3) as ecarts_z
@@ -8245,7 +8340,7 @@ async function executerClotureFantome() {
                     const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
 
                     // --- CALCUL DU THÉORIQUE POUR LE ROBOT (Somme algébrique exacte incluant ventes + et avoirs -) ---
-                    const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
+                    const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc + COALESCE(montant_pourboire, 0)), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
                     const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
 
                     const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE montant END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
