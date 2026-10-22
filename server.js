@@ -1442,6 +1442,14 @@ app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
 // =========================================================================
 // --- EXPORT ICAL (SYNCHRONISATION PLANITY / EXTERNE) ---
 // =========================================================================
+const limiteurAvisPublic = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erreur: "Trop de tentatives, réessayez plus tard." }
+});
+
 app.get('/api/ical/:id_salon/:id_employe.ics', limiteurAvisPublic, async (req, res) => {
     const { id_salon, id_employe } = req.params;
     try {
@@ -1615,14 +1623,6 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 // =========================================================================
 // --- L'ENCAISSEMENT & MÉTHODES DE PAIEMENT (SMART POS) ---
 // =========================================================================
-const limiteurAvisPublic = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { erreur: "Trop de tentatives, réessayez plus tard." }
-});
-
 app.get('/api/avis/info/:token', limiteurAvisPublic, async (req, res) => {
     try {
         const r = await pool.query(`SELECT a.prenom, a.statut, a.note, a.id_salon, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1 AND a.date_creation > NOW() - INTERVAL '30 days'`, [req.params.token]);
