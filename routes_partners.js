@@ -308,4 +308,109 @@ router.post('/prospects/:id/onboarding', verifierTokenPartner, async (req, res) 
     }
 });
 
+// 10. Moteur de Commissions (Brique 5) & KPIs Dashboard (Brique 6)
+const GRILLE_TARIFS_HT = {
+    'ESSENTIEL': 39.00,
+    'PRO': 69.00,
+    'PREMIUM': 99.00
+};
+const SEUIL_SALONS_ACTIFS = 3;
+
+router.get('/dashboard-stats', verifierTokenPartner, async (req, res) => {
+    const idAgent = req.agent.id_agent;
+    const moisCourant = new Date().toISOString().slice(0, 7); // Ex: '2026-10'
+
+    try {
+        // A. Récupérer tous les salons apportés par cet agent avec leur statut Stripe en temps réel
+        const salonsRes = await pool.query(`
+            SELECT s.id_salon, s.nom_salon, s.plan_actuel, s.frequence_paiement, s.date_fin_essai, s.siret,
+                   u.email as email_gerant, u.statut_abonnement,
+                   a.statut_onboarding, a.date_debut_commissionnement, a.date_fin_commissionnement
+            FROM configuration_salon s
+            LEFT JOIN utilisateurs u ON u.id_salon = s.id_salon AND u.role = 'gerant'
+            LEFT JOIN partner_attributions_salons a ON a.id_salon = s.id_salon
+            WHERE s.id_agent_apporteur = $1
+            ORDER BY s.id_salon DESC
+        `, [idAgent]);
+
+        const salons = salonsRes.rows;
+        const salonsActifsPayants = salons.filter(s => s.statut_abonnement === 'actif');
+        const nbSalonsActifs = salonsActifsPayants.length;
+        const nbSalonsEssai = salons.filter(s => s.statut_abonnement !== 'actif').length;
+
+        // B. Générer de façon idempotente les commissions de 20% du mois en cours pour chaque salon actif
+        for (const salon of salonsActifsPayants) {
+            // Initialiser la fenêtre de 24 mois dès le 1er paiement constaté
+            if (!salon.date_debut_commissionnement) {
+                const updateDates = await pool.query(`
+                    INSERT INTO partner_attributions_salons (id_salon, id_agent, mode_attribution, statut_onboarding, date_debut_commissionnement, date_fin_commissionnement)
+                    VALUES ($1, $2, 'LIEN_AFFILIATION', 'GO_LIVE_VALIDE', CURRENT_DATE, (CURRENT_DATE + INTERVAL '24 months')::DATE)
+                    ON CONFLICT (id_salon) DO UPDATE
+                    SET date_debut_commissionnement = CURRENT_DATE,
+                        date_fin_commissionnement = (CURRENT_DATE + INTERVAL '24 months')::DATE,
+                        statut_onboarding = 'GO_LIVE_VALIDE'
+                    RETURNING date_debut_commissionnement, date_fin_commissionnement
+                `, [salon.id_salon, idAgent]);
+                salon.date_debut_commissionnement = updateDates.rows[0].date_debut_commissionnement;
+                salon.date_fin_commissionnement = updateDates.rows[0].date_fin_commissionnement;
+            }
+
+            // Vérifier que la période de 24 mois n'est pas dépassée
+            const dateFin = new Date(salon.date_fin_commissionnement);
+            if (new Date() <= dateFin) {
+                const baseHt = GRILLE_TARIFS_HT[salon.plan_actuel] || 39.00;
+                const montantCom = Number((baseHt * 0.20).toFixed(2));
+                const statutInitial = nbSalonsActifs >= SEUIL_SALONS_ACTIFS ? 'ACQUISE_A_PAYER' : 'EN_ATTENTE_SEUIL';
+
+                await pool.query(`
+                    INSERT INTO partner_commissions 
+                    (id_agent, id_salon, type_commission, periode_mois, montant_base_ht, taux_applique, montant_commission, statut_commission)
+                    VALUES ($1, $2, 'ABONNEMENT_RECURRENT_20_POURCENT', $3, $4, 20.00, $5, $6)
+                    ON CONFLICT (id_salon, periode_mois, type_commission) DO NOTHING
+                `, [idAgent, salon.id_salon, moisCourant, baseHt, montantCom, statutInitial]);
+            }
+        }
+
+        // C. Règle de déblocage rétroactif : si l'agent a >= 3 salons actifs, toutes ses commissions en attente deviennent acquises
+        if (nbSalonsActifs >= SEUIL_SALONS_ACTIFS) {
+            await pool.query(`
+                UPDATE partner_commissions
+                SET statut_commission = 'ACQUISE_A_PAYER'
+                WHERE id_agent = $1 AND statut_commission = 'EN_ATTENTE_SEUIL'
+            `, [idAgent]);
+        }
+
+        // D. Récupérer l'historique des commissions et calculer les totaux
+        const comRes = await pool.query(`
+            SELECT c.*, s.nom_salon, s.plan_actuel
+            FROM partner_commissions c
+            JOIN configuration_salon s ON s.id_salon = c.id_salon
+            WHERE c.id_agent = $1
+            ORDER BY c.periode_mois DESC, c.date_creation DESC
+        `, [idAgent]);
+
+        const commissions = comRes.rows;
+        const sumByStatus = (st) => commissions
+            .filter(c => c.statut_commission === st)
+            .reduce((acc, c) => acc + parseFloat(c.montant_commission || 0), 0)
+            .toFixed(2);
+
+        res.json({
+            kpis: {
+                nb_salons_actifs: nbSalonsActifs,
+                nb_salons_essai: nbSalonsEssai,
+                seuil_deblocage: SEUIL_SALONS_ACTIFS,
+                commissions_en_attente: sumByStatus('EN_ATTENTE_SEUIL'),
+                commissions_acquises: sumByStatus('ACQUISE_A_PAYER'),
+                commissions_payees: sumByStatus('PAYEE')
+            },
+            salons,
+            commissions
+        });
+    } catch (error) {
+        console.error("Erreur Dashboard Stats:", error);
+        res.status(500).json({ error: "Erreur lors du chargement des statistiques." });
+    }
+});
+
 module.exports = router;
