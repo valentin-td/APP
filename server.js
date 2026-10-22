@@ -383,6 +383,11 @@ pool.query(`
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS donnees_scellees TEXT;
     CREATE TABLE IF NOT EXISTS push_subscriptions (id_sub SERIAL PRIMARY KEY, id_salon INT, role VARCHAR(20), id_employe INT, endpoint TEXT, keys JSONB, date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS pointages (id_pointage SERIAL PRIMARY KEY, id_employe INT, id_salon INT, date_jour DATE DEFAULT CURRENT_DATE, type_action VARCHAR(20), heure_action TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    
+    -- TABLES PORTAIL PARTENAIRES
+    CREATE TABLE IF NOT EXISTS partner_agents (id_agent SERIAL PRIMARY KEY, nom VARCHAR(100) NOT NULL, prenom VARCHAR(100) NOT NULL, email VARCHAR(255) UNIQUE NOT NULL, telephone VARCHAR(20), mot_de_passe_hash VARCHAR(255) NOT NULL, siret_agent VARCHAR(50) NOT NULL, numero_rsac VARCHAR(100), iban VARCHAR(50), code_partenaire VARCHAR(50) UNIQUE NOT NULL, statut_compte VARCHAR(30) DEFAULT 'EN_ATTENTE_VALIDATION', date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS partner_stocks_tpe (numero_serie VARCHAR(100) PRIMARY KEY, id_agent INT REFERENCES partner_agents(id_agent) ON DELETE SET NULL, statut VARCHAR(50) DEFAULT 'EN_STOCK_STACK', id_salon_affecte INT, date_attribution_agent TIMESTAMP);
+    ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS id_agent_apporteur INT REFERENCES partner_agents(id_agent) ON DELETE SET NULL;
 `).then(async () => {
     try {
         await pool.query(`CREATE TABLE IF NOT EXISTS vapid_keys (id INT PRIMARY KEY, public_key TEXT, private_key TEXT)`);
@@ -1023,6 +1028,10 @@ app.post('/api/reset-password', authLimiter, async (req, res) => {
 
 // Module légal : acceptation électronique des documents contractuels (CGV, RGPD, SEPA, NF525, prêt du TPE)
 legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, nodemailer, crypto });
+
+// Module Portail Partenaires (Agents Commerciaux)
+const routesPartners = require('./routes_partners');
+app.use('/api/partners', routesPartners);
 
 app.post('/api/creer-checkout', async (req, res) => {
     const cookieHeader = req.headers.cookie;
