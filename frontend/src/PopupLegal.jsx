@@ -65,7 +65,16 @@ export default function PopupLegal({ apiBase, token, onAccepted, onRefuse }) {
   const validerIdentite = async () => {
     setEnvoi(true); setErreur(null);
     try {
-      const identitePropre = { ...identite, siret_salon: (identite.siret_salon || '').replace(/\s/g, '') };
+      // 1. Lecture silencieuse du code partenaire depuis l'URL de la page
+      const partnerCode = new URLSearchParams(window.location.search).get('partner');
+
+      // 2. Injection du code dans les données d'identité envoyées au backend
+      const identitePropre = { 
+        ...identite, 
+        siret_salon: (identite.siret_salon || '').replace(/\s/g, ''),
+        id_agent_apporteur: partnerCode 
+      };
+      
       const r = await fetch(`${apiBase}/api/legal/identite`, { method: 'POST', headers: headers(true), body: JSON.stringify(identitePropre) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.erreur || 'Erreur.');
