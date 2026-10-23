@@ -116,7 +116,7 @@ const corsOptions = {
     credentials: true
 };
 app.use(cors(corsOptions));
-app.options('/(.*)', cors(corsOptions)); // <-- Nouvelle syntaxe obligatoire sous Express 5 pour cibler toutes les routes
+app.options(/.*/, cors(corsOptions)); // <-- L'expression régulière /.*/ (sans guillemets) contourne le parseur de texte et empêche le crash
 
 app.post('/api/logout', (req, res) => {
     res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
