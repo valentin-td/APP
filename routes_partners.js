@@ -837,4 +837,47 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
     }
 });
 
+// 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (Étape 1)
+router.post('/yousign/signature-link', verifierTokenPartner, async (req, res) => {
+    try {
+        const idAgent = req.agent.id_agent;
+        
+        // 1. Récupérer les informations de l'agent
+        const agentRes = await pool.query('SELECT nom, prenom, email, telephone FROM partner_agents WHERE id_agent = $1', [idAgent]);
+        const agent = agentRes.rows[0];
+
+        // 2. Si la clé API Yousign n'est pas encore configurée, on valide l'étape en mode "Simulation" pour ne pas te bloquer
+        if (!process.env.YOUSIGN_API_KEY) {
+            await pool.query('INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING', [idAgent]);
+            await pool.query(`
+                UPDATE partner_conformite_dossier
+                SET contrat_signe = TRUE, date_signature_contrat = CURRENT_TIMESTAMP, statut_contrat = 'VALIDE', updated_at = CURRENT_TIMESTAMP
+                WHERE id_agent = $1
+            `, [idAgent]);
+            
+            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'CONTRAT_MANDAT', 'SIGNATURE_YOUSIGN', 'VALIDE', 'Système (Simulation)', 'Contrat validé en mode simulation')`, [idAgent]);
+
+            return res.json({ 
+                simulation: true, 
+                message: "Mode Simulation : Contrat validé avec succès. (Ajoutez YOUSIGN_API_KEY dans Render pour la vraie signature)." 
+            });
+        }
+
+        /* 3. LOGIQUE RÉELLE YOUSIGN (À activer quand tu auras ta clé API)
+        const response = await fetch('https://api-sandbox.yousign.app/v3/signature_requests', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: "Contrat de Mandat STACK", delivery_mode: "none", timezone: "Europe/Paris" })
+        });
+        const data = await response.json();
+        // Upload du PDF et ajout du signataire ici...
+        */
+
+        res.status(501).json({ error: "L'API Yousign nécessite un document PDF pour fonctionner." });
+    } catch (error) {
+        console.error("Erreur API Yousign:", error);
+        res.status(500).json({ error: "Erreur lors de la création de la signature." });
+    }
+});
+
 module.exports = router;
