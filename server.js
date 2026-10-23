@@ -116,6 +116,7 @@ const corsOptions = {
     credentials: true
 };
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // <-- FORCE EXPRESS À VALIDER LE PREFLIGHT POUR LE BROWSER
 
 app.post('/api/logout', (req, res) => {
     res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
