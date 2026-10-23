@@ -513,10 +513,26 @@ router.get('/profil', verifierTokenPartner, async (req, res) => {
     }
 });
 
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
+
 // 12. Soumettre ou mettre à jour une étape du dossier de conformité (Ordre 1 à 5)
-router.put('/profil/etape', verifierTokenPartner, async (req, res) => {
+router.put('/profil/etape', verifierTokenPartner, upload.any(), async (req, res) => {
     const idAgent = req.agent.id_agent;
-    const { etape, payload } = req.body;
+    let etape = req.body.etape;
+    if (!isNaN(etape)) etape = parseInt(etape);
+
+    let payload = {};
+    try { payload = JSON.parse(req.body.payload || '{}'); } 
+    catch (e) { payload = {}; }
+
+    // Reconversion temporaire des fichiers entrants en Base64 pour la base de données actuelle
+    if (req.files && req.files.length > 0) {
+        req.files.forEach(file => {
+            payload[file.fieldname] = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+        });
+    }
+
     try {
         await pool.query('INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING', [idAgent]);
         const currentRes = await pool.query('SELECT * FROM partner_conformite_dossier WHERE id_agent = $1', [idAgent]);
@@ -841,39 +857,49 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
 router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) => {
     try {
         const idAgent = req.agent.id_agent;
-        
-        // 1. Récupérer les informations de l'agent
         const agentRes = await pool.query('SELECT nom, prenom, email, telephone FROM partner_agents WHERE id_agent = $1', [idAgent]);
         const agent = agentRes.rows[0];
 
-        // 2. Si la clé API Yousign n'est pas encore configurée, on valide l'étape en mode "Simulation" pour ne pas te bloquer
         if (!process.env.YOUSIGN_API_KEY) {
-            await pool.query('INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING', [idAgent]);
-            await pool.query(`
-                UPDATE partner_conformite_dossier
-                SET contrat_signe = TRUE, date_signature_contrat = CURRENT_TIMESTAMP, statut_contrat = 'VALIDE', updated_at = CURRENT_TIMESTAMP
-                WHERE id_agent = $1
-            `, [idAgent]);
-            
-            await pool.query(`INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire) VALUES ($1, 'CONTRAT_MANDAT', 'SIGNATURE_YOUSIGN', 'VALIDE', 'Système (Simulation)', 'Contrat validé en mode simulation')`, [idAgent]);
-
-            return res.json({ 
-                simulation: true, 
-                message: "Mode Simulation : Contrat validé avec succès. (Ajoutez YOUSIGN_API_KEY dans Render pour la vraie signature)." 
-            });
+            return res.status(400).json({ error: "La clé YOUSIGN_API_KEY est manquante sur le serveur." });
         }
 
-        /* 3. LOGIQUE RÉELLE YOUSIGN (À activer quand tu auras ta clé API)
-        const response = await fetch('https://api-sandbox.yousign.app/v3/signature_requests', {
+        const YOUSIGN_URL = 'https://api-sandbox.yousign.app/v3';
+        const headers = { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' };
+
+        // 1. Initialiser la demande de signature
+        const initRes = await fetch(`${YOUSIGN_URL}/signature_requests`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({ name: "Contrat de Mandat STACK", delivery_mode: "none", timezone: "Europe/Paris" })
         });
-        const data = await response.json();
-        // Upload du PDF et ajout du signataire ici...
-        */
+        const signatureRequest = await initRes.json();
 
-        res.status(501).json({ error: "L'API Yousign nécessite un document PDF pour fonctionner." });
+        // 2. Uploader le PDF du contrat (Remplacer base64_du_contrat_vierge par une chaîne Base64 de ton PDF vierge)
+        const docRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/documents`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ nature: "signable_document", file: "base64_du_contrat_vierge" }) 
+        });
+        const document = await docRes.json();
+
+        // 3. Ajouter l'agent comme signataire
+        const signerRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/signers`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                info: { first_name: agent.prenom, last_name: agent.nom, email: agent.email, phone_number: agent.telephone || "+33600000000", locale: "fr" },
+                signature_level: "electronic_signature",
+                signature_authentication_mode: "no_otp",
+                fields: [{ type: "signature", document_id: document.id, page: 1, x: 50, y: 50 }]
+            })
+        });
+        const signer = await signerRes.json();
+
+        // 4. Activer la demande
+        await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/activate`, { method: 'POST', headers });
+
+        res.json({ signatureLink: `https://sandbox.yousign.app/procedure/sign?token=${signer.id}` });
     } catch (error) {
         console.error("Erreur API Yousign:", error);
         res.status(500).json({ error: "Erreur lors de la création de la signature." });
