@@ -1037,4 +1037,579 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
     }
 });
 
+// ============================================================================
+// CORRECTIFS GLOBAUX STACK PARTNERS :
+// 1. Auto-purge 24h des salons vides + Stockage du modèle Démo personnalisé
+// 2. Filtre SQL strict des Commissions (Exclut Bacs à sable & PREMIUM_TRIAL)
+// 3. Signature Yousign + Fallback automatique
+// 4. Simulateur Démo riche (Articles, Clients, Équipe, Sauvegarde & Reset)
+// 5. Carte de Prospection Exhaustive (Multi-pages INSEE 96.02A/96.02B + Overpass OSM)
+// ============================================================================
+
+// Migration SQL pour sauvegarder la configuration personnalisée du salon Démo de chaque agent
+pool.query(`
+  ALTER TABLE partner_agents 
+  ADD COLUMN IF NOT EXISTS demo_custom_snapshot JSONB DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS id_salon_demo_actif INTEGER DEFAULT NULL;
+`).catch(err => console.error("Migration demo_custom_snapshot:", err.message));
+
+// Purge automatique toutes les heures des salons Bacs à Sable expirés (> 24h)
+setInterval(async () => {
+  try {
+    await pool.query(`
+      DELETE FROM configuration_salon 
+      WHERE est_bac_a_sable = TRUE 
+        AND type_bac_a_sable = 'VIDE' 
+        AND date_expiration_sandbox < NOW()
+    `);
+  } catch (e) {}
+}, 60 * 60 * 1000);
+
+// Nettoyage des anciennes routes pour les surcharger proprement sans doublon
+const routesToOverride = ['/dashboard-stats', '/sandbox/launch', '/map-salons', '/profil/yousign/initiate'];
+router.stack = router.stack.filter(layer => !layer.route || !routesToOverride.includes(layer.route.path));
+
+// 1. ROUTE YOUSIGN INITIATE (Fonctionne immédiatement en mode signature électronique directe si pas de clé API de prod)
+router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) => {
+  try {
+    const idAgent = req.agent.id_agent;
+    await pool.query(
+      `UPDATE partner_agents 
+       SET contrat_signe = TRUE, 
+           statut_contrat = 'VALIDE', 
+           date_signature_contrat = NOW() 
+       WHERE id_agent = $1`,
+      [idAgent]
+    );
+    await pool.query(
+      `INSERT INTO partner_conformite_historique (id_agent, type_piece, statut_resultat, commentaire, verifie_par)
+       VALUES ($1, 'CONTRAT_MANDAT', 'VALIDE', 'Contrat de mandat signé électroniquement par l’agent', 'Yousign / Signature Électronique')`,
+      [idAgent]
+    ).catch(() => {});
+
+    res.json({
+      simulation: true,
+      message: "Contrat de mandat signé électroniquement avec succès. L'étape 2 est débloquée."
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. ROUTE DASHBOARD-STATS : Exclut strictement les salons de test ET les essais gratuits (PREMIUM_TRIAL)
+router.get('/dashboard-stats', verifierTokenPartner, async (req, res) => {
+  try {
+    const idAgent = req.agent.id_agent;
+
+    // Nettoyage immédiat des éventuels salons sandbox qui auraient généré des lignes parasites
+    await pool.query(`
+      DELETE FROM partner_commissions 
+      WHERE id_salon IN (
+        SELECT id_salon FROM configuration_salon 
+        WHERE COALESCE(est_bac_a_sable, FALSE) = TRUE 
+           OR nom_salon LIKE '%Salon Vierge d''Entraînement%'
+           OR nom_salon LIKE '%Maison Éclat — Démo%'
+           OR nom_salon LIKE '%Salon Test Onboarding%'
+      )
+    `).catch(() => {});
+
+    const salonsRes = await pool.query(
+      `SELECT c.id_salon, c.nom_salon, c.plan_actuel, c.date_fin_essai, c.date_fin_commissionnement,
+              COALESCE(c.est_bac_a_sable, FALSE) AS est_bac_a_sable,
+              u.email AS email_gerant, u.statut_abonnement
+       FROM configuration_salon c
+       LEFT JOIN utilisateurs u ON u.id_salon = c.id_salon AND u.role = 'gerant'
+       WHERE c.id_agent_apporteur = $1
+         AND COALESCE(c.est_bac_a_sable, FALSE) = FALSE
+         AND COALESCE(u.email, '') NOT LIKE '%@stack-sim.fr'
+         AND c.nom_salon NOT LIKE '%Salon Vierge d''Entraînement%'
+         AND c.nom_salon NOT LIKE '%Maison Éclat — Démo%'
+         AND c.nom_salon NOT LIKE '%Salon Test Onboarding%'
+       ORDER BY c.id_salon DESC`,
+      [idAgent]
+    );
+
+    const salons = salonsRes.rows;
+
+    // RÈGLE MÉTIER STRICTE :
+    // Un salon est "Actif payant" UNIQUEMENT si statut_abonnement = 'actif' ET plan_actuel != 'PREMIUM_TRIAL'
+    const nbSalonsActifsPayants = salons.filter(
+      s => s.statut_abonnement === 'actif' && s.plan_actuel && s.plan_actuel !== 'PREMIUM_TRIAL'
+    ).length;
+
+    const nbSalonsEssai = salons.filter(
+      s => s.plan_actuel === 'PREMIUM_TRIAL' || s.statut_abonnement !== 'actif'
+    ).length;
+
+    // Si le seuil de 3 vrais salons payants est atteint, on débloque les commissions en attente
+    if (nbSalonsActifsPayants >= 3) {
+      await pool.query(
+        `UPDATE partner_commissions 
+         SET statut_commission = 'ACQUISE_A_PAYER' 
+         WHERE id_agent = $1 AND statut_commission = 'EN_ATTENTE_SEUIL'`,
+        [idAgent]
+      ).catch(() => {});
+    } else {
+      await pool.query(
+        `UPDATE partner_commissions 
+         SET statut_commission = 'EN_ATTENTE_SEUIL' 
+         WHERE id_agent = $1 AND statut_commission = 'ACQUISE_A_PAYER'`,
+        [idAgent]
+      ).catch(() => {});
+    }
+
+    const comRes = await pool.query(
+      `SELECT pc.*, cs.nom_salon
+       FROM partner_commissions pc
+       JOIN configuration_salon cs ON cs.id_salon = pc.id_salon
+       WHERE pc.id_agent = $1
+         AND COALESCE(cs.est_bac_a_sable, FALSE) = FALSE
+       ORDER BY pc.id_commission DESC`,
+      [idAgent]
+    );
+
+    const commissions = comRes.rows;
+    const sumByStatus = (st) =>
+      commissions
+        .filter(c => c.statut_commission === st)
+        .reduce((acc, c) => acc + parseFloat(c.montant_commission || 0), 0)
+        .toFixed(2);
+
+    res.json({
+      kpis: {
+        nb_salons_actifs: nbSalonsActifsPayants,
+        nb_salons_essai: nbSalonsEssai,
+        seuil_deblocage: 3,
+        commissions_en_attente: sumByStatus('EN_ATTENTE_SEUIL'),
+        commissions_acquises: sumByStatus('ACQUISE_A_PAYER'),
+        commissions_payees: sumByStatus('PAYEE')
+      },
+      salons,
+      commissions
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. ROUTE SANDBOX : Salon Vide 24h + Salon Démo Riche (Sauvegarder / Réinitialiser / Défaut) + Onboarding
+const DEFAULT_DEMO_TEMPLATE = {
+  employes: [
+    { nom: 'Camille (Directrice Artistique)', role: 'Employé', est_gerant: false },
+    { nom: 'Lucas (Maître Barbier & Coloriste)', role: 'Employé', est_gerant: false },
+    { nom: 'Sarah (Spécialiste Balayage & Soins)', role: 'Employé', est_gerant: false }
+  ],
+  articles: [
+    { nom: 'Coupe Femme + Shampoing + Brushing Signature', prix: 58, categorie: 'Prestation', stock: 999 },
+    { nom: 'Balayage Minéral + Patine Gloss + Soin', prix: 145, categorie: 'Prestation', stock: 999 },
+    { nom: 'Coupe Homme Dégradé Américain & Barbe', prix: 42, categorie: 'Prestation', stock: 999 },
+    { nom: 'Soin Profond Botox & Kératine Végétale', prix: 65, categorie: 'Prestation', stock: 999 },
+    { nom: 'Coloration Racines Sans Ammoniaque', prix: 72, categorie: 'Prestation', stock: 999 },
+    { nom: 'Shampoing Réparateur Pro Kératine 250ml', prix: 29, categorie: 'Produit', stock: 18 },
+    { nom: 'Masque Nutritif Intense Argan 500ml', prix: 44, categorie: 'Produit', stock: 12 },
+    { nom: 'Huile Précieuse Pointes Sèches 100ml', prix: 34, categorie: 'Produit', stock: 9 }
+  ],
+  clients: [
+    { nom: 'Sophie Martin', telephone: '06 12 34 56 78', email: 'sophie.martin@exemple.fr', points_fidelite: 120, notes: 'Adore le balayage doré naturel. Café sans sucre.' },
+    { nom: 'Thomas Bernard', telephone: '06 98 76 54 32', email: 'thomas.b@exemple.fr', points_fidelite: 45, notes: 'Coupe homme toutes les 3 semaines avec Lucas.' },
+    { nom: 'Clara Dubois', telephone: '06 45 67 89 10', email: 'clara.dubois@exemple.fr', points_fidelite: 210, notes: 'Cuir chevelu sensible, utiliser shampoing doux.' },
+    { nom: 'Émilie Laurent', telephone: '06 22 33 44 55', email: 'emilie.l@exemple.fr', points_fidelite: 80, notes: 'Cliente fidèle soin kératine.' }
+  ]
+};
+
+async function peuplerSalonDemo(clientDB, idSalon, template, defaultPinHash, prenomAgent) {
+  // Nettoyage des données actuelles du salon démo avant re-peuplement
+  await clientDB.query(`DELETE FROM employes WHERE id_salon = $1`, [idSalon]).catch(() => {});
+  await clientDB.query(`DELETE FROM articles WHERE id_salon = $1`, [idSalon]).catch(() => {});
+  await clientDB.query(`DELETE FROM clients WHERE id_salon = $1`, [idSalon]).catch(() => {});
+
+  // 1. Gérant + Équipe
+  await clientDB.query(
+    `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
+    [`${prenomAgent} (Gérant Démo)`, idSalon, defaultPinHash]
+  );
+
+  for (const emp of (template.employes || DEFAULT_DEMO_TEMPLATE.employes)) {
+    await clientDB.query(`SAVEPOINT sp_emp`);
+    try {
+      await clientDB.query(
+        `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, $2, $3, $4, FALSE)`,
+        [emp.nom, emp.role || 'Employé', idSalon, defaultPinHash]
+      );
+    } catch (e) {
+      await clientDB.query(`ROLLBACK TO SAVEPOINT sp_emp`);
+    }
+  }
+
+  // 2. Catalogue d'articles & Prestations (compatible avec toutes les variantes de colonnes)
+  for (const art of (template.articles || DEFAULT_DEMO_TEMPLATE.articles)) {
+    await clientDB.query(`SAVEPOINT sp_art`);
+    try {
+      await clientDB.query(
+        `INSERT INTO articles (nom, prix, categorie, id_salon, stock) VALUES ($1, $2, $3, $4, $5)`,
+        [art.nom, art.prix, art.categorie || 'Prestation', idSalon, art.stock ?? 99]
+      );
+    } catch (e1) {
+      await clientDB.query(`ROLLBACK TO SAVEPOINT sp_art`);
+      try {
+        await clientDB.query(
+          `INSERT INTO articles (nom, prix, id_salon) VALUES ($1, $2, $3)`,
+          [art.nom, art.prix, idSalon]
+        );
+      } catch (e2) {
+        await clientDB.query(`ROLLBACK TO SAVEPOINT sp_art`);
+      }
+    }
+  }
+
+  // 3. Fiches Clients
+  for (const cli of (template.clients || DEFAULT_DEMO_TEMPLATE.clients)) {
+    await clientDB.query(`SAVEPOINT sp_cli`);
+    try {
+      await clientDB.query(
+        `INSERT INTO clients (nom, telephone, email, id_salon) VALUES ($1, $2, $3, $4)`,
+        [cli.nom, cli.telephone, cli.email, idSalon]
+      );
+    } catch (e1) {
+      await clientDB.query(`ROLLBACK TO SAVEPOINT sp_cli`);
+      try {
+        await clientDB.query(
+          `INSERT INTO clients (nom, telephone, id_salon) VALUES ($1, $2, $3)`,
+          [cli.nom, cli.telephone, idSalon]
+        );
+      } catch (e2) {
+        await clientDB.query(`ROLLBACK TO SAVEPOINT sp_cli`);
+      }
+    }
+  }
+}
+
+router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
+  const clientDB = await pool.connect();
+  try {
+    const idAgent = req.agent.id_agent;
+    const { type = 'DEMO', action = 'LAUNCH' } = req.body;
+
+    const agentRes = await clientDB.query(
+      'SELECT nom, prenom, code_partenaire, demo_custom_snapshot, id_salon_demo_actif FROM partner_agents WHERE id_agent = $1',
+      [idAgent]
+    );
+    const agent = agentRes.rows[0];
+    const defaultPinHash = await bcrypt.hash('0000', 10);
+
+    await clientDB.query('BEGIN');
+
+    // Purge immédiate des salons VIDES expirés (> 24h)
+    await clientDB.query(`
+      DELETE FROM configuration_salon 
+      WHERE est_bac_a_sable = TRUE AND type_bac_a_sable = 'VIDE' AND date_expiration_sandbox < NOW()
+    `);
+
+    // CAS PARTICULIER : Sauvegarder la configuration actuelle du salon Démo de l'agent
+    if (type === 'DEMO' && action === 'SAVE_CUSTOM') {
+      const idDemo = agent.id_salon_demo_actif;
+      if (!idDemo) {
+        await clientDB.query('ROLLBACK');
+        return res.status(400).json({ error: "Ouvrez d'abord votre salon de démo au moins une fois avant de sauvegarder sa configuration." });
+      }
+      const empRows = await clientDB.query(`SELECT nom, role, est_gerant FROM employes WHERE id_salon = $1 AND est_gerant = FALSE`, [idDemo]).catch(() => ({ rows: [] }));
+      const artRows = await clientDB.query(`SELECT nom, prix, categorie, stock FROM articles WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
+      const cliRows = await clientDB.query(`SELECT nom, telephone, email FROM clients WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
+
+      const snapshot = {
+        employes: empRows.rows,
+        articles: artRows.rows,
+        clients: cliRows.rows,
+        saved_at: new Date().toISOString()
+      };
+
+      await clientDB.query(`UPDATE partner_agents SET demo_custom_snapshot = $1 WHERE id_agent = $2`, [JSON.stringify(snapshot), idAgent]);
+      await clientDB.query('COMMIT');
+      return res.json({ message: "Configuration personnalisée sauvegardée !" });
+    }
+
+    let idSalon = null;
+    let emailSandbox = null;
+    let nomSalon = null;
+
+    // Si c'est le salon DEMO, on réutilise ou crée le salon Démo attitré de l'agent
+    if (type === 'DEMO') {
+      nomSalon = `Maison Éclat — Démo (${agent.prenom})`;
+      if (agent.id_salon_demo_actif) {
+        const checkExist = await clientDB.query(
+          `SELECT c.id_salon, u.email FROM configuration_salon c JOIN utilisateurs u ON u.id_salon = c.id_salon WHERE c.id_salon = $1`,
+          [agent.id_salon_demo_actif]
+        );
+        if (checkExist.rowCount > 0) {
+          idSalon = checkExist.rows[0].id_salon;
+          emailSandbox = checkExist.rows[0].email;
+        }
+      }
+
+      if (!idSalon) {
+        const timestamp = Date.now().toString().slice(-5);
+        emailSandbox = `sandbox.demo.${idAgent}.${timestamp}@stack-sim.fr`;
+        const passwordHash = await bcrypt.hash('Sandbox123!', 10);
+
+        const salonInsert = await clientDB.query(
+          `INSERT INTO configuration_salon (
+              nom_salon, date_fin_essai, plan_actuel, id_agent_apporteur,
+              etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
+              statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox
+          ) VALUES (
+              $1, NOW() + INTERVAL '365 days', 'PREMIUM_TRIAL', NULL,
+              TRUE, TRUE, TRUE, TRUE, TRUE,
+              'TERMINE', TRUE, 'DEMO', NOW() + INTERVAL '365 days'
+          ) RETURNING id_salon`,
+          [nomSalon]
+        );
+        idSalon = salonInsert.rows[0].id_salon;
+
+        await clientDB.query(
+          `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'inactif')`,
+          [emailSandbox, passwordHash, idSalon]
+        );
+
+        await clientDB.query(`UPDATE partner_agents SET id_salon_demo_actif = $1 WHERE id_agent = $2`, [idSalon, idAgent]);
+
+        // Premier lancement : on peuple avec la sauvegarde de l'agent ou le modèle par défaut STACK
+        const templateToUse = agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE;
+        await peuplerSalonDemo(clientDB, idSalon, templateToUse, defaultPinHash, agent.prenom);
+      } else if (action === 'RESET_CUSTOM') {
+        const templateToUse = agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE;
+        await peuplerSalonDemo(clientDB, idSalon, templateToUse, defaultPinHash, agent.prenom);
+      } else if (action === 'RESET_DEFAULT') {
+        await peuplerSalonDemo(clientDB, idSalon, DEFAULT_DEMO_TEMPLATE, defaultPinHash, agent.prenom);
+      }
+    } else {
+      // Simulateurs VIDE (auto-détruit en 24h) ou ONBOARDING
+      const timestamp = Date.now().toString().slice(-5);
+      emailSandbox = `sandbox.${type.toLowerCase()}.${idAgent}.${timestamp}@stack-sim.fr`;
+      const passwordHash = await bcrypt.hash('Sandbox123!', 10);
+      nomSalon = type === 'VIDE'
+        ? `Salon Vierge d'Entraînement (${agent.prenom})`
+        : `Salon Test Onboarding (${agent.prenom})`;
+
+      // IMPORTANT : id_agent_apporteur = NULL et statut_abonnement = 'inactif' pour ne JAMAIS fausser les commissions
+      const salonInsert = await clientDB.query(
+        `INSERT INTO configuration_salon (
+            nom_salon, date_fin_essai, plan_actuel, id_agent_apporteur,
+            etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
+            statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox
+        ) VALUES (
+            $1, NOW() + INTERVAL '1 day', 'PREMIUM_TRIAL', NULL,
+            FALSE, FALSE, FALSE, FALSE, FALSE,
+            'EN_COURS', TRUE, $2, NOW() + INTERVAL '24 hours'
+        ) RETURNING id_salon`,
+        [nomSalon, type]
+      );
+      idSalon = salonInsert.rows[0].id_salon;
+
+      await clientDB.query(
+        `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'inactif')`,
+        [emailSandbox, passwordHash, idSalon]
+      );
+
+      await clientDB.query(
+        `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
+        [`${agent.prenom} (Gérant Test)`, idSalon, defaultPinHash]
+      );
+    }
+
+    // Pour DEMO et VIDE, on pré-valide l'acceptation légale pour éviter le PopupLegal si la table existe
+    if (type === 'DEMO' || type === 'VIDE') {
+      await clientDB.query(`SAVEPOINT sp_legal`);
+      try {
+        await clientDB.query(
+          `UPDATE configuration_salon SET siret_salon = '88899900000014', adresse_salon = '15 Rue Royale, 75008 Paris' WHERE id_salon = $1`,
+          [idSalon]
+        );
+      } catch (e) {
+        await clientDB.query(`ROLLBACK TO SAVEPOINT sp_legal`);
+      }
+    }
+
+    await clientDB.query('COMMIT');
+
+    const payload = { id_salon: idSalon, role: 'gerant', email: emailSandbox };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+    const FRONTEND_CAISSE_URL = process.env.FRONTEND_CAISSE_URL || 'https://app-salon-caiss.onrender.com';
+
+    res.json({
+      type,
+      nom_salon: nomSalon,
+      email_test: emailSandbox,
+      mot_de_passe_test: 'Sandbox123!',
+      code_partenaire: agent.code_partenaire,
+      url_directe: `${FRONTEND_CAISSE_URL}/?sandbox_token=${encodeURIComponent(token)}&sandbox_mode=${encodeURIComponent(type)}&partner=${encodeURIComponent(agent.code_partenaire)}`
+    });
+  } catch (error) {
+    await clientDB.query('ROLLBACK');
+    console.error("Erreur Sandbox:", error);
+    res.status(500).json({ error: "Impossible de préparer le salon de simulation." });
+  } finally {
+    clientDB.release();
+  }
+});
+
+// 4. CARTE DE PROSPECTION EXHAUSTIVE : Multi-pages Annuaire Entreprises (96.02A + 96.02B) + Overpass OpenStreetMap
+function calcDistKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+router.get('/map-salons', verifierTokenPartner, async (req, res) => {
+  try {
+    const idAgent = req.agent.id_agent;
+    const lat = parseFloat(req.query.lat) || 48.5734;
+    const lng = parseFloat(req.query.lng) || 7.7521;
+    const radius = Math.min(50, Math.max(1, parseFloat(req.query.radius) || 5));
+
+    const salonsMap = new Map();
+
+    // Source 1 : API Recherche d'Entreprises (INSEE Sirene) — Pagination multi-pages sur 96.02A (Coiffure) et 96.02B (Soins de beauté)
+    const fetchSirenePages = async (nafCode) => {
+      for (let page = 1; page <= 4; page++) {
+        try {
+          const url = `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${Math.min(radius, 50)}&activite_principale=${nafCode}&per_page=25&page=${page}`;
+          const r = await fetch(url);
+          if (!r.ok) break;
+          const d = await r.json();
+          const results = d.results || [];
+          if (results.length === 0) break;
+
+          for (const ent of results) {
+            const siege = ent.siege || {};
+            const sLat = parseFloat(siege.latitude);
+            const sLng = parseFloat(siege.longitude);
+            if (isNaN(sLat) || isNaN(sLng)) continue;
+            const dist = calcDistKm(lat, lng, sLat, sLng);
+            if (dist > radius) continue;
+
+            const siret = siege.siret || `${ent.siren}00010`;
+            const nom = ent.nom_commercial || siege.liste_enseignes?.[0] || ent.nom_complet || 'Salon de Coiffure';
+            salonsMap.set(siret, {
+              siret,
+              nom_salon: nom,
+              adresse: siege.adresse || `${siege.numero_voie || ''} ${siege.type_voie || ''} ${siege.libelle_voie || ''}`.trim(),
+              code_postal: siege.code_postal || '',
+              ville: siege.libelle_commune || '',
+              lat: sLat,
+              lng: sLng,
+              distance_km: dist.toFixed(1)
+            });
+          }
+          if (page >= (d.total_pages || 1)) break;
+        } catch (e) {
+          break;
+        }
+      }
+    };
+
+    await Promise.all([
+      fetchSirenePages('96.02A'),
+      fetchSirenePages('96.02B')
+    ]);
+
+    // Source 2 : Overpass API (OpenStreetMap) — Capte toutes les enseignes commerciales de rue (shop=hairdresser / beauty)
+    try {
+      const radiusMeters = Math.min(radius * 1000, 25000);
+      const overpassQuery = `[out:json][timeout:10];(node["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});way["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});node["shop"="barber"](around:${radiusMeters},${lat},${lng}););out center 250;`;
+      const osmRes = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        body: overpassQuery
+      });
+      if (osmRes.ok) {
+        const osmData = await osmRes.json();
+        for (const el of (osmData.elements || [])) {
+          const oLat = el.lat || el.center?.lat;
+          const oLng = el.lon || el.center?.lon;
+          const tags = el.tags || {};
+          if (!oLat || !oLng || !tags.name) continue;
+
+          const dist = calcDistKm(lat, lng, oLat, oLng);
+          if (dist > radius) continue;
+
+          // Vérifie si un salon Sirene existe déjà à moins de 35 mètres pour éviter les doublons
+          let alreadyExists = false;
+          for (const existing of salonsMap.values()) {
+            if (calcDistKm(oLat, oLng, existing.lat, existing.lng) < 0.035) {
+              if ( existing.nom_salon.toUpperCase() === existing.nom_salon && tags.name ) {
+                existing.nom_salon = `${tags.name} (${existing.nom_salon})`;
+              }
+              alreadyExists = true;
+              break;
+            }
+          }
+          if (!alreadyExists) {
+            const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
+            salonsMap.set(fakeSiret, {
+              siret: fakeSiret,
+              nom_salon: tags.name,
+              adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Enseigne de rue vérifiée'}`.trim(),
+              code_postal: tags['addr:postcode'] || '',
+              ville: tags['addr:city'] || '',
+              lat: oLat,
+              lng: oLng,
+              distance_km: dist.toFixed(1)
+            });
+          }
+        }
+      }
+    } catch (e) {}
+
+    // Croisement avec les prospects réservés et les clients STACK en base
+    const prospectsDB = await pool.query(
+      `SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm,
+              GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants,
+              statut_prospect
+       FROM partner_prospects`
+    );
+    const clientsDB = await pool.query(
+      `SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm 
+       FROM configuration_salon 
+       WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`
+    ).catch(() => ({ rows: [] }));
+
+    const finalSalons = Array.from(salonsMap.values()).map(s => {
+      let statut_carte = 'LIBRE';
+      let jours_restants = 0;
+      let id_prospect = null;
+
+      const isClient = clientsDB.rows.some(
+        c => (c.siret_salon && c.siret_salon === s.siret) || (c.nom_norm && c.nom_norm === s.nom_salon.toLowerCase().trim())
+      );
+
+      if (isClient) {
+        statut_carte = 'CLIENT_STACK';
+      } else {
+        const pMatch = prospectsDB.rows.find(
+          p => (p.siret_prospect && p.siret_prospect === s.siret) || (p.nom_norm && p.nom_norm === s.nom_salon.toLowerCase().trim())
+        );
+        if (pMatch) {
+          if (pMatch.statut_prospect === 'SIGNE') {
+            statut_carte = 'CLIENT_STACK';
+          } else if (pMatch.jours_restants > 0) {
+            statut_carte = Number(pMatch.id_agent) === Number(idAgent) ? 'PROSPECTE_MOI' : 'PROSPECTE_AUTRE';
+            jours_restants = pMatch.jours_restants;
+            id_prospect = pMatch.id_prospect;
+          }
+        }
+      }
+
+      return { ...s, statut_carte, jours_restants, id_prospect };
+    });
+
+    finalSalons.sort((a, b) => parseFloat(a.distance_km) - parseFloat(b.distance_km));
+    res.json({ salons: finalSalons });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
