@@ -733,4 +733,108 @@ router.patch('/admin/commissions/:id/payer', verifierTokenPartner, verifierSuper
     } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
 });
 
+// 17. CARTE DE PROSPECTION - Salons de coiffure dans un rayon de X km + Statut STACK en temps réel
+const calculerDistanceKm = (lat1, lon1, lat2, lon2) => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+router.get('/map-salons', verifierTokenPartner, async (req, res) => {
+    try {
+        const lat = parseFloat(req.query.lat) || 48.5734;
+        const lng = parseFloat(req.query.lng) || 7.7521;
+        const radius = Math.min(Math.max(parseFloat(req.query.radius) || 5, 1), 50);
+
+        // A. Récupérer les salons déjà clients STACK et les prospects verrouillés en base
+        const [clientsRes, prospectsRes] = await Promise.all([
+            pool.query('SELECT id_salon, nom_salon, siret FROM configuration_salon'),
+            pool.query(`
+                SELECT id_prospect, id_agent, nom_salon, siret_prospect, email_gerant, ville, code_postal,
+                       GREATEST(0, EXTRACT(DAY FROM (date_expiration_protection - CURRENT_TIMESTAMP))::INT) as jours_restants
+                FROM partner_prospects_reservations
+                WHERE date_expiration_protection > CURRENT_TIMESTAMP
+            `)
+        ]);
+
+        const clientsSiret = new Set(clientsRes.rows.map(c => (c.siret || '').replace(/\s/g, '')).filter(Boolean));
+        const clientsNoms = new Set(clientsRes.rows.map(c => (c.nom_salon || '').trim().toLowerCase()).filter(Boolean));
+
+        const prospectsBySiret = new Map();
+        const prospectsByNom = new Map();
+        for (const p of prospectsRes.rows) {
+            const cleanSiret = (p.siret_prospect || '').replace(/\s/g, '');
+            if (cleanSiret) prospectsBySiret.set(cleanSiret, p);
+            if (p.nom_salon) prospectsByNom.set(p.nom_salon.trim().toLowerCase(), p);
+        }
+
+        // B. Interroger l'API officielle SIRENE / INSEE (Salons de coiffure : NAF 96.02A) autour du point GPS
+        const pages = [1, 2];
+        const apiResponses = await Promise.all(
+            pages.map(page =>
+                fetch(`https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${radius}&activite_principale=96.02A&etat_administratif=A&per_page=25&page=${page}`)
+                    .then(r => (r.ok ? r.json() : { results: [] }))
+                    .catch(() => ({ results: [] }))
+            )
+        );
+
+        const salonsMap = new Map();
+
+        for (const data of apiResponses) {
+            for (const entreprise of (data.results || [])) {
+                for (const etab of (entreprise.matching_etablissements || [])) {
+                    const eLat = parseFloat(etab.latitude);
+                    const eLng = parseFloat(etab.longitude);
+                    if (isNaN(eLat) || isNaN(eLng)) continue;
+
+                    const distKm = calculerDistanceKm(lat, lng, eLat, eLng);
+                    if (distKm > radius) continue;
+
+                    const siret = (etab.siret || '').replace(/\s/g, '');
+                    if (!siret || salonsMap.has(siret)) continue;
+
+                    const enseigne = (etab.liste_enseignes && etab.liste_enseignes[0]) || entreprise.nom_complet || 'Salon de Coiffure';
+                    const nomNorm = enseigne.trim().toLowerCase();
+
+                    // C. Déterminer le statut évolutif du salon
+                    let statut_carte = 'LIBRE';
+                    let jours_restants = null;
+                    let id_prospect = null;
+
+                    if (clientsSiret.has(siret) || clientsNoms.has(nomNorm)) {
+                        statut_carte = 'CLIENT_STACK';
+                    } else if (prospectsBySiret.has(siret) || prospectsByNom.has(nomNorm)) {
+                        const reservation = prospectsBySiret.get(siret) || prospectsByNom.get(nomNorm);
+                        statut_carte = reservation.id_agent === req.agent.id_agent ? 'PROSPECTE_MOI' : 'PROSPECTE_AUTRE';
+                        jours_restants = reservation.jours_restants;
+                        id_prospect = reservation.id_prospect;
+                    }
+
+                    salonsMap.set(siret, {
+                        siret,
+                        nom_salon: enseigne,
+                        adresse: etab.adresse || '',
+                        code_postal: etab.code_postal || '',
+                        ville: etab.libelle_commune || '',
+                        lat: eLat,
+                        lng: eLng,
+                        distance_km: Number(distKm.toFixed(2)),
+                        statut_carte,
+                        jours_restants,
+                        id_prospect
+                    });
+                }
+            }
+        }
+
+        const salons = Array.from(salonsMap.values()).sort((a, b) => a.distance_km - b.distance_km);
+        res.json({ center: { lat, lng }, radius, total: salons.length, salons });
+    } catch (error) {
+        console.error("Erreur GET /map-salons:", error);
+        res.status(500).json({ error: "Erreur lors du chargement de la carte des salons." });
+    }
+});
+
 module.exports = router;
