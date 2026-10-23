@@ -5,7 +5,7 @@ import './App.css';
 import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
 import PopupLegal from './PopupLegal';   
-import PricingModal from './PricingModal';
+import PricingModal from './PricingModal'; 
 
 // Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
 function urlBase64ToUint8Array(base64String) { 
