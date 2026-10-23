@@ -116,7 +116,7 @@ const corsOptions = {
     credentials: true
 };
 app.use(cors(corsOptions));
-app.options('/*', cors(corsOptions)); // <-- Correction du crash : Express exige '/*' au lieu de '*'
+app.options('/(.*)', cors(corsOptions)); // <-- Nouvelle syntaxe obligatoire sous Express 5 pour cibler toutes les routes
 
 app.post('/api/logout', (req, res) => {
     res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
