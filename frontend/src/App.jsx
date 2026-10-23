@@ -141,6 +141,7 @@ function App() {
   const [msgSucces, setMsgSucces] = useState(null);
   
   const [emailInput, setEmailInput] = useState('');
+  const [codePartenaireInput, setCodePartenaireInput] = useState('');
   const [motDePasseInput, setMotDePasseInput] = useState('');
   const [nomSalonInput, setNomSalonInput] = useState('');
   const [prenomGerantInput, setPrenomGerantInput] = useState('');
@@ -1327,7 +1328,8 @@ function App() {
       const nomCompletGerant = `${prenomGerantInput.trim()} ${nomFamilleGerantInput.trim()}`;
       
       const urlParams = new URLSearchParams(window.location.search);
-      const code_partenaire = urlParams.get('partner') || undefined;
+      // Remplace "const code_partenaire = urlParams..." par ceci :
+      const code_partenaire = codePartenaireInput.trim() || urlParams.get('partner') || undefined;
       const siret_url = urlParams.get('siret') || undefined;
 
       const response = await fetch('https://api-salon-backend.onrender.com/api/register', { 
