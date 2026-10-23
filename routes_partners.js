@@ -928,4 +928,115 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     }
 });
 
+// ============================================================================
+// PHASE 4 : GÉNÉRATEUR DES 3 SIMULATEURS BACS À SABLE (SANDBOX)
+// ============================================================================
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+
+router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
+    const clientDB = await pool.connect();
+    try {
+        const idAgent = req.agent.id_agent;
+        const { type } = req.body; // 'VIDE' | 'DEMO' | 'ONBOARDING'
+
+        const agentRes = await clientDB.query('SELECT nom, prenom, code_partenaire FROM partner_agents WHERE id_agent = $1', [idAgent]);
+        const agent = agentRes.rows[0];
+
+        await clientDB.query('BEGIN');
+
+        // Nettoyage automatique des bacs à sable expirés (> 24h)
+        await clientDB.query(`DELETE FROM configuration_salon WHERE est_bac_a_sable = TRUE AND date_expiration_sandbox < NOW()`);
+
+        const timestamp = Date.now().toString().slice(-5);
+        const emailSandbox = `sandbox.${type.toLowerCase()}.${idAgent}.${timestamp}@stack-sim.fr`;
+        const passwordHash = await bcrypt.hash('Sandbox123!', 10);
+        const defaultPinHash = await bcrypt.hash('0000', 10);
+
+        const nomSalon = type === 'DEMO' 
+            ? `Maison Éclat — Démo (${agent.prenom})` 
+            : type === 'VIDE' 
+                ? `Salon Vierge d'Entraînement (${agent.prenom})` 
+                : `Salon Test Onboarding (${agent.prenom})`;
+
+        // Seul le salon DEMO a déjà sa checklist Go-Live validée à 100% pour encaisser tout de suite
+        const isCompleted = type === 'DEMO';
+
+        const salonInsert = await clientDB.query(
+            `INSERT INTO configuration_salon (
+                nom_salon, date_fin_essai, plan_actuel, id_agent_apporteur,
+                etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
+                statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox
+            ) VALUES (
+                $1, NOW() + INTERVAL '1 day', 'PREMIUM_TRIAL', $2,
+                $3, $3, $3, $3, $3,
+                $4, TRUE, $5, NOW() + INTERVAL '24 hours'
+            ) RETURNING id_salon`,
+            [nomSalon, idAgent, isCompleted, isCompleted ? 'TERMINE' : 'EN_COURS', type]
+        );
+        const idSalon = salonInsert.rows[0].id_salon;
+
+        await clientDB.query(
+            `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) 
+             VALUES ($1, $2, $3, 'gerant', 'actif')`,
+            [emailSandbox, passwordHash, idSalon]
+        );
+
+        await clientDB.query(
+            `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) 
+             VALUES ($1, 'Gérant', $2, $3, TRUE)`,
+            [`${agent.prenom} (Gérant Test)`, idSalon, defaultPinHash]
+        );
+
+        // Si mode DEMO : Pré-remplissage complet (Employés + Catalogue de prestations)
+        if (type === 'DEMO') {
+            await clientDB.query(
+                `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES 
+                 ('Camille (Coiffeuse Senior)', 'Employé', $1, $2, FALSE),
+                 ('Lucas (Barbier / Coloriste)', 'Employé', $1, $2, FALSE)`,
+                [idSalon, defaultPinHash]
+            );
+
+            // Insertion sécurisée dans le catalogue (ignore si le schéma d'articles diffère légèrement)
+            await clientDB.query(`SAVEPOINT sp_catalogue`);
+            try {
+                await clientDB.query(
+                    `INSERT INTO articles (nom, prix, categorie, id_salon, stock) VALUES 
+                     ('Coupe + Brushing Signature', 58, 'Prestation', $1, 999),
+                     ('Balayage Minéral & Patine', 135, 'Prestation', $1, 999),
+                     ('Coupe Homme & Taille de Barbe', 42, 'Prestation', $1, 999),
+                     ('Soin Profond Kératine', 45, 'Prestation', $1, 999),
+                     ('Shampoing Pro Réparateur 250ml', 28, 'Produit', $1, 24)`,
+                    [idSalon]
+                );
+            } catch (errCatalogue) {
+                await clientDB.query(`ROLLBACK TO SAVEPOINT sp_catalogue`);
+            }
+        }
+
+        await clientDB.query('COMMIT');
+
+        // Génération du Token de connexion directe pour le salon
+        const payload = { id_salon: idSalon, role: 'gerant', email: emailSandbox };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+        const FRONTEND_CAISSE_URL = process.env.FRONTEND_CAISSE_URL || 'https://app-salon-caiss.onrender.com';
+
+        res.json({
+            type,
+            nom_salon: nomSalon,
+            email_test: emailSandbox,
+            mot_de_passe_test: 'Sandbox123!',
+            code_partenaire: agent.code_partenaire,
+            url_directe: `${FRONTEND_CAISSE_URL}/?sandbox_token=${encodeURIComponent(token)}&partner=${encodeURIComponent(agent.code_partenaire)}`
+        });
+    } catch (error) {
+        await clientDB.query('ROLLBACK');
+        console.error("Erreur création Sandbox:", error);
+        res.status(500).json({ error: "Impossible de générer le salon de simulation." });
+    } finally {
+        clientDB.release();
+    }
+});
+
 module.exports = router;
