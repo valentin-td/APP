@@ -8,7 +8,7 @@ const MENTION = 'Lu et approuvé, bon pour réception';
 
 export default function PopupLegal({ apiBase, token, onAccepted, onRefuse }) {
   const [etape, setEtape] = useState('chargement'); // chargement | identite | documents | fait
-  const [identite, setIdentite] = useState({ nom_salon: '', gerant_prenom: '', gerant_nom: '', adresse_salon: '', siret_salon: '', email: '' });
+  const [identite, setIdentite] = useState({ nom_salon: '', gerant_prenom: '', gerant_nom: '', adresse_salon: '', siret_salon: '', email: '', code_partenaire: '' });
   const [docs, setDocs] = useState([]);
   const [ouvert, setOuvert] = useState(null);
   const [consultes, setConsultes] = useState([]);
@@ -47,7 +47,8 @@ export default function PopupLegal({ apiBase, token, onAccepted, onRefuse }) {
                     gerant_nom: dataId.identite?.gerant_nom || '',
                     adresse_salon: dataId.identite?.adresse_salon || '',
                     siret_salon: dataId.identite?.siret_salon || '',
-                    email: dataId.identite?.email || ''
+                    email: dataId.identite?.email || '',
+                   code_partenaire: new URLSearchParams(window.location.search).get('partner') || ''
                 });
                 setEtape('identite');
             }
@@ -130,6 +131,7 @@ export default function PopupLegal({ apiBase, token, onAccepted, onRefuse }) {
             {champ('Nom du salon (raison sociale)', 'nom_salon')}
             {champ('Adresse du salon', 'adresse_salon', { autoComplete: 'street-address' })}
             {champ('SIRET (14 chiffres)', 'siret_salon', { inputMode: 'numeric' })}
+            {champ('Code Partenaire de votre Agent (Optionnel)', 'code_partenaire')}
             <label className="pl-champ"><span>Email du compte</span><input className="pl-input" value={identite.email} disabled /></label>
           </div>
           {erreur && <p className="pl-erreur">{erreur}</p>}
