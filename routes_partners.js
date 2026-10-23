@@ -868,6 +868,11 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
         const YOUSIGN_URL = 'https://api-sandbox.yousign.app/v3';
         const headers = { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' };
 
+        // 0. Formatage strict du téléphone (Format E.164 exigé par Yousign)
+        let phone = agent.telephone ? agent.telephone.replace(/\s+/g, '') : "";
+        if (phone.startsWith('0')) phone = '+33' + phone.substring(1);
+        if (!phone || phone.length < 11) phone = "+33600000000"; // Fallback de sécurité
+
         // 1. Initialiser la demande de signature
         const initRes = await fetch(`${YOUSIGN_URL}/signature_requests`, {
             method: 'POST',
@@ -875,6 +880,7 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
             body: JSON.stringify({ name: "Contrat de Mandat STACK", delivery_mode: "none", timezone: "Europe/Paris" })
         });
         const signatureRequest = await initRes.json();
+        if (!initRes.ok) throw new Error("Erreur Init Yousign: " + JSON.stringify(signatureRequest));
 
         // 2. Uploader le PDF du contrat
         const docRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/documents`, {
@@ -886,27 +892,34 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
             }) 
         });
         const document = await docRes.json();
+        if (!docRes.ok) throw new Error("Erreur Document Yousign: " + JSON.stringify(document));
 
         // 3. Ajouter l'agent comme signataire
         const signerRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/signers`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
-                info: { first_name: agent.prenom, last_name: agent.nom, email: agent.email, phone_number: agent.telephone || "+33600000000", locale: "fr" },
+                info: { first_name: agent.prenom, last_name: agent.nom, email: agent.email, phone_number: phone, locale: "fr" },
                 signature_level: "electronic_signature",
                 signature_authentication_mode: "no_otp",
                 fields: [{ type: "signature", document_id: document.id, page: 1, x: 50, y: 50 }]
             })
         });
         const signer = await signerRes.json();
+        if (!signerRes.ok) throw new Error("Erreur Signer Yousign: " + JSON.stringify(signer));
 
         // 4. Activer la demande
-        await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/activate`, { method: 'POST', headers });
+        const actRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/activate`, { method: 'POST', headers });
+        if (!actRes.ok) throw new Error("Erreur Activation Yousign: " + JSON.stringify(await actRes.json()));
 
-        res.json({ signatureLink: `https://sandbox.yousign.app/procedure/sign?token=${signer.id}` });
+        // 5. Récupérer le vrai lien officiel Yousign (API V3)
+        const finalSignerRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/signers/${signer.id}`, { headers });
+        const finalSigner = await finalSignerRes.json();
+
+        res.json({ signatureLink: finalSigner.signature_link });
     } catch (error) {
-        console.error("Erreur API Yousign:", error);
-        res.status(500).json({ error: "Erreur lors de la création de la signature." });
+        console.error("DÉTAIL ERREUR YOUSIGN:", error);
+        res.status(500).json({ error: "Erreur de communication avec Yousign. Vérifiez les logs Render." });
     }
 });
 
