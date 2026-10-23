@@ -70,6 +70,17 @@ function App() {
   const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
 
   useEffect(() => {
+  const params = new URLSearchParams(window.location.search);
+  const sbToken = params.get('sandbox_token');
+  if (sbToken) {
+    localStorage.setItem('ui_token', sbToken);
+    localStorage.setItem('api_token', sbToken);
+    window.history.replaceState({}, document.title, window.location.pathname + (params.get('partner') ? `?partner=${params.get('partner')}` : ''));
+    window.location.reload();
+  }
+}, []);
+
+  useEffect(() => {
       const checkQueue = async () => {
           const queue = await localforage.getItem('offline_tickets') || [];
           setPendingOfflineCount(queue.length);
