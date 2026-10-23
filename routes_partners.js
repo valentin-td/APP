@@ -1,5 +1,6 @@
 // routes_partners.js
 const express = require('express');
+const fs = require('fs');
 const router = express.Router();
 const { Pool } = require('pg'); 
 
@@ -875,11 +876,14 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
         });
         const signatureRequest = await initRes.json();
 
-        // 2. Uploader le PDF du contrat (Remplacer base64_du_contrat_vierge par une chaîne Base64 de ton PDF vierge)
+        // 2. Uploader le PDF du contrat
         const docRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/documents`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ nature: "signable_document", file: "base64_du_contrat_vierge" }) 
+            body: JSON.stringify({ 
+                nature: "signable_document", 
+                file: fs.readFileSync('./contrat_mandat.pdf').toString('base64') 
+            }) 
         });
         const document = await docRes.json();
 
