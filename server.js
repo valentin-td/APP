@@ -455,6 +455,17 @@ pool.query(`
     );
 
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS id_agent_apporteur INT REFERENCES partner_agents(id_agent) ON DELETE SET NULL;
+    
+    ALTER TABLE configuration_salon 
+    ADD COLUMN IF NOT EXISTS etape_materiel_ok BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS etape_catalogue_ok BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS etape_equipe_ok BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS etape_stripe_ok BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS etape_formation_ok BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS statut_onboarding VARCHAR(30) DEFAULT 'EN_COURS',
+    ADD COLUMN IF NOT EXISTS est_bac_a_sable BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS type_bac_a_sable VARCHAR(30) DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS date_expiration_sandbox TIMESTAMP DEFAULT NULL;
 `).then(async () => {
     try {
         await pool.query(`CREATE TABLE IF NOT EXISTS vapid_keys (id INT PRIMARY KEY, public_key TEXT, private_key TEXT)`);
@@ -1122,6 +1133,48 @@ legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, node
 // Module Portail Partenaires (Agents Commerciaux)
 const routesPartners = require('./routes_partners');
 app.use('/api/partners', routesPartners);
+
+// ============================================================================
+// CHECKLIST GO-LIVE (VERROUILLAGE DE LA CAISSE)
+// ============================================================================
+
+// 1. Récupérer l'état de la checklist du salon connecté
+app.get('/api/onboarding/checklist', verifierToken, async (req, res) => {
+  try {
+    const idSalon = req.user.id_salon;
+    const result = await pool.query(
+      `SELECT etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok, statut_onboarding 
+       FROM configuration_salon WHERE id_salon = $1`,
+      [idSalon]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable" });
+    res.json(result.rows[0]);
+  } catch (e) {
+    res.status(500).json({ erreur: e.message });
+  }
+});
+
+// 2. Mettre à jour une étape et déverrouiller la caisse si 100% complété
+app.put('/api/onboarding/checklist', verifierToken, async (req, res) => {
+  try {
+    const idSalon = req.user.id_salon;
+    const { etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok } = req.body;
+
+    const toutEstValide = Boolean(etape_materiel_ok && etape_catalogue_ok && etape_equipe_ok && etape_stripe_ok && etape_formation_ok);
+    const nouveauStatut = toutEstValide ? 'TERMINE' : 'EN_COURS';
+
+    const result = await pool.query(
+      `UPDATE configuration_salon 
+       SET etape_materiel_ok = $1, etape_catalogue_ok = $2, etape_equipe_ok = $3, etape_stripe_ok = $4, etape_formation_ok = $5, statut_onboarding = $6
+       WHERE id_salon = $7
+       RETURNING etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok, statut_onboarding`,
+      [!!etape_materiel_ok, !!etape_catalogue_ok, !!etape_equipe_ok, !!etape_stripe_ok, !!etape_formation_ok, nouveauStatut, idSalon]
+    );
+    res.json(result.rows[0]);
+  } catch (e) {
+    res.status(500).json({ erreur: e.message });
+  }
+});
 
 app.post('/api/creer-checkout', async (req, res) => {
     const cookieHeader = req.headers.cookie;
