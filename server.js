@@ -111,7 +111,7 @@ app.set('trust proxy', 1);
 // 🚨 SÉCURITÉ : Restriction stricte des origines + Autorisation des Cookies (credentials)
 const corsOptions = {
     origin: ['https://app-salon-caiss.onrender.com', 'http://localhost:5173', 'http://localhost:3000', 'https://stack-partners-frontend.onrender.com'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature'],
     credentials: true
 };
