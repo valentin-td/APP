@@ -866,38 +866,43 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
         }
 
         const YOUSIGN_URL = 'https://api-sandbox.yousign.app/v3';
-        const headers = { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' };
+        
+        // Séparation stricte des headers (JSON pour le texte, Multipart pour le fichier)
+        const headersJson = { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' };
+        const headersMultipart = { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}` }; // fetch ajoutera automatiquement le bon Content-Type
 
         // 0. Formatage strict du téléphone (Format E.164 exigé par Yousign)
         let phone = agent.telephone ? agent.telephone.replace(/\s+/g, '') : "";
         if (phone.startsWith('0')) phone = '+33' + phone.substring(1);
-        if (!phone || phone.length < 11) phone = "+33600000000"; // Fallback de sécurité
+        if (!phone || phone.length < 11) phone = "+33600000000";
 
         // 1. Initialiser la demande de signature
         const initRes = await fetch(`${YOUSIGN_URL}/signature_requests`, {
             method: 'POST',
-            headers,
+            headers: headersJson,
             body: JSON.stringify({ name: "Contrat de Mandat STACK", delivery_mode: "none", timezone: "Europe/Paris" })
         });
         const signatureRequest = await initRes.json();
-        if (!initRes.ok) throw new Error("Erreur Init Yousign: " + JSON.stringify(signatureRequest));
+        if (!initRes.ok) throw new Error("Erreur Init: " + JSON.stringify(signatureRequest));
 
-        // 2. Uploader le PDF du contrat
+        // 2. Uploader le PDF du contrat en format Fichier Brut (Multipart)
+        const pdfBuffer = fs.readFileSync('./contrat_mandat.pdf');
+        const formData = new FormData();
+        formData.append('file', new Blob([pdfBuffer], { type: 'application/pdf' }), 'contrat_mandat.pdf');
+        formData.append('nature', 'signable_document');
+
         const docRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/documents`, {
             method: 'POST',
-            headers,
-            body: JSON.stringify({ 
-                nature: "signable_document", 
-                file: fs.readFileSync('./contrat_mandat.pdf').toString('base64') 
-            }) 
+            headers: headersMultipart,
+            body: formData
         });
         const document = await docRes.json();
-        if (!docRes.ok) throw new Error("Erreur Document Yousign: " + JSON.stringify(document));
+        if (!docRes.ok) throw new Error("Erreur Document: " + JSON.stringify(document));
 
         // 3. Ajouter l'agent comme signataire
         const signerRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/signers`, {
             method: 'POST',
-            headers,
+            headers: headersJson,
             body: JSON.stringify({
                 info: { first_name: agent.prenom, last_name: agent.nom, email: agent.email, phone_number: phone, locale: "fr" },
                 signature_level: "electronic_signature",
@@ -906,14 +911,14 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
             })
         });
         const signer = await signerRes.json();
-        if (!signerRes.ok) throw new Error("Erreur Signer Yousign: " + JSON.stringify(signer));
+        if (!signerRes.ok) throw new Error("Erreur Signataire: " + JSON.stringify(signer));
 
         // 4. Activer la demande
-        const actRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/activate`, { method: 'POST', headers });
-        if (!actRes.ok) throw new Error("Erreur Activation Yousign: " + JSON.stringify(await actRes.json()));
+        const actRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/activate`, { method: 'POST', headers: headersJson });
+        if (!actRes.ok) throw new Error("Erreur Activation: " + JSON.stringify(await actRes.json()));
 
         // 5. Récupérer le vrai lien officiel Yousign (API V3)
-        const finalSignerRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/signers/${signer.id}`, { headers });
+        const finalSignerRes = await fetch(`${YOUSIGN_URL}/signature_requests/${signatureRequest.id}/signers/${signer.id}`, { headers: headersJson });
         const finalSigner = await finalSignerRes.json();
 
         res.json({ signatureLink: finalSigner.signature_link });
