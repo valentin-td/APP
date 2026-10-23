@@ -838,7 +838,7 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
 });
 
 // 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (Étape 1)
-router.post('/yousign/signature-link', verifierTokenPartner, async (req, res) => {
+router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) => {
     try {
         const idAgent = req.agent.id_agent;
         
