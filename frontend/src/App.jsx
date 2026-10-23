@@ -241,9 +241,54 @@ function App() {
       compte_comptable: '607',
       id_employe: '',
       code_pin: ''
+    });
+    const [erreurAnalyseIA, setErreurAnalyseIA] = useState(null);
+    const [checklistOnboarding, setChecklistOnboarding] = useState({
+    etape_materiel_ok: false,
+    etape_catalogue_ok: false,
+    etape_equipe_ok: false,
+    etape_stripe_ok: false,
+    etape_formation_ok: false,
+    statut_onboarding: 'EN_COURS',
+    loaded: false
   });
-  const [erreurAnalyseIA, setErreurAnalyseIA] = useState(null);
+  const [showChecklistModal, setShowChecklistModal] = useState(false);
   
+  const chargerChecklistOnboarding = async () => {
+    try {
+      const res = await fetch('https://api-salon-backend.onrender.com/api/onboarding/checklist', {
+        headers: getAuthHeaders(false)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChecklistOnboarding({ ...data, loaded: true });
+      }
+    } catch (e) {
+      console.error("Erreur chargement checklist:", e);
+    }
+  };
+  
+  const basculerEtapeChecklist = async (champ) => {
+    const nouvelEtat = { ...checklistOnboarding, [champ]: !checklistOnboarding[champ] };
+    setChecklistOnboarding(nouvelEtat);
+    try {
+      const res = await fetch('https://api-salon-backend.onrender.com/api/onboarding/checklist', {
+        method: 'PUT',
+        headers: getAuthHeaders(true),
+        body: JSON.stringify(nouvelEtat)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChecklistOnboarding({ ...data, loaded: true });
+        if (data.statut_onboarding === 'TERMINE') {
+          showToast("Checklist complétée à 100% ! Votre caisse est déverrouillée.");
+        }
+      }
+    } catch (e) {
+      showToast("Erreur de sauvegarde de la checklist", "error");
+    }
+  };
+    
   const envoyerSmsSauvetage = async () => {
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/sms/winback', { 
