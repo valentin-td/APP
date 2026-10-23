@@ -931,8 +931,6 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
 // ============================================================================
 // PHASE 4 : GÉNÉRATEUR DES 3 SIMULATEURS BACS À SABLE (SANDBOX)
 // ============================================================================
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 
 router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
     const clientDB = await pool.connect();
