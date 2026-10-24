@@ -1411,12 +1411,12 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
       let fetchTasks = [];
 
       // Fonction Sirene 100% conforme (per_page=25 max obligatoire sur l'API Gouv)
-      const fetchSireneAtPoint = async (targetLat, targetLng, subRadiusKm, pageList) => {
-        const rKm = Math.min(50, Math.max(1, subRadiusKm));
+      // Pagination linéaire PROFONDE sur le point central exact (jusqu'à 3000 résultats infaillibles)
+      const fetchSireneDeep = async (pageList) => {
         const responses = await Promise.all(pageList.map(page =>
           fetchWithTimeout(
-            `https://recherche-entreprises.api.gouv.fr/near_point?lat=${targetLat.toFixed(4)}&long=${targetLng.toFixed(4)}&radius=${rKm}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`,
-            { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartners/8.0' } },
+            `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat.toFixed(4)}&long=${lng.toFixed(4)}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`,
+            { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartners/9.0' } },
             4500
           ).then(r => r.ok ? r.json() : null).catch(() => null)
         ));
@@ -1458,7 +1458,6 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
         }
       };
 
-      // ÉTAPE 0 : Affichage immédiat (OpenStreetMap BBOX + Centre Sirene Pages 1 à 6)
       if (step === 0) {
         const effectiveRadiusKm = Math.min(requestedRadius, 18);
         const latDelta = effectiveRadiusKm / 111.32;
@@ -1469,7 +1468,7 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
         const east = (lng + lngDelta).toFixed(4);
 
         const fetchOverpassBbox = async () => {
-          const overpassQuery = `[out:json][timeout:6];(node["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east});way["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east}););out center qt 4500;`;
+          const overpassQuery = `[out:json][timeout:6];(node["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east});way["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east}););out center qt 10000;`;
           const mirrors = [
             'https://overpass.kumi.systems/api/interpreter',
             'https://overpass-api.de/api/interpreter',
@@ -1480,7 +1479,7 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
             const osmData = await Promise.any(mirrors.map(url =>
               fetchWithTimeout(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'StackPartners/8.0' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'StackPartners/9.0' },
                 body: `data=${encodeURIComponent(overpassQuery)}`
               }, 5500).then(r => { if (!r.ok) throw new Error(); return r.json(); })
             ));
@@ -1514,38 +1513,18 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
         };
 
         fetchTasks.push(fetchOverpassBbox());
-        fetchTasks.push(fetchSireneAtPoint(lat, lng, apiRadius, [1, 2, 3, 4, 5, 6]));
-      }
-
-      // ÉTAPES 1 à 5 : Maillage géographique multi-points (Quadrillage Nord/Sud/Est/Ouest/Diagonales) pour contourner la limite de pagination Sirene
-      const offsetKm = requestedRadius * 0.48;
-      const dLat = offsetKm / 111.32;
-      const dLng = offsetKm / (111.32 * Math.cos((lat * Math.PI) / 180));
-      const subR = Math.max(2, requestedRadius * 0.65);
-
-      if (step === 1) {
-        // Centre pages suivantes + Nord + Sud
-        fetchTasks.push(fetchSireneAtPoint(lat, lng, apiRadius, [7, 8, 9, 10]));
-        fetchTasks.push(fetchSireneAtPoint(lat + dLat, lng, subR, [1, 2, 3, 4]));
-        fetchTasks.push(fetchSireneAtPoint(lat - dLat, lng, subR, [1, 2, 3, 4]));
+        // Étape 0 : Pages 1 à 20 (Les 500 salons les plus proches)
+        fetchTasks.push(fetchSireneDeep(Array.from({ length: 20 }, (_, i) => i + 1))); 
+      } else if (step === 1) {
+        fetchTasks.push(fetchSireneDeep(Array.from({ length: 20 }, (_, i) => i + 21))); // 500 suivants
       } else if (step === 2) {
-        // Est + Ouest
-        fetchTasks.push(fetchSireneAtPoint(lat, lng + dLng, subR, [1, 2, 3, 4, 5]));
-        fetchTasks.push(fetchSireneAtPoint(lat, lng - dLng, subR, [1, 2, 3, 4, 5]));
+        fetchTasks.push(fetchSireneDeep(Array.from({ length: 20 }, (_, i) => i + 41))); // 500 suivants
       } else if (step === 3) {
-        // Nord-Est + Nord-Ouest
-        fetchTasks.push(fetchSireneAtPoint(lat + dLat * 0.8, lng + dLng * 0.8, subR, [1, 2, 3, 4, 5]));
-        fetchTasks.push(fetchSireneAtPoint(lat + dLat * 0.8, lng - dLng * 0.8, subR, [1, 2, 3, 4, 5]));
+        fetchTasks.push(fetchSireneDeep(Array.from({ length: 20 }, (_, i) => i + 61))); // 500 suivants
       } else if (step === 4) {
-        // Sud-Est + Sud-Ouest
-        fetchTasks.push(fetchSireneAtPoint(lat - dLat * 0.8, lng + dLng * 0.8, subR, [1, 2, 3, 4, 5]));
-        fetchTasks.push(fetchSireneAtPoint(lat - dLat * 0.8, lng - dLng * 0.8, subR, [1, 2, 3, 4, 5]));
+        fetchTasks.push(fetchSireneDeep(Array.from({ length: 20 }, (_, i) => i + 81))); // 500 suivants
       } else if (step === 5) {
-        // Couronne extérieure (Pages profondes Nord/Sud/Est/Ouest)
-        fetchTasks.push(fetchSireneAtPoint(lat + dLat, lng, subR, [5, 6, 7, 8]));
-        fetchTasks.push(fetchSireneAtPoint(lat - dLat, lng, subR, [5, 6, 7, 8]));
-        fetchTasks.push(fetchSireneAtPoint(lat, lng + dLng, subR, [6, 7, 8]));
-        fetchTasks.push(fetchSireneAtPoint(lat, lng - dLng, subR, [6, 7, 8]));
+        fetchTasks.push(fetchSireneDeep(Array.from({ length: 20 }, (_, i) => i + 101))); // 500 suivants
       }
 
       await Promise.all(fetchTasks);
