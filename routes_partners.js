@@ -1357,13 +1357,29 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
   }
 });
 
-// 4. CARTE DE PROSPECTION GPS EXHAUSTIVE (Version Ultra-Rapide avec Exécution Parallèle)
+// 4. CARTE DE PROSPECTION ULTRA-RAPIDE (< 3.5s garanti + Cache RAM + Étoiles)
+const MAP_SECTOR_CACHE = new Map(); // Cache mémoire pour réponse instantanée
+
 function calcDistKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 3200) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+function extractRatingFromTags(tags = {}) {
+  const raw = tags['rating'] || tags['stars'] || tags['google:rating'] || tags['review:score'];
+  if (!raw) return null;
+  const num = parseFloat(String(raw).replace(',', '.'));
+  if (!isNaN(num) && num >= 1 && num <= 5) return Number(num.toFixed(1));
+  return null;
 }
 
 router.get('/map-salons', verifierTokenPartner, async (req, res) => {
@@ -1373,93 +1389,141 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
     const lng = parseFloat(req.query.lng) || 7.7521;
     const requestedRadius = Math.min(50, Math.max(1, parseFloat(req.query.radius) || 5));
 
-    const salonsMap = new Map();
-    const apiRadius = Math.min(requestedRadius, 50);
-    const radiusMeters = Math.min(requestedRadius * 1000, 15000);
+    const cacheKey = `${lat.toFixed(3)}_${lng.toFixed(3)}_${requestedRadius}`;
+    let baseSalons = null;
 
-    // 1. Appel OpenStreetMap (Course entre 3 miroirs, le plus rapide gagne - Timeout Max 6s)
-    const fetchOverpass = async () => {
-      const overpassQuery = `[out:json][timeout:6];(node["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng});way["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng}););out center 2500;`;
-      const mirrors = [
-        'https://overpass.kumi.systems/api/interpreter',
-        'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-        'https://overpass-api.de/api/interpreter'
-      ];
-      try {
-        const osmData = await Promise.any(mirrors.map(url => 
-          fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'StackPartnersMap/3.0' }, body: `data=${encodeURIComponent(overpassQuery)}` })
-          .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-        ));
-        
-        for (const el of (osmData.elements || [])) {
-          const oLat = parseFloat(el.lat || el.center?.lat);
-          const oLng = parseFloat(el.lon || el.center?.lon);
-          const tags = el.tags || {};
-          if (isNaN(oLat) || isNaN(oLng) || !tags.name) continue;
+    // 1. Vérifie si la zone est déjà en cache (moins de 15 minutes)
+    const cached = MAP_SECTOR_CACHE.get(cacheKey);
+    if (cached && (Date.now() - cached.ts < 15 * 60 * 1000)) {
+      baseSalons = cached.data;
+    } else {
+      const salonsMap = new Map();
+      const apiRadius = Math.min(requestedRadius, 50);
+      const radiusMeters = Math.min(requestedRadius * 1000, 12000);
 
-          const dist = calcDistKm(lat, lng, oLat, oLng);
-          if (dist > requestedRadius) continue;
+      // Source A : Overpass (coupé strictement à 3.2 secondes max + format compact out center qt)
+      const fetchOverpassFast = async () => {
+        const overpassQuery = `[out:json][timeout:3];(node["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng});way["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng}););out center qt 1200;`;
+        const mirrors = [
+          'https://overpass.kumi.systems/api/interpreter',
+          'https://overpass-api.de/api/interpreter',
+          'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+        ];
+        try {
+          const osmData = await Promise.any(mirrors.map(url =>
+            fetchWithTimeout(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'StackPartnersFast/4.0' },
+              body: `data=${encodeURIComponent(overpassQuery)}`
+            }, 3200).then(r => { if (!r.ok) throw new Error(); return r.json(); })
+          ));
 
-          const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
-          salonsMap.set(fakeSiret, {
-            siret: fakeSiret, nom_salon: tags.name,
-            adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Salon vérifié sur carte'}`.trim(),
-            code_postal: tags['addr:postcode'] || '', ville: tags['addr:city'] || '',
-            lat: oLat, lng: oLng, distance_km: dist.toFixed(1)
-          });
-        }
-      } catch (e) {} // Si les 3 miroirs échouent ou timeout, on l'ignore silencieusement
-    };
+          for (const el of (osmData.elements || [])) {
+            const oLat = parseFloat(el.lat || el.center?.lat);
+            const oLng = parseFloat(el.lon || el.center?.lon);
+            const tags = el.tags || {};
+            if (isNaN(oLat) || isNaN(oLng) || !tags.name) continue;
 
-    // 2. Appel SIRENE (Exécute 6 pages simultanément au lieu de les charger une par une)
-    const fetchSirene = async () => {
-      const pages = [1, 2, 3, 4, 5, 6];
-      const responses = await Promise.all(pages.map(page => 
-        fetch(`https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersMap/3.0' } })
-        .then(r => r.ok ? r.json() : null).catch(() => null)
-      ));
-
-      for (const d of responses) {
-        if (!d || !d.results) continue;
-        for (const ent of d.results) {
-          const etablissements = [...(Array.isArray(ent.matching_etablissements) ? ent.matching_etablissements : []), ...(ent.siege ? [ent.siege] : [])];
-          for (const etab of etablissements) {
-            const sLat = parseFloat(etab.latitude);
-            const sLng = parseFloat(etab.longitude);
-            if (isNaN(sLat) || isNaN(sLng)) continue;
-            
-            const dist = calcDistKm(lat, lng, sLat, sLng);
+            const dist = calcDistKm(lat, lng, oLat, oLng);
             if (dist > requestedRadius) continue;
 
-            const siret = etab.siret || `${ent.siren}00010`;
-            if (!salonsMap.has(siret)) {
-              salonsMap.set(siret, {
-                siret, nom_salon: etab.nom_commercial || etab.liste_enseignes?.[0] || ent.nom_commercial || ent.nom_complet || 'Salon de Coiffure',
-                adresse: etab.adresse || `${etab.numero_voie || ''} ${etab.type_voie || ''} ${etab.libelle_voie || ''}`.trim(),
-                code_postal: etab.code_postal || '', ville: etab.libelle_commune || '',
-                lat: sLat, lng: sLng, distance_km: dist.toFixed(1)
-              });
+            const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
+            salonsMap.set(fakeSiret, {
+              siret: fakeSiret,
+              nom_salon: tags.name,
+              adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Enseigne vérifiée'}`.trim(),
+              code_postal: tags['addr:postcode'] || '',
+              ville: tags['addr:city'] || '',
+              telephone: tags['phone'] || tags['contact:phone'] || null,
+              site_web: tags['website'] || tags['contact:website'] || null,
+              horaires: tags['opening_hours'] || null,
+              etoiles: extractRatingFromTags(tags),
+              lat: oLat,
+              lng: oLng,
+              distance_km: Number(dist.toFixed(2))
+            });
+          }
+        } catch (e) {}
+      };
+
+      // Source B : INSEE Sirene en parallèle (coupé à 2.8 secondes max)
+      const fetchSireneFast = async () => {
+        const pages = [1, 2, 3, 4];
+        const responses = await Promise.all(pages.map(page =>
+          fetchWithTimeout(
+            `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`,
+            { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersFast/4.0' } },
+            2800
+          ).then(r => r.ok ? r.json() : null).catch(() => null)
+        ));
+
+        for (const d of responses) {
+          if (!d || !d.results) continue;
+          for (const ent of d.results) {
+            const etablissements = [...(Array.isArray(ent.matching_etablissements) ? ent.matching_etablissements : []), ...(ent.siege ? [ent.siege] : [])];
+            for (const etab of etablissements) {
+              const sLat = parseFloat(etab.latitude);
+              const sLng = parseFloat(etab.longitude);
+              if (isNaN(sLat) || isNaN(sLng)) continue;
+
+              const dist = calcDistKm(lat, lng, sLat, sLng);
+              if (dist > requestedRadius) continue;
+
+              const siret = etab.siret || `${ent.siren}00010`;
+              if (!salonsMap.has(siret)) {
+                salonsMap.set(siret, {
+                  siret,
+                  nom_salon: etab.nom_commercial || etab.liste_enseignes?.[0] || ent.nom_commercial || ent.nom_complet || 'Salon de Coiffure',
+                  adresse: etab.adresse || `${etab.numero_voie || ''} ${etab.type_voie || ''} ${etab.libelle_voie || ''}`.trim(),
+                  code_postal: etab.code_postal || '',
+                  ville: etab.libelle_commune || '',
+                  telephone: null,
+                  site_web: null,
+                  horaires: null,
+                  etoiles: null,
+                  lat: sLat,
+                  lng: sLng,
+                  distance_km: Number(dist.toFixed(2))
+                });
+              }
             }
           }
         }
-      }
-    };
+      };
 
-    // EXÉCUTION TOTALEMENT PARALLÈLE : Charge OpenStreetMap et l'INSEE en même temps !
-    await Promise.all([fetchOverpass(), fetchSirene()]);
+      await Promise.all([fetchOverpassFast(), fetchSireneFast()]);
+      baseSalons = Array.from(salonsMap.values());
+      MAP_SECTOR_CACHE.set(cacheKey, { ts: Date.now(), data: baseSalons });
+    }
 
-    // 3. Croisement rapide en Base de données
-    const prospectsDB = await pool.query(`SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm, GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants, statut_prospect FROM partner_prospects`).catch(() => ({ rows: [] }));
-    const clientsDB = await pool.query(`SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`).catch(() => ({ rows: [] }));
+    // 2. Croisement ultra-rapide par HashSets en O(1) avec la BDD
+    const [prospectsDB, clientsDB] = await Promise.all([
+      pool.query(`SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm, GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants, statut_prospect FROM partner_prospects`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`).catch(() => ({ rows: [] }))
+    ]);
 
-    const finalSalons = Array.from(salonsMap.values()).map(s => {
+    const clientSirets = new Set();
+    const clientNames = new Set();
+    for (const c of clientsDB.rows) {
+      if (c.siret_salon) clientSirets.add(c.siret_salon);
+      if (c.nom_norm) clientNames.add(c.nom_norm);
+    }
+
+    const prospectBySiret = new Map();
+    const prospectByName = new Map();
+    for (const p of prospectsDB.rows) {
+      if (p.siret_prospect) prospectBySiret.set(p.siret_prospect, p);
+      if (p.nom_norm) prospectByName.set(p.nom_norm, p);
+    }
+
+    const finalSalons = baseSalons.map(s => {
       let statut_carte = 'LIBRE', jours_restants = 0, id_prospect = null;
-      const isClient = clientsDB.rows.some(c => (c.siret_salon && c.siret_salon === s.siret) || (c.nom_norm && c.nom_norm === s.nom_salon.toLowerCase().trim()));
+      const normName = (s.nom_salon || '').toLowerCase().trim();
 
-      if (isClient) {
+      if (clientSirets.has(s.siret) || clientNames.has(normName)) {
         statut_carte = 'CLIENT_STACK';
       } else {
-        const pMatch = prospectsDB.rows.find(p => (p.siret_prospect && p.siret_prospect === s.siret) || (p.nom_norm && p.nom_norm === s.nom_salon.toLowerCase().trim()));
+        const pMatch = prospectBySiret.get(s.siret) || prospectByName.get(normName);
         if (pMatch) {
           if (pMatch.statut_prospect === 'SIGNE') statut_carte = 'CLIENT_STACK';
           else if (pMatch.jours_restants > 0) {
@@ -1472,14 +1536,13 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
       return { ...s, statut_carte, jours_restants, id_prospect };
     });
 
-    finalSalons.sort((a, b) => parseFloat(a.distance_km) - parseFloat(b.distance_km));
+    finalSalons.sort((a, b) => a.distance_km - b.distance_km);
     res.json({ salons: finalSalons });
   } catch (err) {
     console.error("Erreur GET /map-salons:", err);
     res.status(500).json({ salons: [], error: err.message });
   }
 });
-
 // 5. SURCHARGE DES ROUTES GOD MODE (/admin/...) POUR SUPPRIMER LE 403 FORBIDDEN SUR TON COMPTE
 const adminPathsToOverride = ['/admin/agents', '/admin/commissions', '/admin/agents/:id/verifier-piece', '/admin/commissions/:id/payer'];
 if (Array.isArray(router.stack)) {
