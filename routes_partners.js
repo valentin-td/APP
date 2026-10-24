@@ -1357,14 +1357,12 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
   }
 });
 
-// 4. CARTE DE PROSPECTION GPS EXHAUSTIVE (Haute Capacité : jusqu'à 2500 salons par zone)
+// 4. CARTE DE PROSPECTION GPS EXHAUSTIVE (Version Ultra-Rapide avec Exécution Parallèle)
 function calcDistKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
@@ -1376,145 +1374,95 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
     const requestedRadius = Math.min(50, Math.max(1, parseFloat(req.query.radius) || 5));
 
     const salonsMap = new Map();
-
-    // SOURCE 1 : OpenStreetMap Overpass (Multi-miroirs haute disponibilité — Jusqu'à 2500 salons physiques)
-    const radiusMeters = Math.min(requestedRadius * 1000, 25000);
-    const overpassQuery = `[out:json][timeout:18];(node["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng});way["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng}););out center 2500;`;
-    const overpassMirrors = [
-      'https://overpass.kumi.systems/api/interpreter',
-      'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-      'https://overpass-api.de/api/interpreter'
-    ];
-
-    for (const mirrorUrl of overpassMirrors) {
-      try {
-        const osmRes = await fetch(mirrorUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'StackPartnersMap/2.0'
-          },
-          body: `data=${encodeURIComponent(overpassQuery)}`
-        });
-        if (osmRes.ok) {
-          const osmData = await osmRes.json();
-          const elements = osmData.elements || [];
-          if (elements.length > 0) {
-            for (const el of elements) {
-              const oLat = parseFloat(el.lat || el.center?.lat);
-              const oLng = parseFloat(el.lon || el.center?.lon);
-              const tags = el.tags || {};
-              if (isNaN(oLat) || isNaN(oLng) || !tags.name) continue;
-
-              const dist = calcDistKm(lat, lng, oLat, oLng);
-              if (dist > requestedRadius) continue;
-
-              const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
-              salonsMap.set(fakeSiret, {
-                siret: fakeSiret,
-                nom_salon: tags.name,
-                adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Salon vérifié sur carte'}`.trim(),
-                code_postal: tags['addr:postcode'] || '',
-                ville: tags['addr:city'] || '',
-                lat: oLat,
-                lng: oLng,
-                distance_km: dist.toFixed(1)
-              });
-            }
-            break; // Dès qu'un miroir répond, on garde ses résultats
-          }
-        }
-      } catch (e) {}
-    }
-
-    // SOURCE 2 : API Recherche d'Entreprises (INSEE Sirene — 15 pages en parallèle par lots de 5 + matching_etablissements)
     const apiRadius = Math.min(requestedRadius, 50);
-    const fetchSirenePage = async (page) => {
+    const radiusMeters = Math.min(requestedRadius * 1000, 15000);
+
+    // 1. Appel OpenStreetMap (Course entre 3 miroirs, le plus rapide gagne - Timeout Max 6s)
+    const fetchOverpass = async () => {
+      const overpassQuery = `[out:json][timeout:6];(node["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng});way["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng}););out center 2500;`;
+      const mirrors = [
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+        'https://overpass-api.de/api/interpreter'
+      ];
       try {
-        const url = `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`;
-        const r = await fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersMap/2.0' } });
-        if (!r.ok) return null;
-        return await r.json();
-      } catch (e) {
-        return null;
-      }
+        const osmData = await Promise.any(mirrors.map(url => 
+          fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'StackPartnersMap/3.0' }, body: `data=${encodeURIComponent(overpassQuery)}` })
+          .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+        ));
+        
+        for (const el of (osmData.elements || [])) {
+          const oLat = parseFloat(el.lat || el.center?.lat);
+          const oLng = parseFloat(el.lon || el.center?.lon);
+          const tags = el.tags || {};
+          if (isNaN(oLat) || isNaN(oLng) || !tags.name) continue;
+
+          const dist = calcDistKm(lat, lng, oLat, oLng);
+          if (dist > requestedRadius) continue;
+
+          const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
+          salonsMap.set(fakeSiret, {
+            siret: fakeSiret, nom_salon: tags.name,
+            adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Salon vérifié sur carte'}`.trim(),
+            code_postal: tags['addr:postcode'] || '', ville: tags['addr:city'] || '',
+            lat: oLat, lng: oLng, distance_km: dist.toFixed(1)
+          });
+        }
+      } catch (e) {} // Si les 3 miroirs échouent ou timeout, on l'ignore silencieusement
     };
 
-    for (let batchStart = 1; batchStart <= 15; batchStart += 5) {
-      const pagesBatch = [batchStart, batchStart + 1, batchStart + 2, batchStart + 3, batchStart + 4];
-      const responses = await Promise.all(pagesBatch.map(p => fetchSirenePage(p)));
-      let stopPagination = false;
+    // 2. Appel SIRENE (Exécute 6 pages simultanément au lieu de les charger une par une)
+    const fetchSirene = async () => {
+      const pages = [1, 2, 3, 4, 5, 6];
+      const responses = await Promise.all(pages.map(page => 
+        fetch(`https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersMap/3.0' } })
+        .then(r => r.ok ? r.json() : null).catch(() => null)
+      ));
 
       for (const d of responses) {
-        if (!d || !d.results || d.results.length === 0) {
-          stopPagination = true;
-          continue;
-        }
+        if (!d || !d.results) continue;
         for (const ent of d.results) {
-          const etablissements = [
-            ...(Array.isArray(ent.matching_etablissements) ? ent.matching_etablissements : []),
-            ...(ent.siege ? [ent.siege] : [])
-          ];
+          const etablissements = [...(Array.isArray(ent.matching_etablissements) ? ent.matching_etablissements : []), ...(ent.siege ? [ent.siege] : [])];
           for (const etab of etablissements) {
             const sLat = parseFloat(etab.latitude);
             const sLng = parseFloat(etab.longitude);
             if (isNaN(sLat) || isNaN(sLng)) continue;
+            
             const dist = calcDistKm(lat, lng, sLat, sLng);
             if (dist > requestedRadius) continue;
 
             const siret = etab.siret || `${ent.siren}00010`;
-            const nom = etab.nom_commercial || etab.liste_enseignes?.[0] || ent.nom_commercial || ent.nom_complet || 'Salon de Coiffure';
             if (!salonsMap.has(siret)) {
               salonsMap.set(siret, {
-                siret,
-                nom_salon: nom,
+                siret, nom_salon: etab.nom_commercial || etab.liste_enseignes?.[0] || ent.nom_commercial || ent.nom_complet || 'Salon de Coiffure',
                 adresse: etab.adresse || `${etab.numero_voie || ''} ${etab.type_voie || ''} ${etab.libelle_voie || ''}`.trim(),
-                code_postal: etab.code_postal || '',
-                ville: etab.libelle_commune || '',
-                lat: sLat,
-                lng: sLng,
-                distance_km: dist.toFixed(1)
+                code_postal: etab.code_postal || '', ville: etab.libelle_commune || '',
+                lat: sLat, lng: sLng, distance_km: dist.toFixed(1)
               });
             }
           }
         }
       }
-      if (stopPagination) break;
-    }
+    };
 
-    // Croisement avec la base de données STACK
-    const prospectsDB = await pool.query(
-      `SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm,
-              GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants,
-              statut_prospect
-       FROM partner_prospects`
-    ).catch(() => ({ rows: [] }));
+    // EXÉCUTION TOTALEMENT PARALLÈLE : Charge OpenStreetMap et l'INSEE en même temps !
+    await Promise.all([fetchOverpass(), fetchSirene()]);
 
-    const clientsDB = await pool.query(
-      `SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm 
-       FROM configuration_salon 
-       WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`
-    ).catch(() => ({ rows: [] }));
+    // 3. Croisement rapide en Base de données
+    const prospectsDB = await pool.query(`SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm, GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants, statut_prospect FROM partner_prospects`).catch(() => ({ rows: [] }));
+    const clientsDB = await pool.query(`SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`).catch(() => ({ rows: [] }));
 
     const finalSalons = Array.from(salonsMap.values()).map(s => {
-      let statut_carte = 'LIBRE';
-      let jours_restants = 0;
-      let id_prospect = null;
-
-      const isClient = clientsDB.rows.some(
-        c => (c.siret_salon && c.siret_salon === s.siret) || (c.nom_norm && c.nom_norm === s.nom_salon.toLowerCase().trim())
-      );
+      let statut_carte = 'LIBRE', jours_restants = 0, id_prospect = null;
+      const isClient = clientsDB.rows.some(c => (c.siret_salon && c.siret_salon === s.siret) || (c.nom_norm && c.nom_norm === s.nom_salon.toLowerCase().trim()));
 
       if (isClient) {
         statut_carte = 'CLIENT_STACK';
       } else {
-        const pMatch = prospectsDB.rows.find(
-          p => (p.siret_prospect && p.siret_prospect === s.siret) || (p.nom_norm && p.nom_norm === s.nom_salon.toLowerCase().trim())
-        );
+        const pMatch = prospectsDB.rows.find(p => (p.siret_prospect && p.siret_prospect === s.siret) || (p.nom_norm && p.nom_norm === s.nom_salon.toLowerCase().trim()));
         if (pMatch) {
-          if (pMatch.statut_prospect === 'SIGNE') {
-            statut_carte = 'CLIENT_STACK';
-          } else if (pMatch.jours_restants > 0) {
+          if (pMatch.statut_prospect === 'SIGNE') statut_carte = 'CLIENT_STACK';
+          else if (pMatch.jours_restants > 0) {
             statut_carte = Number(pMatch.id_agent) === Number(idAgent) ? 'PROSPECTE_MOI' : 'PROSPECTE_AUTRE';
             jours_restants = pMatch.jours_restants;
             id_prospect = pMatch.id_prospect;
