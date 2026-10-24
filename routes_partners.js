@@ -1555,6 +1555,7 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
       if (baseSalons.length > 0) {
         MAP_SECTOR_CACHE.set(cacheKey, { ts: Date.now(), data: baseSalons, nextStep: nextStepToReturn });
       }
+    }
 
     // Décoration ultra-rapide avec statuts (Clients, Leads...)
     const [prospectsDB, clientsDB] = await Promise.all([
