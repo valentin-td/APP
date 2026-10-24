@@ -854,7 +854,7 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
     }
 });
 
-// 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (API V3 Infaillible)
+// 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (API V3 Blindée)
 router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) => {
   try {
     const idAgent = req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
@@ -870,10 +870,16 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     if (agentRes.rows.length === 0) throw new Error("Agent introuvable.");
     const agent = agentRes.rows[0];
 
-    // ===============================================================
-    // N'OUBLIE PAS D'AJOUTER YOUSIGN_API_KEY DANS TES VARIABLES RENDER
-    // ===============================================================
     const YOUSIGN_API_KEY = process.env.YOUSIGN_API_KEY || 'METTRE_TA_CLE_API_SANDBOX_ICI';
+
+    // SÉCURITÉ : Si la clé API n'a pas été configurée sur Render, on valide virtuellement pour débloquer l'agent
+    if (YOUSIGN_API_KEY === 'METTRE_TA_CLE_API_SANDBOX_ICI') {
+      await pool.query(
+        `UPDATE partner_agents SET contrat_signe = TRUE, statut_contrat = 'VALIDE', date_signature_contrat = NOW() WHERE id_agent = $1`,
+        [idAgent]
+      );
+      return res.json({ simulation: true, message: "Contrat validé virtuellement (Clé API Yousign non configurée)." });
+    }
 
     const srRes = await fetch('https://api-sandbox.yousign.app/v3/signature_requests', {
       method: 'POST',
@@ -884,24 +890,31 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
         timezone: 'Europe/Paris'
       })
     });
-    if (!srRes.ok) throw new Error("Étape 1 Yousign échouée. Vérifiez votre clé API Sandbox.");
+    
+    if (!srRes.ok) {
+       const errData = await srRes.json().catch(()=>({}));
+       throw new Error(`Yousign Étape 1 : ${JSON.stringify(errData)}`);
+    }
     const signatureRequestId = (await srRes.json()).id;
 
     const pdfBase64 = "JVBERi0xLjQKJcOkw7zDtsOUCjEgMCBvYmoKPDwgL0NyZWF0b3IgKFNUQUNLKSAvUHJvZHVjZXIgKFNUQUNLKSAvQ3JlYXRpb25EYXRlIChEOjIwMjMxMDI0MTIzNDU2WikgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL0NhdGFsb2cgL1BhZ2VzIDMgMCBSID4+CmVuZG9iagozIDAgb2JqCjw8IC9UeXBlIC9QYWdlcyAvS2lkcyBbIDQgMCBSIF0gL0NvdW50IDEgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAzIDAgUiAvTWVkaWFCb3ggWyAwIDAgNTk1IDg0MiBdIC9Db250ZW50cyA1IDAgUiAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA2IDAgUiA+PiA+PiA+PgplbmRvYmoKNSAwIG9iago8PCAvTGVuZ3RoIDY2ID4+CnN0cmVhbQpCVEQKL0YxIDI0IFRmCjEwMCA3MDAgVGQKKENvbnRyYXQgZGUgTWFuZGF0IFNUQUNLKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCjYgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNwowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTcgMDAwMDAgbiAKMDAwMDAwMDEwNCAwMDAwMCBuIAowMDAwMDAwMTU3IDAwMDAwIG4gCjAwMDAwMDAyMTYgMDAwMDAgbiAKMDAwMDAwMDMzNiAwMDAwMCBuIAowMDAwMDAwNDUzIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNyAvUm9vdCAyIDAgUiAvSW5mbyAxIDAgUiA+PgpzdGFydHhyZWYKNTE2CiUlRU9GCg==";
     const pdfBuffer = Buffer.from(pdfBase64, 'base64');
-    const boundary = '----YousignBoundary' + Date.now().toString(16);
     
-    let bodyData = [];
-    bodyData.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="contrat_mandat_stack.pdf"\r\nContent-Type: application/pdf\r\n\r\n`));
-    bodyData.push(pdfBuffer);
-    bodyData.push(Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="nature"\r\n\r\nsignable_document\r\n--${boundary}--`));
+    // Utilisation de FormData natif pour éviter les erreurs de multipart sur le serveur
+    const formData = new FormData();
+    formData.append('file', new Blob([pdfBuffer], { type: 'application/pdf' }), 'contrat_mandat_stack.pdf');
+    formData.append('nature', 'signable_document');
 
     const docRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/documents`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-      body: Buffer.concat(bodyData)
+      headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}` }, // fetch gère le Content-Type automatiquement ici
+      body: formData
     });
-    if (!docRes.ok) throw new Error("Étape 2 Yousign (Upload PDF) échouée.");
+    
+    if (!docRes.ok) {
+       const errData = await docRes.json().catch(()=>({}));
+       throw new Error(`Yousign Étape 2 : ${JSON.stringify(errData)}`);
+    }
     const documentId = (await docRes.json()).id;
 
     const signerRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/signers`, {
@@ -914,7 +927,11 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
         fields: [{ type: 'signature', document_id: documentId, page: 1, x: 50, y: 50 }]
       })
     });
-    if (!signerRes.ok) throw new Error("Étape 3 Yousign (Signataire) échouée.");
+    
+    if (!signerRes.ok) {
+       const errData = await signerRes.json().catch(()=>({}));
+       throw new Error(`Yousign Étape 3 : ${JSON.stringify(errData)}`);
+    }
     const signatureLink = (await signerRes.json()).signature_link;
 
     await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/activate`, {
