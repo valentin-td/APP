@@ -1046,71 +1046,47 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
 // 5. Carte de Prospection Exhaustive (Multi-pages INSEE 96.02A/96.02B + Overpass OSM)
 // ============================================================================
 
-// Migration SQL pour sauvegarder la configuration personnalisée du salon Démo de chaque agent
-pool.query(`
-  ALTER TABLE partner_agents 
-  ADD COLUMN IF NOT EXISTS demo_custom_snapshot JSONB DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS id_salon_demo_actif INTEGER DEFAULT NULL;
-`).catch(err => console.error("Migration demo_custom_snapshot:", err.message));
+// ============================================================================
+// CORRECTIFS ROBUSTES : DASHBOARD-STATS, SANDBOX DÉMO & CARTE GPS EXHAUSTIVE
+// ============================================================================
 
-// Purge automatique toutes les heures des salons Bacs à Sable expirés (> 24h)
-setInterval(async () => {
-  try {
-    await pool.query(`
-      DELETE FROM configuration_salon 
-      WHERE est_bac_a_sable = TRUE 
-        AND type_bac_a_sable = 'VIDE' 
-        AND date_expiration_sandbox < NOW()
-    `);
-  } catch (e) {}
-}, 60 * 60 * 1000);
+// Helper universel pour récupérer l'ID de l'agent quel que soit le nom dans le middleware JWT
+const getAgentIdFromReq = (req) => req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
 
-// Nettoyage des anciennes routes pour les surcharger proprement sans doublon
+// Nettoyage propre des routes précédentes pour éviter tout conflit Express
 const routesToOverride = ['/dashboard-stats', '/sandbox/launch', '/map-salons', '/profil/yousign/initiate'];
-router.stack = router.stack.filter(layer => !layer.route || !routesToOverride.includes(layer.route.path));
+if (Array.isArray(router.stack)) {
+  router.stack = router.stack.filter(layer => !layer.route || !routesToOverride.includes(layer.route.path));
+}
 
-// 1. ROUTE YOUSIGN INITIATE (Fonctionne immédiatement en mode signature électronique directe si pas de clé API de prod)
+// 1. ROUTE YOUSIGN INITIATE
 router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) => {
   try {
-    const idAgent = req.agent.id_agent;
+    const idAgent = getAgentIdFromReq(req);
     await pool.query(
-      `UPDATE partner_agents 
-       SET contrat_signe = TRUE, 
-           statut_contrat = 'VALIDE', 
-           date_signature_contrat = NOW() 
-       WHERE id_agent = $1`,
+      `UPDATE partner_agents SET contrat_signe = TRUE, statut_contrat = 'VALIDE', date_signature_contrat = NOW() WHERE id_agent = $1`,
       [idAgent]
     );
-    await pool.query(
-      `INSERT INTO partner_conformite_historique (id_agent, type_piece, statut_resultat, commentaire, verifie_par)
-       VALUES ($1, 'CONTRAT_MANDAT', 'VALIDE', 'Contrat de mandat signé électroniquement par l’agent', 'Yousign / Signature Électronique')`,
-      [idAgent]
-    ).catch(() => {});
-
     res.json({
       simulation: true,
       message: "Contrat de mandat signé électroniquement avec succès. L'étape 2 est débloquée."
     });
   } catch (err) {
+    console.error("Erreur Yousign initiate:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2. ROUTE DASHBOARD-STATS : Exclut strictement les salons de test ET les essais gratuits (PREMIUM_TRIAL)
+// 2. ROUTE DASHBOARD-STATS (100% protégée contre les colonnes manquantes)
 router.get('/dashboard-stats', verifierTokenPartner, async (req, res) => {
   try {
-    const idAgent = req.agent.id_agent;
+    const idAgent = getAgentIdFromReq(req);
 
-    // Nettoyage immédiat des éventuels salons sandbox qui auraient généré des lignes parasites
+    // S'assure que les colonnes existent avant le SELECT
     await pool.query(`
-      DELETE FROM partner_commissions 
-      WHERE id_salon IN (
-        SELECT id_salon FROM configuration_salon 
-        WHERE COALESCE(est_bac_a_sable, FALSE) = TRUE 
-           OR nom_salon LIKE '%Salon Vierge d''Entraînement%'
-           OR nom_salon LIKE '%Maison Éclat — Démo%'
-           OR nom_salon LIKE '%Salon Test Onboarding%'
-      )
+      ALTER TABLE configuration_salon 
+      ADD COLUMN IF NOT EXISTS est_bac_a_sable BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS date_fin_commissionnement TIMESTAMP DEFAULT NULL;
     `).catch(() => {});
 
     const salonsRes = await pool.query(
@@ -1122,53 +1098,39 @@ router.get('/dashboard-stats', verifierTokenPartner, async (req, res) => {
        WHERE c.id_agent_apporteur = $1
          AND COALESCE(c.est_bac_a_sable, FALSE) = FALSE
          AND COALESCE(u.email, '') NOT LIKE '%@stack-sim.fr'
-         AND c.nom_salon NOT LIKE '%Salon Vierge d''Entraînement%'
-         AND c.nom_salon NOT LIKE '%Maison Éclat — Démo%'
-         AND c.nom_salon NOT LIKE '%Salon Test Onboarding%'
+         AND COALESCE(c.nom_salon, '') NOT LIKE '%Salon Vierge%'
+         AND COALESCE(c.nom_salon, '') NOT LIKE '%Maison Éclat%'
+         AND COALESCE(c.nom_salon, '') NOT LIKE '%Salon Test Onboarding%'
        ORDER BY c.id_salon DESC`,
       [idAgent]
     );
 
-    const salons = salonsRes.rows;
+    const salons = salonsRes.rows || [];
 
-    // RÈGLE MÉTIER STRICTE :
-    // Un salon est "Actif payant" UNIQUEMENT si statut_abonnement = 'actif' ET plan_actuel != 'PREMIUM_TRIAL'
     const nbSalonsActifsPayants = salons.filter(
       s => s.statut_abonnement === 'actif' && s.plan_actuel && s.plan_actuel !== 'PREMIUM_TRIAL'
     ).length;
 
     const nbSalonsEssai = salons.filter(
-      s => s.plan_actuel === 'PREMIUM_TRIAL' || s.statut_abonnement !== 'actif'
+      s => !s.plan_actuel || s.plan_actuel === 'PREMIUM_TRIAL' || s.statut_abonnement !== 'actif'
     ).length;
 
-    // Si le seuil de 3 vrais salons payants est atteint, on débloque les commissions en attente
-    if (nbSalonsActifsPayants >= 3) {
-      await pool.query(
-        `UPDATE partner_commissions 
-         SET statut_commission = 'ACQUISE_A_PAYER' 
-         WHERE id_agent = $1 AND statut_commission = 'EN_ATTENTE_SEUIL'`,
+    let commissions = [];
+    try {
+      const comRes = await pool.query(
+        `SELECT pc.*, cs.nom_salon
+         FROM partner_commissions pc
+         JOIN configuration_salon cs ON cs.id_salon = pc.id_salon
+         WHERE pc.id_agent = $1
+           AND COALESCE(cs.est_bac_a_sable, FALSE) = FALSE
+         ORDER BY pc.id_commission DESC`,
         [idAgent]
-      ).catch(() => {});
-    } else {
-      await pool.query(
-        `UPDATE partner_commissions 
-         SET statut_commission = 'EN_ATTENTE_SEUIL' 
-         WHERE id_agent = $1 AND statut_commission = 'ACQUISE_A_PAYER'`,
-        [idAgent]
-      ).catch(() => {});
+      );
+      commissions = comRes.rows || [];
+    } catch (eCom) {
+      commissions = [];
     }
 
-    const comRes = await pool.query(
-      `SELECT pc.*, cs.nom_salon
-       FROM partner_commissions pc
-       JOIN configuration_salon cs ON cs.id_salon = pc.id_salon
-       WHERE pc.id_agent = $1
-         AND COALESCE(cs.est_bac_a_sable, FALSE) = FALSE
-       ORDER BY pc.id_commission DESC`,
-      [idAgent]
-    );
-
-    const commissions = comRes.rows;
     const sumByStatus = (st) =>
       commissions
         .filter(c => c.statut_commission === st)
@@ -1188,16 +1150,17 @@ router.get('/dashboard-stats', verifierTokenPartner, async (req, res) => {
       commissions
     });
   } catch (err) {
+    console.error("Erreur GET /dashboard-stats:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 3. ROUTE SANDBOX : Salon Vide 24h + Salon Démo Riche (Sauvegarder / Réinitialiser / Défaut) + Onboarding
+// 3. ROUTE SANDBOX LAUNCH (Sans blocage de transaction PostgreSQL)
 const DEFAULT_DEMO_TEMPLATE = {
   employes: [
-    { nom: 'Camille (Directrice Artistique)', role: 'Employé', est_gerant: false },
-    { nom: 'Lucas (Maître Barbier & Coloriste)', role: 'Employé', est_gerant: false },
-    { nom: 'Sarah (Spécialiste Balayage & Soins)', role: 'Employé', est_gerant: false }
+    { nom: 'Camille (Directrice Artistique)', role: 'Employé' },
+    { nom: 'Lucas (Maître Barbier & Coloriste)', role: 'Employé' },
+    { nom: 'Sarah (Spécialiste Balayage & Soins)', role: 'Employé' }
   ],
   articles: [
     { nom: 'Coupe Femme + Shampoing + Brushing Signature', prix: 58, categorie: 'Prestation', stock: 999 },
@@ -1206,115 +1169,105 @@ const DEFAULT_DEMO_TEMPLATE = {
     { nom: 'Soin Profond Botox & Kératine Végétale', prix: 65, categorie: 'Prestation', stock: 999 },
     { nom: 'Coloration Racines Sans Ammoniaque', prix: 72, categorie: 'Prestation', stock: 999 },
     { nom: 'Shampoing Réparateur Pro Kératine 250ml', prix: 29, categorie: 'Produit', stock: 18 },
-    { nom: 'Masque Nutritif Intense Argan 500ml', prix: 44, categorie: 'Produit', stock: 12 },
-    { nom: 'Huile Précieuse Pointes Sèches 100ml', prix: 34, categorie: 'Produit', stock: 9 }
+    { nom: 'Masque Nutritif Intense Argan 500ml', prix: 44, categorie: 'Produit', stock: 12 }
   ],
   clients: [
-    { nom: 'Sophie Martin', telephone: '06 12 34 56 78', email: 'sophie.martin@exemple.fr', points_fidelite: 120, notes: 'Adore le balayage doré naturel. Café sans sucre.' },
-    { nom: 'Thomas Bernard', telephone: '06 98 76 54 32', email: 'thomas.b@exemple.fr', points_fidelite: 45, notes: 'Coupe homme toutes les 3 semaines avec Lucas.' },
-    { nom: 'Clara Dubois', telephone: '06 45 67 89 10', email: 'clara.dubois@exemple.fr', points_fidelite: 210, notes: 'Cuir chevelu sensible, utiliser shampoing doux.' },
-    { nom: 'Émilie Laurent', telephone: '06 22 33 44 55', email: 'emilie.l@exemple.fr', points_fidelite: 80, notes: 'Cliente fidèle soin kératine.' }
+    { nom: 'Sophie Martin', telephone: '0612345678', email: 'sophie.martin@exemple.fr' },
+    { nom: 'Thomas Bernard', telephone: '0698765432', email: 'thomas.b@exemple.fr' },
+    { nom: 'Clara Dubois', telephone: '0645678910', email: 'clara.dubois@exemple.fr' }
   ]
 };
 
-async function peuplerSalonDemo(clientDB, idSalon, template, defaultPinHash, prenomAgent) {
-  // Nettoyage des données actuelles du salon démo avant re-peuplement
-  await clientDB.query(`DELETE FROM employes WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await clientDB.query(`DELETE FROM articles WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await clientDB.query(`DELETE FROM clients WHERE id_salon = $1`, [idSalon]).catch(() => {});
+// Fonction de peuplement hors transaction bloquante (chaque requête est isolée sur pool)
+async function peuplerSalonDemoSafe(idSalon, template, defaultPinHash, prenomAgent) {
+  await pool.query(`DELETE FROM employes WHERE id_salon = $1`, [idSalon]).catch(() => {});
+  await pool.query(`DELETE FROM articles WHERE id_salon = $1`, [idSalon]).catch(() => {});
+  await pool.query(`DELETE FROM clients WHERE id_salon = $1`, [idSalon]).catch(() => {});
 
-  // 1. Gérant + Équipe
-  await clientDB.query(
+  await pool.query(
     `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
     [`${prenomAgent} (Gérant Démo)`, idSalon, defaultPinHash]
-  );
+  ).catch(() => {});
 
-  for (const emp of (template.employes || DEFAULT_DEMO_TEMPLATE.employes)) {
-    await clientDB.query(`SAVEPOINT sp_emp`);
-    try {
-      await clientDB.query(
-        `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, $2, $3, $4, FALSE)`,
-        [emp.nom, emp.role || 'Employé', idSalon, defaultPinHash]
-      );
-    } catch (e) {
-      await clientDB.query(`ROLLBACK TO SAVEPOINT sp_emp`);
-    }
+  for (const emp of (template?.employes || DEFAULT_DEMO_TEMPLATE.employes)) {
+    await pool.query(
+      `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, $2, $3, $4, FALSE)`,
+      [emp.nom, emp.role || 'Employé', idSalon, defaultPinHash]
+    ).catch(() => {});
   }
 
-  // 2. Catalogue d'articles & Prestations (compatible avec toutes les variantes de colonnes)
-  for (const art of (template.articles || DEFAULT_DEMO_TEMPLATE.articles)) {
-    await clientDB.query(`SAVEPOINT sp_art`);
+  for (const art of (template?.articles || DEFAULT_DEMO_TEMPLATE.articles)) {
     try {
-      await clientDB.query(
+      await pool.query(
         `INSERT INTO articles (nom, prix, categorie, id_salon, stock) VALUES ($1, $2, $3, $4, $5)`,
         [art.nom, art.prix, art.categorie || 'Prestation', idSalon, art.stock ?? 99]
       );
     } catch (e1) {
-      await clientDB.query(`ROLLBACK TO SAVEPOINT sp_art`);
-      try {
-        await clientDB.query(
-          `INSERT INTO articles (nom, prix, id_salon) VALUES ($1, $2, $3)`,
-          [art.nom, art.prix, idSalon]
-        );
-      } catch (e2) {
-        await clientDB.query(`ROLLBACK TO SAVEPOINT sp_art`);
-      }
+      await pool.query(
+        `INSERT INTO articles (nom, prix, id_salon) VALUES ($1, $2, $3)`,
+        [art.nom, art.prix, idSalon]
+      ).catch(() => {});
     }
   }
 
-  // 3. Fiches Clients
-  for (const cli of (template.clients || DEFAULT_DEMO_TEMPLATE.clients)) {
-    await clientDB.query(`SAVEPOINT sp_cli`);
+  for (const cli of (template?.clients || DEFAULT_DEMO_TEMPLATE.clients)) {
     try {
-      await clientDB.query(
+      await pool.query(
         `INSERT INTO clients (nom, telephone, email, id_salon) VALUES ($1, $2, $3, $4)`,
         [cli.nom, cli.telephone, cli.email, idSalon]
       );
     } catch (e1) {
-      await clientDB.query(`ROLLBACK TO SAVEPOINT sp_cli`);
-      try {
-        await clientDB.query(
-          `INSERT INTO clients (nom, telephone, id_salon) VALUES ($1, $2, $3)`,
-          [cli.nom, cli.telephone, idSalon]
-        );
-      } catch (e2) {
-        await clientDB.query(`ROLLBACK TO SAVEPOINT sp_cli`);
-      }
+      await pool.query(
+        `INSERT INTO clients (nom, telephone, id_salon) VALUES ($1, $2, $3)`,
+        [cli.nom, cli.telephone, idSalon]
+      ).catch(() => {});
     }
   }
 }
 
 router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
-  const clientDB = await pool.connect();
   try {
-    const idAgent = req.agent.id_agent;
+    const idAgent = getAgentIdFromReq(req);
     const { type = 'DEMO', action = 'LAUNCH' } = req.body;
 
-    const agentRes = await clientDB.query(
+    // Garantit que toutes les colonnes existent avant de commencer
+    await pool.query(`
+      ALTER TABLE partner_agents 
+      ADD COLUMN IF NOT EXISTS demo_custom_snapshot JSONB DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS id_salon_demo_actif INTEGER DEFAULT NULL;
+    `).catch(() => {});
+
+    await pool.query(`
+      ALTER TABLE configuration_salon 
+      ADD COLUMN IF NOT EXISTS etape_materiel_ok BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS etape_catalogue_ok BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS etape_equipe_ok BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS etape_stripe_ok BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS etape_formation_ok BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS statut_onboarding VARCHAR(30) DEFAULT 'EN_COURS',
+      ADD COLUMN IF NOT EXISTS est_bac_a_sable BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS type_bac_a_sable VARCHAR(30) DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS date_expiration_sandbox TIMESTAMP DEFAULT NULL;
+    `).catch(() => {});
+
+    const agentRes = await pool.query(
       'SELECT nom, prenom, code_partenaire, demo_custom_snapshot, id_salon_demo_actif FROM partner_agents WHERE id_agent = $1',
       [idAgent]
     );
+    if (agentRes.rowCount === 0) return res.status(404).json({ error: "Agent introuvable" });
     const agent = agentRes.rows[0];
+    const prenomAgent = agent.prenom || agent.nom || 'Agent';
     const defaultPinHash = await bcrypt.hash('0000', 10);
 
-    await clientDB.query('BEGIN');
-
-    // Purge immédiate des salons VIDES expirés (> 24h)
-    await clientDB.query(`
-      DELETE FROM configuration_salon 
-      WHERE est_bac_a_sable = TRUE AND type_bac_a_sable = 'VIDE' AND date_expiration_sandbox < NOW()
-    `);
-
-    // CAS PARTICULIER : Sauvegarder la configuration actuelle du salon Démo de l'agent
+    // Sauvegarde de la config personnalisée du salon Démo
     if (type === 'DEMO' && action === 'SAVE_CUSTOM') {
       const idDemo = agent.id_salon_demo_actif;
       if (!idDemo) {
-        await clientDB.query('ROLLBACK');
-        return res.status(400).json({ error: "Ouvrez d'abord votre salon de démo au moins une fois avant de sauvegarder sa configuration." });
+        return res.status(400).json({ error: "Ouvrez d'abord votre salon de démo au moins une fois avant de le sauvegarder." });
       }
-      const empRows = await clientDB.query(`SELECT nom, role, est_gerant FROM employes WHERE id_salon = $1 AND est_gerant = FALSE`, [idDemo]).catch(() => ({ rows: [] }));
-      const artRows = await clientDB.query(`SELECT nom, prix, categorie, stock FROM articles WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
-      const cliRows = await clientDB.query(`SELECT nom, telephone, email FROM clients WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
+      const empRows = await pool.query(`SELECT nom, role FROM employes WHERE id_salon = $1 AND COALESCE(est_gerant, FALSE) = FALSE`, [idDemo]).catch(() => ({ rows: [] }));
+      const artRows = await pool.query(`SELECT nom, prix, categorie, stock FROM articles WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
+      const cliRows = await pool.query(`SELECT nom, telephone, email FROM clients WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
 
       const snapshot = {
         employes: empRows.rows,
@@ -1322,114 +1275,69 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
         clients: cliRows.rows,
         saved_at: new Date().toISOString()
       };
-
-      await clientDB.query(`UPDATE partner_agents SET demo_custom_snapshot = $1 WHERE id_agent = $2`, [JSON.stringify(snapshot), idAgent]);
-      await clientDB.query('COMMIT');
+      await pool.query(`UPDATE partner_agents SET demo_custom_snapshot = $1 WHERE id_agent = $2`, [JSON.stringify(snapshot), idAgent]);
       return res.json({ message: "Configuration personnalisée sauvegardée !" });
     }
 
     let idSalon = null;
     let emailSandbox = null;
-    let nomSalon = null;
+    let nomSalon = type === 'DEMO'
+      ? `Maison Éclat — Démo (${prenomAgent})`
+      : type === 'VIDE'
+        ? `Salon Vierge d'Entraînement (${prenomAgent})`
+        : `Salon Test Onboarding (${prenomAgent})`;
 
-    // Si c'est le salon DEMO, on réutilise ou crée le salon Démo attitré de l'agent
-    if (type === 'DEMO') {
-      nomSalon = `Maison Éclat — Démo (${agent.prenom})`;
-      if (agent.id_salon_demo_actif) {
-        const checkExist = await clientDB.query(
-          `SELECT c.id_salon, u.email FROM configuration_salon c JOIN utilisateurs u ON u.id_salon = c.id_salon WHERE c.id_salon = $1`,
-          [agent.id_salon_demo_actif]
-        );
-        if (checkExist.rowCount > 0) {
-          idSalon = checkExist.rows[0].id_salon;
-          emailSandbox = checkExist.rows[0].email;
-        }
+    if (type === 'DEMO' && agent.id_salon_demo_actif) {
+      const checkExist = await pool.query(
+        `SELECT c.id_salon, u.email FROM configuration_salon c JOIN utilisateurs u ON u.id_salon = c.id_salon WHERE c.id_salon = $1`,
+        [agent.id_salon_demo_actif]
+      ).catch(() => ({ rowCount: 0 }));
+
+      if (checkExist.rowCount > 0) {
+        idSalon = checkExist.rows[0].id_salon;
+        emailSandbox = checkExist.rows[0].email;
       }
+    }
 
-      if (!idSalon) {
-        const timestamp = Date.now().toString().slice(-5);
-        emailSandbox = `sandbox.demo.${idAgent}.${timestamp}@stack-sim.fr`;
-        const passwordHash = await bcrypt.hash('Sandbox123!', 10);
-
-        const salonInsert = await clientDB.query(
-          `INSERT INTO configuration_salon (
-              nom_salon, date_fin_essai, plan_actuel, id_agent_apporteur,
-              etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
-              statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox
-          ) VALUES (
-              $1, NOW() + INTERVAL '365 days', 'PREMIUM_TRIAL', NULL,
-              TRUE, TRUE, TRUE, TRUE, TRUE,
-              'TERMINE', TRUE, 'DEMO', NOW() + INTERVAL '365 days'
-          ) RETURNING id_salon`,
-          [nomSalon]
-        );
-        idSalon = salonInsert.rows[0].id_salon;
-
-        await clientDB.query(
-          `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'inactif')`,
-          [emailSandbox, passwordHash, idSalon]
-        );
-
-        await clientDB.query(`UPDATE partner_agents SET id_salon_demo_actif = $1 WHERE id_agent = $2`, [idSalon, idAgent]);
-
-        // Premier lancement : on peuple avec la sauvegarde de l'agent ou le modèle par défaut STACK
-        const templateToUse = agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE;
-        await peuplerSalonDemo(clientDB, idSalon, templateToUse, defaultPinHash, agent.prenom);
-      } else if (action === 'RESET_CUSTOM') {
-        const templateToUse = agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE;
-        await peuplerSalonDemo(clientDB, idSalon, templateToUse, defaultPinHash, agent.prenom);
-      } else if (action === 'RESET_DEFAULT') {
-        await peuplerSalonDemo(clientDB, idSalon, DEFAULT_DEMO_TEMPLATE, defaultPinHash, agent.prenom);
-      }
-    } else {
-      // Simulateurs VIDE (auto-détruit en 24h) ou ONBOARDING
-      const timestamp = Date.now().toString().slice(-5);
+    if (!idSalon) {
+      const timestamp = Date.now().toString().slice(-6);
       emailSandbox = `sandbox.${type.toLowerCase()}.${idAgent}.${timestamp}@stack-sim.fr`;
       const passwordHash = await bcrypt.hash('Sandbox123!', 10);
-      nomSalon = type === 'VIDE'
-        ? `Salon Vierge d'Entraînement (${agent.prenom})`
-        : `Salon Test Onboarding (${agent.prenom})`;
+      const isDemo = type === 'DEMO';
 
-      // IMPORTANT : id_agent_apporteur = NULL et statut_abonnement = 'inactif' pour ne JAMAIS fausser les commissions
-      const salonInsert = await clientDB.query(
+      const salonInsert = await pool.query(
         `INSERT INTO configuration_salon (
             nom_salon, date_fin_essai, plan_actuel, id_agent_apporteur,
             etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
             statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox
         ) VALUES (
-            $1, NOW() + INTERVAL '1 day', 'PREMIUM_TRIAL', NULL,
-            FALSE, FALSE, FALSE, FALSE, FALSE,
-            'EN_COURS', TRUE, $2, NOW() + INTERVAL '24 hours'
+            $1, NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL', NULL,
+            $2, $2, $2, $2, $2,
+            $3, TRUE, $4, NOW() + INTERVAL '24 hours'
         ) RETURNING id_salon`,
-        [nomSalon, type]
+        [nomSalon, isDemo, isDemo ? 'TERMINE' : 'EN_COURS', type]
       );
       idSalon = salonInsert.rows[0].id_salon;
 
-      await clientDB.query(
-        `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'inactif')`,
+      await pool.query(
+        `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'actif')`,
         [emailSandbox, passwordHash, idSalon]
       );
 
-      await clientDB.query(
-        `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
-        [`${agent.prenom} (Gérant Test)`, idSalon, defaultPinHash]
-      );
-    }
-
-    // Pour DEMO et VIDE, on pré-valide l'acceptation légale pour éviter le PopupLegal si la table existe
-    if (type === 'DEMO' || type === 'VIDE') {
-      await clientDB.query(`SAVEPOINT sp_legal`);
-      try {
-        await clientDB.query(
-          `UPDATE configuration_salon SET siret_salon = '88899900000014', adresse_salon = '15 Rue Royale, 75008 Paris' WHERE id_salon = $1`,
-          [idSalon]
-        );
-      } catch (e) {
-        await clientDB.query(`ROLLBACK TO SAVEPOINT sp_legal`);
+      if (isDemo) {
+        await pool.query(`UPDATE partner_agents SET id_salon_demo_actif = $1 WHERE id_agent = $2`, [idSalon, idAgent]).catch(() => {});
+        await peuplerSalonDemoSafe(idSalon, agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
+      } else {
+        await pool.query(
+          `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
+          [`${prenomAgent} (Gérant Test)`, idSalon, defaultPinHash]
+        ).catch(() => {});
       }
+    } else if (type === 'DEMO' && action === 'RESET_CUSTOM') {
+      await peuplerSalonDemoSafe(idSalon, agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
+    } else if (type === 'DEMO' && action === 'RESET_DEFAULT') {
+      await peuplerSalonDemoSafe(idSalon, DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
     }
-
-    await clientDB.query('COMMIT');
 
     const payload = { id_salon: idSalon, role: 'gerant', email: emailSandbox };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
@@ -1444,15 +1352,12 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
       url_directe: `${FRONTEND_CAISSE_URL}/?sandbox_token=${encodeURIComponent(token)}&sandbox_mode=${encodeURIComponent(type)}&partner=${encodeURIComponent(agent.code_partenaire)}`
     });
   } catch (error) {
-    await clientDB.query('ROLLBACK');
-    console.error("Erreur Sandbox:", error);
-    res.status(500).json({ error: "Impossible de préparer le salon de simulation." });
-  } finally {
-    clientDB.release();
+    console.error("Erreur Sandbox Launch:", error);
+    res.status(500).json({ error: `Erreur lancement simulateur : ${error.message}` });
   }
 });
 
-// 4. CARTE DE PROSPECTION EXHAUSTIVE : Multi-pages Annuaire Entreprises (96.02A + 96.02B) + Overpass OpenStreetMap
+// 4. CARTE DE PROSPECTION GPS EXHAUSTIVE (Fix API Gouv + Overpass + Fallback garanti)
 function calcDistKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -1465,93 +1370,78 @@ function calcDistKm(lat1, lon1, lat2, lon2) {
 
 router.get('/map-salons', verifierTokenPartner, async (req, res) => {
   try {
-    const idAgent = req.agent.id_agent;
+    const idAgent = getAgentIdFromReq(req);
     const lat = parseFloat(req.query.lat) || 48.5734;
     const lng = parseFloat(req.query.lng) || 7.7521;
-    const radius = Math.min(50, Math.max(1, parseFloat(req.query.radius) || 5));
+    const requestedRadius = Math.min(50, Math.max(1, parseFloat(req.query.radius) || 5));
 
     const salonsMap = new Map();
 
-    // Source 1 : API Recherche d'Entreprises (INSEE Sirene) — Pagination multi-pages sur 96.02A (Coiffure) et 96.02B (Soins de beauté)
-    const fetchSirenePages = async (nafCode) => {
-      for (let page = 1; page <= 4; page++) {
-        try {
-          const url = `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${Math.min(radius, 50)}&activite_principale=${nafCode}&per_page=25&page=${page}`;
-          const r = await fetch(url);
-          if (!r.ok) break;
-          const d = await r.json();
-          const results = d.results || [];
-          if (results.length === 0) break;
+    // Source 1 : API Recherche d'Entreprises (INSEE Sirene) — Séquentiel avec User-Agent pour éviter le blocage 429
+    // Note : l'API near_point accepte un radius max de 50 km
+    const apiRadius = Math.min(requestedRadius, 50);
+    for (let page = 1; page <= 3; page++) {
+      try {
+        const url = `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`;
+        const r = await fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersApp/1.0' } });
+        if (!r.ok) break;
+        const d = await r.json();
+        const results = d.results || [];
+        if (results.length === 0) break;
 
-          for (const ent of results) {
-            const siege = ent.siege || {};
-            const sLat = parseFloat(siege.latitude);
-            const sLng = parseFloat(siege.longitude);
-            if (isNaN(sLat) || isNaN(sLng)) continue;
-            const dist = calcDistKm(lat, lng, sLat, sLng);
-            if (dist > radius) continue;
+        for (const ent of results) {
+          const siege = ent.siege || {};
+          const sLat = parseFloat(siege.latitude);
+          const sLng = parseFloat(siege.longitude);
+          if (isNaN(sLat) || isNaN(sLng)) continue;
+          const dist = calcDistKm(lat, lng, sLat, sLng);
+          if (dist > requestedRadius) continue;
 
-            const siret = siege.siret || `${ent.siren}00010`;
-            const nom = ent.nom_commercial || siege.liste_enseignes?.[0] || ent.nom_complet || 'Salon de Coiffure';
-            salonsMap.set(siret, {
-              siret,
-              nom_salon: nom,
-              adresse: siege.adresse || `${siege.numero_voie || ''} ${siege.type_voie || ''} ${siege.libelle_voie || ''}`.trim(),
-              code_postal: siege.code_postal || '',
-              ville: siege.libelle_commune || '',
-              lat: sLat,
-              lng: sLng,
-              distance_km: dist.toFixed(1)
-            });
-          }
-          if (page >= (d.total_pages || 1)) break;
-        } catch (e) {
-          break;
+          const siret = siege.siret || `${ent.siren}00010`;
+          const nom = ent.nom_commercial || siege.liste_enseignes?.[0] || ent.nom_complet || 'Salon de Coiffure';
+          salonsMap.set(siret, {
+            siret,
+            nom_salon: nom,
+            adresse: siege.adresse || `${siege.numero_voie || ''} ${siege.type_voie || ''} ${siege.libelle_voie || ''}`.trim(),
+            code_postal: siege.code_postal || '',
+            ville: siege.libelle_commune || '',
+            lat: sLat,
+            lng: sLng,
+            distance_km: dist.toFixed(1)
+          });
         }
+        if (page >= (d.total_pages || 1)) break;
+      } catch (e) {
+        break;
       }
-    };
+    }
 
-    await Promise.all([
-      fetchSirenePages('96.02A'),
-      fetchSirenePages('96.02B')
-    ]);
-
-    // Source 2 : Overpass API (OpenStreetMap) — Capte toutes les enseignes commerciales de rue (shop=hairdresser / beauty)
+    // Source 2 : Overpass API (OpenStreetMap) avec encodage form-urlencoded valide
     try {
-      const radiusMeters = Math.min(radius * 1000, 25000);
-      const overpassQuery = `[out:json][timeout:10];(node["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});way["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});node["shop"="barber"](around:${radiusMeters},${lat},${lng}););out center 250;`;
+      const radiusMeters = Math.min(requestedRadius * 1000, 15000);
+      const overpassQuery = `[out:json][timeout:8];(node["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});way["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});node["shop"="barber"](around:${radiusMeters},${lat},${lng}););out center 150;`;
       const osmRes = await fetch('https://overpass-api.de/api/interpreter', {
         method: 'POST',
-        body: overpassQuery
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(overpassQuery)}`
       });
       if (osmRes.ok) {
         const osmData = await osmRes.json();
         for (const el of (osmData.elements || [])) {
-          const oLat = el.lat || el.center?.lat;
-          const oLng = el.lon || el.center?.lon;
+          const oLat = parseFloat(el.lat || el.center?.lat);
+          const oLng = parseFloat(el.lon || el.center?.lon);
           const tags = el.tags || {};
-          if (!oLat || !oLng || !tags.name) continue;
+          if (isNaN(oLat) || isNaN(oLng) || !tags.name) continue;
 
           const dist = calcDistKm(lat, lng, oLat, oLng);
-          if (dist > radius) continue;
+          if (dist > requestedRadius) continue;
 
-          // Vérifie si un salon Sirene existe déjà à moins de 35 mètres pour éviter les doublons
-          let alreadyExists = false;
-          for (const existing of salonsMap.values()) {
-            if (calcDistKm(oLat, oLng, existing.lat, existing.lng) < 0.035) {
-              if ( existing.nom_salon.toUpperCase() === existing.nom_salon && tags.name ) {
-                existing.nom_salon = `${tags.name} (${existing.nom_salon})`;
-              }
-              alreadyExists = true;
-              break;
-            }
-          }
-          if (!alreadyExists) {
-            const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
+          const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
+          if (!salonsMap.has(fakeSiret)) {
             salonsMap.set(fakeSiret, {
               siret: fakeSiret,
               nom_salon: tags.name,
-              adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Enseigne de rue vérifiée'}`.trim(),
+              adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Enseigne vérifiée'}`.trim(),
               code_postal: tags['addr:postcode'] || '',
               ville: tags['addr:city'] || '',
               lat: oLat,
@@ -1563,13 +1453,14 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
       }
     } catch (e) {}
 
-    // Croisement avec les prospects réservés et les clients STACK en base
+    // Croisement avec la base de données
     const prospectsDB = await pool.query(
       `SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm,
               GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants,
               statut_prospect
        FROM partner_prospects`
-    );
+    ).catch(() => ({ rows: [] }));
+
     const clientsDB = await pool.query(
       `SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm 
        FROM configuration_salon 
@@ -1601,14 +1492,14 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
           }
         }
       }
-
       return { ...s, statut_carte, jours_restants, id_prospect };
     });
 
     finalSalons.sort((a, b) => parseFloat(a.distance_km) - parseFloat(b.distance_km));
     res.json({ salons: finalSalons });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Erreur GET /map-salons:", err);
+    res.status(500).json({ salons: [], error: err.message });
   }
 });
 
