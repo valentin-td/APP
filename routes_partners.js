@@ -1537,19 +1537,38 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
     }
 
     // Décoration ultra-rapide avec statuts (Clients, Leads...)
-    const [prospectsDB, clientsDB] = await Promise.all([
+    const [prospectsDB, clientsDB, visitesDB] = await Promise.all([
       pool.query(`SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm, GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants, statut_prospect FROM partner_prospects`).catch(() => ({ rows: [] })),
-      pool.query(`SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`).catch(() => ({ rows: [] }))
+      pool.query(`SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`).catch(() => ({ rows: [] })),
+      pool.query(`
+        SELECT pv.*, pa.prenom AS agent_prenom, pa.nom AS agent_nom
+        FROM partner_visites pv
+        LEFT JOIN partner_agents pa ON pa.id_agent = pv.id_agent
+        WHERE pv.date_expiration > NOW()
+        ORDER BY pv.date_visite DESC
+      `).catch(() => ({ rows: [] }))
     ]);
 
-    const clientSirets = new Set(); const clientNames = new Set();
+    const clientSirets = new Set();
+    const clientNames = new Set();
     clientsDB.rows.forEach(c => { if(c.siret_salon) clientSirets.add(c.siret_salon); if(c.nom_norm) clientNames.add(c.nom_norm); });
-    const prospectBySiret = new Map(); const prospectByName = new Map();
+    
+    const prospectBySiret = new Map();
+    const prospectByName = new Map();
     prospectsDB.rows.forEach(p => { if(p.siret_prospect) prospectBySiret.set(p.siret_prospect, p); if(p.nom_norm) prospectByName.set(p.nom_norm, p); });
+
+    const visiteBySiret = new Map();
+    visitesDB.rows.forEach(v => {
+      if (v.siret_salon && !visiteBySiret.has(v.siret_salon)) {
+        visiteBySiret.set(v.siret_salon, v);
+      }
+    });
 
     const finalSalons = baseSalons.map(s => {
       let statut_carte = 'LIBRE', jours_restants = 0, id_prospect = null;
       const normName = (s.nom_salon || '').toLowerCase().trim();
+      const vMatch = visiteBySiret.get(s.siret) || null;
+      
       if (clientSirets.has(s.siret) || clientNames.has(normName)) {
         statut_carte = 'CLIENT_STACK';
       } else {
@@ -1558,11 +1577,33 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
           if (pMatch.statut_prospect === 'SIGNE') statut_carte = 'CLIENT_STACK';
           else if (pMatch.jours_restants > 0) {
             statut_carte = Number(pMatch.id_agent) === Number(idAgent) ? 'PROSPECTE_MOI' : 'PROSPECTE_AUTRE';
-            jours_restants = pMatch.jours_restants; id_prospect = pMatch.id_prospect;
+            jours_restants = pMatch.jours_restants;
+            id_prospect = pMatch.id_prospect;
           }
+        } else if (vMatch && vMatch.est_visite_physique) {
+          statut_carte = Number(vMatch.id_agent) === Number(idAgent) ? 'VISITE_MOI' : 'VISITE_AUTRE';
         }
       }
-      return { ...s, statut_carte, jours_restants, id_prospect };
+
+      return {
+        ...s,
+        statut_carte,
+        jours_restants,
+        id_prospect,
+        visite_info: vMatch ? {
+          id_visite: vMatch.id_visite,
+          id_agent: vMatch.id_agent,
+          est_moi: Number(vMatch.id_agent) === Number(idAgent),
+          agent_nom_complet: `${vMatch.agent_prenom || ''} ${vMatch.agent_nom || 'Agent'}`.trim(),
+          tag_concurrent: vMatch.tag_concurrent,
+          statut_visite: vMatch.statut_visite,
+          note_texte: vMatch.note_texte,
+          est_visite_physique: vMatch.est_visite_physique,
+          distance_validation_m: vMatch.distance_validation_m,
+          date_visite: vMatch.date_visite,
+          date_expiration: vMatch.date_expiration
+        } : null
+      };
     });
 
     res.json({ salons: finalSalons, nextStep: nextStepToReturn });
@@ -1657,6 +1698,238 @@ router.patch('/admin/commissions/:id/payer', verifierTokenPartner, verifierSuper
     res.json({ message: "Commission marquée comme payée." });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================================
+// 6. CRM DE TERRAIN : VISITES GÉO-VÉRIFIÉES (100M), TAGS, NOTES & TOURNÉE OSRM
+// ============================================================================
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS partner_visites (
+    id_visite SERIAL PRIMARY KEY,
+    siret_salon VARCHAR(120) UNIQUE NOT NULL,
+    nom_salon VARCHAR(255),
+    ville VARCHAR(150),
+    lat_salon DOUBLE PRECISION,
+    lng_salon DOUBLE PRECISION,
+    id_agent INTEGER NOT NULL,
+    tag_concurrent VARCHAR(60) DEFAULT 'NON_RENSEIGNE',
+    statut_visite VARCHAR(50) DEFAULT 'NOTE_SIMPLE',
+    note_texte TEXT DEFAULT '',
+    est_visite_physique BOOLEAN DEFAULT FALSE,
+    lat_agent DOUBLE PRECISION,
+    lng_agent DOUBLE PRECISION,
+    distance_validation_m INTEGER DEFAULT NULL,
+    date_visite TIMESTAMP DEFAULT NOW(),
+    date_expiration TIMESTAMP NOT NULL
+  );
+`).catch(err => console.error("Erreur init partner_visites:", err.message));
+
+// Enregistrer une visite physique (Géo-fencing <= 100m) ou une note/tag
+router.post('/visites', verifierTokenPartner, async (req, res) => {
+  try {
+    const idAgent = getAgentIdFromReq(req);
+    const {
+      siret_salon, nom_salon, ville, lat_salon, lng_salon,
+      tag_concurrent = 'NON_RENSEIGNE',
+      statut_visite = 'ABSENT_3MOIS',
+      note_texte = '',
+      valider_passage_physique = false,
+      lat_agent = null,
+      lng_agent = null,
+      force_super_admin = false
+    } = req.body;
+
+    if (!siret_salon) return res.status(400).json({ error: "Identifiant salon manquant." });
+
+    let distanceMeters = null;
+    if (valider_passage_physique) {
+      if (lat_agent === null || lng_agent === null || isNaN(parseFloat(lat_agent)) || isNaN(parseFloat(lng_agent))) {
+        return res.status(400).json({ error: "Position GPS introuvable. Activez la localisation sur votre téléphone pour valider votre passage." });
+      }
+      const distKm = calcDistKm(parseFloat(lat_salon), parseFloat(lng_salon), parseFloat(lat_agent), parseFloat(lng_agent));
+      distanceMeters = Math.round(distKm * 1000);
+
+      if (distanceMeters > 100 && !force_super_admin) {
+        return res.status(403).json({
+          error: `Validation refusée (Sécurité Anti-Triche GPS) : Vous êtes à ${distanceMeters} mètres du salon. Vous devez être à moins de 100 mètres pour certifier votre visite.`,
+          distance_m: distanceMeters
+        });
+      }
+    }
+
+    // Calcul du délai de carence : 1 an pour Refus catégorique, 3 mois pour Absent / À rappeler
+    const intervalSql = statut_visite === 'REFUS_1AN' ? "INTERVAL '1 year'" : "INTERVAL '3 months'";
+
+    const upsertQuery = `
+      INSERT INTO partner_visites (
+        siret_salon, nom_salon, ville, lat_salon, lng_salon, id_agent,
+        tag_concurrent, statut_visite, note_texte, est_visite_physique,
+        lat_agent, lng_agent, distance_validation_m, date_visite, date_expiration
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10,
+        $11, $12, $13, NOW(), NOW() + ${intervalSql}
+      )
+      ON CONFLICT (siret_salon) DO UPDATE SET
+        id_agent = EXCLUDED.id_agent,
+        tag_concurrent = EXCLUDED.tag_concurrent,
+        statut_visite = EXCLUDED.statut_visite,
+        note_texte = EXCLUDED.note_texte,
+        est_visite_physique = COALESCE(EXCLUDED.est_visite_physique, partner_visites.est_visite_physique),
+        lat_agent = COALESCE(EXCLUDED.lat_agent, partner_visites.lat_agent),
+        lng_agent = COALESCE(EXCLUDED.lng_agent, partner_visites.lng_agent),
+        distance_validation_m = COALESCE(EXCLUDED.distance_validation_m, partner_visites.distance_validation_m),
+        date_visite = NOW(),
+        date_expiration = NOW() + ${intervalSql}
+      RETURNING *;
+    `;
+
+    const saved = await pool.query(upsertQuery, [
+      siret_salon, nom_salon || 'Salon', ville || '', parseFloat(lat_salon) || 0, parseFloat(lng_salon) || 0, idAgent,
+      tag_concurrent, statut_visite, note_texte, !!valider_passage_physique,
+      lat_agent ? parseFloat(lat_agent) : null, lng_agent ? parseFloat(lng_agent) : null, distanceMeters
+    ]);
+
+    const agentRes = await pool.query(`SELECT prenom, nom FROM partner_agents WHERE id_agent = $1`, [idAgent]);
+    const ag = agentRes.rows[0] || {};
+
+    res.json({
+      message: valider_passage_physique
+        ? `Visite certifiée GPS (${distanceMeters ?? 0}m) ! Verrouillé pour ${statut_visite === 'REFUS_1AN' ? '1 an' : '3 mois'}.`
+        : "Note et qualification enregistrées.",
+      visite_info: {
+        ...saved.rows[0],
+        est_moi: true,
+        agent_nom_complet: `${ag.prenom || ''} ${ag.nom || 'Agent'}`.trim()
+      }
+    });
+  } catch (e) {
+    console.error("Erreur POST /visites:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Optimisation de tournée via OSRM + Algorithme du plus proche voisin (TSP) avec Départ et Arrivée verrouillés
+router.post('/tournee/optimiser', verifierTokenPartner, async (req, res) => {
+  try {
+    const { startPoint, endPoint, salons = [] } = req.body;
+    if (!startPoint || !Array.isArray(salons) || salons.length === 0) {
+      return res.status(400).json({ error: "Sélectionnez au moins un salon et un point de départ." });
+    }
+
+    const start = { lat: parseFloat(startPoint.lat), lng: parseFloat(startPoint.lng), label: startPoint.label || 'Départ GPS' };
+    const end = endPoint && endPoint.lat && endPoint.lng
+      ? { lat: parseFloat(endPoint.lat), lng: parseFloat(endPoint.lng), label: endPoint.label || 'Arrivée' }
+      : start;
+
+    // 1. Ordonnancement intelligent tenant compte de la proximité ET du rapprochement vers la destination finale
+    const remaining = salons.slice(0, 20).map(s => ({ ...s, lat: parseFloat(s.lat), lng: parseFloat(s.lng) }));
+    const orderedSalons = [];
+    let curr = { lat: start.lat, lng: start.lng };
+
+    while (remaining.length > 0) {
+      let bestIdx = 0;
+      let bestScore = Infinity;
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        const distFromCurrent = calcDistKm(curr.lat, curr.lng, candidate.lat, candidate.lng);
+        const distToEnd = calcDistKm(candidate.lat, candidate.lng, end.lat, end.lng);
+        // Pondération : minimise le trajet immédiat tout en orientant progressivement vers le point de retour
+        const weightEnd = remaining.length === 1 ? 1.0 : 0.18;
+        const score = distFromCurrent + (distToEnd * weightEnd);
+        if (score < bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+      const chosen = remaining.splice(bestIdx, 1)[0];
+      orderedSalons.push(chosen);
+      curr = { lat: chosen.lat, lng: chosen.lng };
+    }
+
+    // 2. Amélioration locale 2-Opt (décroise les segments qui se chevauchent)
+    const routePoints = [start, ...orderedSalons, end];
+    for (let iter = 0; iter < 3; iter++) {
+      for (let i = 1; i < routePoints.length - 2; i++) {
+        for (let j = i + 1; j < routePoints.length - 1; j++) {
+          const d1 = calcDistKm(routePoints[i - 1].lat, routePoints[i - 1].lng, routePoints[i].lat, routePoints[i].lng) +
+                     calcDistKm(routePoints[j].lat, routePoints[j].lng, routePoints[j + 1].lat, routePoints[j + 1].lng);
+          const d2 = calcDistKm(routePoints[i - 1].lat, routePoints[i - 1].lng, routePoints[j].lat, routePoints[j].lng) +
+                     calcDistKm(routePoints[i].lat, routePoints[i].lng, routePoints[j + 1].lat, routePoints[j + 1].lng);
+          if (d2 + 0.01 < d1) {
+            const reversed = routePoints.slice(i, j + 1).reverse();
+            routePoints.splice(i, j - i + 1, ...reversed);
+          }
+        }
+      }
+    }
+
+    const finalOrderedSalons = routePoints.slice(1, routePoints.length - 1);
+
+    // 3. Interrogation du moteur routier open-source OSRM pour obtenir le tracé routier exact et la durée réelle
+    let geometryCoords = routePoints.map(p => [p.lat, p.lng]);
+    let totalDistanceKm = 0;
+    for (let i = 0; i < routePoints.length - 1; i++) {
+      totalDistanceKm += calcDistKm(routePoints[i].lat, routePoints[i].lng, routePoints[i + 1].lat, routePoints[i + 1].lng);
+    }
+    let durationMinutes = Math.round((totalDistanceKm / 22) * 60 + finalOrderedSalons.length * 12);
+
+    try {
+      const coordsString = routePoints.map(p => `${p.lng.toFixed(5)},${p.lat.toFixed(5)}`).join(';');
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`;
+      const osrmRes = await fetchWithTimeout(osrmUrl, { headers: { 'User-Agent': 'StackPartnersOSRM/1.0' } }, 3500);
+      if (osrmRes.ok) {
+        const osrmData = await osrmRes.json();
+        if (osrmData.routes?.[0]) {
+          totalDistanceKm = osrmData.routes[0].distance / 1000;
+          durationMinutes = Math.round((osrmData.routes[0].duration / 60) + finalOrderedSalons.length * 12);
+          if (osrmData.routes[0].geometry?.coordinates) {
+            geometryCoords = osrmData.routes[0].geometry.coordinates.map(([lon, la]) => [la, lon]);
+          }
+        }
+      }
+    } catch (e) {}
+
+    res.json({
+      orderedSalons: finalOrderedSalons,
+      start,
+      end,
+      total_distance_km: Number(totalDistanceKm.toFixed(1)),
+      estimated_minutes: durationMinutes,
+      polyline: geometryCoords
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Analytique Marché & Concurrents pour le God Mode Super-Admin
+router.get('/admin/market-stats', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const tagsRes = await pool.query(`
+      SELECT tag_concurrent, COUNT(*)::INT AS count
+      FROM partner_visites
+      WHERE tag_concurrent IS NOT NULL AND tag_concurrent != 'NON_RENSEIGNE'
+      GROUP BY tag_concurrent
+      ORDER BY count DESC
+    `).catch(() => ({ rows: [] }));
+
+    const recentVisitesRes = await pool.query(`
+      SELECT pv.*, pa.prenom, pa.nom
+      FROM partner_visites pv
+      LEFT JOIN partner_agents pa ON pa.id_agent = pv.id_agent
+      ORDER BY pv.date_visite DESC
+      LIMIT 15
+    `).catch(() => ({ rows: [] }));
+
+    res.json({
+      repartition_concurrents: tagsRes.rows,
+      recentes_visites: recentVisitesRes.rows
+    });
+  } catch (e) {
+    res.json({ repartition_concurrents: [], recentes_visites: [] });
   }
 });
 
