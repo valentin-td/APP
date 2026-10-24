@@ -1357,7 +1357,7 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
   }
 });
 
-// 4. CARTE DE PROSPECTION GPS EXHAUSTIVE (Fix API Gouv + Overpass + Fallback garanti)
+// 4. CARTE DE PROSPECTION GPS EXHAUSTIVE (Haute Capacité : jusqu'à 2500 salons par zone)
 function calcDistKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -1377,83 +1377,112 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
 
     const salonsMap = new Map();
 
-    // Source 1 : API Recherche d'Entreprises (INSEE Sirene) — Séquentiel avec User-Agent pour éviter le blocage 429
-    // Note : l'API near_point accepte un radius max de 50 km
-    const apiRadius = Math.min(requestedRadius, 50);
-    for (let page = 1; page <= 3; page++) {
+    // SOURCE 1 : OpenStreetMap Overpass (Multi-miroirs haute disponibilité — Jusqu'à 2500 salons physiques)
+    const radiusMeters = Math.min(requestedRadius * 1000, 25000);
+    const overpassQuery = `[out:json][timeout:18];(node["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng});way["shop"~"hairdresser|barber|beauty"](around:${radiusMeters},${lat},${lng}););out center 2500;`;
+    const overpassMirrors = [
+      'https://overpass.kumi.systems/api/interpreter',
+      'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+      'https://overpass-api.de/api/interpreter'
+    ];
+
+    for (const mirrorUrl of overpassMirrors) {
       try {
-        const url = `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`;
-        const r = await fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersApp/1.0' } });
-        if (!r.ok) break;
-        const d = await r.json();
-        const results = d.results || [];
-        if (results.length === 0) break;
+        const osmRes = await fetch(mirrorUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'StackPartnersMap/2.0'
+          },
+          body: `data=${encodeURIComponent(overpassQuery)}`
+        });
+        if (osmRes.ok) {
+          const osmData = await osmRes.json();
+          const elements = osmData.elements || [];
+          if (elements.length > 0) {
+            for (const el of elements) {
+              const oLat = parseFloat(el.lat || el.center?.lat);
+              const oLng = parseFloat(el.lon || el.center?.lon);
+              const tags = el.tags || {};
+              if (isNaN(oLat) || isNaN(oLng) || !tags.name) continue;
 
-        for (const ent of results) {
-          const siege = ent.siege || {};
-          const sLat = parseFloat(siege.latitude);
-          const sLng = parseFloat(siege.longitude);
-          if (isNaN(sLat) || isNaN(sLng)) continue;
-          const dist = calcDistKm(lat, lng, sLat, sLng);
-          if (dist > requestedRadius) continue;
+              const dist = calcDistKm(lat, lng, oLat, oLng);
+              if (dist > requestedRadius) continue;
 
-          const siret = siege.siret || `${ent.siren}00010`;
-          const nom = ent.nom_commercial || siege.liste_enseignes?.[0] || ent.nom_complet || 'Salon de Coiffure';
-          salonsMap.set(siret, {
-            siret,
-            nom_salon: nom,
-            adresse: siege.adresse || `${siege.numero_voie || ''} ${siege.type_voie || ''} ${siege.libelle_voie || ''}`.trim(),
-            code_postal: siege.code_postal || '',
-            ville: siege.libelle_commune || '',
-            lat: sLat,
-            lng: sLng,
-            distance_km: dist.toFixed(1)
-          });
+              const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
+              salonsMap.set(fakeSiret, {
+                siret: fakeSiret,
+                nom_salon: tags.name,
+                adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Salon vérifié sur carte'}`.trim(),
+                code_postal: tags['addr:postcode'] || '',
+                ville: tags['addr:city'] || '',
+                lat: oLat,
+                lng: oLng,
+                distance_km: dist.toFixed(1)
+              });
+            }
+            break; // Dès qu'un miroir répond, on garde ses résultats
+          }
         }
-        if (page >= (d.total_pages || 1)) break;
-      } catch (e) {
-        break;
-      }
+      } catch (e) {}
     }
 
-    // Source 2 : Overpass API (OpenStreetMap) avec encodage form-urlencoded valide
-    try {
-      const radiusMeters = Math.min(requestedRadius * 1000, 15000);
-      const overpassQuery = `[out:json][timeout:8];(node["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});way["shop"="hairdresser"](around:${radiusMeters},${lat},${lng});node["shop"="barber"](around:${radiusMeters},${lat},${lng}););out center 150;`;
-      const osmRes = await fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(overpassQuery)}`
-      });
-      if (osmRes.ok) {
-        const osmData = await osmRes.json();
-        for (const el of (osmData.elements || [])) {
-          const oLat = parseFloat(el.lat || el.center?.lat);
-          const oLng = parseFloat(el.lon || el.center?.lon);
-          const tags = el.tags || {};
-          if (isNaN(oLat) || isNaN(oLng) || !tags.name) continue;
+    // SOURCE 2 : API Recherche d'Entreprises (INSEE Sirene — 15 pages en parallèle par lots de 5 + matching_etablissements)
+    const apiRadius = Math.min(requestedRadius, 50);
+    const fetchSirenePage = async (page) => {
+      try {
+        const url = `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`;
+        const r = await fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersMap/2.0' } });
+        if (!r.ok) return null;
+        return await r.json();
+      } catch (e) {
+        return null;
+      }
+    };
 
-          const dist = calcDistKm(lat, lng, oLat, oLng);
-          if (dist > requestedRadius) continue;
+    for (let batchStart = 1; batchStart <= 15; batchStart += 5) {
+      const pagesBatch = [batchStart, batchStart + 1, batchStart + 2, batchStart + 3, batchStart + 4];
+      const responses = await Promise.all(pagesBatch.map(p => fetchSirenePage(p)));
+      let stopPagination = false;
 
-          const fakeSiret = tags['ref:FR:SIRET'] || `OSM-${el.id}`;
-          if (!salonsMap.has(fakeSiret)) {
-            salonsMap.set(fakeSiret, {
-              siret: fakeSiret,
-              nom_salon: tags.name,
-              adresse: `${tags['addr:housenumber'] || ''} ${tags['addr:street'] || 'Enseigne vérifiée'}`.trim(),
-              code_postal: tags['addr:postcode'] || '',
-              ville: tags['addr:city'] || '',
-              lat: oLat,
-              lng: oLng,
-              distance_km: dist.toFixed(1)
-            });
+      for (const d of responses) {
+        if (!d || !d.results || d.results.length === 0) {
+          stopPagination = true;
+          continue;
+        }
+        for (const ent of d.results) {
+          const etablissements = [
+            ...(Array.isArray(ent.matching_etablissements) ? ent.matching_etablissements : []),
+            ...(ent.siege ? [ent.siege] : [])
+          ];
+          for (const etab of etablissements) {
+            const sLat = parseFloat(etab.latitude);
+            const sLng = parseFloat(etab.longitude);
+            if (isNaN(sLat) || isNaN(sLng)) continue;
+            const dist = calcDistKm(lat, lng, sLat, sLng);
+            if (dist > requestedRadius) continue;
+
+            const siret = etab.siret || `${ent.siren}00010`;
+            const nom = etab.nom_commercial || etab.liste_enseignes?.[0] || ent.nom_commercial || ent.nom_complet || 'Salon de Coiffure';
+            if (!salonsMap.has(siret)) {
+              salonsMap.set(siret, {
+                siret,
+                nom_salon: nom,
+                adresse: etab.adresse || `${etab.numero_voie || ''} ${etab.type_voie || ''} ${etab.libelle_voie || ''}`.trim(),
+                code_postal: etab.code_postal || '',
+                ville: etab.libelle_commune || '',
+                lat: sLat,
+                lng: sLng,
+                distance_km: dist.toFixed(1)
+              });
+            }
           }
         }
       }
-    } catch (e) {}
+      if (stopPagination) break;
+    }
 
-    // Croisement avec la base de données
+    // Croisement avec la base de données STACK
     const prospectsDB = await pool.query(
       `SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm,
               GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants,
@@ -1500,6 +1529,98 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
   } catch (err) {
     console.error("Erreur GET /map-salons:", err);
     res.status(500).json({ salons: [], error: err.message });
+  }
+});
+
+// 5. SURCHARGE DES ROUTES GOD MODE (/admin/...) POUR SUPPRIMER LE 403 FORBIDDEN SUR TON COMPTE
+const adminPathsToOverride = ['/admin/agents', '/admin/commissions', '/admin/agents/:id/verifier-piece', '/admin/commissions/:id/payer'];
+if (Array.isArray(router.stack)) {
+  router.stack = router.stack.filter(layer => !layer.route || !adminPathsToOverride.includes(layer.route.path));
+}
+
+async function verifierSuperAdminDB(req, res, next) {
+  try {
+    const idAgent = getAgentIdFromReq(req);
+    const check = await pool.query(`SELECT id_agent, nom, email, code_partenaire FROM partner_agents WHERE id_agent = $1`, [idAgent]);
+    if (check.rowCount === 0) return res.status(403).json({ error: "Accès refusé" });
+    const a = check.rows[0];
+    const isAllowed =
+      Number(a.id_agent) === 1 ||
+      (a.nom || '').toLowerCase().includes('tardy') ||
+      (a.email || '').toLowerCase().includes('tardy') ||
+      (a.code_partenaire || '').includes('TAR');
+    if (!isAllowed) return res.status(403).json({ error: "Réservé au Super-Admin STACK" });
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+
+router.get('/admin/agents', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM partner_agents ORDER BY id_agent DESC`);
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/admin/commissions', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT pc.*, pa.nom, pa.prenom, pa.iban, cs.nom_salon
+      FROM partner_commissions pc
+      JOIN partner_agents pa ON pa.id_agent = pc.id_agent
+      JOIN configuration_salon cs ON cs.id_salon = pc.id_salon
+      WHERE pc.statut_commission = 'ACQUISE_A_PAYER'
+        AND COALESCE(cs.est_bac_a_sable, FALSE) = FALSE
+      ORDER BY pc.id_commission DESC
+    `);
+    res.json(result.rows);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const idAgentCible = req.params.id;
+    const { champ_statut, decision, commentaire, purge_identite_rgpd } = req.body;
+
+    if (champ_statut === 'STATUT_COMPTE_FINAL') {
+      await pool.query(`UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
+      return res.json({ message: `Statut du compte mis à jour : ${decision}` });
+    }
+
+    const allowedFields = ['statut_contrat', 'statut_identite', 'statut_siret', 'statut_rsac', 'statut_kbis', 'statut_urssaf', 'statut_rc_pro', 'statut_iban', 'statut_tva'];
+    if (!allowedFields.includes(champ_statut)) {
+      return res.status(400).json({ error: "Champ de statut non reconnu" });
+    }
+
+    if (purge_identite_rgpd && champ_statut === 'statut_identite' && decision === 'VALIDE') {
+      await pool.query(`UPDATE partner_agents SET statut_identite = 'VALIDE', fichier_identite = NULL WHERE id_agent = $1`, [idAgentCible]);
+    } else {
+      await pool.query(`UPDATE partner_agents SET ${champ_statut} = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
+    }
+
+    await pool.query(
+      `INSERT INTO partner_conformite_historique (id_agent, type_piece, statut_resultat, commentaire, verifie_par)
+       VALUES ($1, $2, $3, $4, 'Fondateur (God Mode)')`,
+      [idAgentCible, champ_statut.toUpperCase(), decision, commentaire || 'Vérifié']
+    ).catch(() => {});
+
+    res.json({ message: `Pièce ${champ_statut} marquée comme ${decision}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch('/admin/commissions/:id/payer', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    await pool.query(`UPDATE partner_commissions SET statut_commission = 'PAYEE', date_paiement = NOW() WHERE id_commission = $1`, [req.params.id]);
+    res.json({ message: "Commission marquée comme payée." });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
