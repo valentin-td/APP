@@ -260,44 +260,76 @@ function App() {
     etape_equipe_ok: false,
     etape_stripe_ok: false,
     etape_formation_ok: false,
-    statut_onboarding: 'EN_COURS',
-    loaded: false
+    statut_onboarding: 'EN_COURS' // Bloqué par défaut
   });
+
+  // Auto-connexion aux 3 Simulateurs Bacs à Sable depuis STACK Partners
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sbToken = params.get('sandbox_token');
+    const sbMode = params.get('sandbox_mode'); // On récupère le mode
+    if (sbToken) {
+      localStorage.setItem('ui_token', sbToken);
+      localStorage.setItem('api_token', sbToken);
+      // Si c'est un salon DEMO ou VIDE, on skip le module légal
+      if (sbMode === 'DEMO' || sbMode === 'VIDE') {
+        localStorage.setItem('skip_legal_sandbox', 'true');
+      } else {
+        localStorage.removeItem('skip_legal_sandbox');
+      }
+      window.history.replaceState({}, document.title, window.location.pathname + (params.get('partner') ? `?partner=${params.get('partner')}` : ''));
+      window.location.reload();
+    }
+  }, []);
   const [showChecklistModal, setShowChecklistModal] = useState(false);
   
-  const chargerChecklistOnboarding = async () => {
-    try {
-      const res = await fetch('https://api-salon-backend.onrender.com/api/onboarding/checklist', {
-        headers: getAuthHeaders(false)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setChecklistOnboarding({ ...data, loaded: true });
+  // Chargement automatique et systématique du verrou Go-Live dès qu'un token est présent
+  useEffect(() => {
+    if (!token) return;
+    fetch('https://api-salon-backend.onrender.com/api/onboarding/checklist', {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`,
+        'Content-Type': 'application/json'
       }
-    } catch (e) {
-      console.error("Erreur chargement checklist:", e);
-    }
-  };
-  
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && data.statut_onboarding) {
+          setChecklistOnboarding(data);
+        }
+      })
+      .catch(() => {});
+  }, [token, activeTab]);
+
   const basculerEtapeChecklist = async (champ) => {
-    const nouvelEtat = { ...checklistOnboarding, [champ]: !checklistOnboarding[champ] };
-    setChecklistOnboarding(nouvelEtat);
+    const nextState = { ...checklistOnboarding, [champ]: !checklistOnboarding[champ] };
+    const toutCoche = Boolean(
+      nextState.etape_materiel_ok &&
+      nextState.etape_catalogue_ok &&
+      nextState.etape_equipe_ok &&
+      nextState.etape_stripe_ok &&
+      nextState.etape_formation_ok
+    );
+    nextState.statut_onboarding = toutCoche ? 'TERMINE' : 'EN_COURS';
+    setChecklistOnboarding(nextState);
+
     try {
       const res = await fetch('https://api-salon-backend.onrender.com/api/onboarding/checklist', {
         method: 'PUT',
-        headers: getAuthHeaders(true),
-        body: JSON.stringify(nouvelEtat)
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(nextState)
       });
       if (res.ok) {
-        const data = await res.json();
-        setChecklistOnboarding({ ...data, loaded: true });
-        if (data.statut_onboarding === 'TERMINE') {
-          showToast("Checklist complétée à 100% ! Votre caisse est déverrouillée.");
+        const saved = await res.json();
+        setChecklistOnboarding(saved);
+        if (saved.statut_onboarding === 'TERMINE' && typeof showToast === 'function') {
+          showToast("Checklist Go-Live complétée à 100 % ! Votre caisse est déverrouillée.");
         }
       }
-    } catch (e) {
-      showToast("Erreur de sauvegarde de la checklist", "error");
-    }
+    } catch (e) {}
   };
     
   const envoyerSmsSauvetage = async () => {
@@ -3935,6 +3967,94 @@ function App() {
               )}
               
               {/* VUE : CAISSE & ENCAISSEMENT */}
+
+              {activeTab === 'caisse' && checklistOnboarding.statut_onboarding !== 'TERMINE' && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: '75px', // Laisse de l'espace pour ta barre de navigation mobile
+                  zIndex: 9990,
+                  backgroundColor: 'var(--bg-primary, #f6f6f7)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '24px',
+                  overflowY: 'auto'
+                }}>
+                  <div style={{
+                    width: '100%',
+                    maxWidth: '560px',
+                    backgroundColor: 'var(--card-bg, #ffffff)',
+                    border: '1px solid var(--border-color, #e5e7eb)',
+                    borderRadius: '24px',
+                    padding: '32px',
+                    boxShadow: '0 20px 40px rgba(0,0,0,0.08)',
+                    textAlign: 'center'
+                  }}>
+                    <div style={{
+                      width: '56px',
+                      height: '56px',
+                      borderRadius: '16px',
+                      backgroundColor: '#fef2f2',
+                      color: '#dc2626',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 16px auto',
+                      border: '1px solid #fecaca'
+                    }}>
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                      </svg>
+                    </div>
+              
+                    <h2 style={{ fontSize: '22px', fontWeight: '800', margin: '0 0 8px 0', color: 'var(--text-primary, #111827)' }}>
+                      Caisse Verrouillée — Checklist Go-Live Requise
+                    </h2>
+                    <p style={{ fontSize: '13.5px', color: '#6b7280', lineHeight: 1.5, margin: '0 0 24px 0' }}>
+                      Pour garantir la conformité fiscale NF525, validez ces 5 vérifications de mise en service avec votre agent STACK pour débloquer vos encaissements.
+                    </p>
+              
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', textAlign: 'left' }}>
+                      {[
+                        { key: 'etape_materiel_ok', title: '1. Matériel & Imprimante connectés', desc: 'Tablette/PC configuré et impression ticket testée.' },
+                        { key: 'etape_catalogue_ok', title: '2. Catalogue de prestations paramétré', desc: 'Prestations, produits, tarifs TTC et TVA vérifiés.' },
+                        { key: 'etape_equipe_ok', title: '3. Collaborateurs & Codes PIN créés', desc: 'Comptes employés actifs pour la pointeuse et la caisse.' },
+                        { key: 'etape_stripe_ok', title: '4. Terminal TPE & Compte reliés', desc: 'Liaison monétique prête pour les paiements.' },
+                        { key: 'etape_formation_ok', title: '5. Formation Clôture Z de caisse effectuée', desc: 'Procédure Blind Close NF525 expliquée au gérant.' }
+                      ].map(item => (
+                        <label
+                          key={item.key}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '12px',
+                            padding: '12px 14px',
+                            borderRadius: '14px',
+                            border: checklistOnboarding[item.key] ? '1.5px solid #16a34a' : '1px solid var(--border-color, #e5e7eb)',
+                            backgroundColor: checklistOnboarding[item.key] ? 'rgba(22, 163, 74, 0.06)' : 'transparent',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!checklistOnboarding[item.key]}
+                            onChange={() => basculerEtapeChecklist(item.key)}
+                            style={{ width: '19px', height: '19px', marginTop: '2px', accentColor: '#16a34a', cursor: 'pointer' }}
+                          />
+                          <div>
+                            <div style={{ fontSize: '13.5px', fontWeight: '700', color: 'var(--text-primary, #111827)' }}>{item.title}</div>
+                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{item.desc}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               {(role === 'gerant' || role === 'salon') && activeTab === 'caisse' && (
                 <div className="admin-container caisse-split-container">
                     {/* LEFT PANEL - CATALOGUE */}
