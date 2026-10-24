@@ -1419,7 +1419,8 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
         const west = (lng - lngDelta).toFixed(4); const east = (lng + lngDelta).toFixed(4);
 
         const fetchOverpassBbox = async () => {
-          const overpassQuery = `[out:json][timeout:5];(node["shop"~"hairdresser|barber"](${south},${west},${north},${east});way["shop"~"hairdresser|barber"](${south},${west},${north},${east}););out center qt 4500;`;
+          // On réintègre "beauty" avec la requête BBOX rectangulaire (qui est ultra-rapide et ne plante pas contrairement à "around")
+          const overpassQuery = `[out:json][timeout:5];(node["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east});way["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east}););out center qt 4500;`;
           const mirrors = ['https://overpass.kumi.systems/api/interpreter', 'https://overpass-api.de/api/interpreter'];
           try {
             const osmData = await Promise.any(mirrors.map(url =>
@@ -1447,10 +1448,10 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
         fetchTasks.push(fetchOverpassBbox());
       }
 
-      // ÉTAPES 0 à 4 : Chargement paginé de Sirene en arrière-plan (8 pages par Step)
+      // ÉTAPES 0 à 5 : Chargement paginé de Sirene en arrière-plan (100 résultats par page + Code 96.02A et 96.02B)
       const fetchSirenePages = async (pageList) => {
         const responses = await Promise.all(pageList.map(page =>
-          fetchWithTimeout(`https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A&per_page=25&page=${page}`, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartners/6.0' } }, 4500)
+          fetchWithTimeout(`https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=100&page=${page}`, { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartners/7.0' } }, 4500)
           .then(r => r.ok ? r.json() : null).catch(() => null)
         ));
         for (const d of responses) {
@@ -1463,7 +1464,7 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
               const dist = calcDistKm(lat, lng, sLat, sLng);
               if (dist > requestedRadius) continue;
               const siret = etab.siret || `${ent.siren}00010`;
-              const nom = etab.nom_commercial || etab.liste_enseignes?.[0] || ent.nom_commercial || ent.nom_complet || 'Salon de Coiffure';
+              const nom = etab.nom_commercial || etab.liste_enseignes?.[0] || ent.nom_commercial || ent.nom_complet || 'Salon / Institut';
               if (!salonsMap.has(siret)) {
                 salonsMap.set(siret, {
                   siret, nom_salon: nom, adresse: etab.adresse || `${etab.numero_voie || ''} ${etab.type_voie || ''} ${etab.libelle_voie || ''}`.trim(),
@@ -1477,16 +1478,18 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
       };
 
       let sirenePagesToFetch = [];
-      if (step === 0) sirenePagesToFetch = [1, 2, 3, 4]; // 100 salons
-      else if (step === 1) sirenePagesToFetch = [5, 6, 7, 8, 9, 10, 11, 12]; // 200 salons
-      else if (step === 2) sirenePagesToFetch = [13, 14, 15, 16, 17, 18, 19, 20]; // 200 salons
-      else if (step === 3) sirenePagesToFetch = [21, 22, 23, 24, 25, 26, 27, 28]; // 200 salons
-      else if (step === 4) sirenePagesToFetch = [29, 30, 31, 32, 33, 34, 35, 36]; // 200 salons
+      if (step === 0) sirenePagesToFetch = [1, 2]; // 200 salons
+      else if (step === 1) sirenePagesToFetch = [3, 4, 5, 6]; // 400 salons
+      else if (step === 2) sirenePagesToFetch = [7, 8, 9, 10]; // 400 salons
+      else if (step === 3) sirenePagesToFetch = [11, 12, 13, 14, 15]; // 500 salons
+      else if (step === 4) sirenePagesToFetch = [16, 17, 18, 19, 20]; // 500 salons
+      else if (step === 5) sirenePagesToFetch = [21, 22, 23, 24, 25]; // 500 salons
+      // TOTAL Sirene possible = 2 500 salons physiques qui s'ajoutent aux 4 500 de la carte OpenStreetMap
       
       fetchTasks.push(fetchSirenePages(sirenePagesToFetch));
       await Promise.all(fetchTasks);
 
-      nextStepToReturn = step < 4 ? step + 1 : null;
+      nextStepToReturn = step < 5 ? step + 1 : null;
       baseSalons = Array.from(salonsMap.values());
       MAP_SECTOR_CACHE.set(cacheKey, { ts: Date.now(), data: baseSalons, nextStep: nextStepToReturn });
     }
