@@ -1546,9 +1546,7 @@ async function verifierSuperAdminDB(req, res, next) {
     const a = check.rows[0];
     const isAllowed =
       Number(a.id_agent) === 1 ||
-      (a.nom || '').toLowerCase().includes('tardy') ||
-      (a.email || '').toLowerCase().includes('tardy') ||
-      (a.code_partenaire || '').includes('TAR');
+      (a.email || '').toLowerCase().trim() === 'tardy.valentin04@gmail.com';
     if (!isAllowed) return res.status(403).json({ error: "Réservé au Super-Admin STACK" });
     next();
   } catch (e) {
