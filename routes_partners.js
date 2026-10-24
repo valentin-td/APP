@@ -1064,10 +1064,10 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
 const getAgentIdFromReq = (req) => req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
 
 // Nettoyage propre des routes précédentes pour éviter tout conflit Express
-const routesToOverride = ['/dashboard-stats', '/sandbox/launch', '/map-salons', '/profil/yousign/initiate'];
-if (Array.isArray(router.stack)) {
-  router.stack = router.stack.filter(layer => !layer.route || !routesToOverride.includes(layer.route.path));
-}
+    const routesToOverride = ['/dashboard-stats', '/sandbox/launch', '/map-salons'];
+    if (Array.isArray(router.stack)) {
+      router.stack = router.stack.filter(layer => !layer.route || !routesToOverride.includes(layer.route.path));
+    }
 
 
 // 3. ROUTE SANDBOX LAUNCH (Sans blocage de transaction PostgreSQL)
