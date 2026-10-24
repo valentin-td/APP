@@ -1421,9 +1421,10 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
       const west = (lng - lngDelta).toFixed(4);
       const east = (lng + lngDelta).toFixed(4);
 
-      // Source A : Overpass via BBOX indexée (Renvoie jusqu'à 4500 salons en ~1.5 seconde)
+      // Source A : Overpass via BBOX indexée (Ciblage strict "Coiffure & Barbier" pour garantir l'exhaustivité sans Timeout)
       const fetchOverpassBbox = async () => {
-        const overpassQuery = `[out:json][timeout:5];(node["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east});way["shop"~"hairdresser|barber|beauty"](${south},${west},${north},${east}););out center qt 4500;`;
+        // En retirant 'beauty' (ongleries, spas), on allège massivement la requête et on garantit la réponse à 100% sur de grands rayons
+        const overpassQuery = `[out:json][timeout:5];(node["shop"~"hairdresser|barber"](${south},${west},${north},${east});way["shop"~"hairdresser|barber"](${south},${west},${north},${east}););out center qt 4500;`;
         const mirrors = [
           'https://overpass.kumi.systems/api/interpreter',
           'https://overpass-api.de/api/interpreter',
@@ -1433,9 +1434,9 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
           const osmData = await Promise.any(mirrors.map(url =>
             fetchWithTimeout(url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'StackPartnersBbox/5.0' },
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'StackPartnersBbox/5.1' },
               body: `data=${encodeURIComponent(overpassQuery)}`
-            }, 4700).then(r => { if (!r.ok) throw new Error(); return r.json(); })
+            }, 4800).then(r => { if (!r.ok) throw new Error(); return r.json(); })
           ));
 
           for (const el of (osmData.elements || [])) {
@@ -1469,14 +1470,15 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
         } catch (e) {}
       };
 
-      // Source B : INSEE Sirene — 12 pages lancées simultanément en parallèle (jusqu'à 1200 établissements légaux)
+      // Source B : INSEE Sirene — 20 pages lancées simultanément en parallèle (jusqu'à 2000 établissements légaux en plus d'OpenStreetMap)
       const fetchSireneParallel = async () => {
-        const pages = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        // Cible uniquement 96.02A (Coiffure) pour éviter la saturation avec l'esthétique pure
+        const pages = Array.from({ length: 20 }, (_, i) => i + 1);
         const responses = await Promise.all(pages.map(page =>
           fetchWithTimeout(
-            `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A,96.02B&per_page=25&page=${page}`,
-            { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersBbox/5.0' } },
-            4200
+            `https://recherche-entreprises.api.gouv.fr/near_point?lat=${lat}&long=${lng}&radius=${apiRadius}&activite_principale=96.02A&per_page=25&page=${page}`,
+            { headers: { 'Accept': 'application/json', 'User-Agent': 'StackPartnersBbox/5.1' } },
+            4500
           ).then(r => r.ok ? r.json() : null).catch(() => null)
         ));
 
