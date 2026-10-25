@@ -919,6 +919,10 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     const documentId = (await docRes.json()).id;
 
     // ÉTAPE 3 : Ajouter le signataire (Sans numéro de téléphone pour éviter l'erreur de format E164)
+    // CORRECTIF SANDBOX : Yousign bloque les e-mails inconnus en mode test. 
+    // On force l'envoi vers TON e-mail Yousign (quand tu passeras en production, tu remettras "agent.email")
+    const emailPourSandbox = 'tardy.valentin04@gmail.com'; // Attention: Mets bien l'e-mail exact de ton compte Yousign ici
+
     const signerRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/signers`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' },
@@ -926,7 +930,7 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
         info: { 
           first_name: agent.prenom, 
           last_name: agent.nom, 
-          email: agent.email, 
+          email: emailPourSandbox, 
           locale: 'fr' 
         },
         signature_level: 'electronic_signature',
