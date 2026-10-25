@@ -854,12 +854,11 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
     }
 });
 
-// 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (API V3 avec Débogage Infaillible)
+// 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (Sécurisée)
 router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) => {
   try {
     const idAgent = req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
 
-    // Préparation BDD
     await pool.query(`
       ALTER TABLE partner_agents 
       ADD COLUMN IF NOT EXISTS contrat_signe BOOLEAN DEFAULT FALSE,
@@ -867,13 +866,13 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
       ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL;
     `).catch(() => {});
 
-    const agentRes = await pool.query('SELECT nom, prenom, email, telephone FROM partner_agents WHERE id_agent = $1', [idAgent]);
-    if (agentRes.rows.length === 0) return res.status(404).json({ error: "Agent introuvable." });
+    const agentRes = await pool.query('SELECT nom, prenom, email FROM partner_agents WHERE id_agent = $1', [idAgent]);
+    if (agentRes.rows.length === 0) throw new Error("Agent introuvable dans la base.");
     const agent = agentRes.rows[0];
 
     const YOUSIGN_API_KEY = process.env.YOUSIGN_API_KEY;
     if (!YOUSIGN_API_KEY) {
-      return res.status(400).json({ error: "Clé API Yousign manquante dans les variables Render." });
+      throw new Error("La clé API Yousign n'est pas détectée par le serveur. Vérifiez Render.");
     }
 
     // ÉTAPE 1 : Créer la demande
@@ -888,19 +887,21 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     });
     
     if (!srRes.ok) {
-       return res.status(400).json({ error: `Yousign Étape 1 refusée : ${await srRes.text()}` });
+       const errText = await srRes.text();
+       throw new Error(`Étape 1 (Demande) refusée par Yousign : ${errText}`);
     }
     const signatureRequestId = (await srRes.json()).id;
 
-    // ÉTAPE 2 : Uploader le document (Formatage Binaire pur pour contourner les bugs Node.js)
+    // Faux PDF vierge pour tester la Sandbox
     const pdfBase64 = "JVBERi0xLjQKJcOkw7zDtsOUCjEgMCBvYmoKPDwgL0NyZWF0b3IgKFNUQUNLKSAvUHJvZHVjZXIgKFNUQUNLKSAvQ3JlYXRpb25EYXRlIChEOjIwMjMxMDI0MTIzNDU2WikgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL0NhdGFsb2cgL1BhZ2VzIDMgMCBSID4+CmVuZG9iagozIDAgb2JqCjw8IC9UeXBlIC9QYWdlcyAvS2lkcyBbIDQgMCBSIF0gL0NvdW50IDEgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAzIDAgUiAvTWVkaWFCb3ggWyAwIDAgNTk1IDg0MiBdIC9Db250ZW50cyA1IDAgUiAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA2IDAgUiA+PiA+PiA+PgplbmRvYmoKNSAwIG9iago8PCAvTGVuZ3RoIDY2ID4+CnN0cmVhbQpCVEQKL0YxIDI0IFRmCjEwMCA3MDAgVGQKKENvbnRyYXQgZGUgTWFuZGF0IFNUQUNLKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCjYgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNwowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTcgMDAwMDAgbiAKMDAwMDAwMDEwNCAwMDAwMCBuIAowMDAwMDAwMTU3IDAwMDAwIG4gCjAwMDAwMDAyMTYgMDAwMDAgbiAKMDAwMDAwMDMzNiAwMDAwMCBuIAowMDAwMDAwNDUzIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNyAvUm9vdCAyIDAgUiAvSW5mbyAxIDAgUiA+PgpzdGFydHhyZWYKNTE2CiUlRU9GCg==";
     const pdfBuffer = Buffer.from(pdfBase64, 'base64');
     
+    // ÉTAPE 2 : Upload Multipart Binaire
     const boundary = '----YousignBoundary' + Date.now().toString(16);
     let bodyData = [];
     bodyData.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="contrat.pdf"\r\nContent-Type: application/pdf\r\n\r\n`));
     bodyData.push(pdfBuffer);
-    bodyData.push(Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="nature"\r\n\r\nsignable_document\r\n--${boundary}--`));
+    bodyData.push(Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="nature"\r\n\r\nsignable_document\r\n--${boundary}--\r\n`));
 
     const docRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/documents`, {
       method: 'POST',
@@ -912,15 +913,12 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     });
     
     if (!docRes.ok) {
-       return res.status(400).json({ error: `Yousign Étape 2 refusée : ${await docRes.text()}` });
+       const errText = await docRes.text();
+       throw new Error(`Étape 2 (Fichier) refusée par Yousign : ${errText}`);
     }
     const documentId = (await docRes.json()).id;
 
-    // ÉTAPE 3 : Ajouter le signataire (Avec Width/Height et Phone exigés par l'API)
-    let phone = agent.telephone ? agent.telephone.replace(/\s+/g, '') : "";
-    if (phone.startsWith('0')) phone = '+33' + phone.substring(1);
-    if (!phone || phone.length < 11) phone = "+33600000000";
-
+    // ÉTAPE 3 : Ajouter le signataire (Sans numéro de téléphone pour éviter l'erreur de format E164)
     const signerRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/signers`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' },
@@ -929,7 +927,6 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
           first_name: agent.prenom, 
           last_name: agent.nom, 
           email: agent.email, 
-          phone_number: phone, 
           locale: 'fr' 
         },
         signature_level: 'electronic_signature',
@@ -947,7 +944,8 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     });
     
     if (!signerRes.ok) {
-       return res.status(400).json({ error: `Yousign Étape 3 refusée : ${await signerRes.text()}` });
+       const errText = await signerRes.text();
+       throw new Error(`Étape 3 (Signataire) refusée par Yousign : ${errText}`);
     }
     const signatureLink = (await signerRes.json()).signature_link;
 
@@ -958,7 +956,8 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     });
     
     if (!actRes.ok) {
-       return res.status(400).json({ error: `Yousign Étape 4 refusée : ${await actRes.text()}` });
+       const errText = await actRes.text();
+       throw new Error(`Étape 4 (Activation) refusée par Yousign : ${errText}`);
     }
 
     await pool.query(
@@ -973,9 +972,8 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     });
 
   } catch (err) {
-    console.error("CRASH YOUSIGN INTERNE:", err);
-    // On force un JSON propre pour que le Frontend ne crashe plus jamais sur une page HTML
-    return res.status(400).json({ error: `Erreur interne du serveur : ${err.message}` });
+    console.error("CRASH YOUSIGN INTERNE:", err.message);
+    return res.status(400).json({ error: err.message });
   }
 });
 // ============================================================================
