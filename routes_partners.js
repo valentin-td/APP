@@ -854,17 +854,10 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
     }
 });
 
-// 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (Sécurisée)
+// 18. API YOUSIGN - Génération du lien de signature du contrat de mandat (Sécurisée & Base de données corrigée)
 router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) => {
   try {
     const idAgent = req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
-
-    await pool.query(`
-      ALTER TABLE partner_agents 
-      ADD COLUMN IF NOT EXISTS contrat_signe BOOLEAN DEFAULT FALSE,
-      ADD COLUMN IF NOT EXISTS date_signature_contrat TIMESTAMP DEFAULT NULL,
-      ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL;
-    `).catch(() => {});
 
     const agentRes = await pool.query('SELECT nom, prenom, email FROM partner_agents WHERE id_agent = $1', [idAgent]);
     if (agentRes.rows.length === 0) throw new Error("Agent introuvable dans la base.");
@@ -918,10 +911,8 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     }
     const documentId = (await docRes.json()).id;
 
-    // ÉTAPE 3 : Ajouter le signataire (Sans numéro de téléphone pour éviter l'erreur de format E164)
-    // CORRECTIF SANDBOX : Yousign bloque les e-mails inconnus en mode test. 
-    // On force l'envoi vers TON e-mail Yousign (quand tu passeras en production, tu remettras "agent.email")
-    const emailPourSandbox = 'tardy.valentin04@gmail.com'; // Attention: Mets bien l'e-mail exact de ton compte Yousign ici
+    // ÉTAPE 3 : Ajouter le signataire 
+    const emailPourSandbox = 'tardy.valentin04@gmail.com'; 
 
     const signerRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/signers`, {
       method: 'POST',
@@ -964,10 +955,21 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
        throw new Error(`Étape 4 (Activation) refusée par Yousign : ${errText}`);
     }
 
-    await pool.query(
-      `UPDATE partner_agents SET contrat_signe = TRUE, statut_contrat = 'VALIDE', date_signature_contrat = NOW(), id_yousign_request = $1 WHERE id_agent = $2`,
-      [signatureRequestId, idAgent]
-    );
+    // =================================================================
+    // CORRECTION FINALE : SAUVEGARDE DANS LES BONNES TABLES POSTGRESQL
+    // =================================================================
+    
+    // 1. Sauvegarde de l'ID Yousign sur l'Agent
+    await pool.query(`ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL;`).catch(() => {});
+    await pool.query(`UPDATE partner_agents SET id_yousign_request = $1 WHERE id_agent = $2`, [signatureRequestId, idAgent]);
+
+    // 2. Mise à jour du statut du contrat dans le Dossier de Conformité (La bonne table !)
+    await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgent]);
+    await pool.query(`
+      UPDATE partner_conformite_dossier 
+      SET contrat_signe = TRUE, statut_contrat = 'VALIDE', date_signature_contrat = NOW(), updated_at = NOW()
+      WHERE id_agent = $1
+    `, [idAgent]);
 
     res.json({
       require_redirect: true,
