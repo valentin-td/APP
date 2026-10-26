@@ -963,11 +963,11 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
     await pool.query(`ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL;`).catch(() => {});
     await pool.query(`UPDATE partner_agents SET id_yousign_request = $1 WHERE id_agent = $2`, [signatureRequestId, idAgent]);
 
-    // 2. Mise à jour du statut du contrat dans le Dossier de Conformité (La bonne table !)
+    // 2. Mise à jour du statut du contrat (Passe en attente, NE PAS valider ici !)
     await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgent]);
     await pool.query(`
       UPDATE partner_conformite_dossier 
-      SET contrat_signe = TRUE, statut_contrat = 'VALIDE', date_signature_contrat = NOW(), updated_at = NOW()
+      SET statut_contrat = 'EN_ATTENTE_SIGNATURE', updated_at = NOW()
       WHERE id_agent = $1
     `, [idAgent]);
 
@@ -980,6 +980,37 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
   } catch (err) {
     console.error("CRASH YOUSIGN INTERNE:", err.message);
     return res.status(400).json({ error: err.message });
+  }
+});
+
+// 19. API YOUSIGN - Vérifier si l'agent a RÉELLEMENT signé le contrat
+router.get('/profil/yousign/check', verifierTokenPartner, async (req, res) => {
+  try {
+    const idAgent = req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
+    const agentRes = await pool.query('SELECT id_yousign_request FROM partner_agents WHERE id_agent = $1', [idAgent]);
+    const reqId = agentRes.rows[0]?.id_yousign_request;
+
+    if (!reqId) return res.json({ status: 'manquant' });
+
+    const checkRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${reqId}`, {
+      headers: { 'Authorization': `Bearer ${process.env.YOUSIGN_API_KEY}` }
+    });
+
+    if (!checkRes.ok) throw new Error("Erreur API Yousign lors de la vérification.");
+    const data = await checkRes.json();
+
+    if (data.status === 'done') {
+       await pool.query(`
+         UPDATE partner_conformite_dossier 
+         SET contrat_signe = TRUE, statut_contrat = 'VALIDE', date_signature_contrat = NOW(), updated_at = NOW()
+         WHERE id_agent = $1
+       `, [idAgent]);
+       return res.json({ status: 'done', message: "Parfait, le contrat est officiellement signé !" });
+    } else {
+       return res.json({ status: data.status, message: "Le contrat n'est pas encore signé sur Yousign." });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 // ============================================================================
