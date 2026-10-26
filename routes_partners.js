@@ -2121,4 +2121,150 @@ router.get('/admin/market-stats', verifierTokenPartner, verifierSuperAdminDB, as
   }
 });
 
+// ============================================================================
+// 7. WEBHOOK STRIPE AUTOMATIQUE : ACTIVATION SALONS & COMMISSIONS 20% (24 MOIS)
+// ============================================================================
+
+function verifierSignatureStripe(rawBody, sigHeader, secret) {
+  if (!rawBody || !sigHeader || !secret) return false;
+  const parts = String(sigHeader).split(',');
+  const timestampPart = parts.find(p => p.trim().startsWith('t='));
+  const v1Parts = parts.filter(p => p.trim().startsWith('v1='));
+  if (!timestampPart || v1Parts.length === 0) return false;
+
+  const timestamp = timestampPart.split('=')[1];
+  const signedPayload = `${timestamp}.${rawBody}`;
+  const expectedSig = crypto.createHmac('sha256', secret).update(signedPayload, 'utf8').digest('hex');
+
+  return v1Parts.some(p => {
+    const sig = p.split('=')[1];
+    try {
+      return crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expectedSig, 'hex'));
+    } catch (e) {
+      return false;
+    }
+  });
+}
+
+router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const sig = req.headers['stripe-signature'];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    // Compatible que app.js utilise express.json() ou express.raw()
+    const rawBody = Buffer.isBuffer(req.body)
+      ? req.body.toString('utf8')
+      : (req.rawBody ? String(req.rawBody) : JSON.stringify(req.body));
+
+    let event;
+    if (webhookSecret && sig && Buffer.isBuffer(req.body)) {
+      const isValid = verifierSignatureStripe(rawBody, sig, webhookSecret);
+      if (!isValid) {
+        return res.status(400).json({ error: "Signature Webhook Stripe invalide." });
+      }
+      event = JSON.parse(rawBody);
+    } else {
+      event = typeof req.body === 'object' && !Buffer.isBuffer(req.body) ? req.body : JSON.parse(rawBody);
+    }
+
+    const eventType = event?.type || '';
+    const dataObj = event?.data?.object || {};
+
+    // Événements déclencheurs d'un paiement d'abonnement réussi
+    if (['checkout.session.completed', 'invoice.paid', 'invoice.payment_succeeded', 'customer.subscription.updated'].includes(eventType)) {
+      const emailClient = (dataObj.customer_email || dataObj.customer_details?.email || dataObj.metadata?.email || '').toLowerCase().trim();
+      const idSalonMeta = dataObj.metadata?.id_salon || dataObj.client_reference_id || null;
+      const planMeta = (dataObj.metadata?.plan || dataObj.metadata?.forfait || 'PRO').toUpperCase();
+      const planChoisi = ['ESSENTIEL', 'PRO', 'PREMIUM'].includes(planMeta) ? planMeta : 'PRO';
+
+      // 1. Identifier le salon concerné (par id_salon en metadata ou par email du gérant)
+      let salonRes = { rows: [] };
+      if (idSalonMeta) {
+        salonRes = await pool.query(`SELECT id_salon, id_agent_apporteur, plan_actuel FROM configuration_salon WHERE id_salon = $1`, [idSalonMeta]);
+      }
+      if (salonRes.rows.length === 0 && emailClient) {
+        salonRes = await pool.query(`
+          SELECT s.id_salon, s.id_agent_apporteur, s.plan_actuel
+          FROM configuration_salon s
+          JOIN utilisateurs u ON u.id_salon = s.id_salon
+          WHERE LOWER(TRIM(u.email)) = $1
+          LIMIT 1
+        `, [emailClient]);
+      }
+
+      if (salonRes.rows.length > 0) {
+        const salon = salonRes.rows[0];
+        const idSalon = salon.id_salon;
+        const idAgent = salon.id_agent_apporteur;
+
+        // 2. Passer le salon en abonnement ACTIF PAYANT (sortie de PREMIUM_TRIAL)
+        const nouveauPlan = salon.plan_actuel && salon.plan_actuel !== 'PREMIUM_TRIAL' ? salon.plan_actuel : planChoisi;
+        await pool.query(`UPDATE configuration_salon SET plan_actuel = $1 WHERE id_salon = $2`, [nouveauPlan, idSalon]);
+        await pool.query(`UPDATE utilisateurs SET statut_abonnement = 'actif' WHERE id_salon = $1`, [idSalon]);
+
+        // 3. Si le salon a été apporté par un Agent Commercial STACK, calculer sa commission
+        if (idAgent) {
+          await pool.query(`
+            INSERT INTO partner_attributions_salons (id_salon, id_agent, mode_attribution, statut_onboarding, date_debut_commissionnement, date_fin_commissionnement)
+            VALUES ($1, $2, 'LIEN_AFFILIATION', 'GO_LIVE_VALIDE', CURRENT_DATE, (CURRENT_DATE + INTERVAL '24 months')::DATE)
+            ON CONFLICT (id_salon) DO UPDATE
+            SET date_debut_commissionnement = COALESCE(partner_attributions_salons.date_debut_commissionnement, CURRENT_DATE),
+                date_fin_commissionnement = COALESCE(partner_attributions_salons.date_fin_commissionnement, (CURRENT_DATE + INTERVAL '24 months')::DATE),
+                statut_onboarding = 'GO_LIVE_VALIDE'
+          `, [idSalon, idAgent]);
+
+          // Compter le nombre total de salons actifs payants de cet agent (hors Sandbox et hors essai)
+          const countRes = await pool.query(`
+            SELECT COUNT(*)::INT AS nb_actifs
+            FROM configuration_salon s
+            JOIN utilisateurs u ON u.id_salon = s.id_salon AND u.role = 'gerant'
+            WHERE s.id_agent_apporteur = $1
+              AND u.statut_abonnement = 'actif'
+              AND s.plan_actuel != 'PREMIUM_TRIAL'
+              AND COALESCE(s.est_bac_a_sable, FALSE) = FALSE
+          `, [idAgent]);
+
+          const nbSalonsActifs = countRes.rows[0]?.nb_actifs || 1;
+          const baseHt = GRILLE_TARIFS_HT[nouveauPlan] || 69.00;
+          const montantCom = Number((baseHt * 0.20).toFixed(2));
+          const moisCourant = new Date().toISOString().slice(0, 7);
+          const statutInitial = nbSalonsActifs >= SEUIL_SALONS_ACTIFS ? 'ACQUISE_A_PAYER' : 'EN_ATTENTE_SEUIL';
+
+          await pool.query(`
+            INSERT INTO partner_commissions
+            (id_agent, id_salon, type_commission, periode_mois, montant_base_ht, taux_applique, montant_commission, statut_commission)
+            VALUES ($1, $2, 'ABONNEMENT_RECURRENT_20_POURCENT', $3, $4, 20.00, $5, $6)
+            ON CONFLICT (id_salon, periode_mois, type_commission) DO UPDATE
+            SET montant_base_ht = EXCLUDED.montant_base_ht,
+                montant_commission = EXCLUDED.montant_commission,
+                statut_commission = CASE WHEN partner_commissions.statut_commission = 'PAYEE' THEN 'PAYEE' ELSE EXCLUDED.statut_commission END
+          `, [idAgent, idSalon, moisCourant, baseHt, montantCom, statutInitial]);
+
+          // Déblocage rétroactif automatique si le seuil de 3 salons actifs est atteint
+          if (nbSalonsActifs >= SEUIL_SALONS_ACTIFS) {
+            await pool.query(`
+              UPDATE partner_commissions
+              SET statut_commission = 'ACQUISE_A_PAYER'
+              WHERE id_agent = $1 AND statut_commission = 'EN_ATTENTE_SEUIL'
+            `, [idAgent]);
+          }
+        }
+      }
+    }
+
+    // Si un salon résilie son abonnement ou est en impayé définitif
+    if (['customer.subscription.deleted', 'invoice.payment_failed'].includes(eventType)) {
+      const idSalonMeta = dataObj.metadata?.id_salon || null;
+      if (idSalonMeta) {
+        await pool.query(`UPDATE utilisateurs SET statut_abonnement = 'inactif' WHERE id_salon = $1`, [idSalonMeta]);
+      }
+    }
+
+    res.json({ received: true, type: eventType });
+  } catch (err) {
+    console.error("Erreur Webhook Stripe Partners:", err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;
