@@ -919,8 +919,8 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
       headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         info: { 
-          first_name: agent.prenom, 
-          last_name: agent.nom, 
+          first_name: (agent.prenom || 'Agent').trim(), 
+          last_name: (agent.nom || 'STACK').trim(), 
           email: emailPourSandbox, 
           locale: 'fr' 
         },
@@ -942,32 +942,47 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
        const errText = await signerRes.text();
        throw new Error(`Étape 3 (Signataire) refusée par Yousign : ${errText}`);
     }
-    const signatureLink = (await signerRes.json()).signature_link;
+    const createdSigner = await signerRes.json();
 
-    // ÉTAPE 4 : Activer le contrat
+    // ÉTAPE 4 : Activer le contrat (C'est CETTE étape qui génère réellement le signature_link dans Yousign v3 !)
     const actRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/activate`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}` }
+      headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}`, 'Content-Type': 'application/json' }
     });
     
     if (!actRes.ok) {
        const errText = await actRes.text();
        throw new Error(`Étape 4 (Activation) refusée par Yousign : ${errText}`);
     }
+    const activatedData = await actRes.json();
 
-    // =================================================================
-    // CORRECTION FINALE : SAUVEGARDE DANS LES BONNES TABLES POSTGRESQL
-    // =================================================================
-    
-    // 1. Sauvegarde de l'ID Yousign sur l'Agent
+    // ÉTAPE 5 : Extraire le lien généré après activation (ou relire le signataire si besoin)
+    let signatureLink = activatedData?.signers?.[0]?.signature_link || null;
+    if (!signatureLink && createdSigner?.id) {
+      const getSignerRes = await fetch(`https://api-sandbox.yousign.app/v3/signature_requests/${signatureRequestId}/signers/${createdSigner.id}`, {
+        headers: { 'Authorization': `Bearer ${YOUSIGN_API_KEY}` }
+      });
+      if (getSignerRes.ok) {
+        const signerDetail = await getSignerRes.json();
+        signatureLink = signerDetail.signature_link || null;
+      }
+    }
+
+    if (!signatureLink) {
+      throw new Error(`Yousign a activé la demande (${signatureRequestId}) mais n'a renvoyé aucun signature_link. Réponse brute : ${JSON.stringify(activatedData)}`);
+    }
+
+    // 1. Sauvegarde de l'ID Yousign et remise à FALSE de l'ancien état sur partner_agents
     await pool.query(`ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL;`).catch(() => {});
-    await pool.query(`UPDATE partner_agents SET id_yousign_request = $1 WHERE id_agent = $2`, [signatureRequestId, idAgent]);
+    await pool.query(`UPDATE partner_agents SET id_yousign_request = $1, contrat_signe = FALSE WHERE id_agent = $2`, [signatureRequestId, idAgent]).catch(async () => {
+      await pool.query(`UPDATE partner_agents SET id_yousign_request = $1 WHERE id_agent = $2`, [signatureRequestId, idAgent]);
+    });
 
-    // 2. Mise à jour du statut du contrat (Passe en attente, NE PAS valider ici !)
+    // 2. Remise à FALSE de contrat_signe et passage en EN_ATTENTE_SIGNATURE dans partner_conformite_dossier
     await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgent]);
     await pool.query(`
       UPDATE partner_conformite_dossier 
-      SET statut_contrat = 'EN_ATTENTE_SIGNATURE', updated_at = NOW()
+      SET contrat_signe = FALSE, statut_contrat = 'EN_ATTENTE_SIGNATURE', updated_at = NOW()
       WHERE id_agent = $1
     `, [idAgent]);
 
