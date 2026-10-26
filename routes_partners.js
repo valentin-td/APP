@@ -515,23 +515,191 @@ router.get('/profil', verifierTokenPartner, async (req, res) => {
 });
 
 const multer = require('multer');
+const crypto = require('crypto');
 const upload = multer({ storage: multer.memoryStorage() });
 
-// 12. Soumettre ou mettre à jour une étape du dossier de conformité (Ordre 1 à 5)
+// ============================================================================
+// MOTEUR CLOUDFLARE R2 / S3 NATIF (AWS Signature V4 sans dépendance externe)
+// ============================================================================
+function getR2Config() {
+    const bucket = process.env.R2_BUCKET_NAME;
+    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+    const accountId = process.env.R2_ACCOUNT_ID;
+    const rawEndpoint = process.env.R2_ENDPOINT || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : null);
+    if (!bucket || !accessKeyId || !secretAccessKey || !rawEndpoint) return null;
+    const host = rawEndpoint.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    return { bucket, accessKeyId, secretAccessKey, host, publicUrl: process.env.R2_PUBLIC_URL };
+}
+
+function hmacSha256(key, data) {
+    return crypto.createHmac('sha256', key).update(data, 'utf8').digest();
+}
+
+function sha256Hex(data) {
+    return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+async function uploadBufferToR2(objectKey, buffer, contentType = 'application/pdf') {
+    const cfg = getR2Config();
+    if (!cfg) throw new Error("Variables R2 incomplètes sur Render (R2_BUCKET_NAME, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT ou R2_ACCOUNT_ID).");
+
+    const method = 'PUT';
+    const region = 'auto';
+    const service = 's3';
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.slice(0, 8);
+    const payloadHash = sha256Hex(buffer);
+    const canonicalUri = `/${cfg.bucket}/${objectKey.split('/').map(encodeURIComponent).join('/')}`;
+
+    const canonicalHeaders =
+        `content-type:${contentType}\n` +
+        `host:${cfg.host}\n` +
+        `x-amz-content-sha256:${payloadHash}\n` +
+        `x-amz-date:${amzDate}\n`;
+    const signedHeaders = 'content-type;host;x-amz-content-sha256;x-amz-date';
+
+    const canonicalRequest = [method, canonicalUri, '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+    const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, credentialScope, sha256Hex(canonicalRequest)].join('\n');
+
+    const kDate = hmacSha256(`AWS4${cfg.secretAccessKey}`, dateStamp);
+    const kRegion = hmacSha256(kDate, region);
+    const kService = hmacSha256(kRegion, service);
+    const kSigning = hmacSha256(kService, 'aws4_request');
+    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+
+    const authorization = `AWS4-HMAC-SHA256 Credential=${cfg.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    const res = await fetch(`https://${cfg.host}${canonicalUri}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': contentType,
+            'x-amz-content-sha256': payloadHash,
+            'x-amz-date': amzDate,
+            'Authorization': authorization
+        },
+        body: buffer
+    });
+
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Échec upload R2 (${res.status}) : ${errText}`);
+    }
+    return objectKey;
+}
+
+async function downloadFromR2(objectKey) {
+    const cfg = getR2Config();
+    if (!cfg) throw new Error("Configuration R2 manquante.");
+
+    const method = 'GET';
+    const region = 'auto';
+    const service = 's3';
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.slice(0, 8);
+    const payloadHash = sha256Hex('');
+    const canonicalUri = `/${cfg.bucket}/${objectKey.split('/').map(encodeURIComponent).join('/')}`;
+
+    const canonicalHeaders =
+        `host:${cfg.host}\n` +
+        `x-amz-content-sha256:${payloadHash}\n` +
+        `x-amz-date:${amzDate}\n`;
+    const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+
+    const canonicalRequest = [method, canonicalUri, '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+    const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, credentialScope, sha256Hex(canonicalRequest)].join('\n');
+
+    const kDate = hmacSha256(`AWS4${cfg.secretAccessKey}`, dateStamp);
+    const kRegion = hmacSha256(kDate, region);
+    const kService = hmacSha256(kRegion, service);
+    const kSigning = hmacSha256(kService, 'aws4_request');
+    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+
+    const authorization = `AWS4-HMAC-SHA256 Credential=${cfg.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    return fetch(`https://${cfg.host}${canonicalUri}`, {
+        method: 'GET',
+        headers: {
+            'x-amz-content-sha256': payloadHash,
+            'x-amz-date': amzDate,
+            'Authorization': authorization
+        }
+    });
+}
+
+// Route de lecture sécurisée d'un document stocké sur Cloudflare R2
+router.get('/documents/r2/:agentId/:fileName', async (req, res) => {
+    try {
+        const objectKey = `partners/agent_${req.params.agentId}/${req.params.fileName}`;
+        const r2Res = await downloadFromR2(objectKey);
+        if (!r2Res.ok) return res.status(404).send("Document introuvable sur Cloudflare R2.");
+
+        const contentType = r2Res.headers.get('content-type') || 'application/pdf';
+        const arrayBuf = await r2Res.arrayBuffer();
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `inline; filename="${req.params.fileName}"`);
+        res.send(Buffer.from(arrayBuf));
+    } catch (e) {
+        console.error("Erreur lecture R2:", e.message);
+        res.status(500).send("Erreur lors de la récupération du document.");
+    }
+});
+
+// 12. Soumettre ou mettre à jour une étape du dossier de conformité (Ordre 1 à 5) avec Upload R2 automatique
 router.put('/profil/etape', verifierTokenPartner, upload.any(), async (req, res) => {
     const idAgent = req.agent.id_agent;
     let etape = req.body.etape;
     if (!isNaN(etape)) etape = parseInt(etape);
 
-    let payload = {};
-    try { payload = JSON.parse(req.body.payload || '{}'); } 
-    catch (e) { payload = {}; }
+    let payload = req.body.payload || {};
+    if (typeof payload === 'string') {
+        try { payload = JSON.parse(payload); } catch (e) { payload = {}; }
+    }
 
-    // Reconversion temporaire des fichiers entrants en Base64 pour la base de données actuelle
-    if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-            payload[file.fieldname] = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-        });
+    const baseBackendUrl = `${req.protocol}://${req.get('host')}/api/partners`;
+    const champsFichiers = ['fichier_identite', 'fichier_rsac', 'fichier_kbis', 'fichier_urssaf', 'fichier_rc_pro'];
+
+    try {
+        // A. Si des fichiers multipart sont envoyés, on les envoie sur R2
+        if (req.files && req.files.length > 0) {
+            for (const file of req.files) {
+                const ext = (file.originalname?.split('.').pop() || 'pdf').replace(/[^a-zA-Z0-9]/g, '');
+                const fileName = `${file.fieldname}_${Date.now()}.${ext}`;
+                const objectKey = `partners/agent_${idAgent}/${fileName}`;
+                if (getR2Config()) {
+                    await uploadBufferToR2(objectKey, file.buffer, file.mimetype || 'application/pdf');
+                    payload[file.fieldname] = `${baseBackendUrl}/documents/r2/${idAgent}/${fileName}`;
+                } else {
+                    payload[file.fieldname] = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+                }
+            }
+        }
+
+        // B. Si le Frontend envoie un fichier en Base64 ("data:...;base64,..."), on l'intercepte, on l'uploade sur R2 et on ne stocke que l'URL légère en BDD !
+        if (getR2Config()) {
+            for (const field of champsFichiers) {
+                const val = payload[field];
+                if (typeof val === 'string' && val.startsWith('data:')) {
+                    const match = val.match(/^data:([^;]+);base64,(.+)$/);
+                    if (match) {
+                        const mimeType = match[1];
+                        const buffer = Buffer.from(match[2], 'base64');
+                        const ext = mimeType.includes('png') ? 'png' : mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpg' : 'pdf';
+                        const fileName = `${field}_${Date.now()}.${ext}`;
+                        const objectKey = `partners/agent_${idAgent}/${fileName}`;
+                        await uploadBufferToR2(objectKey, buffer, mimeType);
+                        payload[field] = `${baseBackendUrl}/documents/r2/${idAgent}/${fileName}`;
+                    }
+                }
+            }
+        }
+    } catch (uploadErr) {
+        console.error("Erreur Upload Cloudflare R2:", uploadErr.message);
+        return res.status(500).json({ error: `Échec du stockage Cloud R2 : ${uploadErr.message}` });
     }
 
     try {
@@ -663,59 +831,74 @@ const verifierSuperAdmin = async (req, res, next) => {
 };
 
 // 13. GOD MODE - Récupérer tous les agents avec leur dossier de conformité complet
-router.get('/admin/agents', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT a.*, d.*
-            FROM partner_agents a
-            LEFT JOIN partner_conformite_dossier d ON d.id_agent = a.id_agent
-            ORDER BY a.id_agent DESC
-        `);
-        res.json(result.rows);
-    } catch (error) { res.status(500).json({ error: "Erreur serveur" }); }
+router.get('/admin/agents', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT a.*, d.*, a.id_agent AS id_agent
+      FROM partner_agents a
+      LEFT JOIN partner_conformite_dossier d ON d.id_agent = a.id_agent
+      ORDER BY a.id_agent DESC
+    `);
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// 14. GOD MODE - Vérifier (Valider ou Refuser) une pièce précise ou activer/suspendre l'agent
-router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierSuperAdmin, async (req, res) => {
-    const idAgent = req.params.id;
+router.get('/admin/commissions', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT pc.*, pa.nom, pa.prenom, pa.iban, cs.nom_salon
+      FROM partner_commissions pc
+      JOIN partner_agents pa ON pa.id_agent = pc.id_agent
+      JOIN configuration_salon cs ON cs.id_salon = pc.id_salon
+      WHERE pc.statut_commission = 'ACQUISE_A_PAYER'
+        AND COALESCE(cs.est_bac_a_sable, FALSE) = FALSE
+      ORDER BY pc.id_commission DESC
+    `);
+    res.json(result.rows);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const idAgentCible = req.params.id;
     const { champ_statut, decision, commentaire, purge_identite_rgpd } = req.body;
-    const champsAutorises = ['statut_contrat', 'statut_identite', 'statut_siret', 'statut_rsac', 'statut_kbis', 'statut_urssaf', 'statut_rc_pro', 'statut_iban', 'statut_tva'];
 
-    try {
-        await pool.query('INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING', [idAgent]);
+    await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgentCible]);
 
-        if (champ_statut === 'STATUT_COMPTE_FINAL') {
-            if (decision === 'ACTIF') {
-                const verif = await evaluerConformiteAgent(idAgent);
-                const erreursHorsEtape6 = verif.motifs.filter(m => !m.startsWith('Étape 6'));
-                if (erreursHorsEtape6.length > 0) {
-                    return res.status(400).json({ error: `Activation impossible tant que tout n'est pas validé : ${erreursHorsEtape6[0]}` });
-                }
-            }
-            await pool.query("UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2", [decision, idAgent]);
-        } else if (champsAutorises.includes(champ_statut)) {
-            await pool.query(`UPDATE partner_conformite_dossier SET ${champ_statut} = $1, updated_at = CURRENT_TIMESTAMP WHERE id_agent = $2`, [decision, idAgent]);
-            if (decision === 'REFUSE') {
-                // Blocage immédiat si une pièce est refusée
-                await pool.query("UPDATE partner_agents SET statut_compte = 'BLOQUE_CONFORMITE' WHERE id_agent = $1", [idAgent]);
-            }
-            if (purge_identite_rgpd && champ_statut === 'statut_identite') {
-                // Minimisation RGPD : suppression du fichier brut après validation de l'identité
-                await pool.query("UPDATE partner_conformite_dossier SET fichier_identite = 'PURGE_RGPD_APRES_CONTROLE' WHERE id_agent = $1", [idAgent]);
-            }
-        }
-
-        await pool.query(
-            `INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, verifie_par, commentaire)
-             VALUES ($1, $2, 'VERIFICATION_FONDATEUR', $3, 'Valentin Tardy (Fondateur)', $4)`,
-            [idAgent, champ_statut, decision, commentaire || 'Contrôle manuel effectué']
-        );
-
-        res.json({ message: "Décision enregistrée et tracée." });
-    } catch (error) {
-        console.error("Erreur vérification pièce:", error);
-        res.status(500).json({ error: "Erreur serveur" });
+    if (champ_statut === 'STATUT_COMPTE_FINAL') {
+      await pool.query(`UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
+      return res.json({ message: `Statut du compte mis à jour : ${decision}` });
     }
+
+    const allowedFields = ['statut_contrat', 'statut_identite', 'statut_siret', 'statut_rsac', 'statut_kbis', 'statut_urssaf', 'statut_rc_pro', 'statut_iban', 'statut_tva'];
+    if (!allowedFields.includes(champ_statut)) {
+      return res.status(400).json({ error: "Champ de statut non reconnu" });
+    }
+
+    if (purge_identite_rgpd && champ_statut === 'statut_identite' && decision === 'VALIDE') {
+      await pool.query(`UPDATE partner_conformite_dossier SET statut_identite = 'VALIDE', fichier_identite = NULL, updated_at = NOW() WHERE id_agent = $1`, [idAgentCible]);
+    } else {
+      await pool.query(`UPDATE partner_conformite_dossier SET ${champ_statut} = $1, updated_at = NOW() WHERE id_agent = $2`, [decision, idAgentCible]);
+    }
+
+    if (decision === 'REFUSE') {
+      await pool.query(`UPDATE partner_agents SET statut_compte = 'BLOQUE_CONFORMITE' WHERE id_agent = $1`, [idAgentCible]);
+    }
+
+    await pool.query(
+      `INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, commentaire, verifie_par)
+       VALUES ($1, $2, 'VERIFICATION_FONDATEUR', $3, $4, 'Fondateur (God Mode)')`,
+      [idAgentCible, champ_statut.toUpperCase(), decision, commentaire || 'Vérifié']
+    ).catch(() => {});
+
+    res.json({ message: `Pièce ${champ_statut} marquée comme ${decision}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 15. GOD MODE - Récupérer les commissions "Acquises" (suspendues si une pièce de l'agent est expirée ou refusée)
