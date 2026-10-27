@@ -46,8 +46,32 @@ router.post('/auth/register', async (req, res) => {
     }
 });
 
-// 2. Connexion d'un Agent Commercial (Brique 1)
-router.post('/auth/login', async (req, res) => {
+// ============================================================================
+// SÉCURITÉ : Limiteur de requêtes natif en mémoire (Rate Limiting)
+// ============================================================================
+const loginAttempts = new Map();
+const rateLimiter = (req, res, next) => {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const now = Date.now();
+    const windowMs = 15 * 60 * 1000; // 15 minutes
+    
+    const record = loginAttempts.get(ip) || { count: 0, firstAttempt: now };
+    if (now - record.firstAttempt > windowMs) {
+        record.count = 0;
+        record.firstAttempt = now;
+    }
+    
+    record.count += 1;
+    loginAttempts.set(ip, record);
+    
+    if (record.count > 10) {
+        return res.status(429).json({ error: "Trop de tentatives de connexion. Par sécurité, réessayez dans 15 minutes." });
+    }
+    next();
+};
+
+// 2. Connexion d'un Agent Commercial (Protégée contre le Bruteforce)
+router.post('/auth/login', rateLimiter, async (req, res) => {
     try {
         const { email, mot_de_passe } = req.body;
         const result = await pool.query(`SELECT * FROM partner_agents WHERE email = $1`, [email]);
@@ -1918,12 +1942,18 @@ pool.query(`
     note_texte TEXT DEFAULT '',
     est_visite_physique BOOLEAN DEFAULT FALSE,
     lat_agent DOUBLE PRECISION,
-    lng_agent DOUBLE PRECISION,
+    lng_agent terminal_agent DOUBLE PRECISION,
     distance_validation_m INTEGER DEFAULT NULL,
     date_visite TIMESTAMP DEFAULT NOW(),
     date_expiration TIMESTAMP NOT NULL
   );
-`).catch(err => console.error("Erreur init partner_visites:", err.message));
+
+  -- OPTIMISATIONS GÉOSPATIALES & RECHERCHES BDD (Exécutées silencieusement)
+  CREATE INDEX IF NOT EXISTS idx_visites_lat_lng ON partner_visites (lat_salon, lng_salon);
+  CREATE INDEX IF NOT EXISTS idx_visites_siret ON partner_visites (siret_salon);
+  CREATE INDEX IF NOT EXISTS idx_prospects_siret ON partner_prospects_reservations (siret_prospect);
+  CREATE INDEX IF NOT EXISTS idx_config_salon_siret ON configuration_salon (siret);
+`).catch(err => console.error("Erreur init optimisations BDD:", err.message));
 
 // Enregistrer une visite physique (Géo-fencing <= 100m) ou une note/tag
 router.post('/visites', verifierTokenPartner, async (req, res) => {
