@@ -673,43 +673,52 @@ router.get('/documents/r2/:agentId/:fileName', async (req, res) => {
     }
 });
 
-// 12. Soumettre ou mettre à jour une étape du dossier de conformité (Ordre 1 à 5) avec Upload R2 automatique
-router.put('/profil/etape', verifierTokenPartner, upload.any(), async (req, res) => {
-    const idAgent = req.agent.id_agent;
-    let etape = req.body.etape;
-    if (!isNaN(etape)) etape = parseInt(etape);
+// 12. Soumettre ou mettre à jour une étape du dossier de conformité (Ordre 1 à 5) avec Upload R2 + Fallback sécurisé
+router.put('/profil/etape', express.json({ limit: '25mb' }), verifierTokenPartner, upload.any(), async (req, res) => {
+    const idAgent = req.agent?.id_agent || req.agent?.id;
+    let etape = req.body?.etape;
+    if (etape !== undefined && !isNaN(etape)) etape = parseInt(etape, 10);
 
-    let payload = req.body.payload || {};
-    if (typeof payload === 'string') {
-        try { payload = JSON.parse(payload); } catch (e) { payload = {}; }
+    let payload = {};
+    if (req.body && typeof req.body.payload === 'object' && req.body.payload !== null) {
+        payload = { ...req.body.payload };
+    } else if (typeof req.body?.payload === 'string') {
+        try { payload = JSON.parse(req.body.payload); } catch (e) { payload = {}; }
+    } else if (req.body && typeof req.body === 'object') {
+        payload = { ...req.body };
     }
 
     const baseBackendUrl = `${req.protocol}://${req.get('host')}/api/partners`;
     const champsFichiers = ['fichier_identite', 'fichier_rsac', 'fichier_kbis', 'fichier_urssaf', 'fichier_rc_pro'];
 
-    try {
-        // A. Si des fichiers multipart sont envoyés, on les envoie sur R2
-        if (req.files && req.files.length > 0) {
-            for (const file of req.files) {
-                const ext = (file.originalname?.split('.').pop() || 'pdf').replace(/[^a-zA-Z0-9]/g, '');
-                const fileName = `${file.fieldname}_${Date.now()}.${ext}`;
-                const objectKey = `partners/agent_${idAgent}/${fileName}`;
+    // A. Fichiers multipart éventuels
+    if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+            const ext = (file.originalname?.split('.').pop() || 'pdf').replace(/[^a-zA-Z0-9]/g, '');
+            const fileName = `${file.fieldname}_${Date.now()}.${ext}`;
+            const objectKey = `partners/agent_${idAgent}/${fileName}`;
+            try {
                 if (getR2Config()) {
                     await uploadBufferToR2(objectKey, file.buffer, file.mimetype || 'application/pdf');
                     payload[file.fieldname] = `${baseBackendUrl}/documents/r2/${idAgent}/${fileName}`;
                 } else {
                     payload[file.fieldname] = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
                 }
+            } catch (e) {
+                console.warn("Fallback Base64 (R2 indisponible):", e.message);
+                payload[file.fieldname] = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
             }
         }
+    }
 
-        // B. Si le Frontend envoie un fichier en Base64 ("data:...;base64,..."), on l'intercepte, on l'uploade sur R2 et on ne stocke que l'URL légère en BDD !
-        if (getR2Config()) {
-            for (const field of champsFichiers) {
-                const val = payload[field];
-                if (typeof val === 'string' && val.startsWith('data:')) {
-                    const match = val.match(/^data:([^;]+);base64,(.+)$/);
-                    if (match) {
+    // B. Fichiers Base64 envoyés par le Frontend : Upload R2 si dispo, sinon conservation Base64 sans jamais bloquer l'enregistrement SQL
+    if (getR2Config()) {
+        for (const field of champsFichiers) {
+            const val = payload[field];
+            if (typeof val === 'string' && val.startsWith('data:')) {
+                const match = val.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                    try {
                         const mimeType = match[1];
                         const buffer = Buffer.from(match[2], 'base64');
                         const ext = mimeType.includes('png') ? 'png' : mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpg' : 'pdf';
@@ -717,13 +726,12 @@ router.put('/profil/etape', verifierTokenPartner, upload.any(), async (req, res)
                         const objectKey = `partners/agent_${idAgent}/${fileName}`;
                         await uploadBufferToR2(objectKey, buffer, mimeType);
                         payload[field] = `${baseBackendUrl}/documents/r2/${idAgent}/${fileName}`;
+                    } catch (e) {
+                        console.warn(`Fallback Base64 sur ${field} (R2 a refusé l'upload):`, e.message);
                     }
                 }
             }
         }
-    } catch (uploadErr) {
-        console.error("Erreur Upload Cloudflare R2:", uploadErr.message);
-        return res.status(500).json({ error: `Échec du stockage Cloud R2 : ${uploadErr.message}` });
     }
 
     try {
