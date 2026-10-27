@@ -1190,13 +1190,15 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
       throw new Error(`Yousign a activé la demande (${signatureRequestId}) mais n'a renvoyé aucun signature_link. Réponse brute : ${JSON.stringify(activatedData)}`);
     }
 
-    // 1. Sauvegarde de l'ID Yousign et remise à FALSE de l'ancien état sur partner_agents
-    await pool.query(`ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL;`).catch(() => {});
-    await pool.query(`UPDATE partner_agents SET id_yousign_request = $1, contrat_signe = FALSE WHERE id_agent = $2`, [signatureRequestId, idAgent]).catch(async () => {
-      await pool.query(`UPDATE partner_agents SET id_yousign_request = $1 WHERE id_agent = $2`, [signatureRequestId, idAgent]);
-    });
+    // 1. Sauvegarde de l'ID ET du lien Yousign directement sur l'Agent
+    await pool.query(`
+      ALTER TABLE partner_agents 
+      ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS url_yousign_contrat TEXT DEFAULT NULL;
+    `).catch(() => {});
+    await pool.query(`UPDATE partner_agents SET id_yousign_request = $1, url_yousign_contrat = $2 WHERE id_agent = $3`, [signatureRequestId, signatureLink, idAgent]);
 
-    // 2. Remise à FALSE de contrat_signe et passage en EN_ATTENTE_SIGNATURE dans partner_conformite_dossier
+    // 2. Passage en EN_ATTENTE_SIGNATURE dans partner_conformite_dossier
     await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgent]);
     await pool.query(`
       UPDATE partner_conformite_dossier 
@@ -1220,8 +1222,9 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
 router.get('/profil/yousign/check', verifierTokenPartner, async (req, res) => {
   try {
     const idAgent = req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
-    const agentRes = await pool.query('SELECT id_yousign_request FROM partner_agents WHERE id_agent = $1', [idAgent]);
+    const agentRes = await pool.query('SELECT id_yousign_request, url_yousign_contrat FROM partner_agents WHERE id_agent = $1', [idAgent]);
     const reqId = agentRes.rows[0]?.id_yousign_request;
+    const savedUrl = agentRes.rows[0]?.url_yousign_contrat;
 
     if (!reqId) return res.json({ status: 'manquant' });
 
@@ -1240,7 +1243,11 @@ router.get('/profil/yousign/check', verifierTokenPartner, async (req, res) => {
        `, [idAgent]);
        return res.json({ status: 'done', message: "Parfait, le contrat est officiellement signé !" });
     } else {
-       return res.json({ status: data.status, message: "Le contrat n'est pas encore signé sur Yousign." });
+       return res.json({
+         status: data.status,
+         signature_link: savedUrl,
+         message: "Le contrat n'est pas encore signé sur Yousign."
+       });
     }
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1761,7 +1768,7 @@ router.get('/map-salons', verifierTokenPartner, async (req, res) => {
 
     // Décoration ultra-rapide avec statuts (Clients, Leads...)
     const [prospectsDB, clientsDB, visitesDB] = await Promise.all([
-      pool.query(`SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm, GREATEST(0, 45 - EXTRACT(DAY FROM (NOW() - date_declaration))::INT) AS jours_restants, statut_prospect FROM partner_prospects`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT id_prospect, id_agent, siret_prospect, LOWER(TRIM(nom_salon)) AS nom_norm, GREATEST(0, EXTRACT(DAY FROM (date_expiration_protection - CURRENT_TIMESTAMP))::INT) AS jours_restants, statut_prospect FROM partner_prospects_reservations WHERE date_expiration_protection > CURRENT_TIMESTAMP`).catch(() => ({ rows: [] })),
       pool.query(`SELECT siret_salon, LOWER(TRIM(nom_salon)) AS nom_norm FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE`).catch(() => ({ rows: [] })),
       pool.query(`
         SELECT pv.*, pa.prenom AS agent_prenom, pa.nom AS agent_nom
