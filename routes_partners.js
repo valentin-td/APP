@@ -1222,9 +1222,16 @@ router.post('/profil/yousign/initiate', verifierTokenPartner, async (req, res) =
 router.get('/profil/yousign/check', verifierTokenPartner, async (req, res) => {
   try {
     const idAgent = req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
+
+    await pool.query(`
+      ALTER TABLE partner_agents 
+      ADD COLUMN IF NOT EXISTS id_yousign_request VARCHAR(255) DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS url_yousign_contrat TEXT DEFAULT NULL;
+    `).catch(() => {});
+
     const agentRes = await pool.query('SELECT id_yousign_request, url_yousign_contrat FROM partner_agents WHERE id_agent = $1', [idAgent]);
     const reqId = agentRes.rows[0]?.id_yousign_request;
-    const savedUrl = agentRes.rows[0]?.url_yousign_contrat;
+    const savedUrl = agentRes.rows[0]?.url_yousign_contrat || null;
 
     if (!reqId) return res.json({ status: 'manquant' });
 
@@ -1236,6 +1243,7 @@ router.get('/profil/yousign/check', verifierTokenPartner, async (req, res) => {
     const data = await checkRes.json();
 
     if (data.status === 'done') {
+       await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgent]);
        await pool.query(`
          UPDATE partner_conformite_dossier 
          SET contrat_signe = TRUE, statut_contrat = 'VALIDE', date_signature_contrat = NOW(), updated_at = NOW()
@@ -1865,7 +1873,54 @@ async function verifierSuperAdminDB(req, res, next) {
 
 router.get('/admin/agents', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM partner_agents ORDER BY id_agent DESC`);
+    const result = await pool.query(`
+      SELECT 
+        a.*,
+        d.contrat_signe,
+        COALESCE(d.statut_contrat, 'MANQUANT') AS statut_contrat,
+        d.date_signature_contrat,
+        d.date_naissance,
+        d.date_expiration_identite,
+        d.fichier_identite,
+        COALESCE(d.statut_identite, 'MANQUANT') AS statut_identite,
+        COALESCE(d.forme_juridique, 'EI') AS forme_juridique,
+        d.date_debut_activite,
+        d.adresse_pro,
+        COALESCE(d.statut_siret, 'MANQUANT') AS statut_siret,
+        d.greffe_rsac,
+        d.date_emission_rsac,
+        d.fichier_rsac,
+        COALESCE(d.statut_rsac, 'MANQUANT') AS statut_rsac,
+        d.date_emission_kbis,
+        d.fichier_kbis,
+        COALESCE(d.statut_kbis, 'NON_REQUIS') AS statut_kbis,
+        d.code_verif_urssaf,
+        d.date_emission_urssaf,
+        d.date_expiration_urssaf,
+        d.fichier_urssaf,
+        COALESCE(d.statut_urssaf, 'MANQUANT') AS statut_urssaf,
+        d.assureur_nom,
+        d.assureur_contrat,
+        d.assureur_plafond,
+        d.date_expiration_rc_pro,
+        d.fichier_rc_pro,
+        COALESCE(d.statut_rc_pro, 'MANQUANT') AS statut_rc_pro,
+        d.titulaire_iban,
+        COALESCE(d.statut_iban, 'MANQUANT') AS statut_iban,
+        COALESCE(d.regime_tva, 'FRANCHISE_293B') AS regime_tva,
+        d.numero_tva_intra,
+        COALESCE(d.statut_tva, 'MANQUANT') AS statut_tva,
+        d.honneur_aucune_interdiction,
+        d.honneur_pas_exclusivite_employeur,
+        d.honneur_pas_mandat_concurrent,
+        d.charte_acceptee,
+        d.quiz_score,
+        d.formation_validee,
+        d.telephone_confirme
+      FROM partner_agents a
+      LEFT JOIN partner_conformite_dossier d ON d.id_agent = a.id_agent
+      ORDER BY a.id_agent DESC
+    `);
     res.json(result.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
