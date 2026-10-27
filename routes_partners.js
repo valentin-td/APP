@@ -1412,7 +1412,7 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
 const getAgentIdFromReq = (req) => req.agent?.id_agent || req.agent?.id || req.user?.id_agent || req.user?.id;
 
 // Nettoyage propre des routes précédentes pour éviter tout conflit Express
-    const routesToOverride = ['/dashboard-stats', '/sandbox/launch', '/map-salons'];
+    const routesToOverride = ['/sandbox/launch', '/map-salons'];
     if (Array.isArray(router.stack)) {
       router.stack = router.stack.filter(layer => !layer.route || !routesToOverride.includes(layer.route.path));
     }
@@ -1971,12 +1971,29 @@ router.get('/admin/commissions', verifierTokenPartner, verifierSuperAdminDB, asy
 
 router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
   try {
-    const idAgentCible = req.params.id;
-    const { champ_statut, decision, commentaire, purge_identite_rgpd } = req.body;
+    const idAgentCible = parseInt(req.params.id, 10);
+    const { champ_statut, decision, commentaire, purge_identite_rgpd } = req.body || {};
+
+    if (!idAgentCible || isNaN(idAgentCible)) {
+      return res.status(400).json({ error: "ID agent invalide." });
+    }
+
+    await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgentCible]);
 
     if (champ_statut === 'STATUT_COMPTE_FINAL') {
       await pool.query(`UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
-      return res.json({ message: `Statut du compte mis à jour : ${decision}` });
+      const agRes = await pool.query(`SELECT prenom, email, code_partenaire FROM partner_agents WHERE id_agent = $1`, [idAgentCible]).catch(() => ({ rowCount: 0 }));
+      if (agRes.rowCount > 0 && typeof envoyerEmailSMTP === 'function') {
+        const ag = agRes.rows[0];
+        envoyerEmailSMTP({
+          to: ag.email,
+          subject: decision === 'ACTIF' ? "Votre compte STACK Partners est officiellement ACTIF" : "Suspension temporaire de votre compte STACK Partners",
+          html: decision === 'ACTIF'
+            ? `<p>Bonjour ${ag.prenom},</p><p>Félicitations ! Votre dossier de conformité a été intégralement validé. Votre compte partenaire (Code : <strong>${ag.code_partenaire}</strong>) est désormais <strong>ACTIF</strong>.</p>`
+            : `<p>Bonjour ${ag.prenom},</p><p>Votre compte STACK Partners a été temporairement suspendu pour mise à jour réglementaire.</p>`
+        }).catch(() => {});
+      }
+      return res.json({ message: `Statut du compte mis à jour (${decision}) et agent notifié.` });
     }
 
     const allowedFields = ['statut_contrat', 'statut_identite', 'statut_siret', 'statut_rsac', 'statut_kbis', 'statut_urssaf', 'statut_rc_pro', 'statut_iban', 'statut_tva'];
@@ -1984,21 +2001,37 @@ router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierS
       return res.status(400).json({ error: "Champ de statut non reconnu" });
     }
 
-    if (purge_identite_rgpd && champ_statut === 'statut_identite' && decision === 'VALIDE') {
-      await pool.query(`UPDATE partner_agents SET statut_identite = 'VALIDE', fichier_identite = NULL WHERE id_agent = $1`, [idAgentCible]);
+    if (champ_statut === 'statut_contrat' && decision === 'VALIDE') {
+      await pool.query(
+        `UPDATE partner_conformite_dossier SET statut_contrat = 'VALIDE', contrat_signe = TRUE, date_signature_contrat = COALESCE(date_signature_contrat, NOW()), updated_at = NOW() WHERE id_agent = $1`,
+        [idAgentCible]
+      );
+    } else if (purge_identite_rgpd && champ_statut === 'statut_identite' && decision === 'VALIDE') {
+      await pool.query(
+        `UPDATE partner_conformite_dossier SET statut_identite = 'VALIDE', fichier_identite = '', updated_at = NOW() WHERE id_agent = $1`,
+        [idAgentCible]
+      );
     } else {
-      await pool.query(`UPDATE partner_agents SET ${champ_statut} = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
+      await pool.query(
+        `UPDATE partner_conformite_dossier SET ${champ_statut} = $1, updated_at = NOW() WHERE id_agent = $2`,
+        [decision, idAgentCible]
+      );
+    }
+
+    if (decision === 'REFUSE') {
+      await pool.query(`UPDATE partner_agents SET statut_compte = 'BLOQUE_CONFORMITE' WHERE id_agent = $1`, [idAgentCible]);
     }
 
     await pool.query(
-      `INSERT INTO partner_conformite_historique (id_agent, type_piece, statut_resultat, commentaire, verifie_par)
-       VALUES ($1, $2, $3, $4, 'Fondateur (God Mode)')`,
+      `INSERT INTO partner_conformite_historique (id_agent, type_piece, action, statut_resultat, commentaire, verifie_par)
+       VALUES ($1, $2, 'VERIFICATION_FONDATEUR', $3, $4, 'Fondateur (God Mode)')`,
       [idAgentCible, champ_statut.toUpperCase(), decision, commentaire || 'Vérifié']
     ).catch(() => {});
 
     res.json({ message: `Pièce ${champ_statut} marquée comme ${decision}` });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error("CRASH VERIFIER-PIECE:", e);
+    res.status(500).json({ error: `Erreur SQL (${e.message})` });
   }
 });
 
@@ -2029,7 +2062,7 @@ pool.query(`
     note_texte TEXT DEFAULT '',
     est_visite_physique BOOLEAN DEFAULT FALSE,
     lat_agent DOUBLE PRECISION,
-    lng_agent terminal_agent DOUBLE PRECISION,
+    lng_agent DOUBLE PRECISION,
     distance_validation_m INTEGER DEFAULT NULL,
     date_visite TIMESTAMP DEFAULT NOW(),
     date_expiration TIMESTAMP NOT NULL
