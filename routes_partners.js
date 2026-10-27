@@ -896,14 +896,18 @@ router.get('/admin/commissions', verifierTokenPartner, verifierSuperAdminDB, asy
 
 router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
   try {
-    const idAgentCible = req.params.id;
-    const { champ_statut, decision, commentaire, purge_identite_rgpd } = req.body;
+    const idAgentCible = parseInt(req.params.id, 10);
+    const { champ_statut, decision, commentaire, purge_identite_rgpd } = req.body || {};
+
+    if (!idAgentCible || isNaN(idAgentCible)) {
+      return res.status(400).json({ error: "ID agent invalide." });
+    }
 
     await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgentCible]);
 
     if (champ_statut === 'STATUT_COMPTE_FINAL') {
       await pool.query(`UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
-      const agRes = await pool.query(`SELECT prenom, email, code_partenaire FROM partner_agents WHERE id_agent = $1`, [idAgentCible]);
+      const agRes = await pool.query(`SELECT prenom, email, code_partenaire FROM partner_agents WHERE id_agent = $1`, [idAgentCible]).catch(() => ({ rowCount: 0 }));
       if (agRes.rowCount > 0 && typeof envoyerEmailSMTP === 'function') {
         const ag = agRes.rows[0];
         envoyerEmailSMTP({
@@ -922,10 +926,22 @@ router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierS
       return res.status(400).json({ error: "Champ de statut non reconnu" });
     }
 
-    if (purge_identite_rgpd && champ_statut === 'statut_identite' && decision === 'VALIDE') {
-      await pool.query(`UPDATE partner_conformite_dossier SET statut_identite = 'VALIDE', fichier_identite = NULL, updated_at = NOW() WHERE id_agent = $1`, [idAgentCible]);
+    if (champ_statut === 'statut_contrat' && decision === 'VALIDE') {
+      await pool.query(
+        `UPDATE partner_conformite_dossier SET statut_contrat = 'VALIDE', contrat_signe = TRUE, date_signature_contrat = COALESCE(date_signature_contrat, NOW()), updated_at = NOW() WHERE id_agent = $1`,
+        [idAgentCible]
+      );
+    } else if (purge_identite_rgpd && champ_statut === 'statut_identite' && decision === 'VALIDE') {
+      // Utilise une chaîne vide '' au lieu de NULL au cas où la colonne a une contrainte NOT NULL en base
+      await pool.query(
+        `UPDATE partner_conformite_dossier SET statut_identite = 'VALIDE', fichier_identite = '' WHERE id_agent = $1`,
+        [idAgentCible]
+      );
     } else {
-      await pool.query(`UPDATE partner_conformite_dossier SET ${champ_statut} = $1, updated_at = NOW() WHERE id_agent = $2`, [decision, idAgentCible]);
+      await pool.query(
+        `UPDATE partner_conformite_dossier SET ${champ_statut} = $1 WHERE id_agent = $2`,
+        [decision, idAgentCible]
+      );
     }
 
     if (decision === 'REFUSE') {
@@ -940,7 +956,8 @@ router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierS
 
     res.json({ message: `Pièce ${champ_statut} marquée comme ${decision}` });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error("CRASH VERIFIER-PIECE:", e);
+    res.status(500).json({ error: `Erreur SQL (${e.message})` });
   }
 });
 
