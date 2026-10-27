@@ -871,7 +871,18 @@ router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierS
 
     if (champ_statut === 'STATUT_COMPTE_FINAL') {
       await pool.query(`UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
-      return res.json({ message: `Statut du compte mis à jour : ${decision}` });
+      const agRes = await pool.query(`SELECT prenom, email, code_partenaire FROM partner_agents WHERE id_agent = $1`, [idAgentCible]);
+      if (agRes.rowCount > 0 && typeof envoyerEmailSMTP === 'function') {
+        const ag = agRes.rows[0];
+        envoyerEmailSMTP({
+          to: ag.email,
+          subject: decision === 'ACTIF' ? "Votre compte STACK Partners est officiellement ACTIF" : "Suspension temporaire de votre compte STACK Partners",
+          html: decision === 'ACTIF'
+            ? `<p>Bonjour ${ag.prenom},</p><p>Félicitations ! Votre dossier de conformité a été intégralement validé. Votre compte partenaire (Code : <strong>${ag.code_partenaire}</strong>) est désormais <strong>ACTIF</strong>. Vous pouvez dès maintenant verrouiller vos prospects et émettre vos factures d'installation de 99 € HT.</p>`
+            : `<p>Bonjour ${ag.prenom},</p><p>Votre compte STACK Partners a été temporairement suspendu pour mise à jour réglementaire. Rendez-vous dans votre espace Conformité.</p>`
+        }).catch(() => {});
+      }
+      return res.json({ message: `Statut du compte mis à jour (${decision}) et agent notifié par e-mail.` });
     }
 
     const allowedFields = ['statut_contrat', 'statut_identite', 'statut_siret', 'statut_rsac', 'statut_kbis', 'statut_urssaf', 'statut_rc_pro', 'statut_iban', 'statut_tva'];
@@ -2264,6 +2275,266 @@ router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async
   } catch (err) {
     console.error("Erreur Webhook Stripe Partners:", err.message);
     res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// 8. MOTEUR TRANSACTIONNEL D'E-MAILS (SMTP_USER / SMTP_PASS) AVEC PIÈCES JOINTES
+// ============================================================================
+const tls = require('tls');
+
+async function envoyerEmailSMTP({ to, subject, html, attachments = [] }) {
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  if (!user || !pass) {
+    throw new Error("Variables SMTP_USER ou SMTP_PASS manquantes sur Render.");
+  }
+
+  const host = process.env.SMTP_HOST || (
+    user.includes('@gmail.') ? 'smtp.gmail.com' :
+    user.includes('@outlook.') || user.includes('@hotmail.') ? 'smtp.office365.com' :
+    'smtp-relay.brevo.com'
+  );
+  const port = parseInt(process.env.SMTP_PORT || '465', 10);
+  const fromEmail = process.env.SMTP_FROM || user;
+
+  // 1. Si nodemailer est présent dans node_modules, on l'utilise en priorité
+  try {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass }
+    });
+    await transporter.sendMail({
+      from: `"STACK Partners" <${fromEmail}>`,
+      to,
+      subject,
+      html,
+      attachments: attachments.map(a => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType || 'application/pdf'
+      }))
+    });
+    return { ok: true, mode: 'nodemailer' };
+  } catch (errModule) {
+    if (errModule.code !== 'MODULE_NOT_FOUND') throw errModule;
+  }
+
+  // 2. Sinon : Client SMTP TLS natif Node.js (Zéro dépendance externe)
+  return new Promise((resolve, reject) => {
+    const boundary = `----StackMailBoundary${Date.now().toString(16)}`;
+    const subjectB64 = Buffer.from(subject, 'utf8').toString('base64');
+
+    let mimeParts = [
+      `From: "STACK Partners" <${fromEmail}>`,
+      `To: <${to}>`,
+      `Subject: =?UTF-8?B?${subjectB64}?=`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      ``,
+      `--${boundary}`,
+      `Content-Type: text/html; charset="UTF-8"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      Buffer.from(html, 'utf8').toString('base64')
+    ];
+
+    for (const att of attachments) {
+      const b64 = Buffer.isBuffer(att.content) ? att.content.toString('base64') : Buffer.from(att.content).toString('base64');
+      const chunked = b64.match(/.{1,76}/g)?.join('\r\n') || b64;
+      mimeParts.push(
+        `--${boundary}`,
+        `Content-Type: ${att.contentType || 'application/pdf'}; name="${att.filename}"`,
+        `Content-Disposition: attachment; filename="${att.filename}"`,
+        `Content-Transfer-Encoding: base64`,
+        ``,
+        chunked
+      );
+    }
+    mimeParts.push(`--${boundary}--`, `.`, ``);
+    const mimeBody = mimeParts.join('\r\n');
+
+    const socket = tls.connect({ host, port: 465, rejectUnauthorized: false });
+    let step = 0;
+    let buffer = '';
+
+    socket.setTimeout(10000, () => {
+      socket.destroy();
+      reject(new Error("Délai d'attente SMTP dépassé."));
+    });
+
+    const sendLine = (line) => socket.write(line + '\r\n');
+
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split('\r\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.length >= 4 && line[3] === '-') continue; // Ligne multi-réponse SMTP
+        const code = parseInt(line.slice(0, 3), 10);
+        if (code >= 400) {
+          socket.destroy();
+          return reject(new Error(`Erreur SMTP (${code}) : ${line}`));
+        }
+
+        if (step === 0 && code === 220) { step = 1; sendLine(`EHLO stack-partners.fr`); }
+        else if (step === 1 && code === 250) { step = 2; sendLine(`AUTH LOGIN`); }
+        else if (step === 2 && code === 334) { step = 3; sendLine(Buffer.from(user).toString('base64')); }
+        else if (step === 3 && code === 334) { step = 4; sendLine(Buffer.from(pass).toString('base64')); }
+        else if (step === 4 && code === 235) { step = 5; sendLine(`MAIL FROM:<${fromEmail}>`); }
+        else if (step === 5 && code === 250) { step = 6; sendLine(`RCPT TO:<${to}>`); }
+        else if (step === 6 && code === 250) { step = 7; sendLine(`DATA`); }
+        else if (step === 7 && code === 354) { step = 8; sendLine(mimeBody); }
+        else if (step === 8 && code === 250) { step = 9; sendLine(`QUIT`); resolve({ ok: true, mode: 'native_tls' }); }
+      }
+    });
+
+    socket.on('error', (err) => reject(err));
+  });
+}
+
+// Générer le PDF d'une facture en mémoire (Buffer) pour l'attacher à l'e-mail
+async function genererFacturePdfBuffer(facture, agent, conf) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(20).text('FACTURE', { align: 'right' });
+    doc.fontSize(10).text(`Facture N° : ${facture.numero_facture}`, { align: 'right' });
+    doc.text(`Date : ${new Date(facture.date_emission).toLocaleDateString('fr-FR')}`, { align: 'right' });
+
+    doc.moveDown(2);
+    doc.fontSize(14).text(`${agent.prenom} ${agent.nom}`, { align: 'left' });
+    if (conf.adresse_pro) doc.fontSize(10).text(conf.adresse_pro);
+    doc.fontSize(10).text(`SIRET : ${agent.siret_agent} (${conf.forme_juridique || 'EI'})`);
+    doc.fontSize(10).text(`Immatriculation RSAC : ${agent.numero_rsac || 'En cours'}${conf.greffe_rsac ? ' - Greffe de ' + conf.greffe_rsac : ''}`);
+
+    doc.moveDown(2);
+    doc.fontSize(12).text('Facturé à :', { underline: true });
+    doc.fontSize(12).text(facture.nom_salon);
+    doc.fontSize(10).text(facture.adresse_salon);
+    doc.text(`SIRET : ${facture.siret_salon}`);
+
+    doc.moveDown(3);
+    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown(1);
+    let startY = doc.y;
+    doc.fontSize(12).text('Description', 50, startY, { width: 350 });
+    doc.text('Montant HT', 400, startY, { width: 150, align: 'right' });
+    doc.moveDown(1);
+    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown(1);
+
+    startY = doc.y;
+    doc.text('Frais de configuration et de formation au logiciel STACK', 50, startY, { width: 350 });
+    doc.text('99,00 €', 400, startY, { width: 150, align: 'right' });
+
+    doc.moveDown(2);
+    doc.moveTo(350, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown(1);
+    startY = doc.y;
+    doc.fontSize(14).text('Total à payer :', 350, startY, { width: 100 });
+    doc.text('99,00 €', 450, startY, { width: 100, align: 'right' });
+
+    doc.moveDown(2);
+    doc.fontSize(10).text('TVA non applicable, art. 293 B du CGI.', 50, doc.y);
+
+    doc.moveDown(3);
+    doc.fontSize(12).text('Modalités de paiement :');
+    doc.fontSize(10).text('Paiement par virement bancaire sur le compte ci-dessous :');
+    doc.text(`Titulaire du compte : ${agent.prenom} ${agent.nom}`);
+    doc.text(`IBAN : ${agent.iban || 'Non renseigné'}`);
+
+    doc.end();
+  });
+}
+
+// Route 8A : Envoyer la facture PDF (99 € HT) par e-mail directement au gérant du salon
+router.post('/factures/:id/send-email', verifierTokenPartner, async (req, res) => {
+  try {
+    const idAgent = getAgentIdFromReq(req);
+    const { email_destinataire } = req.body;
+
+    const factRes = await pool.query('SELECT * FROM partner_factures_installation WHERE id_facture = $1 AND id_agent = $2', [req.params.id, idAgent]);
+    if (factRes.rowCount === 0) return res.status(404).json({ error: "Facture introuvable." });
+    const facture = factRes.rows[0];
+
+    // Chercher l'e-mail du gérant dans les prospects si non fourni manuellement
+    let targetEmail = (email_destinataire || '').trim();
+    if (!targetEmail) {
+      const prospRes = await pool.query('SELECT email_gerant FROM partner_prospects_reservations WHERE siret_prospect = $1 AND id_agent = $2 LIMIT 1', [facture.siret_salon, idAgent]);
+      targetEmail = prospRes.rows[0]?.email_gerant || '';
+    }
+    if (!targetEmail) {
+      return res.status(400).json({ error: "Veuillez saisir l'adresse e-mail du gérant." });
+    }
+
+    const agentRes = await pool.query('SELECT * FROM partner_agents WHERE id_agent = $1', [idAgent]);
+    const agent = agentRes.rows[0];
+    const confRes = await pool.query('SELECT * FROM partner_conformite_dossier WHERE id_agent = $1', [idAgent]);
+    const conf = confRes.rows[0] || {};
+
+    const pdfBuffer = await genererFacturePdfBuffer(facture, agent, conf);
+
+    await envoyerEmailSMTP({
+      to: targetEmail,
+      subject: `Facture d'installation STACK (${facture.numero_facture}) - ${facture.nom_salon}`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 16px;">
+          <h2 style="margin: 0 0 12px 0;">Bonjour,</h2>
+          <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+            Veuillez trouver ci-joint votre facture <strong>${facture.numero_facture}</strong> d'un montant de <strong>99,00 € HT</strong> correspondant à la mise en service, au paramétrage complet et à la formation sur place au logiciel de caisse certifié NF525 <strong>STACK</strong> pour votre établissement <strong>${facture.nom_salon}</strong>.
+          </p>
+          <div style="background: #f9fafb; padding: 14px 16px; border-radius: 12px; margin: 18px 0; font-size: 13px;">
+            <strong>Coordonnées de règlement (Virement) :</strong><br/>
+            Bénéficiaire : ${agent.prenom} ${agent.nom} (Mandataire RSAC ${agent.numero_rsac || ''})<br/>
+            IBAN : <span style="font-family: monospace;">${agent.iban || 'Voir PDF joint'}</span>
+          </div>
+          <p style="font-size: 13px; color: #6b7280;">
+            Dès validation de votre règlement, votre lien d'activation privilégié (incluant vos 30 jours d'essai gratuit sur l'abonnement STACK) vous sera débloqué.
+          </p>
+        </div>
+      `,
+      attachments: [{ filename: `${facture.numero_facture}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }]
+    });
+
+    res.json({ message: `Facture ${facture.numero_facture} envoyée par e-mail à ${targetEmail} !` });
+  } catch (e) {
+    console.error("Erreur envoi facture SMTP:", e.message);
+    res.status(500).json({ error: `Échec d'envoi e-mail : ${e.message}` });
+  }
+});
+
+// Route 8B : Envoyer un e-mail d'alerte de conformité ou d'activation depuis le God Mode
+router.post('/admin/agents/:id/notifier-email', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const { sujet, message } = req.body;
+    const agentRes = await pool.query('SELECT nom, prenom, email FROM partner_agents WHERE id_agent = $1', [req.params.id]);
+    if (agentRes.rowCount === 0) return res.status(404).json({ error: "Agent introuvable." });
+    const a = agentRes.rows[0];
+
+    await envoyerEmailSMTP({
+      to: a.email,
+      subject: sujet || "Information importante concernant votre dossier STACK Partners",
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 16px;">
+          <h2 style="margin: 0 0 12px 0;">Bonjour ${a.prenom},</h2>
+          <p style="font-size: 14px; line-height: 1.6; color: #374151;">${message}</p>
+          <p style="font-size: 12.5px; color: #6b7280; margin-top: 24px;">Direction STACK Partners</p>
+        </div>
+      `
+    });
+
+    res.json({ message: `E-mail envoyé avec succès à ${a.email}.` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
