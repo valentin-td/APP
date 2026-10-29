@@ -1526,9 +1526,64 @@ async function archiverEtDetacherSalonTestNF525(idSalon) {
   }
 }
 
-// Peuplement complet et 100% scellé NF525 d'un salon de présentation tout neuf
-async function peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAgent) {
-  const tpl = DEFAULT_DEMO_TEMPLATE;
+// Extrait la structure personnalisée du salon de démo d'un agent (Équipe, Catalogue, Clients, Paramètres) sans figer les dates
+async function extraireTemplatePersonnaliseDemo(idSalon) {
+  const sid = parseInt(idSalon, 10);
+  if (isNaN(sid)) return null;
+
+  const [confRes, empRes, catRes, cliRes] = await Promise.all([
+    pool.query(`SELECT heure_ouverture, heure_fermeture, temps_nettoyage_minutes, fidelite_type, fidelite_points_seuil, fidelite_points_valeur, fidelite_tampons_seuil, fidelite_recompense_type, fidelite_recompense_valeur, fidelite_delai_sms FROM configuration_salon WHERE id_salon = $1`, [sid]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT nom, role, taux_commission_prestation, taux_commission_produit, type_contrat, heures_mensuelles_base FROM employes WHERE id_salon = $1 AND COALESCE(est_gerant, FALSE) = FALSE ORDER BY id_employe ASC`, [sid]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT type_article, nom, prix, taux_tva, stock_actuel, seuil_alerte, reference, delai_livraison_jours, duree_estimee_minutes FROM catalogue WHERE id_salon = $1 AND type_article != 'ARCHIVE_FUSION' ORDER BY id_article ASC`, [sid]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT prenom, nom, email, telephone, points_fidelite, tampons_fidelite, remise_winback, notes FROM clients WHERE id_salon = $1 ORDER BY id_client ASC LIMIT 30`, [sid]).catch(() => ({ rows: [] }))
+  ]);
+
+  return {
+    saved_at: new Date().toISOString(),
+    settings: confRes.rows[0] || {},
+    employes: empRes.rows.length > 0 ? empRes.rows.map(e => ({
+      nom: e.nom,
+      role: e.role || 'Employé',
+      taux_presta: parseFloat(e.taux_commission_prestation) || 10,
+      taux_prod: parseFloat(e.taux_commission_produit) || 12,
+      contrat: e.type_contrat || '35H',
+      heures_base: parseFloat(e.heures_mensuelles_base) || 151.67
+    })) : DEFAULT_DEMO_TEMPLATE.employes,
+    catalogue: catRes.rows.length > 0 ? catRes.rows.map(c => ({
+      type_article: c.type_article || 'PRESTATION',
+      nom: c.nom,
+      prix: parseFloat(c.prix) || 0,
+      taux_tva: parseFloat(c.taux_tva) || 20,
+      stock_actuel: parseInt(c.stock_actuel, 10) || 0,
+      seuil_alerte: parseInt(c.seuil_alerte, 10) || 5,
+      reference: c.reference || null,
+      delai: parseInt(c.delai_livraison_jours, 10) || 3,
+      duree: parseInt(c.duree_estimee_minutes, 10) || 30
+    })) : DEFAULT_DEMO_TEMPLATE.catalogue,
+    clients: cliRes.rows.length > 0 ? cliRes.rows.map((cl, idx) => ({
+      prenom: cl.prenom || '',
+      nom: cl.nom || 'Client',
+      email: cl.email || '',
+      telephone: cl.telephone || '0600000000',
+      points: parseInt(cl.points_fidelite, 10) || 50,
+      tampons: parseInt(cl.tampons_fidelite, 10) || 2,
+      days_ago: idx === 4 ? 96 : (idx + 1),
+      winback: cl.remise_winback || null,
+      notes: cl.notes || ''
+    })) : DEFAULT_DEMO_TEMPLATE.clients,
+    factures_fournisseurs: DEFAULT_DEMO_TEMPLATE.factures_fournisseurs
+  };
+}
+
+// Peuplement complet et 100% scellé NF525 d'un salon de présentation "Jetable" toujours calé sur Aujourd'hui (NOW())
+async function peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAgent, customTemplate = null) {
+  const tpl = {
+    employes: customTemplate?.employes?.length >= 2 ? customTemplate.employes : DEFAULT_DEMO_TEMPLATE.employes,
+    catalogue: customTemplate?.catalogue?.length >= 4 ? customTemplate.catalogue : DEFAULT_DEMO_TEMPLATE.catalogue,
+    clients: customTemplate?.clients?.length >= 3 ? customTemplate.clients : DEFAULT_DEMO_TEMPLATE.clients,
+    factures_fournisseurs: customTemplate?.factures_fournisseurs || DEFAULT_DEMO_TEMPLATE.factures_fournisseurs,
+    settings: customTemplate?.settings || {}
+  };
   const now = new Date();
   const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -1854,21 +1909,54 @@ async function peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAge
     prevHashMvt = hashMvt;
   }
 
-  // 11. TICKETS, LIGNES DE TICKET, COMMISSIONS & CLÔTURES Z (100% SCELLÉS SHA-256 CONFORMES NF525)
-  // Ordre chronologique strict du plus ancien (J-15) jusqu'à aujourd'hui (J-0)
-  const ventesDemo = [
-    { days_ago: 15, hour: 11, emp: idCamille, taux: 12, cli: cliSophie,    methode: 'CARTE',   pourboire: 10.00, lines: [{ artIdx: 1, qte: 4 }, { artIdx: 6, qte: 2 }] },
-    { days_ago: 12, hour: 14, emp: idSarah,   taux: 10, cli: cliElodie,    methode: 'CARTE',   pourboire: 15.00, lines: [{ artIdx: 5, qte: 4 }, { artIdx: 7, qte: 2 }] },
-    { days_ago: 10, hour: 15, emp: idLucas,   taux: 10, cli: cliMarc,      methode: 'ESPECES', pourboire: 5.00,  lines: [{ artIdx: 2, qte: 5 }, { artIdx: 10, qte: 2 }] },
-    { days_ago: 8,  hour: 10, emp: idCamille, taux: 12, cli: cliAlexandre, methode: 'CARTE',   pourboire: 12.00, lines: [{ artIdx: 0, qte: 5 }, { artIdx: 4, qte: 3 }] },
-    { days_ago: 6,  hour: 16, emp: idSarah,   taux: 10, cli: cliClara,     methode: 'CARTE',   pourboire: 10.00, lines: [{ artIdx: 1, qte: 3 }, { artIdx: 3, qte: 2 }] },
-    { days_ago: 4,  hour: 11, emp: idLucas,   taux: 10, cli: cliThomas,    methode: 'ESPECES', pourboire: 8.00,  lines: [{ artIdx: 2, qte: 6 }, { artIdx: 4, qte: 2 }] },
-    { days_ago: 2,  hour: 15, emp: idCamille, taux: 12, cli: cliMarine,    methode: 'CARTE',   pourboire: 0.00,  lines: [{ artIdx: 0, qte: 4 }, { artIdx: 8, qte: 2 }] },
-    { days_ago: 1,  hour: 17, emp: idSarah,   taux: 10, cli: cliSophie,    methode: 'CARTE',   pourboire: 15.00, lines: [{ artIdx: 5, qte: 3 }, { artIdx: 6, qte: 3 }] },
-    // Ventes d'aujourd'hui (Journée ouverte non clôturée pour permettre l'encaissement live en démo)
-    { days_ago: 0,  hour: 9,  emp: idCamille, taux: 12, cli: cliSophie,    methode: 'CARTE',   pourboire: 10.00, lines: [{ artIdx: 1, qte: 1 }, { artIdx: 6, qte: 1 }] },
-    { days_ago: 0,  hour: 10, emp: idLucas,   taux: 10, cli: cliThomas,    methode: 'ESPECES', pourboire: 5.00,  lines: [{ artIdx: 2, qte: 1 }, { artIdx: 10, qte: 1 }] }
+  // 11. TICKETS, LIGNES DE TICKET, COMMISSIONS & CLÔTURES Z (Séquence quotidienne continue de J-14 à J-1 sans aucun trou + J-0 ouvert)
+  const empsPool = [
+    { id: idCamille, taux: 12 },
+    { id: idLucas || idCamille, taux: 10 },
+    { id: idSarah || idCamille, taux: 10 }
   ];
+  const clisPool = [cliSophie, cliThomas, cliClara, cliAlexandre, cliMarine, cliElodie || cliSophie, cliMarc || cliThomas];
+  const ventesDemo = [];
+
+  for (let dAgo = 14; dAgo >= 1; dAgo--) {
+    const emp1 = empsPool[dAgo % empsPool.length];
+    const emp2 = empsPool[(dAgo + 1) % empsPool.length];
+    const cli1 = clisPool[dAgo % clisPool.length] || clientRecords[0];
+    const cli2 = clisPool[(dAgo + 2) % clisPool.length] || clientRecords[0];
+
+    ventesDemo.push({
+      days_ago: dAgo,
+      hour: 11,
+      emp: emp1.id,
+      taux: emp1.taux,
+      cli: cli1,
+      methode: 'CARTE',
+      pourboire: (dAgo % 3 === 0) ? 10.00 : 5.00,
+      lines: [
+        { artIdx: dAgo % Math.min(6, catalogueItems.length), qte: 2 },
+        { artIdx: Math.min(6 + (dAgo % 4), catalogueItems.length - 1), qte: 1 }
+      ]
+    });
+
+    ventesDemo.push({
+      days_ago: dAgo,
+      hour: 16,
+      emp: emp2.id,
+      taux: emp2.taux,
+      cli: cli2,
+      methode: (dAgo % 2 === 0) ? 'ESPECES' : 'CARTE',
+      pourboire: (dAgo % 2 === 0) ? 5.00 : 0.00,
+      lines: [
+        { artIdx: (dAgo + 2) % Math.min(6, catalogueItems.length), qte: 2 }
+      ]
+    });
+  }
+
+  // Ventes d'aujourd'hui (J-0 : journée en cours non clôturée pour permettre l'encaissement en direct devant le prospect)
+  ventesDemo.push(
+    { days_ago: 0, hour: 9,  emp: idCamille, taux: 12, cli: cliSophie || clientRecords[0], methode: 'CARTE',   pourboire: 10.00, lines: [{ artIdx: Math.min(1, catalogueItems.length - 1), qte: 1 }, { artIdx: Math.min(6, catalogueItems.length - 1), qte: 1 }] },
+    { days_ago: 0, hour: 10, emp: idLucas || idCamille, taux: 10, cli: cliThomas || clientRecords[0], methode: 'ESPECES', pourboire: 5.00,  lines: [{ artIdx: Math.min(2, catalogueItems.length - 1), qte: 1 }] }
+  );
 
   let prevHashTicket = 'GENESIS_BLOCK';
   let seqTicket = 0;
@@ -2141,17 +2229,31 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
     const prenomAgent = agent.prenom || agent.nom || 'Agent';
     const defaultPinHash = await bcrypt.hash('0000', 10);
 
+    // 1. Sauvegarde de la structure personnalisée (Équipe, Catalogue, Clients) dans demo_custom_snapshot
     if (type === 'DEMO' && action === 'SAVE_CUSTOM') {
       const idDemo = agent.id_salon_demo_actif;
-      if (!idDemo) return res.status(400).json({ error: "Ouvrez d'abord votre salon de démo au moins une fois." });
-      return res.json({ message: "Configuration du salon de démo enregistrée !" });
+      if (!idDemo) return res.status(400).json({ error: "Ouvrez d'abord votre salon de démo au moins une fois avant d'enregistrer." });
+      const customTpl = await extraireTemplatePersonnaliseDemo(idDemo);
+      if (!customTpl) return res.status(400).json({ error: "Impossible de lire la configuration actuelle du salon." });
+      await pool.query(`UPDATE partner_agents SET demo_custom_snapshot = $1 WHERE id_agent = $2`, [JSON.stringify(customTpl), idAgent]);
+      return res.json({ message: "Configuration personnalisée sauvegardée ! Chaque prochain lancement générera un salon frais du jour avec vos paramètres." });
+    }
+
+    // 2. Si clic sur "Recharger pack riche" (RESET_DEFAULT), on efface la sauvegarde perso pour revenir au modèle d'usine STACK
+    let customSnapshot = agent.demo_custom_snapshot;
+    if (type === 'DEMO' && action === 'RESET_DEFAULT') {
+      customSnapshot = null;
+      await pool.query(`UPDATE partner_agents SET demo_custom_snapshot = NULL WHERE id_agent = $1`, [idAgent]).catch(() => {});
     }
 
     const colActiveSlot = type === 'DEMO' ? 'id_salon_demo_actif' : type === 'VIDE' ? 'id_salon_vide_actif' : 'id_salon_onboarding_actif';
     const existingSlotId = agent[colActiveSlot];
 
-    let idSalon = null;
-    let emailSandbox = null;
+    // 3. Philosophie "Jetable" : à chaque lancement, on archive/détache l'ancien salon et on en recrée un 100% frais calé sur NOW()
+    if (existingSlotId) {
+      await archiverEtDetacherSalonTestNF525(existingSlotId);
+    }
+
     const isDemo = type === 'DEMO';
     const nomSalon = type === 'DEMO'
       ? `Maison Éclat — Salon Démo (${prenomAgent})`
@@ -2159,66 +2261,39 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
         ? `Salon d'Entraînement (${prenomAgent})`
         : `Salon Test Onboarding (${prenomAgent})`;
 
-    if (existingSlotId) {
-      const checkExist = await pool.query(
-        `SELECT c.id_salon, u.email FROM configuration_salon c JOIN utilisateurs u ON u.id_salon = c.id_salon WHERE c.id_salon::text = $1`,
-        [String(existingSlotId)]
-      ).catch(() => ({ rowCount: 0 }));
+    const timestamp = Date.now().toString().slice(-6);
+    const emailSandbox = `sandbox.${type.toLowerCase()}.${idAgent}.${timestamp}@stack-sim.fr`;
+    const passwordHash = await bcrypt.hash('Sandbox123!', 10);
 
-      if (checkExist.rowCount > 0) {
-        idSalon = checkExist.rows[0].id_salon;
-        emailSandbox = checkExist.rows[0].email;
-      }
-    }
+    const salonInsert = await pool.query(
+      `INSERT INTO configuration_salon (
+          nom_salon, siret, tva_intra, forme_juridique, capital_social, rcs_ville, adresse_salon,
+          date_fin_essai, plan_actuel, id_agent_apporteur,
+          etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
+          statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox,
+          assujetti_nf525, mode_ecole_nf525, statut_fiscal_nf525, pin_salon, securite_pin_salon_active
+      ) VALUES (
+          $1, '89245163000018', 'FR42892451630', 'SAS', '15 000 €', 'Strasbourg', '14 Place Kléber, 67000 Strasbourg',
+          NOW() + INTERVAL '30 days', $2, NULL,
+          $3, $3, $3, $3, $3,
+          $4, TRUE, $5, NOW() + INTERVAL '24 hours',
+          TRUE, FALSE, 'ASSUJETTI_NF525', $6, FALSE
+      ) RETURNING id_salon`,
+      [nomSalon, isDemo ? 'PREMIUM' : 'PREMIUM_TRIAL', isDemo, isDemo ? 'TERMINE' : 'EN_COURS', type, defaultPinHash]
+    );
+    const idSalon = salonInsert.rows[0].id_salon;
 
-    // Vérifie si le salon Démo existant possède déjà ses données dans `catalogue` et ses tickets scellés
-    let needsFreshCreation = !idSalon || !isDemo || action === 'RESET_DEFAULT' || action === 'RESET_CUSTOM';
-    if (idSalon && isDemo && !needsFreshCreation) {
-      const checkCat = await pool.query(`SELECT COUNT(*)::INT AS nb FROM catalogue WHERE id_salon = $1`, [idSalon]).catch(() => ({ rows: [{ nb: 0 }] }));
-      const checkTkt = await pool.query(`SELECT COUNT(*)::INT AS nb FROM tickets WHERE id_salon = $1 AND hash_ticket IS NOT NULL`, [idSalon]).catch(() => ({ rows: [{ nb: 0 }] }));
-      if ((checkCat.rows[0]?.nb || 0) < 8 || (checkTkt.rows[0]?.nb || 0) < 5) {
-        needsFreshCreation = true;
-      }
-    }
+    await pool.query(
+      `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'actif')`,
+      [emailSandbox, passwordHash, idSalon]
+    );
 
-    if (needsFreshCreation) {
-      if (idSalon) {
-        await archiverEtDetacherSalonTestNF525(idSalon);
-      }
+    await pool.query(`UPDATE partner_agents SET ${colActiveSlot} = $1 WHERE id_agent = $2`, [String(idSalon), idAgent]).catch(() => {});
 
-      const timestamp = Date.now().toString().slice(-6);
-      emailSandbox = `sandbox.${type.toLowerCase()}.${idAgent}.${timestamp}@stack-sim.fr`;
-      const passwordHash = await bcrypt.hash('Sandbox123!', 10);
-
-      const salonInsert = await pool.query(
-        `INSERT INTO configuration_salon (
-            nom_salon, siret, tva_intra, forme_juridique, capital_social, rcs_ville, adresse_salon,
-            date_fin_essai, plan_actuel, id_agent_apporteur,
-            etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
-            statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox,
-            assujetti_nf525, mode_ecole_nf525, statut_fiscal_nf525, pin_salon, securite_pin_salon_active
-        ) VALUES (
-            $1, '89245163000018', 'FR42892451630', 'SAS', '15 000 €', 'Strasbourg', '14 Place Kléber, 67000 Strasbourg',
-            NOW() + INTERVAL '30 days', $2, NULL,
-            $3, $3, $3, $3, $3,
-            $4, TRUE, $5, NOW() + INTERVAL '24 hours',
-            TRUE, FALSE, 'ASSUJETTI_NF525', $6, FALSE
-        ) RETURNING id_salon`,
-        [nomSalon, isDemo ? 'PREMIUM' : 'PREMIUM_TRIAL', isDemo, isDemo ? 'TERMINE' : 'EN_COURS', type, defaultPinHash]
-      );
-      idSalon = salonInsert.rows[0].id_salon;
-
-      await pool.query(
-        `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'actif')`,
-        [emailSandbox, passwordHash, idSalon]
-      );
-
-      await pool.query(`UPDATE partner_agents SET ${colActiveSlot} = $1 WHERE id_agent = $2`, [String(idSalon), idAgent]).catch(() => {});
-
-      if (isDemo) {
-        await peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAgent);
-        await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Direction)`);
-      } else {
+    if (isDemo) {
+      await peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAgent, customSnapshot);
+      await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Direction)`);
+    } else {
         await pool.query(
           `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
           [`${prenomAgent} (Gérant)`, idSalon, defaultPinHash]
