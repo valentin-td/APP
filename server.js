@@ -1127,7 +1127,75 @@ app.post('/api/reset-password', authLimiter, async (req, res) => {
     } catch (e) { res.status(400).json({ erreur: "Lien expiré, déjà utilisé ou falsifié." }); }
 });
 
+// Middleware SSO Sandbox & Bypass du popup légal uniquement pour les salons DEMO et VIDE (le salon ONBOARDING garde le tunnel légal pour s'exercer)
+app.use(async (req, res, next) => {
+    try {
+        // 1. Si le frontend appelle l'API avec ?sandbox_token= ou un Referer contenant sandbox_token=, on injecte automatiquement l'Authorization et le Cookie
+        let sbToken = req.query?.sandbox_token || req.query?.token_api;
+        if (!sbToken && req.headers.referer && req.headers.referer.includes('sandbox_token=')) {
+            const urlRef = new URL(req.headers.referer);
+            sbToken = urlRef.searchParams.get('sandbox_token') || urlRef.searchParams.get('token_api');
+        }
+        if (sbToken && !req.headers.authorization) {
+            req.headers.authorization = `Bearer ${sbToken}`;
+            res.cookie('token', sbToken, { httpOnly: true, secure: true, sameSite: 'none', path: '/', maxAge: 24 * 60 * 60 * 1000 });
+        }
+
+        // 2. Si le module légal est interrogé pour un salon DEMO ou VIDE, on répond que les CGV sont déjà signées pour ouvrir directement la caisse !
+        if (req.path.startsWith('/api/legal')) {
+            let tokenToDecode = sbToken;
+            if (!tokenToDecode && req.headers.authorization) {
+                tokenToDecode = req.headers.authorization.split(' ')[1];
+            }
+            if (!tokenToDecode && req.headers.cookie) {
+                const c = req.headers.cookie.split(';').map(x => x.trim()).find(x => x.startsWith('token='));
+                if (c) tokenToDecode = c.split('=')[1];
+            }
+            if (tokenToDecode) {
+                const dec = jwt.verify(tokenToDecode, process.env.JWT_SECRET);
+                if (dec && dec.id_salon) {
+                    if (!req.headers.authorization) req.headers.authorization = `Bearer ${tokenToDecode}`;
+                    const sRes = await pool.query('SELECT est_bac_a_sable, type_bac_a_sable, nom_salon, siret, adresse_salon FROM configuration_salon WHERE id_salon = $1', [dec.id_salon]);
+                    if (sRes.rowCount > 0) {
+                        const salon = sRes.rows[0];
+                        if (salon.est_bac_a_sable && (salon.type_bac_a_sable === 'DEMO' || salon.type_bac_a_sable === 'VIDE') && req.method === 'GET') {
+                            return res.json({
+                                en_attente: [],
+                                documents_en_attente: [],
+                                documents: [],
+                                tout_accepte: true,
+                                conforme: true,
+                                preremplissage: {
+                                    prenom_gerant: 'Agent',
+                                    nom_gerant: 'STACK',
+                                    nom_salon: salon.nom_salon,
+                                    adresse_salon: salon.adresse_salon || '14 Place Kléber, 67000 Strasbourg',
+                                    siret: salon.siret || '89245163000018',
+                                    email: dec.email
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {}
+    next();
+});
+
 // Module légal : acceptation électronique des documents contractuels (CGV, RGPD, SEPA, NF525, prêt du TPE)
+const originalDocumentsEnAttente = legal.documentsEnAttente;
+if (typeof originalDocumentsEnAttente === 'function') {
+    legal.documentsEnAttente = async (poolArg, idSalon) => {
+        try {
+            const s = await pool.query('SELECT est_bac_a_sable, type_bac_a_sable FROM configuration_salon WHERE id_salon = $1', [idSalon]);
+            if (s.rowCount > 0 && s.rows[0].est_bac_a_sable && s.rows[0].type_bac_a_sable !== 'ONBOARDING') {
+                return [];
+            }
+        } catch (e) {}
+        return originalDocumentsEnAttente(poolArg, idSalon);
+    };
+}
 legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, nodemailer, crypto });
 
 // Module Portail Partenaires (Agents Commerciaux)
