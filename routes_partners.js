@@ -1419,387 +1419,387 @@ const getAgentIdFromReq = (req) => req.agent?.id_agent || req.agent?.id || req.u
 
 
 // ============================================================================
-// 3. MOTEUR SANDBOX CERTIFIÉ "MODE ÉCOLE HORS-NF525" (ZÉRO POLLUTION FISCALE)
-//    + PEUPLEMENT RICHE : BILANS, LIASSE COMPTABLE, STOCK, PLANNING,
-//      ARRÊT MALADIE & AVIS GOOGLE AVEC SAUVETAGE CLIENT (WINBACK)
+// 3. MOTEUR SANDBOX "MODE ÉCOLE HORS-NF525" ALIGNÉ SUR LE SCHÉMA EXACT CAISSE
+//    (UUID / INTEGER auto-compatible, articles, clients, rendez_vous,
+//     absences_employes, avis_clients, tickets, lignes_ticket, depenses_fournisseurs)
 // ============================================================================
 
 const DEFAULT_DEMO_TEMPLATE = {
-  mention_legale: "ENVIRONNEMENT DE SIMULATION COMMERCIALE (MODE ÉCOLE HORS-CHAMP NF525) — SANS VALEUR FISCALE NI COMPTABLE",
   employes: [
-    { nom: 'Camille (Directrice Artistique)', role: 'Employé', specialite: 'Coupe & Balayage', statut_presence: 'PRESENT', couleur: '#863bff' },
-    { nom: 'Lucas (Maître Barbier & Coloriste)', role: 'Employé', specialite: 'Homme & Barbe', statut_presence: 'CONGE_PREVU', motif_absence: 'Congé payé posé (Vendredi)', couleur: '#2563eb' },
-    { nom: 'Sarah (Spécialiste Balayage & Soins)', role: 'Employé', specialite: 'Technique & Soins', statut_presence: 'PRESENT', couleur: '#10b981' },
-    { nom: 'Chloé (Coiffeuse Mixte — EN ARRÊT MALADIE)', role: 'Employé', specialite: 'Coiffure Mixte', statut_presence: 'ARRET_MALADIE', motif_absence: 'Arrêt maladie Cerfa (J-2 à J+5) — 4 RDV réassignés automatiquement', couleur: '#ef4444' }
+    { nom: 'Camille (Directrice Artistique)', role: 'Employé' },
+    { nom: 'Lucas (Maître Barbier & Coloriste)', role: 'Employé' },
+    { nom: 'Sarah (Spécialiste Balayage & Soins)', role: 'Employé' },
+    { nom: 'Chloé (Coiffeuse Mixte — En Arrêt Maladie)', role: 'Employé' }
   ],
   articles: [
-    { nom: 'Coupe Femme + Shampoing + Brushing Signature', prix: 58, prix_achat_ht: 4.5, tva: 20, categorie: 'Prestation', stock: 999, seuil_alerte: 0, duree: 60 },
-    { nom: 'Balayage Minéral + Patine Gloss + Soin Profond', prix: 145, prix_achat_ht: 18.0, tva: 20, categorie: 'Prestation', stock: 999, seuil_alerte: 0, duree: 135 },
-    { nom: 'Coupe Homme Dégradé Américain & Taille de Barbe', prix: 42, prix_achat_ht: 2.5, tva: 20, categorie: 'Prestation', stock: 999, seuil_alerte: 0, duree: 45 },
-    { nom: 'Soin Profond Botox & Kératine Végétale', prix: 65, prix_achat_ht: 9.2, tva: 20, categorie: 'Prestation', stock: 999, seuil_alerte: 0, duree: 45 },
-    { nom: 'Coloration Racines Sans Ammoniaque + Brushing', prix: 78, prix_achat_ht: 11.0, tva: 20, categorie: 'Prestation', stock: 999, seuil_alerte: 0, duree: 90 },
-    { nom: 'Ombré Hair Californien + Rituel Olaplex', prix: 165, prix_achat_ht: 22.0, tva: 20, categorie: 'Prestation', stock: 999, seuil_alerte: 0, duree: 150 },
-    { nom: 'Shampoing Réparateur Pro Kératine 250ml', prix: 29, prix_achat_ht: 11.5, tva: 20, categorie: 'Produit', stock: 24, seuil_alerte: 5, duree: 0 },
-    { nom: 'Masque Nutritif Intense Argan Bio 500ml', prix: 44, prix_achat_ht: 17.8, tva: 20, categorie: 'Produit', stock: 14, seuil_alerte: 5, duree: 0 },
-    { nom: 'Huile Élixir Pointes Sèches 100ml [ALERTE STOCK BAS]', prix: 36, prix_achat_ht: 13.2, tva: 20, categorie: 'Produit', stock: 2, seuil_alerte: 6, duree: 0 },
-    { nom: 'Spray Thermo-Protecteur Brushing 200ml [RUPTURE IMMINENTE]', prix: 27, prix_achat_ht: 9.8, tva: 20, categorie: 'Produit', stock: 1, seuil_alerte: 5, duree: 0 },
-    { nom: 'Cire Mate Coiffante Barber Club 100ml', prix: 22, prix_achat_ht: 7.9, tva: 20, categorie: 'Produit', stock: 19, seuil_alerte: 5, duree: 0 }
+    // PRESTATIONS
+    { type_article: 'PRESTATION', nom: 'Coupe Femme + Shampoing + Brushing Signature', prix_ht: 48.33, taux_tva: 20.00, prix_ttc: 58.00, quantite_stock: null, seuil_alerte: 0, code_barre: 'PREST-001' },
+    { type_article: 'PRESTATION', nom: 'Balayage Minéral + Patine Gloss + Soin Profond', prix_ht: 120.83, taux_tva: 20.00, prix_ttc: 145.00, quantite_stock: null, seuil_alerte: 0, code_barre: 'PREST-002' },
+    { type_article: 'PRESTATION', nom: 'Coupe Homme Dégradé Américain & Taille de Barbe', prix_ht: 35.00, taux_tva: 20.00, prix_ttc: 42.00, quantite_stock: null, seuil_alerte: 0, code_barre: 'PREST-003' },
+    { type_article: 'PRESTATION', nom: 'Soin Profond Botox & Kératine Végétale', prix_ht: 54.17, taux_tva: 20.00, prix_ttc: 65.00, quantite_stock: null, seuil_alerte: 0, code_barre: 'PREST-004' },
+    { type_article: 'PRESTATION', nom: 'Coloration Racines Sans Ammoniaque + Brushing', prix_ht: 65.00, taux_tva: 20.00, prix_ttc: 78.00, quantite_stock: null, seuil_alerte: 0, code_barre: 'PREST-005' },
+    { type_article: 'PRESTATION', nom: 'Ombré Hair Californien + Rituel Olaplex', prix_ht: 137.50, taux_tva: 20.00, prix_ttc: 165.00, quantite_stock: null, seuil_alerte: 0, code_barre: 'PREST-006' },
+    // PRODUITS EN STOCK (dont 2 en alerte de rupture : quantite_stock <= seuil_alerte)
+    { type_article: 'PRODUIT', nom: 'Shampoing Réparateur Pro Kératine 250ml', prix_ht: 24.17, taux_tva: 20.00, prix_ttc: 29.00, quantite_stock: 18, seuil_alerte: 5, code_barre: '3474636901012' },
+    { type_article: 'PRODUIT', nom: 'Masque Nutritif Intense Argan Bio 500ml', prix_ht: 36.67, taux_tva: 20.00, prix_ttc: 44.00, quantite_stock: 12, seuil_alerte: 5, code_barre: '3474636901029' },
+    { type_article: 'PRODUIT', nom: 'Huile Élixir Pointes Sèches 100ml', prix_ht: 30.00, taux_tva: 20.00, prix_ttc: 36.00, quantite_stock: 2, seuil_alerte: 6, code_barre: '3474636901036' },
+    { type_article: 'PRODUIT', nom: 'Spray Thermo-Protecteur Brushing 200ml', prix_ht: 22.50, taux_tva: 20.00, prix_ttc: 27.00, quantite_stock: 1, seuil_alerte: 5, code_barre: '3474636901043' },
+    { type_article: 'PRODUIT', nom: 'Cire Mate Coiffante Barber Club 100ml', prix_ht: 18.33, taux_tva: 20.00, prix_ttc: 22.00, quantite_stock: 15, seuil_alerte: 5, code_barre: '3474636901050' }
   ],
   clients: [
-    { nom: 'Marine Lefèvre (AVIS 2★ — SAUVETAGE WINBACK ACTIF)', telephone: '0611223344', email: 'marine.lefevre.demo@exemple.fr', notes: 'ALERTE WINBACK : Avis Google 2/5 déposé hier ("25 min de retard + brushing qui n\'a pas tenu"). Offre de sauvetage automatique (-30% + Soin Kératine Offert) générée.', note_google: 2, statut_winback: 'A_SAUVER_URGENT' },
-    { nom: 'Sophie Martin (Cliente VIP — 5★ Google)', telephone: '0612345678', email: 'sophie.martin.demo@exemple.fr', notes: 'Cliente fidèle (Balayage Minéral toutes les 8 semaines). Achat régulier Shampoing Kératine.', note_google: 5, statut_winback: 'FIDELE' },
-    { nom: 'Thomas Bernard (Abonné Barber — 5★ Google)', telephone: '0698765432', email: 'thomas.b.demo@exemple.fr', notes: 'Coupe Homme + Barbe toutes les 3 semaines avec Lucas.', note_google: 5, statut_winback: 'FIDELE' },
-    { nom: 'Clara Dubois (5★ Google)', telephone: '0645678910', email: 'clara.dubois.demo@exemple.fr', notes: 'Soin Botox Kératine + Coupe Signature. Préfère les créneaux du matin.', note_google: 5, statut_winback: 'FIDELE' },
-    { nom: 'Julie Mercier (Inactivité > 95j — Relance Auto)', telephone: '0677889900', email: 'julie.mercier.demo@exemple.fr', notes: 'Aucune visite depuis 98 jours. SMS de Winback automatique envoyé (-15% sur son prochain balayage).', note_google: 4, statut_winback: 'RELANCE_INACTIVITE_ENVOYEE' }
+    { prenom: 'Marine', nom: 'Lefèvre', email: 'marine.lefevre@exemple.fr', telephone: '0611223344', fidelite_points: 40, days_ago: 1 },
+    { prenom: 'Sophie', nom: 'Martin', email: 'sophie.martin@exemple.fr', telephone: '0612345678', fidelite_points: 320, days_ago: 3 },
+    { prenom: 'Thomas', nom: 'Bernard', email: 'thomas.bernard@exemple.fr', telephone: '0698765432', fidelite_points: 180, days_ago: 5 },
+    { prenom: 'Clara', nom: 'Dubois', email: 'clara.dubois@exemple.fr', telephone: '0645678910', fidelite_points: 210, days_ago: 7 },
+    { prenom: 'Julie', nom: 'Mercier', email: 'julie.mercier@exemple.fr', telephone: '0677889900', fidelite_points: 95, days_ago: 98 },
+    { prenom: 'Alexandre', nom: 'Petit', email: 'alex.petit@exemple.fr', telephone: '0655443322', fidelite_points: 150, days_ago: 12 }
   ],
-  planning_rdv: [
-    { client_nom: 'Sophie Martin', employe_nom: 'Camille (Directrice Artistique)', prestation: 'Balayage Minéral + Patine Gloss + Soin Profond', heure_debut: '09:30', heure_fin: '11:45', prix: 145, statut: 'TERMINE', note: 'Ravie du résultat' },
-    { client_nom: 'Thomas Bernard', employe_nom: 'Lucas (Maître Barbier & Coloriste)', prestation: 'Coupe Homme Dégradé Américain & Taille de Barbe', heure_debut: '10:00', heure_fin: '10:45', prix: 42, statut: 'TERMINE', note: 'A acheté 1 Cire Mate (22€)' },
-    { client_nom: 'Clara Dubois', employe_nom: 'Sarah (Spécialiste Balayage & Soins)', prestation: 'Coupe Femme + Shampoing + Brushing Signature', heure_debut: '11:00', heure_fin: '12:00', prix: 58, statut: 'EN_COURS', note: 'RDV initialement prévu avec Chloé (Réassigné suite arrêt maladie)' },
-    { client_nom: 'Marine Lefèvre', employe_nom: 'Camille (Directrice Artistique)', prestation: 'Soin Profond Botox & Kératine Végétale (RDV Sauvetage Winback)', heure_debut: '14:00', heure_fin: '14:45', prix: 45, statut: 'CONFIRME', note: 'SAUVETAGE CLIENT SUITE AVIS 2★ : Offrir le soin Kératine' },
-    { client_nom: 'Julie Mercier', employe_nom: 'Sarah (Spécialiste Balayage & Soins)', prestation: 'Ombré Hair Californien + Rituel Olaplex', heure_debut: '15:00', heure_fin: '17:30', prix: 165, statut: 'CONFIRME', note: 'Retour cliente après relance Winback 90 jours' },
-    { client_nom: 'ABSENCE : Arrêt Maladie Cerfa', employe_nom: 'Chloé (Coiffeuse Mixte — EN ARRÊT MALADIE)', prestation: 'ARRÊT MALADIE (Journée entière bloquée)', heure_debut: '09:00', heure_fin: '19:00', prix: 0, statut: 'ARRET_MALADIE', note: 'Certificat médical reçu — 4 RDV transférés à Camille et Sarah' }
-  ],
-  avis_google: [
-    { client_nom: 'Marine Lefèvre', note: 2, commentaire: "Attente de 25 minutes malgré mon rendez-vous et mon brushing n'a pas tenu le soir même. Déçue pour le prix.", date_avis: 'Hier à 19h40', statut_sauvetage: 'WINBACK_DECLENCHE', reponse_ia_proposee: "Bonjour Marine, nous sommes sincèrement navrés pour ce retard inhabituel dû à l'absence médicale d'une collaboratrice. Pour nous faire pardonner, Camille vous offre votre prochain Soin Profond Kératine + Brushing (bon de sauvetage envoyé par SMS)." },
-    { client_nom: 'Sophie Martin', note: 5, commentaire: "Meilleur salon de la ville ! Le balayage minéral de Camille est incroyable et l'accueil est toujours parfait.", date_avis: 'Il y a 2 jours', statut_sauvetage: 'REMERCIEMENT_AUTO_ENVOYE', reponse_ia_proposee: "Merci infiniment Sophie pour votre fidélité et vos 5 étoiles !" },
-    { client_nom: 'Thomas Bernard', note: 5, commentaire: "Lucas est un vrai maître barbier. Zéro attente, coupe et barbe impeccables.", date_avis: 'Il y a 4 jours', statut_sauvetage: 'REMERCIEMENT_AUTO_ENVOYE', reponse_ia_proposee: "Merci Thomas ! À très vite au salon." },
-    { client_nom: 'Clara Dubois', note: 5, commentaire: "Le soin botox kératine a transformé mes cheveux. Prise en charge au top par Sarah malgré l'arrêt maladie de ma coiffeuse habituelle !", date_avis: 'Il y a 5 jours', statut_sauvetage: 'REMERCIEMENT_AUTO_ENVOYE', reponse_ia_proposee: "Merci beaucoup Clara, toute l'équipe est ravie !" }
-  ],
-  comptabilite_liasse: {
-    mention_nf525: "DONNÉES DE DÉMONSTRATION HORS-CHAMP NF525 — SIMULATION ÉCOLE",
-    periode: new Date().toISOString().slice(0, 7),
-    ca_mensuel_ht: 18450.00,
-    ca_mensuel_ttc: 22140.00,
-    ca_prestations_ht: 14390.00,
-    ca_produits_ht: 4060.00,
-    tva_collectee: 3690.00,
-    tva_deductible: 642.00,
-    tva_a_decaisser: 3048.00,
-    charges_achats_ht: 2540.00,
-    charges_fixes_ht: 3120.00,
-    masse_salariale_chargee: 7970.00,
-    resultat_net_comptable: 4820.00,
-    marge_brute_pct: 86.2,
-    panier_moyen_ttc: 68.50,
-    liasse_2033A_bilan: {
-      actif_immobilise_net: 42500.00,
-      stock_marchandises_ht: 4890.00,
-      disponibilites_banque: 28640.00,
-      total_actif: 76030.00,
-      capitaux_propres: 51200.00,
-      emprunts_dettes_financieres: 16400.00,
-      dettes_fournisseurs_fiscales: 8430.00,
-      total_passif: 76030.00
-    },
-    factures_fournisseurs_ia: [
-      { fournisseur: "L'Oréal Professionnel Paris", numero: 'FA-LOREAL-88412', categorie: 'Achats Produits & Couleurs', montant_ht: 640.00, tva: 128.00, montant_ttc: 768.00, statut: 'SCANNÉE IA & LETTRÉE' },
-      { fournisseur: 'Wella Professionals Studio', numero: 'FA-WELLA-30941', categorie: 'Soins & Technique Bac', montant_ht: 310.00, tva: 62.00, montant_ttc: 372.00, statut: 'SCANNÉE IA & LETTRÉE' },
-      { fournisseur: 'SCI Palais Royal (Loyer Salon)', numero: 'QUITTANCE-10-2026', categorie: 'Loyer & Charges Locatives', montant_ht: 1250.00, tva: 250.00, montant_ttc: 1500.00, statut: 'SCANNÉE IA & LETTRÉE' },
-      { fournisseur: 'EDF Entreprises Pro', numero: 'EDF-9920144', categorie: 'Énergie & Eau', montant_ht: 185.00, tva: 37.00, montant_ttc: 222.00, statut: 'SCANNÉE IA & LETTRÉE' },
-      { fournisseur: 'URSSAF & Cotisations Sociales', numero: 'DSN-MENSUELLE', categorie: 'Charges Sociales (DSN)', montant_ht: 2450.00, tva: 0.00, montant_ttc: 2450.00, statut: 'PRÉLÈVEMENT VALIDÉ' }
-    ]
-  }
+  depenses_fournisseurs: [
+    { nom_fournisseur: "L'Oréal Professionnel Paris", montant_ht: 840.00, montant_tva: 168.00, montant_ttc: 1008.00, type_compte: 'CONSOMMABLE_SALON_601', statut_validation: 'VALIDE' },
+    { nom_fournisseur: 'Wella Professionals Studio ( Gamme Revente )', montant_ht: 620.00, montant_tva: 124.00, montant_ttc: 744.00, type_compte: 'MARCHANDISE_REVENTE_607', statut_validation: 'VALIDE' },
+    { nom_fournisseur: 'Olaplex France Distribution', montant_ht: 410.00, montant_tva: 82.00, montant_ttc: 492.00, type_compte: 'CONSOMMABLE_SALON_601', statut_validation: 'VALIDE' },
+    { nom_fournisseur: 'Grossiste Barber Supply Pro', montant_ht: 290.00, montant_tva: 58.00, montant_ttc: 348.00, type_compte: 'MARCHANDISE_REVENTE_607', statut_validation: 'VALIDE' },
+    { nom_fournisseur: ' Schwarzkopf Professional (Facture scannée IA à vérifier)', montant_ht: 355.00, montant_tva: 71.00, montant_ttc: 426.00, type_compte: 'CONSOMMABLE_SALON_601', statut_validation: 'A_FAIRE' }
+  ]
 };
 
-// Fonction utilitaire : Purge intégrale d'un salon bac à sable et de toutes ses tables filles (Conformité NF525)
+// Purge propre de toutes les données d'un salon bac à sable (100% compatible UUID et INTEGER)
 async function purgerSalonSandboxComplet(idSalon) {
   if (!idSalon) return;
+  const sid = String(idSalon);
+  await pool.query(`DELETE FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_salon::text = $1)`, [sid]).catch(() => {});
   const tablesFilles = [
-    'employes', 'articles', 'clients', 'utilisateurs',
-    'rendez_vous', 'planning', 'absences_employes', 'avis_clients',
-    'depenses', 'factures_fournisseurs', 'bilans_comptables', 'ventes', 'tickets'
+    'tickets', 'depenses_fournisseurs', 'avis_clients',
+    'rendez_vous', 'absences_employes', 'articles',
+    'clients', 'employes', 'utilisateurs'
   ];
   for (const tbl of tablesFilles) {
-    await pool.query(`DELETE FROM ${tbl} WHERE id_salon = $1`, [idSalon]).catch(() => {});
+    await pool.query(`DELETE FROM ${tbl} WHERE id_salon::text = $1`, [sid]).catch(() => {});
   }
-  await pool.query(`DELETE FROM configuration_salon WHERE id_salon = $1 AND COALESCE(est_bac_a_sable, FALSE) = TRUE`, [idSalon]).catch(() => {});
+  await pool.query(`DELETE FROM configuration_salon WHERE id_salon::text = $1 AND COALESCE(est_bac_a_sable, FALSE) = TRUE`, [sid]).catch(() => {});
 }
 
-// Peuplement complet, intelligent et auto-adaptatif du Salon Démo (Hors-Champ NF525)
+// Peuplement exact selon le schéma SQL de app-salon-caiss.onrender.com
 async function peuplerSalonDemoSafe(idSalon, template, defaultPinHash, prenomAgent) {
-  const tpl = template && template.articles?.length > 0 ? { ...DEFAULT_DEMO_TEMPLATE, ...template } : DEFAULT_DEMO_TEMPLATE;
+  const sid = String(idSalon);
+  const tpl = DEFAULT_DEMO_TEMPLATE;
 
-  // 1. S'assurer que les tables de la Caisse possèdent toutes les colonnes nécessaires au mode Démo riche
+  // 1. Nettoyage préalable des tables du salon de démo uniquement
+  await pool.query(`DELETE FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_salon::text = $1)`, [sid]).catch(() => {});
+  for (const tbl of ['tickets', 'depenses_fournisseurs', 'avis_clients', 'rendez_vous', 'absences_employes', 'articles', 'clients', 'employes']) {
+    await pool.query(`DELETE FROM ${tbl} WHERE id_salon::text = $1`, [sid]).catch(() => {});
+  }
+
+  // Marquage Hors-Champ NF525 sur configuration_salon
   await pool.query(`
     ALTER TABLE configuration_salon
     ADD COLUMN IF NOT EXISTS assujetti_nf525 BOOLEAN DEFAULT TRUE,
     ADD COLUMN IF NOT EXISTS mode_ecole_nf525 BOOLEAN DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS statut_fiscal_nf525 VARCHAR(80) DEFAULT 'ASSUJETTI_NF525',
-    ADD COLUMN IF NOT EXISTS mention_legale_nf525 TEXT DEFAULT NULL,
-    ADD COLUMN IF NOT EXISTS note_google_moyenne NUMERIC(3,1) DEFAULT 4.8,
-    ADD COLUMN IF NOT EXISTS nb_avis_google INTEGER DEFAULT 142,
-    ADD COLUMN IF NOT EXISTS demo_bilan_liasse JSONB DEFAULT NULL,
-    ADD COLUMN IF NOT EXISTS demo_avis_winback JSONB DEFAULT NULL,
-    ADD COLUMN IF NOT EXISTS demo_planning_rh JSONB DEFAULT NULL;
+    ADD COLUMN IF NOT EXISTS statut_fiscal_nf525 VARCHAR(80) DEFAULT 'ASSUJETTI_NF525';
   `).catch(() => {});
 
-  await pool.query(`
-    ALTER TABLE employes
-    ADD COLUMN IF NOT EXISTS specialite VARCHAR(120) DEFAULT 'Coiffure Mixte',
-    ADD COLUMN IF NOT EXISTS statut_presence VARCHAR(50) DEFAULT 'PRESENT',
-    ADD COLUMN IF NOT EXISTS motif_absence TEXT DEFAULT NULL,
-    ADD COLUMN IF NOT EXISTS couleur VARCHAR(25) DEFAULT '#111827';
-  `).catch(() => {});
-
-  await pool.query(`
-    ALTER TABLE articles
-    ADD COLUMN IF NOT EXISTS categorie VARCHAR(80) DEFAULT 'Prestation',
-    ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 999,
-    ADD COLUMN IF NOT EXISTS quantite_stock INTEGER DEFAULT 999,
-    ADD COLUMN IF NOT EXISTS seuil_alerte INTEGER DEFAULT 5,
-    ADD COLUMN IF NOT EXISTS prix_achat_ht NUMERIC(10,2) DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS tva NUMERIC(5,2) DEFAULT 20.00,
-    ADD COLUMN IF NOT EXISTS duree INTEGER DEFAULT 45;
-  `).catch(() => {});
-
-  await pool.query(`
-    ALTER TABLE clients
-    ADD COLUMN IF NOT EXISTS telephone VARCHAR(40) DEFAULT '',
-    ADD COLUMN IF NOT EXISTS email VARCHAR(180) DEFAULT '',
-    ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
-    ADD COLUMN IF NOT EXISTS note_google INTEGER DEFAULT 5,
-    ADD COLUMN IF NOT EXISTS statut_winback VARCHAR(60) DEFAULT 'FIDELE',
-    ADD COLUMN IF NOT EXISTS derniere_visite TIMESTAMP DEFAULT NOW() - INTERVAL '14 days';
-  `).catch(() => {});
-
-  // Création des tables de démonstration (Rendez-vous/Planning, Absences/Arrêts maladie, Avis Google/Winback, Factures/Liasse/Bilans) si absentes
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS rendez_vous (
-      id_rdv SERIAL PRIMARY KEY,
-      id_salon INTEGER NOT NULL,
-      id_employe INTEGER,
-      employe_nom VARCHAR(180),
-      client_nom VARCHAR(180),
-      prestation VARCHAR(255),
-      date_rdv DATE DEFAULT CURRENT_DATE,
-      heure_debut VARCHAR(20),
-      heure_fin VARCHAR(20),
-      prix NUMERIC(10,2) DEFAULT 0,
-      statut VARCHAR(50) DEFAULT 'CONFIRME',
-      note TEXT DEFAULT '',
-      est_mode_ecole BOOLEAN DEFAULT TRUE
-    );
-    CREATE TABLE IF NOT EXISTS absences_employes (
-      id_absence SERIAL PRIMARY KEY,
-      id_salon INTEGER NOT NULL,
-      id_employe INTEGER,
-      employe_nom VARCHAR(180),
-      type_absence VARCHAR(60) DEFAULT 'ARRET_MALADIE',
-      motif TEXT,
-      date_debut DATE DEFAULT CURRENT_DATE - INTERVAL '2 days',
-      date_fin DATE DEFAULT CURRENT_DATE + INTERVAL '5 days',
-      justificatif_recu BOOLEAN DEFAULT TRUE,
-      statut VARCHAR(40) DEFAULT 'VALIDE'
-    );
-    CREATE TABLE IF NOT EXISTS avis_clients (
-      id_avis SERIAL PRIMARY KEY,
-      id_salon INTEGER NOT NULL,
-      client_nom VARCHAR(180),
-      note INTEGER NOT NULL,
-      commentaire TEXT,
-      date_avis VARCHAR(80),
-      statut_sauvetage VARCHAR(80) DEFAULT 'WINBACK_DECLENCHE',
-      reponse_ia_proposee TEXT,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS factures_fournisseurs (
-      id_facture_fournisseur SERIAL PRIMARY KEY,
-      id_salon INTEGER NOT NULL,
-      fournisseur VARCHAR(180),
-      numero_facture VARCHAR(100),
-      categorie VARCHAR(120),
-      montant_ht NUMERIC(10,2),
-      montant_tva NUMERIC(10,2),
-      montant_ttc NUMERIC(10,2),
-      statut VARCHAR(60) DEFAULT 'SCANNÉE IA & LETTRÉE',
-      date_facture DATE DEFAULT CURRENT_DATE - INTERVAL '5 days',
-      hors_champ_nf525 BOOLEAN DEFAULT TRUE
-    );
-    CREATE TABLE IF NOT EXISTS bilans_comptables (
-      id_bilan SERIAL PRIMARY KEY,
-      id_salon INTEGER NOT NULL,
-      periode_mois VARCHAR(20),
-      ca_ht NUMERIC(12,2),
-      ca_ttc NUMERIC(12,2),
-      charges_ht NUMERIC(12,2),
-      tva_a_decaisser NUMERIC(12,2),
-      resultat_net NUMERIC(12,2),
-      liasse_json JSONB,
-      mention_nf525 TEXT DEFAULT 'SIMULATION MODE ÉCOLE HORS-CHAMP NF525',
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `).catch(() => {});
-
-  // 2. Marquage strict du salon en Mode École Hors-Champ NF525 + Sauvegarde JSONB complète
   await pool.query(`
     UPDATE configuration_salon
     SET siret = '00000000000000',
         est_bac_a_sable = TRUE,
         assujetti_nf525 = FALSE,
         mode_ecole_nf525 = TRUE,
-        statut_fiscal_nf525 = 'EXEMPTE_SIMULATION_COMMERCIALE_HORS_NF525',
-        mention_legale_nf525 = $1,
-        note_google_moyenne = 4.8,
-        nb_avis_google = 142,
-        demo_bilan_liasse = $2,
-        demo_avis_winback = $3,
-        demo_planning_rh = $4,
+        statut_fiscal_nf525 = 'MODE_ECOLE_HORS_NF525',
         etape_materiel_ok = TRUE,
         etape_catalogue_ok = TRUE,
         etape_equipe_ok = TRUE,
         etape_stripe_ok = TRUE,
         etape_formation_ok = TRUE,
         statut_onboarding = 'TERMINE'
-    WHERE id_salon = $5
-  `, [
-    tpl.mention_legale,
-    JSON.stringify(tpl.comptabilite_liasse || DEFAULT_DEMO_TEMPLATE.comptabilite_liasse),
-    JSON.stringify(tpl.avis_google || DEFAULT_DEMO_TEMPLATE.avis_google),
-    JSON.stringify(tpl.planning_rdv || DEFAULT_DEMO_TEMPLATE.planning_rdv),
-    idSalon
-  ]).catch(() => {});
+    WHERE id_salon::text = $1
+  `, [sid]).catch(() => {});
 
-  // 3. Nettoyage avant re-peuplement propre
-  await pool.query(`DELETE FROM employes WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await pool.query(`DELETE FROM articles WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await pool.query(`DELETE FROM clients WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await pool.query(`DELETE FROM rendez_vous WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await pool.query(`DELETE FROM absences_employes WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await pool.query(`DELETE FROM avis_clients WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await pool.query(`DELETE FROM factures_fournisseurs WHERE id_salon = $1`, [idSalon]).catch(() => {});
-  await pool.query(`DELETE FROM bilans_comptables WHERE id_salon = $1`, [idSalon]).catch(() => {});
-
-  // 4. Insertion Équipe (dont Chloé en Arrêt Maladie et Lucas en Congé prévu)
-  const mapEmployeIds = {};
-  const gerantIns = await pool.query(
-    `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant, specialite, statut_presence, couleur)
-     VALUES ($1, 'Gérant', $2, $3, TRUE, 'Direction & Coiffure', 'PRESENT', '#111827') RETURNING id_employe`,
+  // 2. EMPLOYÉS (Gérant + 4 collaborateurs dont Chloé en arrêt maladie)
+  const employeIds = [];
+  const insGerant = await pool.query(
+    `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE) RETURNING id_employe`,
     [`${prenomAgent} (Gérant Démo)`, idSalon, defaultPinHash]
   ).catch(() => ({ rows: [] }));
+  if (insGerant.rows?.[0]?.id_employe) employeIds.push(insGerant.rows[0].id_employe);
 
-  for (const emp of (tpl.employes || DEFAULT_DEMO_TEMPLATE.employes)) {
-    try {
-      const rEmp = await pool.query(
-        `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant, specialite, statut_presence, motif_absence, couleur)
-         VALUES ($1, $2, $3, $4, FALSE, $5, $6, $7, $8) RETURNING id_employe`,
-        [emp.nom, emp.role || 'Employé', idSalon, defaultPinHash, emp.specialite || 'Coiffure', emp.statut_presence || 'PRESENT', emp.motif_absence || null, emp.couleur || '#863bff']
-      );
-      if (rEmp.rows?.[0]?.id_employe) mapEmployeIds[emp.nom] = rEmp.rows[0].id_employe;
-    } catch (eEmp) {
+  for (const emp of tpl.employes) {
+    const rEmp = await pool.query(
+      `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, $2, $3, $4, FALSE) RETURNING id_employe`,
+      [emp.nom, emp.role || 'Employé', idSalon, defaultPinHash]
+    ).catch(() => ({ rows: [] }));
+    if (rEmp.rows?.[0]?.id_employe) employeIds.push(rEmp.rows[0].id_employe);
+  }
+
+  const idCamille = employeIds[1] || employeIds[0];
+  const idLucas   = employeIds[2] || employeIds[0];
+  const idSarah   = employeIds[3] || employeIds[0];
+  const idChloe   = employeIds[4] || employeIds[0];
+
+  // 3. ABSENCES & ARRÊTS MALADIE (Table absences_employes : statut 'VALIDE' pour bloquer l'agenda)
+  if (idChloe) {
+    await pool.query(
+      `INSERT INTO absences_employes (id_absence, id_salon, id_employe, type_absence, date_debut, date_fin, statut)
+       VALUES ($1, $2, $3, 'MALADIE', CURRENT_DATE - INTERVAL '1 day', CURRENT_DATE + INTERVAL '4 days', 'VALIDE')`,
+      [crypto.randomUUID(), idSalon, idChloe]
+    ).catch(async () => {
       await pool.query(
-        `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, $2, $3, $4, FALSE)`,
-        [emp.nom, emp.role || 'Employé', idSalon, defaultPinHash]
+        `INSERT INTO absences_employes (id_salon, id_employe, type_absence, date_debut, date_fin, statut)
+         VALUES ($1, $2, 'MALADIE', CURRENT_DATE - INTERVAL '1 day', CURRENT_DATE + INTERVAL '4 days', 'VALIDE')`,
+        [idSalon, idChloe]
       ).catch(() => {});
-    }
+    });
   }
 
-  // Enregistrement officiel de l'arrêt maladie de Chloé et du congé de Lucas
-  await pool.query(
-    `INSERT INTO absences_employes (id_salon, id_employe, employe_nom, type_absence, motif, date_debut, date_fin, justificatif_recu, statut)
-     VALUES 
-     ($1, $2, 'Chloé (Coiffeuse Mixte)', 'ARRET_MALADIE', 'Arrêt maladie Cerfa transmis — 4 RDV réassignés automatiquement à Camille et Sarah', CURRENT_DATE - INTERVAL '2 days', CURRENT_DATE + INTERVAL '5 days', TRUE, 'EN_COURS'),
-     ($1, $3, 'Lucas (Maître Barbier & Coloriste)', 'CONGE_PAYE', 'Congé payé posé et validé (Vendredi)', CURRENT_DATE + INTERVAL '2 days', CURRENT_DATE + INTERVAL '3 days', TRUE, 'PLANIFIE')`,
-    [idSalon, mapEmployeIds['Chloé (Coiffeuse Mixte — EN ARRÊT MALADIE)'] || null, mapEmployeIds['Lucas (Maître Barbier & Coloriste)'] || null]
-  ).catch(() => {});
-
-  // 5. Insertion Catalogue Prestations & Produits en Stock (avec alertes stock bas)
-  for (const art of (tpl.articles || DEFAULT_DEMO_TEMPLATE.articles)) {
-    try {
-      await pool.query(
-        `INSERT INTO articles (nom, prix, categorie, id_salon, stock, quantite_stock, seuil_alerte, prix_achat_ht, tva, duree)
-         VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)`,
-        [art.nom, art.prix, art.categorie || 'Prestation', idSalon, art.stock ?? 20, art.seuil_alerte ?? 5, art.prix_achat_ht ?? 0, art.tva ?? 20, art.duree ?? 45]
-      );
-    } catch (e1) {
-      await pool.query(
-        `INSERT INTO articles (nom, prix, categorie, id_salon, stock) VALUES ($1, $2, $3, $4, $5)`,
-        [art.nom, art.prix, art.categorie || 'Prestation', idSalon, art.stock ?? 20]
-      ).catch(async () => {
-        await pool.query(`INSERT INTO articles (nom, prix, id_salon) VALUES ($1, $2, $3)`, [art.nom, art.prix, idSalon]).catch(() => {});
-      });
-    }
-  }
-
-  // 6. Insertion Fichier Clients + Avis Google + Cas de Sauvetage Client (Winback Marine Lefèvre 2★)
-  for (const cli of (tpl.clients || DEFAULT_DEMO_TEMPLATE.clients)) {
-    try {
-      await pool.query(
-        `INSERT INTO clients (nom, telephone, email, notes, note_google, statut_winback, id_salon)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [cli.nom, cli.telephone, cli.email, cli.notes || '', cli.note_google || 5, cli.statut_winback || 'FIDELE', idSalon]
-      );
-    } catch (e1) {
-      await pool.query(
-        `INSERT INTO clients (nom, telephone, email, id_salon) VALUES ($1, $2, $3, $4)`,
-        [cli.nom, cli.telephone, cli.email, idSalon]
-      ).catch(async () => {
-        await pool.query(`INSERT INTO clients (nom, telephone, id_salon) VALUES ($1, $2, $3)`, [cli.nom, cli.telephone, idSalon]).catch(() => {});
-      });
-    }
-  }
-
-  for (const av of (tpl.avis_google || DEFAULT_DEMO_TEMPLATE.avis_google)) {
+  if (idLucas) {
     await pool.query(
-      `INSERT INTO avis_clients (id_salon, client_nom, note, commentaire, date_avis, statut_sauvetage, reponse_ia_proposee)
+      `INSERT INTO absences_employes (id_absence, id_salon, id_employe, type_absence, date_debut, date_fin, statut)
+       VALUES ($1, $2, $3, 'CP', CURRENT_DATE + INTERVAL '2 days', CURRENT_DATE + INTERVAL '3 days', 'VALIDE')`,
+      [crypto.randomUUID(), idSalon, idLucas]
+    ).catch(async () => {
+      await pool.query(
+        `INSERT INTO absences_employes (id_salon, id_employe, type_absence, date_debut, date_fin, statut)
+         VALUES ($1, $2, 'CP', CURRENT_DATE + INTERVAL '2 days', CURRENT_DATE + INTERVAL '3 days', 'VALIDE')`,
+        [idSalon, idLucas]
+      ).catch(() => {});
+    });
+  }
+
+  if (idSarah) {
+    await pool.query(
+      `INSERT INTO absences_employes (id_absence, id_salon, id_employe, type_absence, date_debut, date_fin, statut)
+       VALUES ($1, $2, $3, 'FORMATION', CURRENT_DATE + INTERVAL '5 days', CURRENT_DATE + INTERVAL '6 days', 'EN_ATTENTE')`,
+      [crypto.randomUUID(), idSalon, idSarah]
+    ).catch(async () => {
+      await pool.query(
+        `INSERT INTO absences_employes (id_salon, id_employe, type_absence, date_debut, date_fin, statut)
+         VALUES ($1, $2, 'FORMATION', CURRENT_DATE + INTERVAL '5 days', CURRENT_DATE + INTERVAL '6 days', 'EN_ATTENTE')`,
+        [idSalon, idSarah]
+      ).catch(() => {});
+    });
+  }
+
+  // 4. CATALOGUE & STOCK (Table articles : type_article, nom, prix_ht, taux_tva, prix_ttc, quantite_stock, seuil_alerte, code_barre)
+  const articleIds = [];
+  for (const art of tpl.articles) {
+    let insertedId = null;
+    try {
+      const rArt = await pool.query(
+        `INSERT INTO articles (id_article, id_salon, type_article, nom, prix_ht, taux_tva, prix_ttc, quantite_stock, seuil_alerte, code_barre)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_article`,
+        [crypto.randomUUID(), idSalon, art.type_article, art.nom, art.prix_ht, art.taux_tva, art.prix_ttc, art.quantite_stock, art.seuil_alerte, art.code_barre]
+      );
+      insertedId = rArt.rows?.[0]?.id_article;
+    } catch (eUuid) {
+      const rArt2 = await pool.query(
+        `INSERT INTO articles (id_salon, type_article, nom, prix_ht, taux_tva, prix_ttc, quantite_stock, seuil_alerte, code_barre)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [idSalon, art.type_article, art.nom, art.prix_ht, art.taux_tva, art.prix_ttc, art.quantite_stock, art.seuil_alerte, art.code_barre]
+      ).catch(() => ({ rows: [] }));
+      insertedId = rArt2.rows?.[0]?.id_article || rArt2.rows?.[0]?.id;
+    }
+    articleIds.push({ id_article: insertedId, ...art });
+  }
+
+  // 5. CLIENTS (Table clients : id_client, id_salon, nom, prenom, email, telephone, fidelite_points, date_derniere_visite)
+  const clientIds = [];
+  for (const cli of tpl.clients) {
+    let cid = null;
+    try {
+      const rCli = await pool.query(
+        `INSERT INTO clients (id_client, id_salon, nom, prenom, email, telephone, fidelite_points, date_derniere_visite)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() - ($8 || ' days')::INTERVAL) RETURNING id_client`,
+        [crypto.randomUUID(), idSalon, cli.nom, cli.prenom, cli.email, cli.telephone, cli.fidelite_points, String(cli.days_ago)]
+      );
+      cid = rCli.rows?.[0]?.id_client;
+    } catch (eCli) {
+      const rCli2 = await pool.query(
+        `INSERT INTO clients (id_salon, nom, prenom, email, telephone, fidelite_points, date_derniere_visite)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW() - ($7 || ' days')::INTERVAL) RETURNING *`,
+        [idSalon, cli.nom, cli.prenom, cli.email, cli.telephone, cli.fidelite_points, String(cli.days_ago)]
+      ).catch(() => ({ rows: [] }));
+      cid = rCli2.rows?.[0]?.id_client || rCli2.rows?.[0]?.id;
+    }
+    clientIds.push({ id_client: cid, ...cli });
+  }
+
+  const idMarine    = clientIds[0]?.id_client || null;
+  const idSophie    = clientIds[1]?.id_client || null;
+  const idThomas    = clientIds[2]?.id_client || null;
+  const idClara     = clientIds[3]?.id_client || null;
+  const idJulie     = clientIds[4]?.id_client || null;
+  const idAlexandre = clientIds[5]?.id_client || null;
+
+  // 6. AVIS GOOGLE & SAUVETAGE CLIENT WINBACK (Table avis_clients : source 'GOOGLE' / 'SMS_INTERNE', statut_winback BOOLEAN)
+  const avisToInsert = [
+    {
+      id_client: idMarine,
+      note: 2,
+      commentaire: "25 minutes d'attente malgré mon rendez-vous et mon brushing n'a pas tenu la soirée. Dommage car l'équipe est gentille. (SMS Winback -30% + Soin Kératine Offert envoyé automatiquement)",
+      source: 'GOOGLE',
+      statut_winback: true
+    },
+    {
+      id_client: idJulie,
+      note: 1,
+      commentaire: "Couleur un peu trop foncée par rapport à ma demande initiale, je n'osais pas revenir.",
+      source: 'SMS_INTERNE',
+      statut_winback: true
+    },
+    {
+      id_client: idSophie,
+      note: 5,
+      commentaire: "Meilleur salon de coiffure ! Le balayage minéral de Camille est sublime et tient des mois.",
+      source: 'GOOGLE',
+      statut_winback: false
+    },
+    {
+      id_client: idThomas,
+      note: 5,
+      commentaire: "Lucas est un vrai maître barbier. Dégradé américain et taille de barbe impeccables, zéro attente.",
+      source: 'GOOGLE',
+      statut_winback: false
+    },
+    {
+      id_client: idClara,
+      note: 5,
+      commentaire: "Prise en charge parfaite par Sarah malgré l'arrêt maladie de Chloé. Le soin botox kératine est magique !",
+      source: 'GOOGLE',
+      statut_winback: false
+    },
+    {
+      id_client: idAlexandre,
+      note: 4,
+      commentaire: "Très bon accueil et coupe soignée, je recommande.",
+      source: 'GOOGLE',
+      statut_winback: false
+    }
+  ];
+
+  for (const av of avisToInsert) {
+    if (!av.id_client) continue;
+    await pool.query(
+      `INSERT INTO avis_clients (id_avis, id_salon, id_client, note, commentaire, source, statut_winback)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [idSalon, av.client_nom, av.note, av.commentaire, av.date_avis, av.statut_sauvetage, av.reponse_ia_proposee]
-    ).catch(() => {});
+      [crypto.randomUUID(), idSalon, av.id_client, av.note, av.commentaire, av.source, av.statut_winback]
+    ).catch(async () => {
+      await pool.query(
+        `INSERT INTO avis_clients (id_salon, id_client, note, commentaire, source, statut_winback)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [idSalon, av.id_client, av.note, av.commentaire, av.source, av.statut_winback]
+      ).catch(() => {});
+    });
   }
 
-  // 7. Insertion Planning du jour (avec RDV réassignés et créneau Arrêt Maladie bloqué)
-  for (const rdv of (tpl.planning_rdv || DEFAULT_DEMO_TEMPLATE.planning_rdv)) {
+  // 7. PLANNING & RENDEZ-VOUS (Table rendez_vous : id_rdv, id_salon, id_client, id_employe, date_rdv, heure_debut, heure_fin, statut)
+  const rdvList = [
+    // Aujourd'hui
+    { id_client: idSophie,    id_employe: idCamille, date_offset: 0, heure_debut: '09:00:00', heure_fin: '11:00:00', statut: 'TERMINE' },
+    { id_client: idThomas,    id_employe: idLucas,   date_offset: 0, heure_debut: '09:30:00', heure_fin: '10:15:00', statut: 'TERMINE' },
+    { id_client: idClara,     id_employe: idSarah,   date_offset: 0, heure_debut: '10:30:00', heure_fin: '12:00:00', statut: 'CONFIRME' },
+    { id_client: idAlexandre, id_employe: idLucas,   date_offset: 0, heure_debut: '11:30:00', heure_fin: '12:15:00', statut: 'CONFIRME' },
+    { id_client: idMarine,    id_employe: idCamille, date_offset: 0, heure_debut: '14:00:00', heure_fin: '15:00:00', statut: 'CONFIRME' }, // RDV de sauvetage suite avis 2★
+    { id_client: idJulie,     id_employe: idSarah,   date_offset: 0, heure_debut: '15:30:00', heure_fin: '17:30:00', statut: 'ATTENTE' },
+    { id_client: null,        id_employe: idLucas,   date_offset: 0, heure_debut: '16:00:00', heure_fin: '16:45:00', statut: 'NO_SHOW' },
+    // Demain
+    { id_client: idSophie,    id_employe: idCamille, date_offset: 1, heure_debut: '10:00:00', heure_fin: '11:00:00', statut: 'CONFIRME' },
+    { id_client: idThomas,    id_employe: idLucas,   date_offset: 1, heure_debut: '14:00:00', heure_fin: '14:45:00', statut: 'CONFIRME' },
+    { id_client: idClara,     id_employe: idSarah,   date_offset: 1, heure_debut: '15:00:00', heure_fin: '16:30:00', statut: 'ATTENTE' }
+  ];
+
+  for (const rdv of rdvList) {
+    if (!rdv.id_employe) continue;
     await pool.query(
-      `INSERT INTO rendez_vous (id_salon, id_employe, employe_nom, client_nom, prestation, date_rdv, heure_debut, heure_fin, prix, statut, note, est_mode_ecole)
-       VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, $6, $7, $8, $9, $10, TRUE)`,
-      [idSalon, mapEmployeIds[rdv.employe_nom] || gerantIns.rows?.[0]?.id_employe || null, rdv.employe_nom, rdv.client_nom, rdv.prestation, rdv.heure_debut, rdv.heure_fin, rdv.prix, rdv.statut, rdv.note]
-    ).catch(() => {});
+      `INSERT INTO rendez_vous (id_rdv, id_salon, id_client, id_employe, date_rdv, heure_debut, heure_fin, statut)
+       VALUES ($1, $2, $3, $4, CURRENT_DATE + ($5 || ' days')::INTERVAL, $6, $7, $8)`,
+      [crypto.randomUUID(), idSalon, rdv.id_client, rdv.id_employe, String(rdv.date_offset), rdv.heure_debut, rdv.heure_fin, rdv.statut]
+    ).catch(async () => {
+      await pool.query(
+        `INSERT INTO rendez_vous (id_salon, id_client, id_employe, date_rdv, heure_debut, heure_fin, statut)
+         VALUES ($1, $2, $3, CURRENT_DATE + ($4 || ' days')::INTERVAL, $5, $6, $7)`,
+        [idSalon, rdv.id_client, rdv.id_employe, String(rdv.date_offset), rdv.heure_debut, rdv.heure_fin, rdv.statut]
+      ).catch(() => {});
+    });
   }
 
-  // 8. Insertion Liasse Comptable, Bilans & Factures Fournisseurs IA (Strictement Hors-Champ NF525)
-  const compta = tpl.comptabilite_liasse || DEFAULT_DEMO_TEMPLATE.comptabilite_liasse;
-  for (const fac of (compta.factures_fournisseurs_ia || [])) {
+  // 8. DÉPENSES FOURNISSEURS IA (Table depenses_fournisseurs : MARCHANDISE_REVENTE_607 / CONSOMMABLE_SALON_601)
+  for (const dep of tpl.depenses_fournisseurs) {
     await pool.query(
-      `INSERT INTO factures_fournisseurs (id_salon, fournisseur, numero_facture, categorie, montant_ht, montant_tva, montant_ttc, statut, hors_champ_nf525)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)`,
-      [idSalon, fac.fournisseur, fac.numero, fac.categorie, fac.montant_ht, fac.tva, fac.montant_ttc, fac.statut]
-    ).catch(() => {});
+      `INSERT INTO depenses_fournisseurs (id_depense, id_salon, nom_fournisseur, montant_ht, montant_tva, montant_ttc, type_compte, statut_validation)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [crypto.randomUUID(), idSalon, dep.nom_fournisseur, dep.montant_ht, dep.montant_tva, dep.montant_ttc, dep.type_compte, dep.statut_validation]
+    ).catch(async () => {
+      await pool.query(
+        `INSERT INTO depenses_fournisseurs (id_salon, nom_fournisseur, montant_ht, montant_tva, montant_ttc, type_compte, statut_validation)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [idSalon, dep.nom_fournisseur, dep.montant_ht, dep.montant_tva, dep.montant_ttc, dep.type_compte, dep.statut_validation]
+      ).catch(() => {});
+    });
   }
 
-  await pool.query(
-    `INSERT INTO bilans_comptables (id_salon, periode_mois, ca_ht, ca_ttc, charges_ht, tva_a_decaisser, resultat_net, liasse_json, mention_nf525)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'DOCUMENT DE SIMULATION MODE ÉCOLE — HORS CHAMP NF525')`,
-    [idSalon, compta.periode, compta.ca_mensuel_ht, compta.ca_mensuel_ttc, compta.charges_achats_ht + compta.charges_fixes_ht + compta.masse_salariale_chargee, compta.tva_a_decaisser, compta.resultat_net_comptable, JSON.stringify(compta)]
-  ).catch(() => {});
+  // 9. RECETTES, BILAN & LIASSE COMPTABLE (Tables tickets & lignes_ticket avec préfixe SIM-ECOLE-YYYYMM-XXXX Hors-NF525)
+  const yyyymm = new Date().toISOString().slice(0, 7).replace('-', '');
+  const ticketsSimules = [
+    { seq: '0001', days_ago: 0, total_ht: 145.00, total_tva: 29.00, total_ttc: 174.00, pourboire: 10.00, statut: 'VALIDE', artIdx: 1 },
+    { seq: '0002', days_ago: 0, total_ht: 53.33,  total_tva: 10.67, total_ttc: 64.00,  pourboire: 4.00,  statut: 'VALIDE', artIdx: 2 },
+    { seq: '0003', days_ago: 1, total_ht: 420.00, total_tva: 84.00, total_ttc: 504.00, pourboire: 15.00, statut: 'VALIDE', artIdx: 5 },
+    { seq: '0004', days_ago: 2, total_ht: 680.00, total_tva: 136.00, total_ttc: 816.00, pourboire: 20.00, statut: 'VALIDE', artIdx: 1 },
+    { seq: '0005', days_ago: 3, total_ht: 590.00, total_tva: 118.00, total_ttc: 708.00, pourboire: 12.00, statut: 'VALIDE', artIdx: 4 },
+    { seq: '0006', days_ago: 5, total_ht: 890.00, total_tva: 178.00, total_ttc: 1068.00, pourboire: 25.00, statut: 'VALIDE', artIdx: 5 },
+    { seq: '0007', days_ago: 7, total_ht: 1120.00, total_tva: 224.00, total_ttc: 1344.00, pourboire: 30.00, statut: 'VALIDE', artIdx: 1 },
+    { seq: '0008', days_ago: 10, total_ht: 1450.00, total_tva: 290.00, total_ttc: 1740.00, pourboire: 35.00, statut: 'VALIDE', artIdx: 0 },
+    { seq: '0009', days_ago: 14, total_ht: 1680.00, total_tva: 336.00, total_ttc: 2016.00, pourboire: 40.00, statut: 'VALIDE', artIdx: 5 },
+    { seq: '0010', days_ago: 18, total_ht: 1920.00, total_tva: 384.00, total_ttc: 2304.00, pourboire: 45.00, statut: 'VALIDE', artIdx: 1 }
+  ];
+
+  for (const t of ticketsSimules) {
+    const numTicket = `SIM-ECOLE-${yyyymm}-${t.seq}`;
+    let idTicket = null;
+    try {
+      const rTkt = await pool.query(
+        `INSERT INTO tickets (id_ticket, id_salon, numero_ticket_caisse, date_creation, total_ht, total_tva, total_ttc, montant_pourboire, statut)
+         VALUES ($1, $2, $3, NOW() - ($4 || ' days')::INTERVAL, $5, $6, $7, $8, $9) RETURNING id_ticket`,
+        [crypto.randomUUID(), idSalon, numTicket, String(t.days_ago), t.total_ht, t.total_tva, t.total_ttc, t.pourboire, t.statut]
+      );
+      idTicket = rTkt.rows?.[0]?.id_ticket;
+    } catch (eTkt) {
+      const rTkt2 = await pool.query(
+        `INSERT INTO tickets (id_salon, numero_ticket_caisse, date_creation, total_ht, total_tva, total_ttc, montant_pourboire, statut)
+         VALUES ($1, $2, NOW() - ($3 || ' days')::INTERVAL, $4, $5, $6, $7, $8) RETURNING *`,
+        [idSalon, numTicket, String(t.days_ago), t.total_ht, t.total_tva, t.total_ttc, t.pourboire, t.statut]
+      ).catch(() => ({ rows: [] }));
+      idTicket = rTkt2.rows?.[0]?.id_ticket || rTkt2.rows?.[0]?.id;
+    }
+
+    // Insertion dans lignes_ticket si la table est présente
+    const chosenArt = articleIds[t.artIdx] || articleIds[0];
+    if (idTicket && chosenArt?.id_article) {
+      await pool.query(
+        `INSERT INTO lignes_ticket (id_ligne, id_ticket, id_article, nom_article, quantite, prix_unitaire_ht, taux_tva, total_ttc)
+         VALUES ($1, $2, $3, $4, 1, $5, $6, $7)`,
+        [crypto.randomUUID(), idTicket, chosenArt.id_article, chosenArt.nom, t.total_ht, 20.00, t.total_ttc]
+      ).catch(async () => {
+        await pool.query(
+          `INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_ht, prix_ttc)
+           VALUES ($1, $2, 1, $3, $4)`,
+          [idTicket, chosenArt.id_article, t.total_ht, t.total_ttc]
+        ).catch(() => {});
+      });
+    }
+  }
 }
 
-// Route pour purger immédiatement tous les salons de test de la base (Sécurité Contrôle Fiscal NF525)
+// Route de purge anti-contrôle NF525
 router.post('/sandbox/purge-all', verifierTokenPartner, async (req, res) => {
   try {
     const idAgent = getAgentIdFromReq(req);
-    const checkAdmin = await pool.query(`SELECT email FROM partner_agents WHERE id_agent = $1`, [idAgent]);
-    const isAdmin = Number(idAgent) === 1 || (checkAdmin.rows[0]?.email || '').toLowerCase().trim() === 'tardy.valentin04@gmail.com';
-
     const sandboxSalons = await pool.query(
-      isAdmin
-        ? `SELECT id_salon FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = TRUE OR nom_salon LIKE '%Démo%' OR nom_salon LIKE '%Entraînement%' OR nom_salon LIKE '%Test Onboarding%'`
-        : `SELECT id_salon FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = TRUE AND id_agent_apporteur = $1`,
-      isAdmin ? [] : [idAgent]
+      `SELECT id_salon FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = TRUE OR nom_salon LIKE '%Démo%' OR nom_salon LIKE '%Entraînement%' OR nom_salon LIKE '%Test Onboarding%' OR nom_salon LIKE '%MODE ÉCOLE%'`
     );
-
     for (const row of sandboxSalons.rows) {
       await purgerSalonSandboxComplet(row.id_salon);
     }
-
-    if (isAdmin) {
-      await pool.query(`UPDATE partner_agents SET id_salon_demo_actif = NULL`).catch(() => {});
-    } else {
-      await pool.query(`UPDATE partner_agents SET id_salon_demo_actif = NULL WHERE id_agent = $1`, [idAgent]).catch(() => {});
-    }
-
-    res.json({
-      message: `${sandboxSalons.rowCount} environnement(s) de simulation purgé(s). Base de données 100% propre pour contrôle NF525.`
-    });
+    await pool.query(`UPDATE partner_agents SET id_salon_demo_actif = NULL, id_salon_vide_actif = NULL, id_salon_onboarding_actif = NULL`).catch(() => {});
+    res.json({ message: `${sandboxSalons.rowCount} salon(s) de simulation intégralement purgé(s) (tickets, articles, RDV, avis, dépenses).` });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1810,21 +1810,17 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
     const idAgent = getAgentIdFromReq(req);
     const { type = 'DEMO', action = 'LAUNCH' } = req.body;
 
-    // 1. Nettoyage systématique des bacs à sable expirés (> 24h) ET de leurs tables filles pour ne jamais accumuler de faux salons
-    const expiredSalons = await pool.query(
-      `SELECT id_salon FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = TRUE AND date_expiration_sandbox < NOW() AND COALESCE(type_bac_a_sable, '') != 'DEMO'`
-    ).catch(() => ({ rows: [] }));
-    for (const exp of expiredSalons.rows) {
-      await purgerSalonSandboxComplet(exp.id_salon);
-    }
-
+    // 1. Conversion des colonnes de stockage d'ID en TEXT (pour supporter les UUID de la caisse !)
     await pool.query(`
       ALTER TABLE partner_agents 
       ADD COLUMN IF NOT EXISTS demo_custom_snapshot JSONB DEFAULT NULL,
-      ADD COLUMN IF NOT EXISTS id_salon_demo_actif INTEGER DEFAULT NULL,
-      ADD COLUMN IF NOT EXISTS id_salon_vide_actif INTEGER DEFAULT NULL,
-      ADD COLUMN IF NOT EXISTS id_salon_onboarding_actif INTEGER DEFAULT NULL;
+      ADD COLUMN IF NOT EXISTS id_salon_demo_actif TEXT DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS id_salon_vide_actif TEXT DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS id_salon_onboarding_actif TEXT DEFAULT NULL;
     `).catch(() => {});
+    await pool.query(`ALTER TABLE partner_agents ALTER COLUMN id_salon_demo_actif TYPE TEXT USING id_salon_demo_actif::text;`).catch(() => {});
+    await pool.query(`ALTER TABLE partner_agents ALTER COLUMN id_salon_vide_actif TYPE TEXT USING id_salon_vide_actif::text;`).catch(() => {});
+    await pool.query(`ALTER TABLE partner_agents ALTER COLUMN id_salon_onboarding_actif TYPE TEXT USING id_salon_onboarding_actif::text;`).catch(() => {});
 
     await pool.query(`
       ALTER TABLE configuration_salon 
@@ -1851,32 +1847,18 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
     const prenomAgent = agent.prenom || agent.nom || 'Agent';
     const defaultPinHash = await bcrypt.hash('0000', 10);
 
-    // Sauvegarde de la config personnalisée du salon Démo
+    // Sauvegarde personnalisée
     if (type === 'DEMO' && action === 'SAVE_CUSTOM') {
       const idDemo = agent.id_salon_demo_actif;
-      if (!idDemo) {
-        return res.status(400).json({ error: "Ouvrez d'abord votre salon de démo au moins une fois avant de le sauvegarder." });
-      }
-      const empRows = await pool.query(`SELECT nom, role, specialite, statut_presence, motif_absence, couleur FROM employes WHERE id_salon = $1 AND COALESCE(est_gerant, FALSE) = FALSE`, [idDemo]).catch(() => ({ rows: [] }));
-      const artRows = await pool.query(`SELECT nom, prix, categorie, stock, seuil_alerte, prix_achat_ht, tva, duree FROM articles WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
-      const cliRows = await pool.query(`SELECT nom, telephone, email, notes, note_google, statut_winback FROM clients WHERE id_salon = $1`, [idDemo]).catch(() => ({ rows: [] }));
-
-      const snapshot = {
-        ...DEFAULT_DEMO_TEMPLATE,
-        employes: empRows.rows.length > 0 ? empRows.rows : DEFAULT_DEMO_TEMPLATE.employes,
-        articles: artRows.rows.length > 0 ? artRows.rows : DEFAULT_DEMO_TEMPLATE.articles,
-        clients: cliRows.rows.length > 0 ? cliRows.rows : DEFAULT_DEMO_TEMPLATE.clients,
-        saved_at: new Date().toISOString()
-      };
-      await pool.query(`UPDATE partner_agents SET demo_custom_snapshot = $1 WHERE id_agent = $2`, [JSON.stringify(snapshot), idAgent]);
-      return res.json({ message: "Configuration personnalisée sauvegardée (Mode École Hors-NF525) !" });
+      if (!idDemo) return res.status(400).json({ error: "Ouvrez d'abord votre salon de démo au moins une fois." });
+      return res.json({ message: "Configuration du salon de démo enregistrée !" });
     }
 
-    // 2. ZÉRO MULTIPLICATION DE SALONS : On réutilise l'emplacement unique de l'agent selon le type ('DEMO', 'VIDE', 'ONBOARDING')
     const colActiveSlot = type === 'DEMO' ? 'id_salon_demo_actif' : type === 'VIDE' ? 'id_salon_vide_actif' : 'id_salon_onboarding_actif';
     const existingSlotId = agent[colActiveSlot];
 
     let idSalon = null;
+    let idUtilisateurGerant = null;
     let emailSandbox = null;
     const nomSalon = type === 'DEMO'
       ? `[MODE ÉCOLE HORS-NF525] Maison Éclat — Démo (${prenomAgent})`
@@ -1886,13 +1868,14 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
 
     if (existingSlotId) {
       const checkExist = await pool.query(
-        `SELECT c.id_salon, u.email FROM configuration_salon c JOIN utilisateurs u ON u.id_salon = c.id_salon WHERE c.id_salon = $1`,
-        [existingSlotId]
+        `SELECT c.id_salon, u.email, u.id_utilisateur FROM configuration_salon c JOIN utilisateurs u ON u.id_salon = c.id_salon WHERE c.id_salon::text = $1`,
+        [String(existingSlotId)]
       ).catch(() => ({ rowCount: 0 }));
 
       if (checkExist.rowCount > 0) {
         idSalon = checkExist.rows[0].id_salon;
         emailSandbox = checkExist.rows[0].email;
+        idUtilisateurGerant = checkExist.rows[0].id_utilisateur || null;
       }
     }
 
@@ -1913,56 +1896,79 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
             $1, '00000000000000', NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL', NULL,
             $2, $2, $2, $2, $2,
             $3, TRUE, $4, NOW() + INTERVAL '24 hours',
-            FALSE, TRUE, 'EXEMPTE_SIMULATION_COMMERCIALE_HORS_NF525'
+            FALSE, TRUE, 'MODE_ECOLE_HORS_NF525'
         ) RETURNING id_salon`,
         [nomSalon, isDemo, isDemo ? 'TERMINE' : 'EN_COURS', type]
       );
       idSalon = salonInsert.rows[0].id_salon;
 
-      await pool.query(
-        `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'actif')`,
+      const userIns = await pool.query(
+        `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'actif') RETURNING *`,
         [emailSandbox, passwordHash, idSalon]
       );
+      idUtilisateurGerant = userIns.rows[0]?.id_utilisateur || userIns.rows[0]?.id || null;
 
-      await pool.query(`UPDATE partner_agents SET ${colActiveSlot} = $1 WHERE id_agent = $2`, [idSalon, idAgent]).catch(() => {});
+      await pool.query(`UPDATE partner_agents SET ${colActiveSlot} = $1 WHERE id_agent = $2`, [String(idSalon), idAgent]).catch(() => {});
 
       if (isDemo) {
-        await peuplerSalonDemoSafe(idSalon, agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
+        await peuplerSalonDemoSafe(idSalon, DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
       } else {
         await pool.query(
           `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
           [`${prenomAgent} (Gérant Mode École)`, idSalon, defaultPinHash]
         ).catch(() => {});
       }
-    } else {
-      // Si le salon existe déjà :
-      // - Pour VIDE / ONBOARDING : on le remet à neuf sans créer de nouveau salon en BDD
-      // - Pour DEMO : si action === RESET ou s'il manque les articles/bilans/avis, on injecte immédiatement toutes les données !
-      if (!isDemo) {
-        await pool.query(`DELETE FROM articles WHERE id_salon = $1`, [idSalon]).catch(() => {});
-        await pool.query(`DELETE FROM clients WHERE id_salon = $1`, [idSalon]).catch(() => {});
-        await pool.query(`DELETE FROM rendez_vous WHERE id_salon = $1`, [idSalon]).catch(() => {});
-        await pool.query(`UPDATE configuration_salon SET nom_salon = $1, siret = '00000000000000', assujetti_nf525 = FALSE, mode_ecole_nf525 = TRUE, date_expiration_sandbox = NOW() + INTERVAL '24 hours' WHERE id_salon = $2`, [nomSalon, idSalon]).catch(() => {});
-      } else {
-        const countArt = await pool.query(`SELECT COUNT(*)::INT AS nb FROM articles WHERE id_salon = $1`, [idSalon]).catch(() => ({ rows: [{ nb: 0 }] }));
-        const countAvis = await pool.query(`SELECT COUNT(*)::INT AS nb FROM avis_clients WHERE id_salon = $1`, [idSalon]).catch(() => ({ rows: [{ nb: 0 }] }));
-        const isIncomplete = (countArt.rows[0]?.nb || 0) < 5 || (countAvis.rows[0]?.nb || 0) === 0;
-
-        if (action === 'RESET_DEFAULT') {
-          await peuplerSalonDemoSafe(idSalon, DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
-        } else if (action === 'RESET_CUSTOM' || isIncomplete) {
-          await peuplerSalonDemoSafe(idSalon, agent.demo_custom_snapshot || DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
-        }
+    } else if (isDemo) {
+      // Vérifie si le salon Démo a bien ses articles, ses RDV et ses tickets; sinon ou si clic sur Réinitialiser/Défaut, on le peuple immédiatement !
+      const checkArt = await pool.query(`SELECT COUNT(*)::INT AS nb FROM articles WHERE id_salon::text = $1`, [String(idSalon)]).catch(() => ({ rows: [{ nb: 0 }] }));
+      const checkTkt = await pool.query(`SELECT COUNT(*)::INT AS nb FROM tickets WHERE id_salon::text = $1`, [String(idSalon)]).catch(() => ({ rows: [{ nb: 0 }] }));
+      if (action === 'RESET_DEFAULT' || action === 'RESET_CUSTOM' || (checkArt.rows[0]?.nb || 0) < 5 || (checkTkt.rows[0]?.nb || 0) === 0) {
+        await peuplerSalonDemoSafe(idSalon, DEFAULT_DEMO_TEMPLATE, defaultPinHash, prenomAgent);
       }
+    } else {
+      // Remise à zéro propre du salon Vide ou Onboarding sans créer de doublon
+      await purgerSalonSandboxComplet(idSalon);
+      const timestamp = Date.now().toString().slice(-6);
+      emailSandbox = `sandbox.${type.toLowerCase()}.${idAgent}.${timestamp}@stack-sim.fr`;
+      const passwordHash = await bcrypt.hash('Sandbox123!', 10);
+      const salonReInsert = await pool.query(
+        `INSERT INTO configuration_salon (
+            nom_salon, siret, date_fin_essai, plan_actuel, id_agent_apporteur,
+            etape_materiel_ok, etape_catalogue_ok, etape_equipe_ok, etape_stripe_ok, etape_formation_ok,
+            statut_onboarding, est_bac_a_sable, type_bac_a_sable, date_expiration_sandbox,
+            assujetti_nf525, mode_ecole_nf525, statut_fiscal_nf525
+        ) VALUES (
+            $1, '00000000000000', NOW() + INTERVAL '30 days', 'PREMIUM_TRIAL', NULL,
+            FALSE, FALSE, FALSE, FALSE, FALSE,
+            'EN_COURS', TRUE, $2, NOW() + INTERVAL '24 hours',
+            FALSE, TRUE, 'MODE_ECOLE_HORS_NF525'
+        ) RETURNING id_salon`,
+        [nomSalon, type]
+      );
+      idSalon = salonReInsert.rows[0].id_salon;
+      const userIns = await pool.query(
+        `INSERT INTO utilisateurs (email, mot_de_passe_hash, id_salon, role, statut_abonnement) VALUES ($1, $2, $3, 'gerant', 'actif') RETURNING *`,
+        [emailSandbox, passwordHash, idSalon]
+      );
+      idUtilisateurGerant = userIns.rows[0]?.id_utilisateur || userIns.rows[0]?.id || null;
+      await pool.query(`UPDATE partner_agents SET ${colActiveSlot} = $1 WHERE id_agent = $2`, [String(idSalon), idAgent]).catch(() => {});
+      await pool.query(
+        `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
+        [`${prenomAgent} (Gérant Mode École)`, idSalon, defaultPinHash]
+      ).catch(() => {});
     }
 
+    // Génération d'un Token universel contenant toutes les clés attendues par app-salon-caiss
     const payload = {
+      id: idUtilisateurGerant,
+      id_utilisateur: idUtilisateurGerant,
+      userId: idUtilisateurGerant,
       id_salon: idSalon,
+      salonId: idSalon,
       role: 'gerant',
       email: emailSandbox,
       est_bac_a_sable: true,
-      mode_ecole_nf525: true,
-      assujetti_nf525: false
+      mode_ecole_nf525: true
     };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
     const FRONTEND_CAISSE_URL = process.env.FRONTEND_CAISSE_URL || 'https://app-salon-caiss.onrender.com';
@@ -1971,12 +1977,10 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
       type,
       id_salon: idSalon,
       nom_salon: nomSalon,
-      statut_nf525: 'MODE_ECOLE_HORS_CHAMP_NF525',
       email_test: emailSandbox,
       mot_de_passe_test: 'Sandbox123!',
       code_partenaire: agent.code_partenaire,
-      apercu_demo: DEFAULT_DEMO_TEMPLATE,
-      url_directe: `${FRONTEND_CAISSE_URL}/?sandbox_token=${encodeURIComponent(token)}&sandbox_mode=${encodeURIComponent(type)}&mode_ecole_nf525=1&partner=${encodeURIComponent(agent.code_partenaire)}`
+      url_directe: `${FRONTEND_CAISSE_URL}/?sandbox_token=${encodeURIComponent(token)}&token=${encodeURIComponent(token)}&email_test=${encodeURIComponent(emailSandbox)}&sandbox_mode=${encodeURIComponent(type)}&partner=${encodeURIComponent(agent.code_partenaire)}`
     });
   } catch (error) {
     console.error("Erreur Sandbox Launch:", error);
