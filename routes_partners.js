@@ -2291,43 +2291,42 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
     await pool.query(`UPDATE partner_agents SET ${colActiveSlot} = $1 WHERE id_agent = $2`, [String(idSalon), idAgent]).catch(() => {});
 
     if (isDemo) {
-      await peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAgent, customSnapshot);
-      await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Direction)`);
-    } else {
-        await pool.query(
-          `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
-          [`${prenomAgent} (Gérant)`, idSalon, defaultPinHash]
-        );
-        await scellerJetSandbox(idSalon, 'INITIALISATION_SALON_NF525', { type, siret: '89245163000018' }, new Date().toISOString(), 'GENESIS_JET');
-        if (type === 'VIDE') {
-          await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Gérant)`);
+          await peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAgent, customSnapshot);
+          await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Direction)`);
+        } else {
+          await pool.query(
+            `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
+            [`${prenomAgent} (Gérant)`, idSalon, defaultPinHash]
+          );
+          await scellerJetSandbox(idSalon, 'INITIALISATION_SALON_NF525', { type, siret: '89245163000018' }, new Date().toISOString(), 'GENESIS_JET');
+          if (type === 'VIDE') {
+            await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Gérant)`);
+          }
         }
       }
+
+      const payload = {
+        id_salon: idSalon,
+        role: 'gerant',
+        email: emailSandbox
+      };
+      const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+      const backendOrigin = `${req.protocol}://${req.get('host')}`;
+
+      res.json({
+        type,
+        id_salon: idSalon,
+        nom_salon: nomSalon,
+        email_test: emailSandbox,
+        mot_de_passe_test: 'Sandbox123!',
+        code_partenaire: agent.code_partenaire,
+        url_directe: `${backendOrigin}/api/partners/sandbox/sso?token=${encodeURIComponent(token)}&sandbox_mode=${encodeURIComponent(type)}&partner=${encodeURIComponent(agent.code_partenaire)}`
+      });
+    } catch (error) {
+      console.error("Erreur Sandbox Launch:", error);
+      res.status(500).json({ error: `Erreur lancement simulateur : ${error.message}` });
     }
-
-    const payload = {
-      id_salon: idSalon,
-      role: 'gerant',
-      email: emailSandbox
-    };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
-    const backendOrigin = `${req.protocol}://${req.get('host')}`;
-
-    res.json({
-      type,
-      id_salon: idSalon,
-      nom_salon: nomSalon,
-      email_test: emailSandbox,
-      mot_de_passe_test: 'Sandbox123!',
-      code_partenaire: agent.code_partenaire,
-      url_directe: `${backendOrigin}/api/partners/sandbox/sso?token=${encodeURIComponent(token)}&sandbox_mode=${encodeURIComponent(type)}&partner=${encodeURIComponent(agent.code_partenaire)}`
-    });
-  } catch (error) {
-    console.error("Erreur Sandbox Launch:", error);
-    res.status(500).json({ error: `Erreur lancement simulateur : ${error.message}` });
-  }
 });
-
 // 4. CARTE DE PROSPECTION HAUTE DENSITÉ EN STREAMING (Progressive Chunking)
 const MAP_SECTOR_CACHE = new Map();
 
