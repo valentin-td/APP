@@ -2014,7 +2014,34 @@ async function peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAge
   ).catch(() => {});
 }
 
-// Route SSO : Pose le cookie httpOnly et injecte le token dans localStorage sur app-salon-caiss.onrender.com
+// Pré-valide automatiquement toutes les tables légales éventuelles pour éviter le popup "Conditions générales" sur DEMO et VIDE
+async function preValiderDocumentsLegauxSandbox(idSalon, emailGerant, nomGerant) {
+  try {
+    const tablesRes = await pool.query(`
+      SELECT table_name FROM information_schema.tables 
+      WHERE table_schema = 'public' AND (table_name ILIKE '%legal%' OR table_name ILIKE '%contrat%' OR table_name ILIKE '%accept%' OR table_name ILIKE '%cgv%')
+    `);
+    const docsTypes = ['CGV', 'RGPD', 'SEPA', 'NF525', 'PRET_TPE', 'CGU', 'MANDAT_SEPA', 'ATTESTATION_NF525'];
+    for (const r of tablesRes.rows) {
+      const tName = r.table_name;
+      if (tName.startsWith('partner_')) continue;
+      for (const docType of docsTypes) {
+        await pool.query(
+          `INSERT INTO ${tName} (id_salon, type_document, version, date_acceptation, ip_acceptation, email_signataire, nom_signataire, signature_hash)
+           VALUES ($1, $2, 'v1.0', NOW(), '127.0.0.1', $3, $4, 'SANDBOX_LEGAL_HASH') ON CONFLICT DO NOTHING`,
+          [idSalon, docType, emailGerant, nomGerant]
+        ).catch(() => {});
+        await pool.query(
+          `INSERT INTO ${tName} (id_salon, document_code, version, accepted_at, ip_address)
+           VALUES ($1, $2, 'v1.0', NOW(), '127.0.0.1') ON CONFLICT DO NOTHING`,
+          [idSalon, docType]
+        ).catch(() => {});
+      }
+    }
+  } catch (e) {}
+}
+
+// Route SSO : Exécutée sur le serveur Backend, pose le cookie httpOnly Cross-Origin et redirige vers le Frontend Caisse
 router.get('/sandbox/sso', async (req, res) => {
   try {
     const { token, partner, sandbox_mode } = req.query;
@@ -2028,11 +2055,14 @@ router.get('/sandbox/sso', async (req, res) => {
       httpOnly: true,
       secure: true,
       sameSite: 'none',
+      path: '/',
       maxAge: 24 * 60 * 60 * 1000
     });
 
-    const targetQuery = `?sandbox_token=${encodeURIComponent(String(token))}&sandbox_mode=${encodeURIComponent(String(sandbox_mode || 'DEMO'))}&partner=${encodeURIComponent(String(partner || ''))}`;
+    const FRONTEND_CAISSE_URL = process.env.FRONTEND_CAISSE_URL || 'https://app-salon-caiss.onrender.com';
+    const targetUrl = `${FRONTEND_CAISSE_URL}/?sandbox_token=${encodeURIComponent(String(token))}&token=${encodeURIComponent(String(token))}&token_api=${encodeURIComponent(String(token))}&ui_token=${encodeURIComponent(uiToken)}&id_salon=${encodeURIComponent(String(decoded.id_salon))}&sandbox_mode=${encodeURIComponent(String(sandbox_mode || 'DEMO'))}&partner=${encodeURIComponent(String(partner || ''))}`;
 
+    // Si le Frontend et le Backend sont sur le même domaine, on injecte aussi localStorage directement
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!DOCTYPE html>
 <html lang="fr">
@@ -2040,7 +2070,7 @@ router.get('/sandbox/sso', async (req, res) => {
 <body style="background:#111827;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
   <div style="text-align:center;">
     <div style="font-size:16px;font-weight:700;margin-bottom:8px;">Ouverture de l'environnement STACK certifié NF525...</div>
-    <div style="font-size:13px;color:#9ca3af;">Chargement des données du salon en cours</div>
+    <div style="font-size:13px;color:#9ca3af;">Connexion automatique au salon #${decoded.id_salon}</div>
   </div>
   <script>
     try {
@@ -2048,7 +2078,7 @@ router.get('/sandbox/sso', async (req, res) => {
       localStorage.setItem('ui_token', ${JSON.stringify(uiToken)});
       localStorage.setItem('token_api', ${JSON.stringify(String(token))});
     } catch (e) {}
-    window.location.replace('/' + ${JSON.stringify(targetQuery)});
+    window.location.replace(${JSON.stringify(targetUrl)});
   </script>
 </body>
 </html>`);
@@ -2187,12 +2217,16 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
 
       if (isDemo) {
         await peuplerSalonDemoAssujettiNF525(idSalon, defaultPinHash, prenomAgent);
+        await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Direction)`);
       } else {
         await pool.query(
           `INSERT INTO employes (nom, role, id_salon, code_pin, est_gerant) VALUES ($1, 'Gérant', $2, $3, TRUE)`,
           [`${prenomAgent} (Gérant)`, idSalon, defaultPinHash]
         );
         await scellerJetSandbox(idSalon, 'INITIALISATION_SALON_NF525', { type, siret: '89245163000018' }, new Date().toISOString(), 'GENESIS_JET');
+        if (type === 'VIDE') {
+          await preValiderDocumentsLegauxSandbox(idSalon, emailSandbox, `${prenomAgent} (Gérant)`);
+        }
       }
     }
 
@@ -2202,7 +2236,7 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
       email: emailSandbox
     };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
-    const FRONTEND_CAISSE_URL = process.env.FRONTEND_CAISSE_URL || 'https://app-salon-caiss.onrender.com';
+    const backendOrigin = `${req.protocol}://${req.get('host')}`;
 
     res.json({
       type,
@@ -2211,7 +2245,7 @@ router.post('/sandbox/launch', verifierTokenPartner, async (req, res) => {
       email_test: emailSandbox,
       mot_de_passe_test: 'Sandbox123!',
       code_partenaire: agent.code_partenaire,
-      url_directe: `${FRONTEND_CAISSE_URL}/api/partners/sandbox/sso?token=${encodeURIComponent(token)}&sandbox_mode=${encodeURIComponent(type)}&partner=${encodeURIComponent(agent.code_partenaire)}`
+      url_directe: `${backendOrigin}/api/partners/sandbox/sso?token=${encodeURIComponent(token)}&sandbox_mode=${encodeURIComponent(type)}&partner=${encodeURIComponent(agent.code_partenaire)}`
     });
   } catch (error) {
     console.error("Erreur Sandbox Launch:", error);
