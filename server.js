@@ -8521,7 +8521,7 @@ async function executerClotureFantome() {
 
     const clientDB = await pool.connect();
     try {
-        const salons = await clientDB.query("SELECT id_salon FROM configuration_salon");
+        const salons = await clientDB.query("SELECT id_salon FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE");
         for (let s of salons.rows) {
             const id_salon = s.id_salon;
             
@@ -8626,7 +8626,7 @@ async function executerRapportHebdoGerant() {
             debug: true
         });
 
-        const salons = await clientDB.query("SELECT id_salon, nom_salon FROM configuration_salon");
+        const salons = await clientDB.query("SELECT id_salon, nom_salon FROM configuration_salon WHERE COALESCE(est_bac_a_sable, FALSE) = FALSE");
         console.log(`🔍 [ROBOT-HEBDO] ${salons.rowCount} salon(s) trouvé(s) en base.`);
         
         for (let s of salons.rows) {
