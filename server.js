@@ -1330,11 +1330,11 @@ app.use(async (req, res, next) => {
         doc.roundedRect(45, y, 36, 36, 9).fill(DARK);
         doc.font('Helvetica-Bold').fontSize(19).fillColor('#ffffff').text('S', 45, y + 8, { width: 36, align: 'center' });
 
-        doc.font('Helvetica-Bold').fontSize(15).fillColor(DARK).text('STACK — Logiciel de Caisse Certifié NF525', 92, y + 2);
-        doc.font('Helvetica').fontSize(8.5).fillColor(LIGHT_MUTED).text('Tiers de preuve & Horodatage Cryptographique • Articles 1366 et 1367 du Code civil', 92, y + 21);
+        doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text('STACK — Caisse Certifiée NF525', 92, y + 3, { width: 235, lineBreak: false });
+        doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text('Tiers de preuve & Horodatage • Art. 1366 & 1367 C. civ.', 92, y + 21, { width: 240, lineBreak: false });
 
-        doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text('CERTIFICAT D\'ACCEPTATION', 340, y, { width: 210, align: 'right' });
-        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text(`Réf. Dossier : ${referenceCertificat}`, 340, y + 18, { width: 210, align: 'right' });
+        doc.font('Helvetica-Bold').fontSize(12.5).fillColor(DARK).text('CERTIFICAT D\'ACCEPTATION', 345, y + 2, { width: 205, align: 'right', lineBreak: false });
+        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text(`Réf. Dossier : ${referenceCertificat}`, 345, y + 19, { width: 205, align: 'right', lineBreak: false });
 
         doc.roundedRect(380, y + 34, 170, 18, 5).fill(GREEN_BG);
         doc.font('Helvetica-Bold').fontSize(7.5).fillColor(GREEN_TXT).text('SIGNATURE ÉLECTRONIQUE VALIDE', 380, y + 39, { width: 170, align: 'center' });
@@ -1440,9 +1440,9 @@ app.use(async (req, res, next) => {
                 y = 36;
             }
             doc.roundedRect(45, y, 505, 26, 5).fill(DARK);
-            doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#ffffff').text(`${d.titre} — Version ${d.version}`, 55, y + 8, { width: 350 });
-            doc.font('Courier').fontSize(7).fillColor('#9ca3af').text(`SHA-256 : ${d.hash.slice(0, 20)}...`, 390, y + 9, { width: 150, align: 'right' });
-            y += 34;
+            doc.font('Helvetica-Bold').fontSize(8.8).fillColor('#ffffff').text(`${d.titre} (v.${d.version})`, 55, y + 8, { width: 345, lineBreak: false, ellipsis: true });
+            doc.font('Courier').fontSize(7).fillColor('#9ca3af').text(`SHA-256 : ${d.hash.slice(0, 18)}...`, 405, y + 9, { width: 135, align: 'right', lineBreak: false });
+            y += 36;
 
             for (const art of d.articles) {
                 doc.font('Helvetica-Bold').fontSize(8.8);
