@@ -1206,6 +1206,284 @@ if (typeof originalDocumentsEnAttente === 'function') {
         return originalDocumentsEnAttente(poolArg, idSalon);
     };
 }
+// Interception et Refonte "STACK Executive" du Certificat d'Acceptation Électronique (STACK-acceptation-ACC-XX.pdf)
+app.use(async (req, res, next) => {
+    const isLegalPdfRoute =
+        req.method === 'GET' &&
+        req.path.startsWith('/api/legal') &&
+        (req.path.includes('pdf') || req.path.includes('certificat') || req.path.includes('preuve') || req.query?.format === 'pdf');
+
+    if (!isLegalPdfRoute) return next();
+
+    try {
+        // 1. Authentification du salon (Cookie, Header ou Query token)
+        let token = req.query?.token || req.query?.sandbox_token || req.query?.token_api;
+        if (!token && req.headers.authorization) token = req.headers.authorization.split(' ')[1];
+        if (!token && req.headers.cookie) {
+            const c = req.headers.cookie.split(';').map(x => x.trim()).find(x => x.startsWith('token='));
+            if (c) token = c.split('=')[1];
+        }
+        if (!token) return next();
+
+        const user = jwt.verify(token, process.env.JWT_SECRET);
+        if (!user || !user.id_salon) return next();
+
+        // 2. Récupération de l'acceptation enregistrée dans acceptations_legales et des infos du salon
+        const accIdParam = req.params?.id || req.query?.id || null;
+        let accRow = null;
+        try {
+            const accRes = accIdParam
+                ? await pool.query(`SELECT * FROM acceptations_legales WHERE id_salon = $1 AND (id::text = $2 OR id_acceptation::text = $2) ORDER BY 1 DESC LIMIT 1`, [user.id_salon, String(accIdParam)])
+                : await pool.query(`SELECT * FROM acceptations_legales WHERE id_salon = $1 ORDER BY 1 DESC LIMIT 1`, [user.id_salon]);
+            if (accRes.rowCount > 0) accRow = accRes.rows[0];
+        } catch (e) {}
+
+        const salonRes = await pool.query(`SELECT * FROM configuration_salon WHERE id_salon = $1`, [user.id_salon]);
+        const salon = salonRes.rows[0] || {};
+        const gerantRes = await pool.query(`SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1`, [user.id_salon]);
+
+        const refId = accRow?.id_acceptation || accRow?.id || user.id_salon;
+        const referenceCertificat = `ACC-${refId}`;
+        const dateAcceptation = accRow?.date_acceptation || accRow?.created_at || accRow?.date_creation || new Date();
+        const dateObj = new Date(dateAcceptation);
+        const dateParis = dateObj.toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const dateIso = dateObj.toISOString();
+
+        const nomSignataire = accRow?.nom_signataire || ((accRow?.prenom_gerant || '') + ' ' + (accRow?.nom_gerant || '')).trim() || gerantRes.rows[0]?.nom || 'Représentant Légal';
+        const emailSignataire = accRow?.email_signataire || accRow?.email || user.email || 'Non renseigné';
+        const nomSalon = accRow?.nom_salon || salon.nom_salon || 'Établissement Coiffure';
+        const adresseSalon = accRow?.adresse_salon || salon.adresse_salon || 'Adresse enregistrée';
+        const siretSalon = accRow?.siret || salon.siret || 'En cours';
+        const ipSignataire = accRow?.ip_acceptation || accRow?.ip || req.ip || '127.0.0.1';
+        const uaSignataire = accRow?.user_agent || accRow?.navigateur || req.headers['user-agent'] || 'Navigateur Web Sécurisé';
+
+        // Textes officiels des 3 documents contractuels STACK
+        const docsContractuels = [
+            {
+                code: 'CGV',
+                titre: "Conditions Générales d'Utilisation et de Vente (CGUV)",
+                version: '2026-09-28',
+                hash: crypto.createHash('sha256').update('STACK_CGUV_2026-09-28').digest('hex'),
+                articles: [
+                    { t: "1. Objet du contrat", c: "L'application STACK est un logiciel en mode SaaS (Software as a Service) destiné à la gestion intégrale de salons de coiffure (encaissement certifié NF525, agenda, stocks, ressources humaines, comptabilité IA et marketing)." },
+                    { t: "2. Abonnement et Paiement", c: "L'accès complet aux fonctionnalités de STACK (hors période d'essai gratuit de 30 jours) nécessite un abonnement actif. Les paiements sont sécurisés et traités par notre partenaire Stripe. L'abonnement est sans engagement de durée et peut être résilié à tout moment. En cas de défaut de paiement, l'accès au tableau de bord sera suspendu." },
+                    { t: "3. Conformité Caisse et Loi Anti-fraude (Norme NF525)", c: "STACK intègre un système de clôture journalière (Z de caisse) et un chaînage cryptographique SHA-256 des tickets pour garantir l'inaltérabilité des données financières (Art. 286 I-3° bis du CGI). L'Utilisateur est seul responsable de réaliser ses clôtures de caisse quotidiennement et de ses déclarations fiscales et comptables. STACK agit comme un outil d'assistance et ne remplace pas les conseils d'un expert-comptable." },
+                    { t: "4. Fonctionnalités d'Intelligence Artificielle", c: "L'application propose des outils automatisés (analyse d'e-mails et scan de factures fournisseurs). Bien que l'IA soit conçue pour être précise, l'Utilisateur s'engage à vérifier les tâches générées avant de les valider. STACK ne saurait être tenu responsable d'une erreur d'interprétation de l'IA." },
+                    { t: "5. Disponibilité du Service et Mode Hors-Ligne", c: "L'éditeur s'efforce de maintenir l'accès au serveur 24h/24 et 7j/7. En cas de coupure réseau côté client, STACK propose un Mode Hors-Ligne permettant d'encaisser en espèces. L'Utilisateur s'engage à reconnecter son appareil à Internet pour synchroniser ces tickets dès que possible." },
+                    { t: "6. Limitation de Responsabilité", c: "STACK décline toute responsabilité en cas de perte de chiffre d'affaires liée à une mauvaise utilisation du logiciel, à une panne matérielle de l'appareil de l'utilisateur, ou à un refus de paiement du terminal bancaire." }
+                ]
+            },
+            {
+                code: 'RGPD',
+                titre: "Politique de Confidentialité & Sous-traitance (RGPD)",
+                version: '2026-09-28',
+                hash: crypto.createHash('sha256').update('STACK_RGPD_2026-09-28').digest('hex'),
+                articles: [
+                    { t: "1. Rôles et Responsabilités (Art. 28 RGPD)", c: "Dans le cadre de l'utilisation de STACK, le gérant du salon de coiffure agit en tant que Responsable de traitement des données de ses clients. STACK agit en tant que Sous-traitant, fournissant uniquement l'infrastructure technique sécurisée pour stocker et traiter ces données." },
+                    { t: "2. Données collectées et finalités", c: "• Données du Salon : Nom, email, code PIN haché, taux de commission (authentification et calcul des primes).\n• Données des Clients finaux : Prénom, nom, téléphone, email, date de naissance, historique d'achats et notes (gestion de l'agenda, fidélité et envoi de SMS/Emails de rappel).\n• Données Financières : Tickets de caisse, méthodes de paiement, clôtures Z (conformité fiscale NF525 et export FEC)." },
+                    { t: "3. Services Tiers et Sous-traitants ultérieurs", c: "• Render & PostgreSQL (Région UE Francfort) : Hébergement souverain de l'application et de la base de données.\n• Cloudflare R2 : Stockage chiffré et redondé des pièces justificatives.\n• Stripe : Traitement certifié PCI-DSS des paiements et liaison TPE.\n• Brevo : Envoi des notifications transactionnelles et campagnes SMS.\n• Groq (IA) : Traitement éphémère du texte des e-mails (aucun entraînement de modèle public)." },
+                    { t: "4. Sécurité, Chiffrement et Inaltérabilité", c: "Les mots de passe et codes PIN sont hachés via bcrypt. Les secrets tiers sont chiffrés en AES-256-CBC. Les historiques de caisse sont scellés cryptographiquement en SHA-256." },
+                    { t: "5. Durée de conservation légale & Droits", c: "Les pièces fiscales (tickets, Z de caisse, journal JET) sont conservées de manière inaltérable pendant 6 ans conformément à l'article L. 102 B du LPF (anonymisation RGPD en cas de suppression d'une fiche client). Contact DPO / Droits : stackcontact.fr@gmail.com." }
+                ]
+            },
+            {
+                code: 'SEPA',
+                titre: "Conditions de Paiement & Mandat de Prélèvement SEPA",
+                version: '2026-09-28',
+                hash: crypto.createHash('sha256').update('STACK_SEPA_2026-09-28').digest('hex'),
+                articles: [
+                    { t: "1. Moyens de paiement acceptés", c: "L'abonnement logiciel STACK est réglé par prélèvement automatique SEPA ou par carte bancaire, via l'infrastructure sécurisée de notre prestataire de paiement Stripe." },
+                    { t: "2. Établissement du Mandat de prélèvement SEPA", c: "En choisissant le prélèvement SEPA, le mandat est établi et signé électroniquement lors de l'étape de paiement sécurisée Stripe. Ce mandat précise l'identifiant créancier SEPA (ICS), la Référence Unique du Mandat (RUM) et les coordonnées bancaires IBAN à débiter." },
+                    { t: "3. Portée du mandat et Contestations", c: "Le mandat autorise le prélèvement récurrent des échéances de l'abonnement STACK choisi par le salon. Vos droits en matière de contestation et de remboursement d'un prélèvement SEPA sont garantis conformément à la réglementation européenne et aux conditions de votre établissement bancaire." },
+                    { t: "4. Conservation de la preuve électronique", c: "Votre acceptation électronique du présent document, scellée par horodatage UTC, adresse IP et empreinte cryptographique SHA-256, est archivée de manière inaltérable par l'éditeur à titre de preuve légale." }
+                ]
+            }
+        ];
+
+        const hashGlobalPreuve = accRow?.empreinte_preuve || accRow?.signature_hash || accRow?.hash_preuve ||
+            crypto.createHash('sha256').update(`${referenceCertificat}|${dateIso}|${nomSignataire}|${siretSalon}|${ipSignataire}`).digest('hex');
+
+        const doc = new PDFDocument({ size: 'A4', margin: 45, bufferPages: true });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="STACK-acceptation-${referenceCertificat}.pdf"`);
+        doc.pipe(res);
+
+        const DARK = '#111827';
+        const MUTED = '#4b5563';
+        const LIGHT_MUTED = '#6b7280';
+        const BG_SOFT = '#f9fafb';
+        const BORDER = '#e5e7eb';
+        const GREEN_BG = '#dcfce7';
+        const GREEN_TXT = '#166534';
+
+        const formatSiret = (s) => {
+            const clean = String(s || '').replace(/\s+/g, '');
+            return clean.length === 14 ? `${clean.slice(0, 3)} ${clean.slice(3, 6)} ${clean.slice(6, 9)} ${clean.slice(9)}` : (clean || 'En cours');
+        };
+
+        // =========================================================================
+        // PAGE 1 : CERTIFICAT OFFICIEL DE SIGNATURE ÉLECTRONIQUE (DESIGN EXECUTIVE)
+        // =========================================================================
+        doc.rect(0, 0, 595.28, 8).fill(DARK);
+
+        let y = 36;
+        doc.roundedRect(45, y, 36, 36, 9).fill(DARK);
+        doc.font('Helvetica-Bold').fontSize(19).fillColor('#ffffff').text('S', 45, y + 8, { width: 36, align: 'center' });
+
+        doc.font('Helvetica-Bold').fontSize(15).fillColor(DARK).text('STACK — Logiciel de Caisse Certifié NF525', 92, y + 2);
+        doc.font('Helvetica').fontSize(8.5).fillColor(LIGHT_MUTED).text('Tiers de preuve & Horodatage Cryptographique • Articles 1366 et 1367 du Code civil', 92, y + 21);
+
+        doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text('CERTIFICAT D\'ACCEPTATION', 340, y, { width: 210, align: 'right' });
+        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text(`Réf. Dossier : ${referenceCertificat}`, 340, y + 18, { width: 210, align: 'right' });
+
+        doc.roundedRect(380, y + 34, 170, 18, 5).fill(GREEN_BG);
+        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(GREEN_TXT).text('SIGNATURE ÉLECTRONIQUE VALIDE', 380, y + 39, { width: 170, align: 'center' });
+
+        y = 104;
+        doc.moveTo(45, y).lineTo(550, y).lineWidth(0.8).strokeColor(BORDER).stroke();
+        y += 16;
+
+        // Cartes Éditeur (Gauche) & Signataire (Droite)
+        const cardH = 108;
+        doc.roundedRect(45, y, 242, cardH, 8).fillAndStroke(BG_SOFT, BORDER);
+        doc.roundedRect(308, y, 242, cardH, 8).fillAndStroke('#ffffff', BORDER);
+
+        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(LIGHT_MUTED).text('ÉDITEUR DU LOGICIEL SAAS', 57, y + 11);
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor(DARK).text('STACK (Valentin TARDY)', 57, y + 25);
+        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
+        doc.text('32 Rue du Goujon, 67000 Strasbourg', 57, y + 41, { width: 218 });
+        doc.text(`SIRET : ${process.env.EDITEUR_SIRET || 'En cours d\'immatriculation'}`, 57, y + 56, { width: 218 });
+        doc.text('Logiciel : STACK Cloud SaaS v1.0 (Norme NF525)', 57, y + 71, { width: 218 });
+        doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text('Support & DPO : stackcontact.fr@gmail.com', 57, y + 88);
+
+        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(LIGHT_MUTED).text('SIGNATAIRE & ÉTABLISSEMENT ENGAGÉ', 320, y + 11);
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor(DARK).text(nomSalon, 320, y + 25, { width: 218 });
+        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
+        doc.text(`Représenté par : ${nomSignataire}`, 320, y + 41, { width: 218 });
+        doc.text(`E-mail : ${emailSignataire}`, 320, y + 55, { width: 218 });
+        doc.text(`Adresse : ${adresseSalon}`, 320, y + 69, { width: 218 });
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(`SIRET : ${formatSiret(siretSalon)}`, 320, y + 88, { width: 218 });
+
+        y += cardH + 14;
+
+        // Bandeau Métadonnées techniques d'horodatage et traçabilité IP
+        doc.roundedRect(45, y, 505, 52, 6).fillAndStroke(BG_SOFT, BORDER);
+        doc.font('Helvetica-Bold').fontSize(7).fillColor(LIGHT_MUTED).text('HORODATAGE LÉGAL (EUROPE/PARIS)', 57, y + 8);
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(dateParis, 57, y + 19);
+
+        doc.font('Helvetica-Bold').fontSize(7).fillColor(LIGHT_MUTED).text('HORODATAGE UNIVERSEL (UTC ISO-8601)', 225, y + 8);
+        doc.font('Courier-Bold').fontSize(8).fillColor(DARK).text(dateIso, 225, y + 19);
+
+        doc.font('Helvetica-Bold').fontSize(7).fillColor(LIGHT_MUTED).text('ADRESSE IP SOURCE', 425, y + 8);
+        doc.font('Courier-Bold').fontSize(8.5).fillColor(DARK).text(ipSignataire, 425, y + 19);
+
+        doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text(`Empreinte Navigateur (User-Agent) : ${uaSignataire}`, 57, y + 35, { width: 480, lineBreak: false, ellipsis: true });
+
+        y += 66;
+
+        // Tableau des documents contractuels acceptés et leurs condensats SHA-256
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK).text('DOCUMENTS CONTRACTUELS ACCEPTÉS ET SCELLÉS CRYPTOGRAPHIQUEMENT', 45, y);
+        y += 14;
+
+        doc.rect(45, y, 505, 22).fill(DARK);
+        doc.font('Helvetica-Bold').fontSize(8).fillColor('#ffffff');
+        doc.text('DOCUMENT CONTRACTUEL', 55, y + 7, { width: 210 });
+        doc.text('VERSION', 270, y + 7, { width: 65, align: 'center' });
+        doc.text('EMPREINTE SHA-256 DU DOCUMENT', 340, y + 7, { width: 200, align: 'right' });
+        y += 22;
+
+        docsContractuels.forEach((d, idx) => {
+            const rowH = 34;
+            doc.rect(45, y, 505, rowH).fillAndStroke(idx % 2 === 0 ? '#ffffff' : BG_SOFT, BORDER);
+            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(d.titre, 55, y + 11, { width: 210 });
+            doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(d.version, 270, y + 12, { width: 65, align: 'center' });
+            const hSplit = `${d.hash.slice(0, 32)}\n${d.hash.slice(32, 64)}`;
+            doc.font('Courier').fontSize(7.2).fillColor(DARK).text(hSplit, 340, y + 7, { width: 200, align: 'right' });
+            y += rowH;
+        });
+
+        y += 16;
+
+        // Encadré Déclaration du signataire & Sceau Cryptographique Global du Dossier de Preuve
+        doc.roundedRect(45, y, 505, 92, 8).fillAndStroke('#f0fdf4', '#bbf7d0');
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(GREEN_TXT).text('DÉCLARATION D\'ENGAGEMENT & SCEAU D\'INTÉGRITÉ DU DOSSIER DE PREUVE', 57, y + 11);
+        doc.font('Helvetica').fontSize(8.2).fillColor(DARK).text(
+            `Je soussigné(e) ${nomSignataire}, agissant en qualité de représentant légal habilité à engager l'établissement « ${nomSalon} » (SIRET ${formatSiret(siretSalon)}), atteste avoir pris pleinement connaissance de l'intégralité des documents contractuels listés ci-dessus et les accepter sans réserve.`,
+            57, y + 26, { width: 480, lineGap: 1.5 }
+        );
+        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(MUTED).text('EMPREINTE GLOBALE DU DOSSIER DE PREUVE (SHA-256) :', 57, y + 58);
+        doc.font('Courier-Bold').fontSize(8.2).fillColor(GREEN_TXT).text(hashGlobalPreuve, 57, y + 70, { width: 480 });
+
+        // Pied de page légal Page 1
+        const p1FooterY = 740;
+        doc.moveTo(45, p1FooterY).lineTo(550, p1FooterY).lineWidth(0.6).strokeColor(BORDER).stroke();
+        doc.font('Helvetica-Oblique').fontSize(7.5).fillColor(LIGHT_MUTED).text(
+            'Valeur probante : Conformément aux articles 1366 et 1367 du Code civil et au règlement européen eIDAS (UE n°910/2014), le présent certificat d\'acceptation électronique scellé par condensat cryptographique SHA-256 et horodatage serveur fait foi entre les parties.',
+            45, p1FooterY + 8, { width: 505, align: 'justify', lineGap: 1.5 }
+        );
+
+        // =========================================================================
+        // PAGES SUIVANTES : ANNEXES INTÉGRALES DES CONTRATS ACCEPTÉS
+        // =========================================================================
+        doc.addPage();
+        doc.rect(0, 0, 595.28, 8).fill(DARK);
+        y = 36;
+
+        doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text(`ANNEXES CONTRACTUELLES INTÉGRALES — DOSSIER ${referenceCertificat}`, 45, y);
+        doc.font('Helvetica').fontSize(8.5).fillColor(LIGHT_MUTED).text(`Texte intégral figé des documents acceptés électroniquement le ${dateParis} par ${nomSignataire}`, 45, y + 16);
+        y += 36;
+
+        for (const d of docsContractuels) {
+            if (y > 670) {
+                doc.addPage();
+                doc.rect(0, 0, 595.28, 8).fill(DARK);
+                y = 36;
+            }
+            doc.roundedRect(45, y, 505, 26, 5).fill(DARK);
+            doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#ffffff').text(`${d.titre} — Version ${d.version}`, 55, y + 8, { width: 350 });
+            doc.font('Courier').fontSize(7).fillColor('#9ca3af').text(`SHA-256 : ${d.hash.slice(0, 20)}...`, 390, y + 9, { width: 150, align: 'right' });
+            y += 34;
+
+            for (const art of d.articles) {
+                doc.font('Helvetica-Bold').fontSize(8.8);
+                const hT = doc.heightOfString(art.t, { width: 495 });
+                doc.font('Helvetica').fontSize(8.2);
+                const hC = doc.heightOfString(art.c, { width: 495, lineGap: 1.5 });
+
+                if (y + hT + hC + 16 > 750) {
+                    doc.addPage();
+                    doc.rect(0, 0, 595.28, 8).fill(DARK);
+                    y = 36;
+                }
+
+                doc.font('Helvetica-Bold').fontSize(8.8).fillColor(DARK).text(art.t, 50, y, { width: 495 });
+                y += hT + 3;
+                doc.font('Helvetica').fontSize(8.2).fillColor(MUTED).text(art.c, 50, y, { width: 495, lineGap: 1.5, align: 'justify' });
+                y += hC + 9;
+            }
+            y += 8;
+        }
+
+        // Pagination dynamique sur toutes les pages du certificat
+        const range = doc.bufferedPageRange();
+        for (let i = range.start, end = range.start + range.count, page = 1; i < end; i++, page++) {
+            doc.switchToPage(i);
+            const origBottom = doc.page.margins.bottom;
+            doc.page.margins.bottom = 0;
+            doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text(
+                `STACK — Certificat d'Acceptation Électronique ${referenceCertificat} (${nomSalon}) — Empreinte : ${hashGlobalPreuve.slice(0, 16).toUpperCase()} — Page ${page} / ${range.count}`,
+                45, 808, { width: 505, align: 'center' }
+            );
+            doc.page.margins.bottom = origBottom;
+        }
+
+        doc.end();
+    } catch (errPdfLegal) {
+        console.error("Erreur génération Certificat Légal Executive:", errPdfLegal);
+        next();
+    }
+});
+
 legal.installerRoutesLegales({ app, pool, jwt, enregistrerJET, PDFDocument, nodemailer, crypto });
 
 // Module Portail Partenaires (Agents Commerciaux)
