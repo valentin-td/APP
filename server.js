@@ -202,8 +202,18 @@ app.get('/api/events/:id_salon', (req, res, next) => {
 });
 
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/webhooks' || req.originalUrl === '/api/webhooks/') { next(); } 
-  else { express.json({ limit: '10mb' })(req, res, next); }
+  if (
+    req.originalUrl === '/api/webhooks' ||
+    req.originalUrl === '/api/webhooks/' ||
+    req.originalUrl.startsWith('/api/partners/webhooks/stripe')
+  ) {
+    next();
+  } else {
+    express.json({
+      limit: '10mb',
+      verify: (reqObj, resObj, buf) => { reqObj.rawBody = buf; }
+    })(req, res, next);
+  }
 });
 
 const pool = new Pool({
@@ -1393,71 +1403,88 @@ app.post('/api/webhooks/', express.raw({type: 'application/json'}), async (req, 
     }
 
     // 3. Facture Mensuelle Payée (Moteur de Commissions STACK Partners - Brique 8)
-    if (event.type === 'invoice.payment_succeeded') {
+    if (event.type === 'invoice.payment_succeeded' || event.type === 'invoice.paid') {
         const invoice = event.data.object;
         
         // On ignore les factures à 0 € (Périodes d'essai gratuites)
         if (invoice.amount_paid > 0) {
             const customerId = invoice.customer;
+            const subId = invoice.subscription || null;
             
-            // Trouver si ce salon est rattaché à un agent STACK Partners
-            const agentRes = await pool.query(`
-                SELECT s.id_salon, a.id_agent, a.date_fin_commissionnement
+            // Trouver le salon par _customer_id, _subscription_id ou email
+            const salonLookup = await pool.query(`
+                SELECT s.id_salon, s.id_agent_apporteur, s.plan_actuel, a.date_fin_commissionnement
                 FROM utilisateurs u
                 JOIN configuration_salon s ON u.id_salon = s.id_salon
-                JOIN partner_attributions_salons a ON s.id_salon = a.id_salon
-                WHERE u._customer_id = $1
-            `, [customerId]);
+                LEFT JOIN partner_attributions_salons a ON s.id_salon = a.id_salon
+                WHERE (u._customer_id = $1 OR ($2::varchar IS NOT NULL AND u._subscription_id = $2) OR LOWER(TRIM(u.email)) = LOWER(TRIM($3)))
+                  AND COALESCE(s.est_bac_a_sable, FALSE) = FALSE
+                LIMIT 1
+            `, [customerId, subId, invoice.customer_email || '']);
 
-            if (agentRes.rowCount > 0) {
-                const { id_salon, id_agent } = agentRes.rows[0];
-                let date_fin = agentRes.rows[0].date_fin_commissionnement;
+            if (salonLookup.rowCount > 0) {
+                const { id_salon, id_agent_apporteur, plan_actuel } = salonLookup.rows[0];
+                let date_fin = salonLookup.rows[0].date_fin_commissionnement;
 
-                // S'il s'agit du tout premier paiement, on démarre le chronomètre des 24 mois d'éligibilité
-                if (!date_fin) {
-                    const updateRes = await pool.query(`
-                        UPDATE partner_attributions_salons
-                        SET date_debut_commissionnement = CURRENT_DATE,
-                            date_fin_commissionnement = (CURRENT_DATE + INTERVAL '24 months')::DATE,
-                            statut_onboarding = 'GO_LIVE_VALIDE'
-                        WHERE id_salon = $1
-                        RETURNING date_fin_commissionnement
-                    `, [id_salon]);
-                    date_fin = updateRes.rows[0].date_fin_commissionnement;
-                }
+                // Passer officiellement le salon de "En essai (PREMIUM_TRIAL)" à "Actif payant"
+                const planPayant = (plan_actuel && plan_actuel !== 'PREMIUM_TRIAL') ? plan_actuel : 'PREMIUM';
+                await pool.query(`UPDATE utilisateurs SET statut_abonnement = 'actif' WHERE id_salon = $1`, [id_salon]);
+                await pool.query(`UPDATE configuration_salon SET plan_actuel = $1 WHERE id_salon = $2`, [planPayant, id_salon]);
 
-                // Vérifier que la durée d'éligibilité (24 mois max) n'est pas dépassée
-                if (new Date() <= new Date(date_fin)) {
-                    const montantBaseHT = invoice.amount_paid / 100; // Stripe gère l'argent en centimes
-                    const montantCommission = (montantBaseHT * 0.20).toFixed(2); // Calcul des 20 %
-                    const periodeMois = new Date(invoice.created * 1000).toISOString().slice(0, 7);
+                if (id_agent_apporteur) {
+                    // S'il s'agit du tout premier paiement, on initialise l'attribution et la fenêtre de 24 mois
+                    if (!date_fin) {
+                        const updateRes = await pool.query(`
+                            INSERT INTO partner_attributions_salons (id_salon, id_agent, mode_attribution, statut_onboarding, date_debut_commissionnement, date_fin_commissionnement)
+                            VALUES ($1, $2, 'LIEN_AFFILIATION', 'GO_LIVE_VALIDE', CURRENT_DATE, (CURRENT_DATE + INTERVAL '24 months')::DATE)
+                            ON CONFLICT (id_salon) DO UPDATE
+                            SET date_debut_commissionnement = COALESCE(partner_attributions_salons.date_debut_commissionnement, CURRENT_DATE),
+                                date_fin_commissionnement = COALESCE(partner_attributions_salons.date_fin_commissionnement, (CURRENT_DATE + INTERVAL '24 months')::DATE),
+                                statut_onboarding = 'GO_LIVE_VALIDE'
+                            RETURNING date_fin_commissionnement
+                        `, [id_salon, id_agent_apporteur]);
+                        date_fin = updateRes.rows[0].date_fin_commissionnement;
+                    }
 
-                    // Vérifier si l'agent a atteint le seuil de 3 salons pour débloquer l'argent
-                    const seuilRes = await pool.query(`
-                        SELECT COUNT(DISTINCT s.id_salon) as nb_actifs
-                        FROM configuration_salon s
-                        JOIN utilisateurs u ON u.id_salon = s.id_salon
-                        WHERE s.id_agent_apporteur = $1 AND u.statut_abonnement = 'actif'
-                    `, [id_agent]);
-                    
-                    const nbActifs = parseInt(seuilRes.rows[0].nb_actifs) || 0;
-                    const statutCommission = nbActifs >= 3 ? 'ACQUISE_A_PAYER' : 'EN_ATTENTE_SEUIL';
+                    // Vérifier que la durée d'éligibilité (24 mois max) n'est pas dépassée
+                    if (new Date() <= new Date(date_fin)) {
+                        const baseCents = invoice.subtotal_excluding_tax || invoice.amount_Excluding_Tax || invoice.amount_paid;
+                        const montantBaseHT = Number((baseCents / 100).toFixed(2));
+                        const montantCommission = Number((montantBaseHT * 0.20).toFixed(2));
+                        const periodeMois = new Date((invoice.created || Math.floor(Date.now() / 1000)) * 1000).toISOString().slice(0, 7);
 
-                    // Insérer la commission mensuelle de manière idempotente
-                    await pool.query(`
-                        INSERT INTO partner_commissions 
-                        (id_agent, id_salon, type_commission, periode_mois, montant_base_ht, taux_applique, montant_commission, statut_commission)
-                        VALUES ($1, $2, 'ABONNEMENT_RECURRENT_20_POURCENT', $3, $4, 20.00, $5, $6)
-                        ON CONFLICT (id_salon, periode_mois, type_commission) DO NOTHING
-                    `, [id_agent, id_salon, periodeMois, montantBaseHT, montantCommission, statutCommission]);
-                    
-                    // Déblocage automatique des sommes bloquées si le palier de 3 vient d'être franchi
-                    if (nbActifs >= 3) {
+                        // Vérifier le palier de 3 salons actifs payants (hors essai et hors bac à sable)
+                        const seuilRes = await pool.query(`
+                            SELECT COUNT(DISTINCT s.id_salon) as nb_actifs
+                            FROM configuration_salon s
+                            JOIN utilisateurs u ON u.id_salon = s.id_salon AND u.role = 'gerant'
+                            WHERE s.id_agent_apporteur = $1
+                              AND u.statut_abonnement = 'actif'
+                              AND s.plan_actuel != 'PREMIUM_TRIAL'
+                              AND COALESCE(s.est_bac_a_sable, FALSE) = FALSE
+                        `, [id_agent_apporteur]);
+                        
+                        const nbActifs = parseInt(seuilRes.rows[0].nb_actifs, 10) || 0;
+                        const statutCommission = nbActifs >= 3 ? 'ACQUISE_A_PAYER' : 'EN_ATTENTE_SEUIL';
+
                         await pool.query(`
-                            UPDATE partner_commissions
-                            SET statut_commission = 'ACQUISE_A_PAYER'
-                            WHERE id_agent = $1 AND statut_commission = 'EN_ATTENTE_SEUIL'
-                        `, [id_agent]);
+                            INSERT INTO partner_commissions 
+                            (id_agent, id_salon, type_commission, periode_mois, montant_base_ht, taux_applique, montant_commission, statut_commission)
+                            VALUES ($1, $2, 'ABONNEMENT_RECURRENT_20_POURCENT', $3, $4, 20.00, $5, $6)
+                            ON CONFLICT (id_salon, periode_mois, type_commission) DO UPDATE
+                            SET montant_base_ht = EXCLUDED.montant_base_ht,
+                                montant_commission = EXCLUDED.montant_commission,
+                                statut_commission = CASE WHEN partner_commissions.statut_commission = 'PAYEE' THEN 'PAYEE' ELSE EXCLUDED.statut_commission END
+                        `, [id_agent_apporteur, id_salon, periodeMois, montantBaseHT, montantCommission, statutCommission]);
+                        
+                        // Déblocage rétroactif immédiat si le palier de 3 salons actifs payants vient d'être franchi
+                        if (nbActifs >= 3) {
+                            await pool.query(`
+                                UPDATE partner_commissions
+                                SET statut_commission = 'ACQUISE_A_PAYER'
+                                WHERE id_agent = $1 AND statut_commission = 'EN_ATTENTE_SEUIL'
+                            `, [id_agent_apporteur]);
+                        }
                     }
                 }
             }
