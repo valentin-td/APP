@@ -3338,20 +3338,23 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
     doc.roundedRect(45, y, 242, boxHeight, 8).fillAndStroke(BG_SOFT, BORDER);
     doc.roundedRect(308, y, 242, boxHeight, 8).fillAndStroke('#ffffff', BORDER);
 
-    // Contenu Émetteur (sans doublon EI)
+    // Contenu Émetteur (Empilement dynamique sans aucun retour à la ligne parasite sur RSAC)
     doc.font('Helvetica-Bold').fontSize(7.5).fillColor(LIGHT_MUTED).text('ÉMETTEUR (AGENT COMMERCIAL MANDATAIRE)', 57, y + 11);
-    doc.font('Helvetica-Bold').fontSize(10.5).fillColor(DARK).text(`${nomCompletAgent}${estEI ? ' (EI)' : ''}`, 57, y + 24, { width: 218 });
+    doc.font('Helvetica-Bold').fontSize(10.5).fillColor(DARK).text(
+      estEI ? `${nomCompletAgent} — Entrepreneur Individuel (EI)` : `${nomCompletAgent} (${mentionFormeCourte})`,
+      57, y + 24, { width: 218, lineBreak: false, ellipsis: true }
+    );
     doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
-    doc.text(conf.adresse_pro || 'Adresse professionnelle enregistrée au RSAC', 57, y + 39, { width: 218 });
-    doc.text(`SIRET : ${formaterSiretAffichage(agent.siret_agent)} • ${mentionFormeCourte}`, 57, y + 63, { width: 218 });
+    doc.text(conf.adresse_pro || 'Adresse professionnelle enregistrée au RSAC', 57, y + 40, { width: 218 });
+    doc.text(`SIRET : ${formaterSiretAffichage(agent.siret_agent)}`, 57, y + 64, { width: 218, lineBreak: false });
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(
       `RSAC : N° ${agent.numero_rsac || 'En cours'}${conf.greffe_rsac ? ' — Greffe de ' + formaterNomPropre(conf.greffe_rsac) : ''}`,
-      57, y + 77, { width: 218 }
+      57, y + 78, { width: 218, lineBreak: false, ellipsis: true }
     );
     if (assujettiTVA && conf.numero_tva_intra) {
-      doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(`TVA Intracom. : ${conf.numero_tva_intra}`, 57, y + 92);
+      doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(`TVA Intracom. : ${conf.numero_tva_intra}`, 57, y + 93, { width: 218, lineBreak: false });
     } else if (agent.email) {
-      doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text(`Contact : ${agent.email}${agent.telephone ? ' • ' + agent.telephone : ''}`, 57, y + 92, { width: 218 });
+      doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text(`Contact : ${agent.email}${agent.telephone ? ' • ' + agent.telephone : ''}`, 57, y + 93, { width: 218, lineBreak: false, ellipsis: true });
     }
 
     // Contenu Client (Salon de coiffure)
@@ -3444,7 +3447,8 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
     doc.font('Helvetica').fontSize(9).fillColor(MUTED).text(assujettiTVA ? 'TVA (20,00 %)' : 'TVA (0,00 % — Art. 293 B)', totX + 14, y + 30);
     doc.font('Helvetica').fontSize(9).fillColor(DARK).text(fmtEur(montantTVA), totX + 120, y + 30, { width: 82, align: 'right' });
 
-    doc.rect(totX, y + 48, totW, 44).fill(DARK);
+    doc.roundedRect(totX, y + 48, totW, 44, 7).fill(DARK);
+    doc.rect(totX, y + 48, totW, 10).fill(DARK);
     doc.font('Helvetica-Bold').fontSize(10).fillColor('#ffffff').text(estPayee ? 'NET PAYÉ TTC' : 'NET À PAYER TTC', totX + 14, y + 64);
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#ffffff').text(fmtEur(montantTTC), totX + 105, y + 62, { width: 97, align: 'right' });
 
