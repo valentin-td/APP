@@ -3171,20 +3171,25 @@ router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async
 const tls = require('tls');
 
 async function envoyerEmailSMTP({ to, subject, html, attachments = [] }) {
-  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || 'contact@stack-app.fr';
+  const fromEmail = (process.env.SMTP_FROM || process.env.SMTP_USER || 'tardy.valentin04@gmail.com').trim();
 
-  // 1. PRIORITÉ RENDER FREE TIER : Envoi via API HTTPS (Port 443 jamais bloqué par Render)
-  // Cherche BREVO_API_KEY dans l'environnement ou dans configuration_salon
-  let brevoKey = process.env.BREVO_API_KEY || (process.env.SMTP_PASS && process.env.SMTP_PASS.startsWith('xkeysib-') ? process.env.SMTP_PASS : null);
-  if (!brevoKey) {
+  // 1. PRIORITÉ RENDER FREE TIER : Envoi via API HTTPS Brevo (Port 443 jamais bloqué par Render)
+  let rawBrevoKey =
+    process.env.BREVO_API_KEY ||
+    process.env.SENDINBLUE_API_KEY ||
+    (process.env.SMTP_PASS && process.env.SMTP_PASS.trim().startsWith('xkeysib-') ? process.env.SMTP_PASS : null);
+
+  if (!rawBrevoKey) {
     const dbKey = await pool.query(`SELECT brevo_api_key FROM configuration_salon WHERE brevo_api_key IS NOT NULL AND TRIM(brevo_api_key) != '' LIMIT 1`).catch(() => ({ rows: [] }));
-    if (dbKey.rows[0]?.brevo_api_key) brevoKey = dbKey.rows[0].brevo_api_key.trim();
+    if (dbKey.rows[0]?.brevo_api_key) rawBrevoKey = dbKey.rows[0].brevo_api_key;
   }
+
+  const brevoKey = rawBrevoKey ? String(rawBrevoKey).replace(/['"\s]/g, '').trim() : null;
 
   if (brevoKey) {
     const payloadBrevo = {
       sender: { name: 'STACK Partners', email: fromEmail },
-      to: [{ email: to }],
+      to: [{ email: String(to).trim() }],
       subject,
       htmlContent: html
     };
@@ -3194,6 +3199,7 @@ async function envoyerEmailSMTP({ to, subject, html, attachments = [] }) {
         content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : Buffer.from(a.content).toString('base64')
       }));
     }
+
     const resBrevo = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
@@ -3203,9 +3209,15 @@ async function envoyerEmailSMTP({ to, subject, html, attachments = [] }) {
       },
       body: JSON.stringify(payloadBrevo)
     });
-    if (resBrevo.ok) return { ok: true, mode: 'brevo_https_api' };
-    const errTxt = await resBrevo.text().catch(() => '');
-    console.warn("Avertissement Brevo API HTTPS:", errTxt);
+
+    if (resBrevo.ok) {
+      return { ok: true, mode: 'brevo_https_api' };
+    }
+
+    // Si Brevo refuse la requête, on remonte immédiatement la vraie raison à l'écran !
+    const errJson = await resBrevo.json().catch(() => ({}));
+    const detailBrevo = errJson.message || errJson.code || `HTTP ${resBrevo.status}`;
+    throw new Error(`Refus API Brevo (${detailBrevo}) — Vérifiez que l'adresse expéditrice "${fromEmail}" (variable SMTP_FROM ou SMTP_USER sur Render) est bien validée dans Brevo > Expéditeurs.`);
   }
 
   // Alternative HTTPS Resend si RESEND_API_KEY est configurée
@@ -3213,12 +3225,12 @@ async function envoyerEmailSMTP({ to, subject, html, attachments = [] }) {
     const resResend = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         from: `STACK Partners <${fromEmail}>`,
-        to: [to],
+        to: [String(to).trim()],
         subject,
         html,
         attachments: attachments.map(a => ({
@@ -3228,50 +3240,11 @@ async function envoyerEmailSMTP({ to, subject, html, attachments = [] }) {
       })
     });
     if (resResend.ok) return { ok: true, mode: 'resend_https_api' };
+    const errResend = await resResend.text().catch(() => '');
+    throw new Error(`Refus API Resend : ${errResend}`);
   }
 
-  // 2. FALLBACK SMTP (Fonctionne sur Render Paid Tier ou en local)
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  if (!user || !pass) {
-    throw new Error("Ajoutez BREVO_API_KEY (recommandé sur Render Free) ou SMTP_USER / SMTP_PASS dans vos variables d'environnement Render.");
-  }
-
-  const host = process.env.SMTP_HOST || (
-    user.includes('@gmail.') ? 'smtp.gmail.com' :
-    user.includes('@outlook.') || user.includes('@hotmail.') ? 'smtp.office365.com' :
-    'smtp-relay.brevo.com'
-  );
-  const port = parseInt(process.env.SMTP_PORT || '465', 10);
-
-  try {
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-      connectionTimeout: 8000,
-      greetingTimeout: 8000
-    });
-    await transporter.sendMail({
-      from: `"STACK Partners" <${fromEmail}>`,
-      to,
-      subject,
-      html,
-      attachments: attachments.map(a => ({
-        filename: a.filename,
-        content: a.content,
-        contentType: a.contentType || 'application/pdf'
-      }))
-    });
-    return { ok: true, mode: 'nodemailer' };
-  } catch (errSmtp) {
-    if (errSmtp.message && errSmtp.message.toLowerCase().includes('timeout')) {
-      throw new Error("Le plan gratuit de Render bloque les ports SMTP (465/587). Ajoutez votre clé gratuite BREVO_API_KEY dans Render > Environment pour envoyer vos e-mails en HTTPS (port 443) sans blocage !");
-    }
-    throw errSmtp;
-  }
+  throw new Error("Clé BREVO_API_KEY non détectée par le serveur Render. Vérifiez que vous avez bien ajouté BREVO_API_KEY dans l'onglet Environment de votre service backend Render (api-salon-backend) et que le redéploiement est terminé.");
 }
 
 // Formateur de numéros SIRET (ex: 123 456 789 01234) et IBAN (par blocs de 4)
@@ -3295,7 +3268,7 @@ function formaterNomPropre(str) {
     .join(' ');
 }
 
-// Générer le PDF d'une facture d'installation au design "STACK Executive" 100% conforme B2B (Art. L441-9 Code de commerce & Art. 289 CGI)
+// Générer le PDF d'une facture d'installation au design "STACK Executive" sans aucun chevauchement (Art. L441-9 Code de commerce)
 async function genererFacturePdfBuffer(facture, agent, conf = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 45 });
@@ -3313,8 +3286,14 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
 
     const nomCompletAgent = `${formaterNomPropre(agent.prenom)} ${String(agent.nom || '').toUpperCase()}`.trim();
     const estEI = (conf.forme_juridique || 'EI') === 'EI';
-    const mentionFormeAgent = estEI ? 'Entrepreneur Individuel (EI)' : (conf.forme_juridique || 'Société');
+    const mentionFormeCourte = estEI ? 'Entrepreneur Individuel — EI' : (conf.forme_juridique || 'Société');
     const assujettiTVA = conf.regime_tva === 'ASSUJETTI_TVA';
+
+    // Protection intelligente : si titulaire_iban contient par erreur un IBAN (FR76...), on affiche le vrai nom de l'agent !
+    const rawTitulaire = String(conf.titulaire_iban || '').trim();
+    const titulairePropre = (!rawTitulaire || /^[A-Z]{2}\d{2}[A-Z0-9\s]{10,}$/i.test(rawTitulaire))
+      ? nomCompletAgent
+      : rawTitulaire;
 
     const montantHT = parseFloat(facture.montant_ht) || 99.00;
     const tauxTVA = assujettiTVA ? 20.00 : 0.00;
@@ -3332,63 +3311,61 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
     doc.rect(0, 0, 595.28, 8).fill(DARK);
 
     // 2. EN-TÊTE : IDENTITÉ DE L'AGENT (GAUCHE) & CARTOUCHE FACTURE (DROITE)
-    let y = 38;
+    let y = 36;
     doc.roundedRect(45, y, 34, 34, 8).fill(DARK);
     doc.font('Helvetica-Bold').fontSize(18).fillColor('#ffffff').text('S', 45, y + 8, { width: 34, align: 'center' });
 
     doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text(nomCompletAgent, 88, y + 2);
     doc.font('Helvetica').fontSize(8.5).fillColor(LIGHT_MUTED).text(`Mandataire Commercial Indépendant — Réseau STACK Partners (${agent.code_partenaire || 'PARTNER'})`, 88, y + 19);
 
-    // Cartouche FACTURE à droite
     doc.font('Helvetica-Bold').fontSize(22).fillColor(DARK).text('FACTURE', 350, y - 2, { width: 200, align: 'right' });
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(MUTED).text(`N° ${facture.numero_facture}`, 350, y + 24, { width: 200, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(10).fillColor(MUTED).text(`N° ${facture.numero_facture}`, 350, y + 23, { width: 200, align: 'right' });
 
-    // Badge de statut (PAYÉE ou EN ATTENTE DE RÈGLEMENT)
-    const badgeW = estPayee ? 110 : 148;
+    const badgeW = estPayee ? 120 : 148;
     const badgeX = 550 - badgeW;
-    doc.roundedRect(badgeX, y + 40, badgeW, 18, 5).fill(estPayee ? '#dcfce7' : '#fef3c7');
+    doc.roundedRect(badgeX, y + 39, badgeW, 18, 5).fill(estPayee ? '#dcfce7' : '#fef3c7');
     doc.font('Helvetica-Bold').fontSize(8).fillColor(estPayee ? '#166534' : '#92400e').text(
       estPayee ? `ACQUITTÉE LE ${datePaiementFr || dateEmissionFr}` : 'EN ATTENTE DE RÈGLEMENT',
-      badgeX, y + 45, { width: badgeW, align: 'center' }
+      badgeX, y + 44, { width: badgeW, align: 'center' }
     );
 
-    y = 112;
+    y = 108;
     doc.moveTo(45, y).lineTo(550, y).lineWidth(0.8).strokeColor(BORDER).stroke();
-    y += 18;
+    y += 16;
 
     // 3. BLOCS ÉMETTEUR (AGENT MANDATAIRE) & DESTINATAIRE (SALON CLIENT) CÔTE À CÔTE
-    const boxHeight = 112;
+    const boxHeight = 110;
     doc.roundedRect(45, y, 242, boxHeight, 8).fillAndStroke(BG_SOFT, BORDER);
     doc.roundedRect(308, y, 242, boxHeight, 8).fillAndStroke('#ffffff', BORDER);
 
-    // Contenu Émetteur
-    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(LIGHT_MUTED).text('ÉMETTEUR (AGENT COMMERCIAL MANDATAIRE)', 57, y + 12);
-    doc.font('Helvetica-Bold').fontSize(10.5).fillColor(DARK).text(`${nomCompletAgent}${estEI ? ' — EI' : ''}`, 57, y + 26, { width: 218 });
+    // Contenu Émetteur (sans doublon EI)
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(LIGHT_MUTED).text('ÉMETTEUR (AGENT COMMERCIAL MANDATAIRE)', 57, y + 11);
+    doc.font('Helvetica-Bold').fontSize(10.5).fillColor(DARK).text(`${nomCompletAgent}${estEI ? ' (EI)' : ''}`, 57, y + 24, { width: 218 });
     doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
-    doc.text(conf.adresse_pro || 'Adresse professionnelle enregistrée au RSAC', 57, y + 42, { width: 218 });
-    doc.text(`SIRET : ${formaterSiretAffichage(agent.siret_agent)} (${mentionFormeAgent})`, 57, y + 66, { width: 218 });
+    doc.text(conf.adresse_pro || 'Adresse professionnelle enregistrée au RSAC', 57, y + 39, { width: 218 });
+    doc.text(`SIRET : ${formaterSiretAffichage(agent.siret_agent)} • ${mentionFormeCourte}`, 57, y + 63, { width: 218 });
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(
       `RSAC : N° ${agent.numero_rsac || 'En cours'}${conf.greffe_rsac ? ' — Greffe de ' + formaterNomPropre(conf.greffe_rsac) : ''}`,
-      57, y + 80, { width: 218 }
+      57, y + 77, { width: 218 }
     );
     if (assujettiTVA && conf.numero_tva_intra) {
-      doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(`TVA Intracom. : ${conf.numero_tva_intra}`, 57, y + 94);
+      doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(`TVA Intracom. : ${conf.numero_tva_intra}`, 57, y + 92);
     } else if (agent.email) {
-      doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text(`Contact : ${agent.email}${agent.telephone ? ' • ' + agent.telephone : ''}`, 57, y + 94, { width: 218 });
+      doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text(`Contact : ${agent.email}${agent.telephone ? ' • ' + agent.telephone : ''}`, 57, y + 92, { width: 218 });
     }
 
     // Contenu Client (Salon de coiffure)
-    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(LIGHT_MUTED).text('FACTURÉ À (ÉTABLISSEMENT CLIENT)', 320, y + 12);
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(DARK).text(facture.nom_salon || 'Salon de Coiffure', 320, y + 26, { width: 218 });
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(LIGHT_MUTED).text('FACTURÉ À (ÉTABLISSEMENT CLIENT)', 320, y + 11);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor(DARK).text(facture.nom_salon || 'Salon de Coiffure', 320, y + 24, { width: 218 });
     doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
-    doc.text(facture.adresse_salon || 'Adresse de l\'établissement', 320, y + 44, { width: 218 });
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(`SIRET : ${formaterSiretAffichage(facture.siret_salon)}`, 320, y + 80, { width: 218 });
-    doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text('Catégorie : Prestation de services B2B (Art. L441-9 C. com.)', 320, y + 94, { width: 218 });
+    doc.text(facture.adresse_salon || 'Adresse de l\'établissement', 320, y + 41, { width: 218 });
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(`SIRET : ${formaterSiretAffichage(facture.siret_salon)}`, 320, y + 77, { width: 218 });
+    doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text('Catégorie : Prestation de services B2B (Art. L441-9 C. com.)', 320, y + 92, { width: 218 });
 
-    y += boxHeight + 18;
+    y += boxHeight + 14;
 
     // 4. BARRE DE MÉTADONNÉES DE FACTURATION
-    doc.roundedRect(45, y, 505, 36, 6).fillAndStroke(BG_SOFT, BORDER);
+    doc.roundedRect(45, y, 505, 34, 6).fillAndStroke(BG_SOFT, BORDER);
     const metaCols = [
       { label: 'DATE D\'ÉMISSION', val: dateEmissionFr, x: 57, w: 110 },
       { label: 'DATE DE PRESTATION', val: dateEmissionFr, x: 175, w: 115 },
@@ -3396,39 +3373,41 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
       { label: 'MODE DE RÈGLEMENT', val: 'Virement SEPA (IBAN)', x: 430, w: 110 }
     ];
     metaCols.forEach(m => {
-      doc.font('Helvetica-Bold').fontSize(7).fillColor(LIGHT_MUTED).text(m.label, m.x, y + 8, { width: m.w });
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(m.val, m.x, y + 20, { width: m.w });
+      doc.font('Helvetica-Bold').fontSize(7).fillColor(LIGHT_MUTED).text(m.label, m.x, y + 7, { width: m.w });
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(m.val, m.x, y + 19, { width: m.w });
     });
 
-    y += 52;
+    y += 46;
 
-    // 5. TABLEAU DÉTAILLÉ DES PRESTATIONS (CONFORME NORMES COMPTABLES)
-    doc.rect(45, y, 505, 24).fill(DARK);
+    // 5. TABLEAU DÉTAILLÉ DES PRESTATIONS (Hauteur calculée dynamiquement : zéro chevauchement !)
+    doc.rect(45, y, 505, 22).fill(DARK);
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#ffffff');
-    doc.text('DÉSIGNATION DES PRESTATIONS DE MISE EN SERVICE', 55, y + 8, { width: 255 });
-    doc.text('QTÉ', 315, y + 8, { width: 35, align: 'center' });
-    doc.text('UNITÉ', 355, y + 8, { width: 45, align: 'center' });
-    doc.text('P.U. HT', 405, y + 8, { width: 50, align: 'right' });
-    doc.text('TVA', 460, y + 8, { width: 35, align: 'right' });
-    doc.text('TOTAL HT', 495, y + 8, { width: 48, align: 'right' });
+    doc.text('DÉSIGNATION DES PRESTATIONS DE MISE EN SERVICE', 55, y + 7, { width: 255 });
+    doc.text('QTÉ', 315, y + 7, { width: 35, align: 'center' });
+    doc.text('UNITÉ', 355, y + 7, { width: 45, align: 'center' });
+    doc.text('P.U. HT', 405, y + 7, { width: 50, align: 'right' });
+    doc.text('TVA', 460, y + 7, { width: 35, align: 'right' });
+    doc.text('TOTAL HT', 495, y + 7, { width: 48, align: 'right' });
 
-    y += 24;
+    y += 22;
 
-    // Ligne de prestation détaillée et valorisante pour le salon
-    const rowHeight = 82;
-    doc.rect(45, y, 505, rowHeight).fillAndStroke('#ffffff', BORDER);
-    doc.font('Helvetica-Bold').fontSize(9.5).fillColor(DARK).text(
-      'Forfait d\'Installation, Paramétrage Sur-Mesure & Formation Certifiée — Logiciel STACK NF525',
-      55, y + 10, { width: 255 }
-    );
-    doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(
+    const titrePresta = 'Forfait d\'Installation, Paramétrage Sur-Mesure & Formation Certifiée — Logiciel STACK NF525';
+    const detailsPresta =
       '• Audit et paramétrage de l\'établissement (identité légale, TVA, horaires, caisse)\n' +
-      '• Intégration du catalogue des prestations, produits de revente et stocks d\'alerte\n' +
+      '• Intégration du catalogue des prestations, produits de revente et seuils d\'alerte\n' +
       '• Création des profils collaborateurs, contrats RH, commissions et pointeuse PIN\n' +
       '• Formation sur place à l\'encaissement, à la clôture Z (NF525) et à la liasse comptable IA\n' +
-      '• Déblocage de l\'accès privilégié incluant 30 jours d\'essai gratuit sur l\'abonnement STACK',
-      55, y + 25, { width: 255, lineGap: 1.5 }
-    );
+      '• Activation de l\'accès privilégié incluant 30 jours d\'essai gratuit sur l\'abonnement STACK';
+
+    doc.font('Helvetica-Bold').fontSize(9.2);
+    const titleH = doc.heightOfString(titrePresta, { width: 252 });
+    doc.font('Helvetica').fontSize(8);
+    const bulletsH = doc.heightOfString(detailsPresta, { width: 252, lineGap: 2 });
+    const rowHeight = Math.max(96, titleH + bulletsH + 24);
+
+    doc.rect(45, y, 505, rowHeight).fillAndStroke('#ffffff', BORDER);
+    doc.font('Helvetica-Bold').fontSize(9.2).fillColor(DARK).text(titrePresta, 55, y + 10, { width: 252 });
+    doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(detailsPresta, 55, y + 14 + titleH, { width: 252, lineGap: 2 });
 
     doc.font('Helvetica').fontSize(9).fillColor(DARK);
     doc.text('1', 315, y + 12, { width: 35, align: 'center' });
@@ -3437,14 +3416,13 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
     doc.text(`${tauxTVA}%`, 460, y + 12, { width: 35, align: 'right' });
     doc.font('Helvetica-Bold').text(fmtEur(montantHT), 495, y + 12, { width: 48, align: 'right' });
 
-    y += rowHeight + 18;
+    y += rowHeight + 16;
 
     // 6. BLOC COORDONNÉES BANCAIRES IBAN (GAUCHE) & RÉCAPITULATIF FINANCIER (DROITE)
-    // Encadré Règlement par Virement à gauche
     doc.roundedRect(45, y, 275, 92, 8).fillAndStroke(BG_SOFT, BORDER);
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text('COORDONNÉES DE RÈGLEMENT (VIREMENT SEPA)', 57, y + 12);
     doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
-    doc.text(`Titulaire du compte : `, 57, y + 28, { continued: true }).font('Helvetica-Bold').fillColor(DARK).text(conf.titulaire_iban || nomCompletAgent);
+    doc.text('Titulaire du compte : ', 57, y + 28, { continued: true }).font('Helvetica-Bold').fillColor(DARK).text(titulairePropre);
     doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text('IBAN : ', 57, y + 43, { continued: true });
     doc.font('Courier-Bold').fontSize(9).fillColor(DARK).text(formaterIbanAffichage(agent.iban));
     doc.font('Helvetica').fontSize(8).fillColor(LIGHT_MUTED).text(
@@ -3456,7 +3434,6 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
       57, y + 74, { width: 250 }
     );
 
-    // Tableau des totaux à droite
     const totX = 335;
     const totW = 215;
     doc.roundedRect(totX, y, totW, 92, 8).fillAndStroke('#ffffff', BORDER);
@@ -3471,27 +3448,24 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
     doc.font('Helvetica-Bold').fontSize(10).fillColor('#ffffff').text(estPayee ? 'NET PAYÉ TTC' : 'NET À PAYER TTC', totX + 14, y + 64);
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#ffffff').text(fmtEur(montantTTC), totX + 105, y + 62, { width: 97, align: 'right' });
 
-    y += 104;
+    y += 102;
 
     if (!assujettiTVA) {
       doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(
         'Mention fiscale obligatoire : TVA non applicable, article 293 B du Code Général des Impôts (CGI).',
         45, y
       );
-      y += 18;
-    } else {
-      y += 8;
     }
 
     // 7. PIED DE PAGE : MENTIONS LÉGALES B2B OBLIGATOIRES (ART. L441-9 & D441-5 CODE DE COMMERCE)
-    const footerY = 720;
+    const footerY = 716;
     doc.moveTo(45, footerY).lineTo(550, footerY).lineWidth(0.6).strokeColor(BORDER).stroke();
     doc.font('Helvetica-Bold').fontSize(7.5).fillColor(DARK).text(
       'CONDITIONS DE RÈGLEMENT & MENTIONS LÉGALES OBLIGATOIRES (ARTICLES L. 441-9 ET D. 441-5 DU CODE DE COMMERCE)',
       45, footerY + 8
     );
     doc.font('Helvetica').fontSize(7).fillColor(LIGHT_MUTED).text(
-      `• Statut juridique de l'émetteur : Facture émise par ${nomCompletAgent} (${mentionFormeAgent}), mandataire commercial indépendant immatriculé au Registre Spécial des Agents Commerciaux (RSAC) sous le n° ${agent.numero_rsac || 'En cours'}${conf.greffe_rsac ? ' auprès du Greffe du Tribunal de ' + formaterNomPropre(conf.greffe_rsac) : ''}, SIRET ${formaterSiretAffichage(agent.siret_agent)}.\n` +
+      `• Statut juridique de l'émetteur : Facture émise par ${nomCompletAgent} (${mentionFormeCourte}), mandataire commercial indépendant immatriculé au Registre Spécial des Agents Commerciaux (RSAC) sous le n° ${agent.numero_rsac || 'En cours'}${conf.greffe_rsac ? ' auprès du Greffe du Tribunal de ' + formaterNomPropre(conf.greffe_rsac) : ''}, SIRET ${formaterSiretAffichage(agent.siret_agent)}.\n` +
       `• Conditions d'escompte : Paiement comptant à réception de facture. Aucun escompte n'est accordé en cas de paiement anticipé.\n` +
       `• Pénalités de retard et frais de recouvrement (B2B) : Conformément aux articles L. 441-10 et D. 441-5 du Code de commerce, tout retard de paiement entraîne de plein droit, sans qu'un rappel soit nécessaire, l'application de pénalités de retard calculées à un taux égal à trois (3) fois le taux d'intérêt légal en vigueur, ainsi qu'une indemnité forfaitaire pour frais de recouvrement de quarante euros (40,00 €).\n` +
       `• Nature de la prestation : Prestation indépendante d'installation, de paramétrage et de formation initiale sur site. L'abonnement logiciel mensuel STACK fait l'objet d'une facturation distincte par l'éditeur après la période d'essai gratuit de 30 jours.`,
@@ -3501,7 +3475,6 @@ async function genererFacturePdfBuffer(facture, agent, conf = {}) {
     doc.end();
   });
 }
-
 // Route 8A : Envoyer la facture PDF (99 € HT) par e-mail directement au gérant du salon
 router.post('/factures/:id/send-email', verifierTokenPartner, async (req, res) => {
   try {
