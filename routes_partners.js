@@ -905,19 +905,69 @@ router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierS
     }
 
     await pool.query(`INSERT INTO partner_conformite_dossier (id_agent) VALUES ($1) ON CONFLICT (id_agent) DO NOTHING`, [idAgentCible]);
+    const agRes = await pool.query(`SELECT prenom, nom, email, code_partenaire FROM partner_agents WHERE id_agent = $1`, [idAgentCible]).catch(() => ({ rowCount: 0 }));
+    const ag = agRes.rowCount > 0 ? agRes.rows[0] : null;
+    const portailUrl = process.env.FRONTEND_PARTNERS_URL || 'https://stack-partners-frontend.onrender.com';
 
+    // 1. Activation finale ou suspension du compte depuis le God Mode
     if (champ_statut === 'STATUT_COMPTE_FINAL') {
       await pool.query(`UPDATE partner_agents SET statut_compte = $1 WHERE id_agent = $2`, [decision, idAgentCible]);
-      const agRes = await pool.query(`SELECT prenom, email, code_partenaire FROM partner_agents WHERE id_agent = $1`, [idAgentCible]).catch(() => ({ rowCount: 0 }));
-      if (agRes.rowCount > 0 && typeof envoyerEmailSMTP === 'function') {
-        const ag = agRes.rows[0];
+
+      if (ag && ag.email && typeof envoyerEmailSMTP === 'function') {
+        const isActif = decision === 'ACTIF';
         envoyerEmailSMTP({
           to: ag.email,
-          subject: decision === 'ACTIF' ? "Votre compte STACK Partners est officiellement ACTIF" : "Suspension temporaire de votre compte STACK Partners",
-          html: decision === 'ACTIF'
-            ? `<p>Bonjour ${ag.prenom},</p><p>Félicitations ! Votre dossier de conformité a été intégralement validé. Votre compte partenaire (Code : <strong>${ag.code_partenaire}</strong>) est désormais <strong>ACTIF</strong>. Vous pouvez dès maintenant verrouiller vos prospects et émettre vos factures d'installation de 99 € HT.</p>`
-            : `<p>Bonjour ${ag.prenom},</p><p>Votre compte STACK Partners a été temporairement suspendu pour mise à jour réglementaire. Rendez-vous dans votre espace Conformité.</p>`
-        }).catch(() => {});
+          subject: isActif
+            ? "Félicitations ! Votre compte STACK Partners est officiellement ACTIF"
+            : "Information importante : Suspension temporaire de votre compte STACK Partners",
+          html: isActif
+            ? `
+              <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 580px; margin: 0 auto; padding: 28px; border: 1px solid #e5e7eb; border-radius: 18px; background: #ffffff;">
+                <div style="display: inline-block; padding: 5px 12px; border-radius: 999px; background: #dcfce7; color: #166534; font-size: 12px; font-weight: 700; margin-bottom: 14px;">
+                  DOSSIER VALIDÉ • DROIT DE VENTE DÉBLOQUÉ
+                </div>
+                <h2 style="margin: 0 0 12px 0; font-size: 22px;">Bonjour ${ag.prenom},</h2>
+                <p style="font-size: 14.5px; line-height: 1.6; color: #374151;">
+                  Félicitations ! Votre dossier de conformité réglementaire a été intégralement validé par la direction STACK. Votre compte partenaire est désormais <strong>ACTIF</strong>.
+                </p>
+                <div style="background: #f9fafb; border: 1px solid #e5e7eb; padding: 16px 20px; border-radius: 14px; margin: 20px 0;">
+                  <div style="font-size: 11.5px; font-weight: 700; color: #6b7280; text-transform: uppercase;">Votre Code Partenaire Officiel</div>
+                  <div style="font-size: 20px; font-weight: 800; font-family: monospace; color: #111827; margin-top: 4px;">${ag.code_partenaire}</div>
+                </div>
+                <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                  Vous pouvez dès maintenant :
+                  <br/>• Verrouiller vos prospects sur la carte interactive (protection 45 jours).
+                  <br/>• Émettre et envoyer par e-mail vos factures d'installation de <strong>99,00 € HT</strong>.
+                  <br/>• Débloquer vos liens d'onboarding et cumuler vos commissions récurrentes de <strong>20 % sur 24 mois</strong>.
+                </p>
+                <div style="margin-top: 24px;">
+                  <a href="${portailUrl}" style="display: inline-block; background: #111827; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 12px; font-size: 13.5px; font-weight: 700;">
+                    Accéder à mon Portail STACK Partners
+                  </a>
+                </div>
+              </div>
+            `
+            : `
+              <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 580px; margin: 0 auto; padding: 28px; border: 1px solid #fecaca; border-radius: 18px; background: #ffffff;">
+                <div style="display: inline-block; padding: 5px 12px; border-radius: 999px; background: #fef2f2; color: #dc2626; font-size: 12px; font-weight: 700; margin-bottom: 14px;">
+                  ACTION REQUISE • DOSSIER DE CONFORMITÉ
+                </div>
+                <h2 style="margin: 0 0 12px 0; font-size: 20px;">Bonjour ${ag.prenom},</h2>
+                <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                  Votre compte STACK Partners a été temporairement suspendu dans l'attente de la mise à jour d'un document légal (pièce manquante, refusée ou arrivée à expiration).
+                </p>
+                ${commentaire ? `<div style="background:#fef2f2;padding:12px 16px;border-radius:10px;color:#991b1b;font-size:13px;margin:16px 0;"><strong>Motif indiqué :</strong> ${commentaire}</div>` : ''}
+                <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                  Connectez-vous à votre espace <strong>Paramètres & Conformité</strong> pour régulariser votre situation et réactiver immédiatement votre droit de facturation.
+                </p>
+                <div style="margin-top: 22px;">
+                  <a href="${portailUrl}" style="display: inline-block; background: #111827; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 12px; font-size: 13.5px; font-weight: 700;">
+                    Régulariser mon dossier
+                  </a>
+                </div>
+              </div>
+            `
+        }).catch(err => console.error("Erreur notification SMTP God Mode:", err.message));
       }
       return res.json({ message: `Statut du compte mis à jour (${decision}) et agent notifié par e-mail.` });
     }
@@ -933,20 +983,57 @@ router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierS
         [idAgentCible]
       );
     } else if (purge_identite_rgpd && champ_statut === 'statut_identite' && decision === 'VALIDE') {
-      // Utilise une chaîne vide '' au lieu de NULL au cas où la colonne a une contrainte NOT NULL en base
       await pool.query(
-        `UPDATE partner_conformite_dossier SET statut_identite = 'VALIDE', fichier_identite = '' WHERE id_agent = $1`,
+        `UPDATE partner_conformite_dossier SET statut_identite = 'VALIDE', fichier_identite = '', updated_at = NOW() WHERE id_agent = $1`,
         [idAgentCible]
       );
     } else {
       await pool.query(
-        `UPDATE partner_conformite_dossier SET ${champ_statut} = $1 WHERE id_agent = $2`,
+        `UPDATE partner_conformite_dossier SET ${champ_statut} = $1, updated_at = NOW() WHERE id_agent = $2`,
         [decision, idAgentCible]
       );
     }
 
+    const labelsPieces = {
+      statut_contrat: "Contrat de Mandat d'Agent Commercial",
+      statut_identite: "Pièce d'Identité",
+      statut_siret: "Numéro SIREN / SIRET (INSEE)",
+      statut_rsac: "Extrait d'immatriculation RSAC",
+      statut_kbis: "Extrait Kbis",
+      statut_urssaf: "Attestation de Vigilance URSSAF",
+      statut_rc_pro: "Attestation d'Assurance RC Pro",
+      statut_iban: "RIB / IBAN Professionnel",
+      statut_tva: "Régime de TVA & Quiz NF525"
+    };
+
+    // 2. Si une pièce est refusée : on suspend le compte et on envoie un e-mail avec le motif précis
     if (decision === 'REFUSE') {
       await pool.query(`UPDATE partner_agents SET statut_compte = 'BLOQUE_CONFORMITE' WHERE id_agent = $1`, [idAgentCible]);
+      if (ag && ag.email && typeof envoyerEmailSMTP === 'function') {
+        envoyerEmailSMTP({
+          to: ag.email,
+          subject: `Action requise : Pièce justificative refusée (${labelsPieces[champ_statut] || champ_statut})`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 580px; margin: 0 auto; padding: 28px; border: 1px solid #fecaca; border-radius: 18px; background: #ffffff;">
+              <h2 style="margin: 0 0 12px 0; font-size: 20px;">Bonjour ${ag.prenom},</h2>
+              <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                Lors de l'audit de votre dossier, la pièce suivante n'a pas pu être validée : <strong>${labelsPieces[champ_statut] || champ_statut}</strong>.
+              </p>
+              <div style="background: #fef2f2; border-left: 4px solid #dc2626; padding: 12px 16px; border-radius: 8px; margin: 18px 0; font-size: 13.5px; color: #991b1b;">
+                <strong>Motif du refus :</strong> ${commentaire || 'Document illisible, expiré ou non conforme.'}
+              </div>
+              <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                Merci de déposer un nouveau justificatif conforme depuis votre onglet <strong>Paramètres & Conformité</strong>.
+              </p>
+              <div style="margin-top: 22px;">
+                <a href="${portailUrl}" style="display: inline-block; background: #111827; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 12px; font-size: 13.5px; font-weight: 700;">
+                  Mettre à jour ma pièce
+                </a>
+              </div>
+            </div>
+          `
+        }).catch(err => console.error("Erreur SMTP refus pièce:", err.message));
+      }
     }
 
     await pool.query(
@@ -955,7 +1042,7 @@ router.patch('/admin/agents/:id/verifier-piece', verifierTokenPartner, verifierS
       [idAgentCible, champ_statut.toUpperCase(), decision, commentaire || 'Vérifié']
     ).catch(() => {});
 
-    res.json({ message: `Pièce ${champ_statut} marquée comme ${decision}` });
+    res.json({ message: `Pièce ${champ_statut} marquée comme ${decision}${decision === 'REFUSE' ? ' (e-mail envoyé à l\'agent)' : ''}` });
   } catch (e) {
     console.error("CRASH VERIFIER-PIECE:", e);
     res.status(500).json({ error: `Erreur SQL (${e.message})` });
@@ -3392,6 +3479,77 @@ router.post('/admin/agents/:id/notifier-email', verifierTokenPartner, verifierSu
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Route 8C : Scanner et alerter automatiquement par e-mail tous les agents dont un document légal (URSSAF, RC Pro, Identité) est expiré ou expire sous 30 jours
+async function verifierEtAlerterDocumentsExpires() {
+  try {
+    const agentsRes = await pool.query(`SELECT id_agent, prenom, nom, email, statut_compte FROM partner_agents`);
+    const portailUrl = process.env.FRONTEND_PARTNERS_URL || 'https://stack-partners-frontend.onrender.com';
+    let nbEmailsEnvoyes = 0;
+
+    for (const ag of agentsRes.rows) {
+      const verif = await evaluerConformiteAgent(ag.id_agent);
+      const motifsExpiration = verif.motifs.filter(m => m.toLowerCase().includes('expir'));
+
+      // Si une pièce est expirée et que l'agent était ACTIF, on le passe en BLOQUE_CONFORMITE et on l'alerte
+      if (motifsExpiration.length > 0 && ag.statut_compte === 'ACTIF') {
+        await pool.query(`UPDATE partner_agents SET statut_compte = 'BLOQUE_CONFORMITE' WHERE id_agent = $1`, [ag.id_agent]);
+        await envoyerEmailSMTP({
+          to: ag.email,
+          subject: "Suspension automatique : Document légal arrivé à expiration — STACK Partners",
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 580px; margin: 0 auto; padding: 26px; border: 1px solid #fecaca; border-radius: 16px;">
+              <h2 style="margin: 0 0 12px 0;">Bonjour ${ag.prenom},</h2>
+              <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                Un ou plusieurs documents obligatoires de votre dossier d'agent commercial sont arrivés à expiration :
+              </p>
+              <ul style="font-size: 13.5px; color: #dc2626; font-weight: 600; line-height: 1.6;">
+                ${motifsExpiration.map(m => `<li>${m}</li>`).join('')}
+              </ul>
+              <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                Conformément à nos obligations de vigilance, votre compte est temporairement suspendu jusqu'au dépôt de votre nouvelle attestation sur votre portail.
+              </p>
+              <a href="${portailUrl}" style="display: inline-block; margin-top: 14px; background: #111827; color: #ffffff; text-decoration: none; padding: 11px 20px; border-radius: 10px; font-size: 13px; font-weight: 700;">
+                Déposer mon document renouvelé
+              </a>
+            </div>
+          `
+        }).catch(() => {});
+        nbEmailsEnvoyes++;
+      } else if (verif.alertes.length > 0) {
+        // Pré-alerte à J-30 avant expiration
+        await envoyerEmailSMTP({
+          to: ag.email,
+          subject: "Rappel préventif : Document légal arrivant bientôt à échéance — STACK Partners",
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 580px; margin: 0 auto; padding: 26px; border: 1px solid #fde68a; border-radius: 16px;">
+              <h2 style="margin: 0 0 12px 0;">Bonjour ${ag.prenom},</h2>
+              <p style="font-size: 14px; line-height: 1.6; color: #374151;">
+                Pour éviter toute interruption de vos droits de facturation et de versement de commissions, pensez à renouveler prochainement :
+              </p>
+              <ul style="font-size: 13.5px; color: #b45309; font-weight: 600; line-height: 1.6;">
+                ${verif.alertes.map(a => `<li>${a}</li>`).join('')}
+              </ul>
+              <a href="${portailUrl}" style="display: inline-block; margin-top: 14px; background: #111827; color: #ffffff; text-decoration: none; padding: 11px 20px; border-radius: 10px; font-size: 13px; font-weight: 700;">
+                Mettre à jour mon dossier
+              </a>
+            </div>
+          `
+        }).catch(() => {});
+        nbEmailsEnvoyes++;
+      }
+    }
+    return nbEmailsEnvoyes;
+  } catch (e) {
+    console.error("Erreur scan expiration documents:", e.message);
+    return 0;
+  }
+}
+
+router.post('/admin/scanner-expirations', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  const count = await verifierEtAlerterDocumentsExpires();
+  res.json({ message: `Vérification terminée : ${count} alerte(s) e-mail envoyée(s).` });
 });
 
 module.exports = router;
