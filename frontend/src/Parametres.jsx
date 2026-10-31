@@ -493,15 +493,53 @@ const groupesBas = [
       </>);
       case 'horaires': return (<>
                   <div className="carte scan-carte">
-                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Modifiez l'affichage de votre grille.</span>
+                    <span style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '14px'}}>Modifiez l'amplitude horaire affichée sur votre agenda (de 0h à 23h).</span>
                     <div style={{display: 'flex', gap: '15px'}}>
                       <div style={{flex: 1}}>
-                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Ouverture (0-23)</label>
-                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_ouverture || 8} onChange={e => setConfigSalon({...configSalon, heure_ouverture: e.target.value})} />
+                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: '600'}}>Ouverture (0-23)</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="8"
+                          className="input-fournisseur"
+                          value={configSalon.heure_ouverture ?? ''}
+                          onChange={e => {
+                            const raw = e.target.value.replace(/\D/g, '').slice(0, 2);
+                            if (raw === '') {
+                              setConfigSalon({ ...configSalon, heure_ouverture: '' });
+                            } else {
+                              setConfigSalon({ ...configSalon, heure_ouverture: Math.min(23, parseInt(raw, 10)) });
+                            }
+                          }}
+                          onBlur={() => {
+                            if (configSalon.heure_ouverture === '' || configSalon.heure_ouverture === null || isNaN(parseInt(configSalon.heure_ouverture, 10))) {
+                              setConfigSalon({ ...configSalon, heure_ouverture: 8 });
+                            }
+                          }}
+                        />
                       </div>
                       <div style={{flex: 1}}>
-                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', fontWeight: '500'}}>Fermeture (0-23)</label>
-                        <input type="number" min="0" max="23" className="input-fournisseur" value={configSalon.heure_fermeture || 20} onChange={e => setConfigSalon({...configSalon, heure_fermeture: e.target.value})} />
+                        <label style={{fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: '600'}}>Fermeture (0-23)</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="20"
+                          className="input-fournisseur"
+                          value={configSalon.heure_fermeture ?? ''}
+                          onChange={e => {
+                            const raw = e.target.value.replace(/\D/g, '').slice(0, 2);
+                            if (raw === '') {
+                              setConfigSalon({ ...configSalon, heure_fermeture: '' });
+                            } else {
+                              setConfigSalon({ ...configSalon, heure_fermeture: Math.min(23, parseInt(raw, 10)) });
+                            }
+                          }}
+                          onBlur={() => {
+                            if (configSalon.heure_fermeture === '' || configSalon.heure_fermeture === null || isNaN(parseInt(configSalon.heure_fermeture, 10))) {
+                              setConfigSalon({ ...configSalon, heure_fermeture: 20 });
+                            }
+                          }}
+                        />
                       </div>
                     </div>
                   </div>
