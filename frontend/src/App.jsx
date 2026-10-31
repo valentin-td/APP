@@ -3642,7 +3642,7 @@ function App() {
                       </button>
                   </div>
               </div>
-          </div>
+          
       )}
 
       {/* --- BARRE DE NAVIGATION (DESKTOP & MOBILE) --- */}
