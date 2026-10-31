@@ -3701,7 +3701,7 @@ function App() {
               </>
           )}
 
-          {/* VUE MOBILE : BARRE "LIQUID GLASS" (voir LiquidTabBar.jsx) */}
+          {/* VUE MOBILE : BARRE "LIQUID GLASS" */}
           {isMobile && (
               <LiquidTabBar
                   activeIndex={(() => {
