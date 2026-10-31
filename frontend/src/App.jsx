@@ -1352,12 +1352,345 @@ function App() {
         }
     };
 
+  const [showSimIAMenu, setShowSimIAMenu] = useState(false);
+
+  // Détecte automatiquement si l'utilisateur est dans un Salon de Démo STACK Partners
+  const isSalonDemoActif = Boolean(
+      localStorage.getItem('skip_legal_sandbox') === 'true' ||
+      (decodeToken(token)?.email || '').toLowerCase().includes('sandbox.demo') ||
+      (configSalon?.nom_salon || '').toLowerCase().includes('démo') ||
+      (configSalon?.nom_salon || '').toLowerCase().includes('demo')
+  );
+
+  // Génère une facture fournisseur visuelle haute définition (L'Oréal Professionnel) pour l'aperçu Split-Screen
+  const genererFactureExempleUrl = () => {
+      const dateFr = new Date().toLocaleDateString('fr-FR');
+      const nomSalonCible = configSalon?.nom_salon || 'Maison Éclat — Salon Démo';
+      const adresseCible = configSalon?.adresse_salon || '14 Place Kléber, 67000 Strasbourg';
+      const siretCible = configSalon?.siret || '892 451 630 00018';
+
+      const svgFacture = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 794 1123" width="100%" height="100%">
+        <rect width="794" height="1123" fill="#ffffff"/>
+        <rect width="794" height="14" fill="#111827"/>
+        
+        <!-- En-tête Fournisseur -->
+        <text x="55" y="72" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="800" fill="#111827" letter-spacing="1">L'ORÉAL PROFESSIONNEL</text>
+        <text x="55" y="92" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#6b7280" letter-spacing="2">PARIS • DIVISION PRODUITS PROFESSIONNELS</text>
+        <text x="55" y="116" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#4b5563">14 Rue Royale, 75008 Paris • France</text>
+        <text x="55" y="132" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#4b5563">SIRET : 632 012 100 00024 • TVA Intracom. : FR 18 632012100</text>
+
+        <!-- Cartouche Facture Droite -->
+        <rect x="490" y="46" width="249" height="94" rx="10" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1.5"/>
+        <text x="614" y="74" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="800" fill="#111827" text-anchor="middle">FACTURE ORIGINALE</text>
+        <text x="614" y="96" font-family="Courier, monospace" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">N° FAC-LP-2026-8841</text>
+        <text x="614" y="116" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#4b5563" text-anchor="middle">Date d'émission : ${dateFr}</text>
+        <text x="614" y="131" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#16a34a" text-anchor="middle">PRÉLÈVEMENT SEPA AUTORISÉ</text>
+
+        <line x1="55" y1="168" x2="739" y2="168" stroke="#e5e7eb" stroke-width="1.5"/>
+
+        <!-- Encadré Client Destinataire -->
+        <rect x="55" y="192" width="330" height="106" rx="10" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1.2"/>
+        <text x="72" y="214" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#6b7280" letter-spacing="0.8">ÉTABLISSEMENT FACTURÉ &amp; LIVRÉ</text>
+        <text x="72" y="236" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#111827">${nomSalonCible.replace(/&/g, '&amp;')}</text>
+        <text x="72" y="256" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#4b5563">${adresseCible.replace(/&/g, '&amp;')}</text>
+        <text x="72" y="278" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#111827">SIRET : ${siretCible}</text>
+
+        <!-- Encadré Références Commande -->
+        <rect x="409" y="192" width="330" height="106" rx="10" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.2"/>
+        <text x="426" y="214" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#6b7280" letter-spacing="0.8">RÉFÉRENCES LOGISTIQUES</text>
+        <text x="426" y="236" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#4b5563">Bon de livraison : <tspan font-weight="700" fill="#111827">BL-STR-90412</tspan></text>
+        <text x="426" y="256" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#4b5563">Compte client : <tspan font-weight="700" fill="#111827">PRO-67000-ECLAT</tspan></text>
+        <text x="426" y="276" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#4b5563">Mode de règlement : <tspan font-weight="700" fill="#111827">Prélèvement SEPA</tspan></text>
+
+        <!-- En-tête Tableau Produits -->
+        <rect x="55" y="330" width="684" height="36" rx="6" fill="#111827"/>
+        <text x="70" y="353" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff">RÉF.</text>
+        <text x="155" y="353" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff">DÉSIGNATION DES ARTICLES</text>
+        <text x="455" y="353" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">DESTINATION</text>
+        <text x="535" y="353" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">QTÉ</text>
+        <text x="615" y="353" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="end">P.U. HT</text>
+        <text x="720" y="353" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="end">TOTAL HT</text>
+
+        <!-- Ligne 1 -->
+        <rect x="55" y="366" width="684" height="58" fill="#ffffff" stroke="#e5e7eb" stroke-width="1"/>
+        <text x="70" y="399" font-family="Courier, monospace" font-size="11" font-weight="700" fill="#374151">KER-SH-250</text>
+        <text x="155" y="393" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#111827">Shampoing Réparateur Kératine 250ml</text>
+        <text x="155" y="410" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#6b7280">Gamme Pro-Kératine Absolut Repair • Flacon Revente</text>
+        <rect x="415" y="384" width="80" height="22" rx="6" fill="#eff6ff"/>
+        <text x="455" y="399" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#1d4ed8" text-anchor="middle">REVENTE</text>
+        <text x="535" y="400" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#111827" text-anchor="middle">6</text>
+        <text x="615" y="400" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#374151" text-anchor="end">15,00 €</text>
+        <text x="720" y="400" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="end">90,00 €</text>
+
+        <!-- Ligne 2 -->
+        <rect x="55" y="424" width="684" height="58" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1"/>
+        <text x="70" y="457" font-family="Courier, monospace" font-size="11" font-weight="700" fill="#374151">MAS-NUT-500</text>
+        <text x="155" y="451" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#111827">Masque Intense Nutrition 500ml</text>
+        <text x="155" y="468" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#6b7280">Soin Profond Nutritifier Sans Silicone • Pot 500ml</text>
+        <rect x="415" y="442" width="80" height="22" rx="6" fill="#eff6ff"/>
+        <text x="455" y="457" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#1d4ed8" text-anchor="middle">REVENTE</text>
+        <text x="535" y="458" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#111827" text-anchor="middle">4</text>
+        <text x="615" y="458" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#374151" text-anchor="end">25,00 €</text>
+        <text x="720" y="458" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="end">100,00 €</text>
+
+        <!-- Ligne 3 -->
+        <rect x="55" y="482" width="684" height="58" fill="#ffffff" stroke="#e5e7eb" stroke-width="1"/>
+        <text x="70" y="515" font-family="Courier, monospace" font-size="11" font-weight="700" fill="#374151">COL-MAJ-60</text>
+        <text x="155" y="509" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#111827">Tube Coloration Sans Ammoniaque 60ml</text>
+        <text x="155" y="526" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#6b7280">Inoa Nuances Fondamentales • Consommable Laboratoire</text>
+        <rect x="410" y="500" width="90" height="22" rx="6" fill="#f3e8ff"/>
+        <text x="455" y="515" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#7e22ce" text-anchor="middle">LABO / CONSO</text>
+        <text x="535" y="516" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#111827" text-anchor="middle">12</text>
+        <text x="615" y="516" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#374151" text-anchor="end">10,00 €</text>
+        <text x="720" y="516" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="end">120,00 €</text>
+
+        <!-- Encadré Totaux -->
+        <rect x="449" y="575" width="290" height="132" rx="10" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1.2"/>
+        <text x="469" y="604" font-family="Helvetica, Arial, sans-serif" font-size="12.5" fill="#4b5563">Total Hors Taxes (HT)</text>
+        <text x="719" y="604" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="end">310,00 €</text>
+        <text x="469" y="632" font-family="Helvetica, Arial, sans-serif" font-size="12.5" fill="#4b5563">TVA (Taux normal 20,00 %)</text>
+        <text x="719" y="632" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="end">62,00 €</text>
+        <rect x="449" y="652" width="290" height="55" rx="8" fill="#111827"/>
+        <text x="469" y="685" font-family="Helvetica, Arial, sans-serif" font-size="13.5" font-weight="800" fill="#ffffff">NET À PAYER TTC</text>
+        <text x="719" y="686" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="900" fill="#ffffff" text-anchor="end">372,00 €</text>
+
+        <!-- Tampon Extraction IA -->
+        <rect x="55" y="575" width="365" height="132" rx="10" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+        <text x="75" y="602" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="800" fill="#166534">DOCUMENT ANALYSÉ PAR LE MOTEUR OCR STACK IA</text>
+        <text x="75" y="624" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#15803d">• Fournisseur &amp; N° de facture reconnus automatiquement</text>
+        <text x="75" y="644" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#15803d">• Contrôle de cohérence HT (310 €) + TVA (62 €) = TTC (372 €) OK</text>
+        <text x="75" y="664" font-family="Helvetica, Arial, sans-serif" font-size="11.5" fill="#15803d">• 3 références détectées pour mise à jour directe du stock</text>
+        <text x="75" y="686" font-family="Courier, monospace" font-size="10.5" font-weight="700" fill="#166534">Compte PCG affecté : 607 (Achats de marchandises)</text>
+      </svg>`;
+
+      const blob = new Blob([svgFacture], { type: 'image/svg+xml;charset=utf-8' });
+      return URL.createObjectURL(blob);
+  };
+
+  // Déclenche à la demande l'un des 5 scénarios IA dans le Salon de Démo
+  const lancerSimulationIA = (typeScenario) => {
+      setShowSimIAMenu(false);
+      const now = new Date();
+      const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const demain = new Date(now);
+      demain.setDate(now.getDate() + 1);
+      const dans7Jours = new Date(now);
+      dans7Jours.setDate(now.getDate() + 7);
+      const dans9Jours = new Date(now);
+      dans9Jours.setDate(now.getDate() + 9);
+
+      const premierEmp = (employesListe || []).find(e => !e.est_gerant) || (employesListe || [])[0];
+      const secondEmp = (employesListe || []).filter(e => !e.est_gerant)[1] || premierEmp;
+      const premierePresta = (catalogueListe || []).find(a => a.type_article === 'PRESTATION' && (a.nom || '').toLowerCase().includes('balayage'))
+          || (catalogueListe || []).find(a => a.type_article === 'PRESTATION');
+      const premierProdStock = (stocksData || [])[0] || (catalogueListe || []).find(a => a.type_article === 'PRODUIT_REVENTE');
+
+      let tacheSimulee = null;
+
+      if (typeScenario === 'RDV') {
+          tacheSimulee = {
+              id_tache: `SIM_IA_RDV_${Date.now()}`,
+              type_tache: 'RDV',
+              donnees: {
+                  nom_client: 'Camille Rocher',
+                  telephone: '0688990011',
+                  prestation: premierePresta?.nom || 'Balayage Minéral + Patine Gloss + Soin Profond',
+                  date_heure_debut: `${formatYMD(demain)}T15:00`,
+                  duree_minutes: premierePresta?.duree_estimee_minutes || 120,
+                  id_employe: premierEmp?.id_employe || ''
+              }
+          };
+      } else if (typeScenario === 'STOCK') {
+          tacheSimulee = {
+              id_tache: `SIM_IA_STOCK_${Date.now()}`,
+              type_tache: 'STOCK',
+              donnees: {
+                  nom_produit: premierProdStock?.nom || 'Shampoing Réparateur Kératine 250ml',
+                  quantite: 12,
+                  reference: premierProdStock?.reference || 'KER-SH-250'
+              }
+          };
+      } else if (typeScenario === 'CONGES') {
+          tacheSimulee = {
+              id_tache: `SIM_IA_ABSENCE_CONGES_${Date.now()}`,
+              type_tache: 'ABSENCE',
+              donnees: {
+                  id_employe: secondEmp?.id_employe || '',
+                  nom_employe: secondEmp?.nom || 'Lucas Bernard',
+                  type_demande: 'CONGES',
+                  date_debut: formatYMD(dans7Jours),
+                  date_fin: formatYMD(dans9Jours),
+                  commentaire: 'Demande de 3 jours de congés payés reçue par e-mail (week-end prolongé familial).'
+              }
+          };
+      } else if (typeScenario === 'MALADIE') {
+          tacheSimulee = {
+              id_tache: `SIM_IA_ABSENCE_MALADIE_${Date.now()}`,
+              type_tache: 'ABSENCE',
+              donnees: {
+                  id_employe: premierEmp?.id_employe || '',
+                  nom_employe: premierEmp?.nom || 'Camille Laurent',
+                  type_demande: 'ARRET_MALADIE',
+                  date_debut: formatYMD(now),
+                  date_fin: formatYMD(demain),
+                  commentaire: 'Certificat médical d\'arrêt de travail (Volet 3 transmis par e-mail) — Grippe saisonnière.'
+              }
+          };
+      } else if (typeScenario === 'FACTURE') {
+          const prod1 = (stocksData || [])[0]?.nom || 'Shampoing Réparateur Kératine 250ml';
+          const prod2 = (stocksData || [])[1]?.nom || 'Masque Intense Nutrition 500ml';
+          const prod3 = (stocksData || [])[2]?.nom || 'Tube Coloration Sans Ammoniaque 60ml';
+
+          tacheSimulee = {
+              id_tache: `SIM_IA_FACTURE_${Date.now()}`,
+              type_tache: 'FACTURE_ACHAT',
+              donnees: {
+                  fournisseur: "L'Oréal Professionnel France",
+                  numero_facture: 'FAC-LP-2026-8841',
+                  date_facture: formatYMD(now),
+                  mode_paiement: 'PRELEVEMENT',
+                  compte_comptable: '607',
+                  montant_ht: '310.00',
+                  montant_tva: '62.00',
+                  montant_ttc: '372.00',
+                  mime_type: 'image/svg+xml',
+                  pdf_url: genererFactureExempleUrl(),
+                  produits: [
+                      { nom: prod1, quantite: 6, type_destine: 'REVENTE' },
+                      { nom: prod2, quantite: 4, type_destine: 'REVENTE' },
+                      { nom: prod3, quantite: 12, type_destine: 'CONSOMMABLE' }
+                  ]
+              }
+          };
+      }
+
+      if (tacheSimulee) {
+          setFileAttenteIA([tacheSimulee]);
+          setModalIA(tacheSimulee);
+      }
+  };
+
   const validerTacheIA = async (tache) => {
       try {
-          // On retire proprement UNIQUEMENT le suffixe "_0", "_1" du batch, 
-          // sans casser les identifiants comme "UPLOAD_MANUEL_1234"
-          const baseId = String(tache.id_tache).replace(/_\d+$/, ''); 
-          
+          const baseId = String(tache.id_tache).replace(/_\d+$/, '');
+
+          // --- GESTION EN DIRECT DES SIMULATIONS IA DU SALON DÉMO ---
+          if (baseId.startsWith('SIM_IA_')) {
+              if (tache.type_tache === 'RDV') {
+                  const rawDt = tache.donnees?.date_heure_debut || '';
+                  const dtFormatted = rawDt.length === 16 ? `${rawDt}:00` : rawDt;
+                  const resRdv = await fetch('https://api-salon-backend.onrender.com/api/rdv', {
+                      method: 'POST',
+                      headers: getAuthHeaders(true),
+                      body: JSON.stringify({
+                          nom_client: tache.donnees?.nom_client || 'Client',
+                          telephone_client: tache.donnees?.telephone || '',
+                          id_employe: tache.donnees?.id_employe || (employesListe || [])[0]?.id_employe,
+                          prestation: tache.donnees?.prestation || 'Prestation',
+                          date_heure_debut: dtFormatted,
+                          duree_minutes: parseInt(tache.donnees?.duree_minutes, 10) || 60,
+                          forcer_ajout: true
+                      })
+                  });
+                  await handleFetchError(resRdv);
+                  showToast("RDV ajouté à l'Agenda !", "success");
+              } else if (tache.type_tache === 'STOCK') {
+                  const nomCherche = nettoyerTexteRecherche(tache.donnees?.nom_produit || '');
+                  const qteAjout = parseInt(tache.donnees?.quantite, 10) || 1;
+                  const articleExistant = (stocksData || []).find(s => nettoyerTexteRecherche(s.nom) === nomCherche)
+                      || (catalogueListe || []).find(a => nettoyerTexteRecherche(a.nom) === nomCherche);
+
+                  if (articleExistant) {
+                      const nvStock = (parseInt(articleExistant.stock_actuel, 10) || 0) + qteAjout;
+                      await fetch(`https://api-salon-backend.onrender.com/api/stocks/${articleExistant.id_article}`, {
+                          method: 'PUT',
+                          headers: getAuthHeaders(true),
+                          body: JSON.stringify({ nouveau_stock: nvStock })
+                      });
+                  } else {
+                      await fetch('https://api-salon-backend.onrender.com/api/catalogue', {
+                          method: 'POST',
+                          headers: getAuthHeaders(true),
+                          body: JSON.stringify({
+                              nom: tache.donnees?.nom_produit || 'Nouveau produit',
+                              type_article: 'PRODUIT_REVENTE',
+                              prix: 24,
+                              stock_actuel: qteAjout,
+                              reference: tache.donnees?.reference || 'REF-IA-01',
+                              delai_livraison_jours: 3
+                          })
+                      });
+                  }
+                  showToast(`+${qteAjout} unité(s) ajoutées dans l'inventaire !`, "success");
+              } else if (tache.type_tache === 'ABSENCE') {
+                  const empMatch = (employesListe || []).find(e =>
+                      String(e.id_employe) === String(tache.donnees?.id_employe) ||
+                      nettoyerTexteRecherche(e.nom).includes(nettoyerTexteRecherche(tache.donnees?.nom_employe || ''))
+                  ) || (employesListe || [])[0];
+
+                  const isMaladie = tache.donnees?.type_demande === 'ARRET_MALADIE';
+                  const resAbs = await fetch('https://api-salon-backend.onrender.com/api/rh/absences', {
+                      method: 'POST',
+                      headers: getAuthHeaders(true),
+                      body: JSON.stringify({
+                          id_employe: empMatch?.id_employe,
+                          type_demande: isMaladie ? 'ARRET_MALADIE' : 'CONGES',
+                          nature_absence: isMaladie ? 'MALADIE_ORDINAIRE' : 'CP',
+                          type_prolongation: 'INITIAL',
+                          date_debut: tache.donnees?.date_debut,
+                          moment_debut: 'MATIN',
+                          date_fin: tache.donnees?.date_fin,
+                          moment_fin: 'APRES_MIDI',
+                          commentaire: tache.donnees?.commentaire || ''
+                      })
+                  });
+                  const dataAbs = await handleFetchError(resAbs);
+                  showToast(isMaladie ? "Arrêt maladie enregistré !" : "Demande de congés transmise dans Équipe RH !", "success");
+
+                  if (dataAbs.conflits && dataAbs.conflits.length > 0 && empMatch) {
+                      const prenomEmp = (empMatch.nom || '').split(' ')[0];
+                      setCancellationRobot({ rdvs: dataAbs.conflits, id_employe: empMatch.id_employe, nom_employe: prenomEmp });
+                      setSelectedCancelRdvs(dataAbs.conflits.map(r => r.id_rdv));
+                      setCancelMessageTemplate(`Bonjour [Prénom], en raison d'une absence exceptionnelle, votre RDV du [Date] avec ${prenomEmp} ne pourra pas être assuré. Cliquez ici pour reprogrammer : [Lien]. L'équipe du Salon.`);
+                  }
+              } else if (tache.type_tache === 'FACTURE_ACHAT') {
+                  await fetch('https://api-salon-backend.onrender.com/api/factures/saisie-manuelle', {
+                      method: 'POST',
+                      headers: getAuthHeaders(true),
+                      body: JSON.stringify({
+                          nom_fournisseur: tache.donnees?.fournisseur || "L'Oréal Professionnel",
+                          numero_facture: tache.donnees?.numero_facture || 'FAC-LP-2026-8841',
+                          date_facture: tache.donnees?.date_facture || new Date().toISOString().split('T')[0],
+                          montant_ht: parseFloat(tache.donnees?.montant_ht) || 310,
+                          montant_tva: parseFloat(tache.donnees?.montant_tva) || 62,
+                          montant_ttc: parseFloat(tache.donnees?.montant_ttc) || 372,
+                          mode_paiement: tache.donnees?.mode_paiement || 'PRELEVEMENT',
+                          compte_comptable: tache.donnees?.compte_comptable || '607'
+                      })
+                  });
+
+                  for (const prod of (tache.donnees?.produits || [])) {
+                      const matchProd = (stocksData || []).find(s => nettoyerTexteRecherche(s.nom) === nettoyerTexteRecherche(prod.nom));
+                      if (matchProd) {
+                          const nvStock = (parseInt(matchProd.stock_actuel, 10) || 0) + (parseInt(prod.quantite, 10) || 0);
+                          await fetch(`https://api-salon-backend.onrender.com/api/stocks/${matchProd.id_article}`, {
+                              method: 'PUT',
+                              headers: getAuthHeaders(true),
+                              body: JSON.stringify({ nouveau_stock: nvStock })
+                          }).catch(() => {});
+                      }
+                  }
+                  showToast("Facture enregistrée en Comptabilité et stocks mis à jour !", "success");
+              }
+
+              setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache));
+              setRefreshTrigger(prev => prev + 1);
+              if (typeof chargerTout === 'function') chargerTout();
+              passerAuDocumentSuivant(tache.id_tache);
+              return;
+          }
+
+          // --- FLUX NORMAL PRODUCTION ---
           const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/valider`, {
               method: 'POST',
               headers: getAuthHeaders(true),
@@ -1384,10 +1717,12 @@ function App() {
   const ignorerTacheIA = async (tache) => {
       try {
           const baseId = String(tache.id_tache).replace(/_\d+$/, '');
-          await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/ignorer`, {
-              method: 'POST',
-              headers: getAuthHeaders()
-          });
+          if (!baseId.startsWith('SIM_IA_')) {
+              await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/ignorer`, {
+                  method: 'POST',
+                  headers: getAuthHeaders()
+              });
+          }
           showToast("Tâche ignorée", "info");
           setTachesIA(prev => (prev || []).filter(t => t.id_tache !== tache.id_tache && String(t.id_tache) !== String(baseId)));
           passerAuDocumentSuivant(tache.id_tache);
@@ -8690,7 +9025,122 @@ function App() {
           </div>
       )}
 
-            {toast && (
+            {/* --- LANCEUR FLOTTANT "SIMULATEUR IA" (EXCLUSIVEMENT DANS LE SALON DE DÉMO) --- */}
+      {token && isSalonDemoActif && role === 'gerant' && (
+          <div style={{
+              position: 'fixed',
+              bottom: isMobile ? '92px' : '24px',
+              right: isMobile ? '16px' : '24px',
+              zIndex: 99990,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+              gap: '10px'
+          }}>
+              {showSimIAMenu && (
+                  <div style={{
+                      width: isMobile ? '290px' : '320px',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '18px',
+                      padding: '14px',
+                      boxShadow: '0 20px 44px rgba(0,0,0,0.22)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      animation: 'fadeIn 0.2s ease'
+                  }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 4px 8px 4px', borderBottom: '1px solid var(--border-color)' }}>
+                          <div>
+                              <span style={{ fontSize: '10px', fontWeight: '800', color: 'var(--color-success)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Outil de Démonstration Agent</span>
+                              <strong style={{ fontSize: '13.5px', color: 'var(--text-main)' }}>Simuler une détection de l'IA</strong>
+                          </div>
+                          <button type="button" onClick={() => setShowSimIAMenu(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}>✕</button>
+                      </div>
+
+                      {[
+                          {
+                              key: 'FACTURE',
+                              title: 'Facture Fournisseur (Split-Screen)',
+                              desc: 'Facture L\'Oréal Professionnel + 3 stocks',
+                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                          },
+                          {
+                              key: 'RDV',
+                              title: 'Nouveau Rendez-vous Client',
+                              desc: 'Balayage Minéral + Patine (Demain 15h)',
+                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          },
+                          {
+                              key: 'STOCK',
+                              title: 'Livraison de Stock (+12 unités)',
+                              desc: 'Bon de livraison Shampoing Kératine',
+                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                          },
+                          {
+                              key: 'CONGES',
+                              title: 'Demande de Congés Payés (RH)',
+                              desc: 'Demande de 3 jours à arbitrer',
+                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 2v4M8 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9 14l2 2 4-4"/></svg>
+                          },
+                          {
+                              key: 'MALADIE',
+                              title: 'Arrêt Maladie & Robot SMS',
+                              desc: 'Arrêt immédiat + détection RDV en conflit',
+                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                          }
+                      ].map(item => (
+                          <button
+                              key={item.key}
+                              type="button"
+                              onClick={() => lancerSimulationIA(item.key)}
+                              className="hover-bg-card"
+                              style={{
+                                  display: 'flex', alignItems: 'center', gap: '12px',
+                                  width: '100%', textAlign: 'left', padding: '10px 12px',
+                                  borderRadius: '12px', border: '1px solid var(--border-color)',
+                                  background: 'var(--bg-app)', color: 'var(--text-main)',
+                                  cursor: 'pointer', transition: 'all 0.15s ease'
+                              }}
+                          >
+                              <div style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  {item.icon}
+                              </div>
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ fontSize: '12.5px', fontWeight: '800', color: 'var(--text-main)' }}>{item.title}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.desc}</div>
+                              </div>
+                          </button>
+                      ))}
+                  </div>
+              )}
+
+              <button
+                  type="button"
+                  onClick={() => setShowSimIAMenu(!showSimIAMenu)}
+                  style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '9px',
+                      padding: '12px 18px',
+                      borderRadius: '999px',
+                      background: 'var(--text-main)',
+                      color: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      boxShadow: '0 12px 28px rgba(0,0,0,0.22)',
+                      fontWeight: '800',
+                      fontSize: '13px',
+                      cursor: 'pointer'
+                  }}
+              >
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e' }} />
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                  <span>Simulateur IA (Démo)</span>
+              </button>
+          </div>
+      )}
+
+      {toast && (
         <div
           className={`toast-notification ${toast.type}`}
           style={{
