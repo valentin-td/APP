@@ -1648,21 +1648,188 @@ function App() {
       } catch (e) { showToast("Erreur lors de la mise à jour du stock.", "error"); }
   };
 
-  const ajouterIngredientRecette = () => {
-      if (!ingredientTemp.id_article || !ingredientTemp.quantite_necessaire) return showToast("Sélectionnez un article et une quantité.", "error");
-      const art = (catalogueListe || []).find(a => a.id_article?.toString() === ingredientTemp.id_article);
-      if ((nouveauProtocole.ingredients || []).find(i => i.id_article === art.id_article)) return showToast("Ingrédient déjà dans la recette.", "error");
-      setNouveauProtocole({ ...nouveauProtocole, ingredients: [...(nouveauProtocole.ingredients || []), { id_article: art.id_article, nom: art.nom, quantite_necessaire: parseFloat(ingredientTemp.quantite_necessaire) }] });
-      setIngredientTemp({ id_article: '', quantite_necessaire: '' });
+  // Compression légère Canvas côté client pour les photos d'étapes et de galerie de l'Académie
+  const compresserImageProtocole = (file, callback) => {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+              const canvas = document.createElement('canvas');
+              const maxDim = 1100;
+              let w = img.width, h = img.height;
+              if (w > maxDim || h > maxDim) {
+                  if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+                  else { w = Math.round((w * maxDim) / h); h = maxDim; }
+              }
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, w, h);
+              callback(canvas.toDataURL('image/jpeg', 0.78));
+          };
+          img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
   };
-  const supprimerIngredientRecette = (id_article) => { setNouveauProtocole({ ...nouveauProtocole, ingredients: (nouveauProtocole.ingredients || []).filter(i => i.id_article !== id_article) }); };
+
+  // Normalise une étape (compatibilité anciens et nouveaux protocoles)
+  const normaliserEtapeUI = (etape, index = 0) => {
+      if (typeof etape === 'string') {
+          return { id_etape: `et_${index}`, titre: `Étape ${index + 1}`, description: etape, texte: etape, duree_minutes: 0, timer_min: '', photo_url: null, ingredients: [] };
+      }
+      return {
+          id_etape: etape.id_etape || `et_${index}_${Date.now()}`,
+          titre: etape.titre || `Étape ${index + 1}`,
+          description: etape.description || etape.texte || '',
+          texte: etape.description || etape.texte || '',
+          duree_minutes: parseInt(etape.duree_minutes ?? etape.timer_min, 10) || 0,
+          timer_min: etape.duree_minutes || etape.timer_min || '',
+          photo_url: etape.photo_url || null,
+          ingredients: Array.isArray(etape.ingredients) ? etape.ingredients : []
+      };
+  };
+
+  // Agrège tous les ingrédients de toutes les étapes (+ ingrédients globaux éventuels) pour le calcul de rentabilité et le déstockage
+  const calculerIngredientsTotauxProtocole = (proto) => {
+      if (!proto) return [];
+      const cumulParArticle = new Map();
+      const etapesList = Array.isArray(proto.etapes) ? proto.etapes : [];
+      etapesList.forEach((et, idx) => {
+          const ings = Array.isArray(et?.ingredients) ? et.ingredients : [];
+          ings.forEach(ing => {
+              if (!ing || !ing.id_article) return;
+              const key = Number(ing.id_article);
+              const artCat = (catalogueListe || []).find(a => Number(a.id_article) === key);
+              const qte = parseFloat(ing.quantite_necessaire) || 1;
+              if (cumulParArticle.has(key)) {
+                  const prev = cumulParArticle.get(key);
+                  prev.quantite_necessaire = Number((prev.quantite_necessaire + qte).toFixed(2));
+                  if (ing.proportion && !prev.proportions.includes(ing.proportion)) prev.proportions.push(ing.proportion);
+              } else {
+                  cumulParArticle.set(key, {
+                      id_article: key,
+                      nom: ing.nom || artCat?.nom || 'Produit technique',
+                      quantite_necessaire: qte,
+                      proportion: ing.proportion || '',
+                      proportions: ing.proportion ? [ing.proportion] : [],
+                      numero_etape: idx + 1
+                  });
+              }
+          });
+      });
+
+      if (cumulParArticle.size === 0 && Array.isArray(proto.ingredients)) {
+          return proto.ingredients;
+      }
+      return Array.from(cumulParArticle.values());
+  };
+
+  // Ajout d'un ingrédient dans le brouillon de la nouvelle étape en cours de création
+  const ajouterIngredientBrouillonEtape = () => {
+      if (!ingredientTemp.id_article) return showToast("Sélectionnez un produit du catalogue.", "error");
+      const art = (catalogueListe || []).find(a => String(a.id_article) === String(ingredientTemp.id_article));
+      if (!art) return;
+      const qte = parseFloat(ingredientTemp.quantite_necessaire) || 1;
+      const proportion = (ingredientTemp.proportion || '').trim();
+      const listeActuelle = Array.isArray(etapeTemp.ingredients) ? etapeTemp.ingredients : [];
+      setEtapeTemp({
+          ...etapeTemp,
+          ingredients: [
+              ...listeActuelle,
+              { id_article: art.id_article, nom: art.nom, quantite_necessaire: qte, proportion }
+          ]
+      });
+      setIngredientTemp({ id_article: '', quantite_necessaire: '1', proportion: '' });
+  };
+
+  // Ajout d'un ingrédient directement sur une étape déjà créée (par son index)
+  const ajouterIngredientSurEtapeExistante = (idxEtape, idArticle, quantite, proportion) => {
+      if (!idArticle) return showToast("Sélectionnez un produit du catalogue.", "error");
+      const art = (catalogueListe || []).find(a => String(a.id_article) === String(idArticle));
+      if (!art) return;
+      const nouvellesEtapes = (nouveauProtocole.etapes || []).map((et, i) => {
+          if (i !== idxEtape) return et;
+          const ings = Array.isArray(et.ingredients) ? [...et.ingredients] : [];
+          ings.push({
+              id_article: art.id_article,
+              nom: art.nom,
+              quantite_necessaire: parseFloat(quantite) || 1,
+              proportion: (proportion || '').trim()
+          });
+          return { ...et, ingredients: ings };
+      });
+      setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes });
+  };
+
+  const supprimerIngredientDuneEtape = (idxEtape, idxIng) => {
+      const nouvellesEtapes = (nouveauProtocole.etapes || []).map((et, i) => {
+          if (i !== idxEtape) return et;
+          return { ...et, ingredients: (et.ingredients || []).filter((_, j) => j !== idxIng) };
+      });
+      setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes });
+  };
+
+  const modifierChampEtapeExistante = (idxEtape, champ, valeur) => {
+      const nouvellesEtapes = (nouveauProtocole.etapes || []).map((et, i) => {
+          if (i !== idxEtape) return et;
+          const updated = { ...et, [champ]: valeur };
+          if (champ === 'description') updated.texte = valeur;
+          if (champ === 'duree_minutes') updated.timer_min = valeur;
+          return updated;
+      });
+      setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes });
+  };
+
+  const uploaderPhotoSurEtape = (e, idxEtape = null) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      compresserImageProtocole(file, (dataUrl) => {
+          if (idxEtape === null) {
+              setEtapeTemp(prev => ({ ...prev, photo_url: dataUrl }));
+          } else {
+              modifierChampEtapeExistante(idxEtape, 'photo_url', dataUrl);
+          }
+      });
+      e.target.value = null;
+  };
 
   const ajouterEtapeRecette = () => {
-      if (!etapeTemp.texte) return showToast("La description de l'étape est requise.", "error");
-      setNouveauProtocole({ ...nouveauProtocole, etapes: [...(nouveauProtocole.etapes || []), { ...etapeTemp, id_etape: Date.now() }] });
-      setEtapeTemp({ texte: '', timer_min: '' });
+      const desc = (etapeTemp.description || etapeTemp.texte || '').trim();
+      const titre = (etapeTemp.titre || '').trim();
+      if (!desc && !titre) return showToast("Renseignez au moins le titre ou les instructions de l'étape.", "error");
+      const num = (nouveauProtocole.etapes || []).length + 1;
+      const duree = parseInt(etapeTemp.duree_minutes || etapeTemp.timer_min, 10) || 0;
+      const nouvelleEtape = {
+          id_etape: `step_${Date.now()}`,
+          numero: num,
+          titre: titre || `Étape ${num}`,
+          description: desc,
+          texte: desc,
+          duree_minutes: duree,
+          timer_min: duree > 0 ? String(duree) : '',
+          photo_url: etapeTemp.photo_url || null,
+          ingredients: Array.isArray(etapeTemp.ingredients) ? etapeTemp.ingredients : []
+      };
+      setNouveauProtocole({ ...nouveauProtocole, etapes: [...(nouveauProtocole.etapes || []), nouvelleEtape] });
+      setEtapeTemp({ titre: '', description: '', texte: '', duree_minutes: '', timer_min: '', photo_url: null, ingredients: [] });
   };
-  const supprimerEtapeRecette = (id_etape) => { setNouveauProtocole({ ...nouveauProtocole, etapes: (nouveauProtocole.etapes || []).filter(e => e.id_etape !== id_etape) }); };
+
+  const supprimerEtapeRecette = (id_etape) => {
+      setNouveauProtocole({
+          ...nouveauProtocole,
+          etapes: (nouveauProtocole.etapes || []).filter((e, idx) => (e.id_etape || idx) !== id_etape)
+      });
+  };
+
+  const deplacerEtapeRecette = (idx, direction) => {
+      const cible = idx + direction;
+      const list = [...(nouveauProtocole.etapes || [])];
+      if (cible < 0 || cible >= list.length) return;
+      const [moved] = list.splice(idx, 1);
+      list.splice(cible, 0, moved);
+      setNouveauProtocole({ ...nouveauProtocole, etapes: list });
+  };
 
   const toggleTag = (tag) => {
       const tags = (nouveauProtocole.tags || []).includes(tag) ? (nouveauProtocole.tags || []).filter(t => t !== tag) : [...(nouveauProtocole.tags || []), tag];
@@ -1670,30 +1837,71 @@ function App() {
   };
 
   const uploadMediaProtocole = (e, type) => {
-      const file = e.target.files[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => { setNouveauProtocole({ ...nouveauProtocole, medias: { ...nouveauProtocole.medias, [type]: reader.result } }); };
-          reader.readAsDataURL(file);
-      }
+      const file = e.target.files?.[0];
+      if (!file) return;
+      compresserImageProtocole(file, (dataUrl) => {
+          setNouveauProtocole(prev => ({ ...prev, medias: { ...(prev.medias || {}), [type]: dataUrl } }));
+      });
+      e.target.value = null;
   };
 
   const creerProtocole = async () => {
-      if(isOffline) return showToast("Action impossible hors-ligne.", "error");
-      if(!nouveauProtocole.nom_prestation) return showToast("Le nom de la prestation est requis.", "error");
+      if (isOffline) return showToast("Action impossible hors-ligne.", "error");
+      if (!nouveauProtocole.nom_prestation) return showToast("Le nom de la prestation est requis.", "error");
       try {
           const method = nouveauProtocole.id_protocole ? 'PUT' : 'POST';
-          const url = nouveauProtocole.id_protocole 
-              ? `https://api-salon-backend.onrender.com/api/protocoles/${nouveauProtocole.id_protocole}` 
+          const url = nouveauProtocole.id_protocole
+              ? `https://api-salon-backend.onrender.com/api/protocoles/${nouveauProtocole.id_protocole}`
               : 'https://api-salon-backend.onrender.com/api/protocoles';
 
-          const res = await fetch(url, { method: method, headers: getAuthHeaders(true), body: JSON.stringify({...nouveauProtocole, temps_nettoyage_minutes: nouveauProtocole.a_temps_nettoyage ? nouveauProtocole.temps_nettoyage_minutes : 0}) });
+          // Si l'utilisateur a saisi une étape dans le bloc brouillon sans avoir cliqué sur "+ Ajouter l'étape", on l'inclut automatiquement !
+          let etapesFinales = [...(nouveauProtocole.etapes || [])];
+          if ((etapeTemp.titre && etapeTemp.titre.trim()) || (etapeTemp.description && etapeTemp.description.trim()) || (etapeTemp.texte && etapeTemp.texte.trim())) {
+              const num = etapesFinales.length + 1;
+              const desc = (etapeTemp.description || etapeTemp.texte || '').trim();
+              const duree = parseInt(etapeTemp.duree_minutes || etapeTemp.timer_min, 10) || 0;
+              etapesFinales.push({
+                  id_etape: `step_${Date.now()}`,
+                  numero: num,
+                  titre: (etapeTemp.titre || '').trim() || `Étape ${num}`,
+                  description: desc,
+                  texte: desc,
+                  duree_minutes: duree,
+                  timer_min: duree > 0 ? String(duree) : '',
+                  photo_url: etapeTemp.photo_url || null,
+                  ingredients: Array.isArray(etapeTemp.ingredients) ? etapeTemp.ingredients : []
+              });
+          }
+
+          const ingredientsPlat = [];
+          etapesFinales.forEach((et, idx) => {
+              (et.ingredients || []).forEach(ing => {
+                  if (ing && ing.id_article) {
+                      ingredientsPlat.push({
+                          id_article: ing.id_article,
+                          quantite_necessaire: parseFloat(ing.quantite_necessaire) || 1,
+                          numero_etape: idx + 1,
+                          proportion: ing.proportion || null
+                      });
+                  }
+              });
+          });
+
+          const payload = {
+              ...nouveauProtocole,
+              etapes: etapesFinales,
+              ingredients: ingredientsPlat.length > 0 ? ingredientsPlat : (nouveauProtocole.ingredients || []),
+              temps_nettoyage_minutes: nouveauProtocole.a_temps_nettoyage ? (parseInt(nouveauProtocole.temps_nettoyage_minutes, 10) || 5) : 0
+          };
+
+          const res = await fetch(url, { method, headers: getAuthHeaders(true), body: JSON.stringify(payload) });
           await handleFetchError(res);
           setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false });
+          setEtapeTemp({ titre: '', description: '', texte: '', duree_minutes: '', timer_min: '', photo_url: null, ingredients: [] });
           setModeEditionProtocole(null);
-          chargerTout(); 
-          showToast(nouveauProtocole.id_protocole ? "Fiche modifiée !" : "Fiche créée !", "success");
-      } catch (e) { showToast("Erreur lors de la sauvegarde.", "error"); }
+          chargerTout();
+          showToast(nouveauProtocole.id_protocole ? "Protocole mis à jour !" : "Protocole créé avec succès !", "success");
+      } catch (e) { showToast("Erreur lors de la sauvegarde du protocole.", "error"); }
   };
 
   const supprimerProtocole = async (id) => {
@@ -1831,34 +2039,42 @@ function App() {
   }
 
   if (remiseAppliquee) {
-      // On récupère la fiche client localement pour éviter le crash de la variable (Temporal Dead Zone)
-      const tempFicheClient = (clientsListe || []).find(c => c.id_client?.toString() === clientCaisse);
-      
-      if (tempFicheClient && tempFicheClient.remise_winback) {
-          // Si le client a une remise Winback enregistrée sur sa fiche
-          if (tempFicheClient.remise_winback.includes('10%')) {
-              totalCaisse = Math.max(0, sousTotalCaisse * 0.90);
-          } else if (tempFicheClient.remise_winback.includes('20%')) {
-              totalCaisse = Math.max(0, sousTotalCaisse * 0.80);
-          } else if (tempFicheClient.remise_winback.includes('Soin')) {
-              totalCaisse = sousTotalCaisse; 
+      const tempFicheClient = (clientsListe || []).find(c => String(c.id_client) === String(clientCaisse));
+      const winbackStr = tempFicheClient?.remise_winback ? String(tempFicheClient.remise_winback) : '';
+
+      if (winbackStr) {
+          const pctMatch = winbackStr.match(/(\d+(?:[.,]\d+)?)\s*%/);
+          const eurMatch = winbackStr.match(/(\d+(?:[.,]\d+)?)\s*€/);
+          if (pctMatch) {
+              const pct = Math.min(100, Math.max(0, parseFloat(pctMatch[1].replace(',', '.')) || 0));
+              totalCaisse = Math.max(0, sousTotalCaisse * (1 - pct / 100));
+          } else if (eurMatch) {
+              const eur = Math.max(0, parseFloat(eurMatch[1].replace(',', '.')) || 0);
+              totalCaisse = Math.max(0, sousTotalCaisse - eur);
+          } else {
+              totalCaisse = sousTotalCaisse;
           }
       } else {
-          // Sinon c'est une remise fidélité classique
+          const cleanNumber = (val) => {
+              if (val === null || val === undefined) return 0;
+              const m = String(val).replace(',', '.').match(/\d+(?:\.\d+)?/);
+              return m ? parseFloat(m[0]) || 0 : 0;
+          };
           if (configSalon.fidelite_type === 'POINTS') {
-              totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_points_valeur || 0));
+              totalCaisse = Math.max(0, sousTotalCaisse - cleanNumber(configSalon.fidelite_points_valeur));
           } else if (configSalon.fidelite_type === 'TAMPONS') {
               if (configSalon.fidelite_recompense_type === 'MONTANT') {
-                  totalCaisse = Math.max(0, sousTotalCaisse - parseFloat(configSalon.fidelite_recompense_valeur || 0));
+                  totalCaisse = Math.max(0, sousTotalCaisse - cleanNumber(configSalon.fidelite_recompense_valeur));
               } else if (configSalon.fidelite_recompense_type === 'POURCENTAGE') {
-                  totalCaisse = Math.max(0, sousTotalCaisse * (1 - (parseFloat(configSalon.fidelite_recompense_valeur || 0) / 100)));
+                  const pct = Math.min(100, Math.max(0, cleanNumber(configSalon.fidelite_recompense_valeur)));
+                  totalCaisse = Math.max(0, sousTotalCaisse * (1 - pct / 100));
               }
           }
       }
   }
 
-  const montantPourboireFinal = parseFloat(pourboireCaisse) || 0;
-  totalCaisse += montantPourboireFinal;
+  const montantPourboireFinal = parseFloat(String(pourboireCaisse || '').replace(',', '.')) || 0;
+  totalCaisse = Number.isFinite(totalCaisse) ? Number((totalCaisse + montantPourboireFinal).toFixed(2)) : 0;
 
   const validerEncaisser = () => {
       if(!posEmploye) { showToast("Veuillez sélectionner un employé.", "error"); return; }
@@ -3647,7 +3863,7 @@ function App() {
                       <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
                           <ThemeToggle />
                           <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1-1-1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
                           </button>
                       </div>
                   </div>
@@ -5002,65 +5218,73 @@ function App() {
                       </div>
                   )}
 
-                  {/* MODALE AFFICHAGE DU PROTOCOLE POUR L'EMPLOYÉ (AGENDA) */}
+                  {/* MODALE AFFICHAGE DU PROTOCOLE TUTORIEL POUR L'EMPLOYÉ (AGENDA) */}
                   {protocoleVisible && (
                       <div className="modal-overlay">
-                          <div className="modal-content" style={{maxWidth: '600px', height: '80vh', overflowY: 'auto', padding: '24px'}}>
-                              <div className="modal-header" style={{borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '16px'}}>
+                          <div className="modal-content" style={{maxWidth: '680px', maxHeight: '86vh', overflowY: 'auto', padding: isMobile ? '18px' : '28px'}}>
+                              <div className="modal-header" style={{borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '20px'}}>
                                   <div>
-                                      <h3 style={{margin: '0 0 8px 0', fontSize: '22px', color: 'var(--text-main)'}}>{protocoleVisible.nom_prestation}</h3>
-                                      <div style={{display: 'flex', gap: '8px'}}>
-                                          {(protocoleVisible.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '2px 8px', borderRadius: '12px', border: '1px solid var(--border-color)'}}>{t}</span>)}
+                                      <span style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '4px'}}>Guide Technique & Protocole</span>
+                                      <h3 style={{margin: '0 0 8px 0', fontSize: '20px', color: 'var(--text-main)'}}>{protocoleVisible.nom_prestation}</h3>
+                                      <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
+                                          {(protocoleVisible.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '3px 9px', borderRadius: '999px', border: '1px solid var(--border-color)', fontWeight: '600'}}>{t}</span>)}
                                       </div>
                                   </div>
                                   <button className="modal-close-btn" onClick={() => setProtocoleVisible(null)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                               </div>
-                              
-                              {/* GALERIE EMPLOYÉ */}
-                              <div style={{display: 'flex', gap: '8px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '8px'}}>
-                                  {['avant', 'pendant', 'apres'].map(type => (
-                                      protocoleVisible.medias && protocoleVisible.medias[type] && (
-                                          <div key={type} style={{flexShrink: 0, width: '140px'}}>
-                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={protocoleVisible.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              <span style={{fontSize: '11px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
-                                          </div>
-                                      )
-                                  ))}
-                              </div>
-                              
-                              <div className="section-titre" style={{fontSize: '14px', marginTop: 0}}>Ingrédients (Préparation Labo)</div>
-                              <div style={{background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', marginBottom: '24px', border: '1px dashed var(--border-color)'}}>
-                                  {protocoleVisible.ingredients && (protocoleVisible.ingredients || []).length > 0 ? (
-                                      (protocoleVisible.ingredients || []).map((ing, i) => (
-                                          <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i !== (protocoleVisible.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '14px', color: 'var(--text-main)', fontWeight: '600'}}>
-                                              <span style={{display: 'flex', alignItems: 'center', gap: '8px'}}><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><line x1="5.52" y1="16" x2="18.48" y2="16"/></svg>{ing.nom}</span>
-                                              <span>{formatPortion(ing.quantite_necessaire)} dose(s)</span>
-                                          </div>
-                                      ))
-                                  ) : <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit à préparer.</span>}
-                              </div>
 
-                              <div className="section-titre" style={{fontSize: '14px'}}>Déroulé de la prestation (To-Do List)</div>
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {protocoleVisible.etapes && (protocoleVisible.etapes || []).length > 0 ? (
-                                      (protocoleVisible.etapes || []).map((etape, index) => (
-                                          <label key={index} style={{display: 'flex', gap: '16px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', cursor: 'pointer', alignItems: 'flex-start'}}>
-                                              <input type="checkbox" style={{width: '20px', height: '20px', marginTop: '2px', accentColor: 'var(--btn-primary)', cursor: 'pointer'}} />
-                                              <div style={{flex: 1}}>
-                                                  <span style={{fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'bold', display: 'block', marginBottom: '4px'}}>Étape {index + 1}</span>
-                                                  <p style={{margin: '0 0 12px 0', fontSize: '14px', color: 'var(--text-main)', lineHeight: '1.5'}}>{etape.texte}</p>
-                                                  {etape.timer_min && (
-                                                      <button onClick={(e) => { e.preventDefault(); showToast(`Minuteur de ${etape.timer_min} min lancé sur votre appareil !`, "info"); }} style={{fontSize: '12px', background: 'var(--btn-primary)', color: 'white', padding: '6px 12px', borderRadius: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'}}>
-                                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                                          Lancer minuteur ({etape.timer_min} min)
-                                                      </button>
+                              {/* Tutoriel pas-à-pas interactif */}
+                              <div style={{display: 'flex', flexDirection: 'column', gap: '14px'}}>
+                                  {(protocoleVisible.etapes || []).length > 0 ? (
+                                      (protocoleVisible.etapes || []).map((rawEtape, index) => {
+                                          const etape = normaliserEtapeUI(rawEtape, index);
+                                          return (
+                                              <label key={index} style={{display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '14px', border: '1px solid var(--border-color)', cursor: 'pointer', boxShadow: 'var(--shadow-sm)'}}>
+                                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px'}}>
+                                                      <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                                          <input type="checkbox" style={{width: '18px', height: '18px', accentColor: 'var(--btn-primary)', cursor: 'pointer'}} />
+                                                          <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700'}}>{index + 1}</span>
+                                                          <strong style={{fontSize: '15px', color: 'var(--text-main)'}}>{etape.titre}</strong>
+                                                      </div>
+                                                      {etape.duree_minutes > 0 && (
+                                                          <button type="button" onClick={(e) => { e.preventDefault(); showToast(`Minuteur de ${etape.duree_minutes} min lancé !`, "info"); }} style={{fontSize: '11.5px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '5px 10px', borderRadius: '999px', fontWeight: '700', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '5px'}}>
+                                                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                                              {etape.duree_minutes} min
+                                                          </button>
+                                                      )}
+                                                  </div>
+
+                                                  {etape.description && (
+                                                      <p style={{margin: 0, fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: '1.55', paddingLeft: '28px'}}>{etape.description}</p>
                                                   )}
-                                              </div>
-                                          </label>
-                                      ))
+
+                                                  {etape.ingredients && etape.ingredients.length > 0 && (
+                                                      <div style={{marginLeft: '28px', background: 'var(--bg-app)', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px'}}>
+                                                          <span style={{fontSize: '10.5px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '5px'}}>
+                                                              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><line x1="5.52" y1="16" x2="18.48" y2="16"/></svg>
+                                                              Produits & Proportions de l'étape
+                                                          </span>
+                                                          <div style={{display: 'flex', flexWrap: 'wrap', gap: '6px'}}>
+                                                              {etape.ingredients.map((ing, i) => (
+                                                                  <span key={i} style={{fontSize: '12px', background: 'var(--bg-card)', color: 'var(--text-main)', padding: '4px 10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: '600'}}>
+                                                                      {ing.nom} • <strong>{ing.proportion ? ing.proportion : `${formatPortion(ing.quantite_necessaire)} dose(s)`}</strong>
+                                                                  </span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+                                                  )}
+
+                                                  {etape.photo_url && (
+                                                      <div style={{marginLeft: '28px', borderRadius: '10px', overflow: 'hidden', maxHeight: '220px', border: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
+                                                          <img src={etape.photo_url} alt={etape.titre} style={{width: '100%', height: '220px', objectFit: 'cover', display: 'block'}} />
+                                                      </div>
+                                                  )}
+                                              </label>
+                                          );
+                                      })
                                   ) : (
-                                      <div style={{fontSize: '14px', color: 'var(--text-secondary)', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                          {protocoleVisible.description || "Aucune instruction enregistrée."}
+                                      <div style={{fontSize: '14px', color: 'var(--text-secondary)', background: 'var(--bg-app)', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-color)'}}>
+                                          {protocoleVisible.description || "Aucune étape enregistrée pour ce protocole."}
                                       </div>
                                   )}
                               </div>
@@ -5070,29 +5294,41 @@ function App() {
                 </div>
               )}
 
-              {/* VUE : L'ACADÉMIE (PROTOCOLES) */}
+              {/* VUE : L'ACADÉMIE (PROTOCOLES & TUTORIELS ÉTAPE PAR ÉTAPE) */}
               {(role === 'gerant' || role === 'salon') && activeTab === 'protocoles' && (
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   
                   {/* EN-TÊTE FIXE */}
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '12px'}}>
                           <div>
                               <h1 style={{margin: 0}}>L'Académie</h1>
-                              <span className="date-subtitle" style={{margin: 0}}>Base de connaissances & Nomenclatures</span>
+                              <span className="date-subtitle" style={{margin: 0}}>Tutoriels pas-à-pas, dosages laboratoire & fiches techniques</span>
                           </div>
-                          <div style={{display: 'flex', gap: isMobile ? '8px' : '16px', alignItems: 'center'}}>
+                          <div style={{display: 'flex', gap: isMobile ? '8px' : '12px', alignItems: 'center'}}>
                               <ThemeToggle />
-                              <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'}} title="Nouvelle Prestation (Catalogue)">+</button>
+                              <button onClick={() => setShowAddPrestation(!showAddPrestation)} className="btn-action" style={{width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center'}} title="Nouvelle Prestation (Catalogue)">
+                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                              </button>
                               {!modeEditionProtocole && (
-                                  <button onClick={() => { setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false }); setModeEditionProtocole('NEW'); }} className="btn-action" style={{ whiteSpace: 'nowrap', flexShrink: 0, padding: isMobile ? '8px 12px' : '12px 18px', fontSize: isMobile ? '12px' : '14px' }}>
-                                      {isMobile ? 'Créer' : 'Créer une Fiche'}
+                                  <button
+                                      onClick={() => {
+                                          setNouveauProtocole({ nom_prestation: '', etapes: [], medias: { avant: null, pendant: null, apres: null }, tags: [], ingredients: [], temps_nettoyage_minutes: 5, a_temps_nettoyage: false });
+                                          setEtapeTemp({ titre: '', description: '', texte: '', duree_minutes: '', timer_min: '', photo_url: null, ingredients: [] });
+                                          setIngredientTemp({ id_article: '', quantite_necessaire: '1', proportion: '' });
+                                          setModeEditionProtocole('NEW');
+                                      }}
+                                      className="btn-action"
+                                      style={{ whiteSpace: 'nowrap', flexShrink: 0, padding: isMobile ? '9px 14px' : '11px 18px', fontSize: isMobile ? '12.5px' : '13.5px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                                  >
+                                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                                      <span>{isMobile ? 'Nouveau Tuto' : 'Créer un Tutoriel'}</span>
                                   </button>
                               )}
                           </div>
                       </div>
                       {!modeEditionProtocole && (
-                          <input type="text" className="input-fournisseur" placeholder="Rechercher (ex: Balayage)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', width: '100%', boxSizing: 'border-box'}}/>
+                          <input type="text" className="input-fournisseur" placeholder="Rechercher un tutoriel ou protocole (ex: Balayage, Patine, Kératine)..." value={rechercheProtocole} onChange={(e) => setRechercheProtocole(e.target.value)} style={{marginBottom: '16px', fontSize: '14px', width: '100%', boxSizing: 'border-box'}}/>
                       )}
                   </div>
 
@@ -5101,174 +5337,437 @@ function App() {
 
                   {showAddPrestation && (
                       <div className="carte scan-carte" style={{marginBottom: '24px', animation: 'fadeIn 0.3s ease'}}>
-                          <h3 style={{marginTop: 0}}>Nouvelle Prestation (Catalogue)</h3>
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px'}}>
-                              <input type="text" className="input-fournisseur" placeholder="Nom de la prestation (ex: Coupe Homme)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
-                              <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{width: '110px'}} value={newArticle.duree_estimee_minutes} onChange={(e) => setNewArticle({...newArticle, duree_estimee_minutes: e.target.value, type_article: 'PRESTATION'})} />
-                              <input type="number" className="input-fournisseur" placeholder="Prix (€)" style={{width: '90px'}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
+                          <h3 style={{marginTop: 0, marginBottom: '14px', fontSize: '16px'}}>Nouvelle Prestation (Catalogue)</h3>
+                          <div style={{display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap'}}>
+                              <input type="text" className="input-fournisseur" style={{flex: '2 1 200px', marginBottom: 0}} placeholder="Nom de la prestation (ex: Balayage Signature)" value={newArticle.nom} onChange={(e) => setNewArticle({...newArticle, nom: e.target.value, type_article: 'PRESTATION'})} />
+                              <input type="number" className="input-fournisseur" placeholder="Durée (min)" style={{flex: '1 1 100px', marginBottom: 0}} value={newArticle.duree_estimee_minutes} onChange={(e) => setNewArticle({...newArticle, duree_estimee_minutes: e.target.value, type_article: 'PRESTATION'})} />
+                              <input type="number" className="input-fournisseur" placeholder="Prix TTC (€)" style={{flex: '1 1 100px', marginBottom: 0}} value={newArticle.prix} onChange={(e) => setNewArticle({...newArticle, prix: e.target.value, type_article: 'PRESTATION'})} />
                           </div>
-                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation</button>
+                          <button className="btn-action" onClick={() => { setNewArticle({...newArticle, type_article: 'PRESTATION'}); ajouterArticle(); setShowAddPrestation(false); }} disabled={!newArticle.nom || !newArticle.prix} style={{width: '100%'}}>Ajouter la prestation au catalogue</button>
                       </div>
                   )}
 
                   <div className="caisse-split-container" style={{ display: 'block' }}>
+                      {/* 1. GRILLE DES FICHES TUTORIELS */}
                       {!modeEditionProtocole && (
                           <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
-                              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px'}}>
+                              <div style={{display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(290px, 1fr))', gap: '16px'}}>
                                   {(protocolesListe || []).filter(p => !rechercheProtocole || nettoyerTexteRecherche(p.nom_prestation).includes(nettoyerTexteRecherche(rechercheProtocole))).map(proto => {
+                                      const ingsTotaux = calculerIngredientsTotauxProtocole(proto);
                                       let stockSuffisant = true;
-                                      (proto.ingredients || []).forEach(ing => {
-                                          const articleDuStock = (catalogueListe || []).find(a => a.id_article === ing.id_article);
-                                          if (articleDuStock && articleDuStock.stock_actuel < ing.quantite_necessaire) stockSuffisant = false;
+                                      ingsTotaux.forEach(ing => {
+                                          const articleDuStock = (catalogueListe || []).find(a => Number(a.id_article) === Number(ing.id_article));
+                                          if (articleDuStock && parseFloat(articleDuStock.stock_actuel) < parseFloat(ing.quantite_necessaire)) stockSuffisant = false;
                                       });
+                                      const nbEtapes = Array.isArray(proto.etapes) ? proto.etapes.length : 0;
+                                      const dureeTotale = (proto.etapes || []).reduce((acc, e) => acc + (parseInt(e?.duree_minutes ?? e?.timer_min, 10) || 0), 0);
+                                      const coverImg = proto.medias?.apres || (proto.etapes || []).find(e => e?.photo_url)?.photo_url || proto.medias?.avant || null;
 
                                       return (
-                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} className="hover-lift" style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-card)', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}}>
-                                              {proto.medias && proto.medias.apres ? (
-                                                  <div style={{height: '140px', width: '100%', background: 'var(--bg-hover)'}}><img src={proto.medias.apres} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              ) : ( <div style={{height: '4px', width: '100%', background: 'var(--btn-primary)'}}></div> )}
-                                              
-                                              <div style={{padding: '16px'}}>
-                                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
-                                                      <span style={{fontSize: '15px', fontWeight: 'bold'}}>{proto.nom_prestation}</span>
-                                                      <span style={{width: '12px', height: '12px', borderRadius: '50%', background: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'}} title={stockSuffisant ? "Stock OK" : "Rupture prévue"}></span>
-                                                  </div>
-                                                  <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '12px'}}>
-                                                      {(proto.tags || []).map(t => <span key={t} style={{fontSize: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px', color: 'var(--text-main)'}}>{t}</span>)}
+                                          <div key={proto.id_protocole} onClick={() => setModeEditionProtocole(proto)} className="hover-lift" style={{background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '18px', overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)'}}>
+                                              <div>
+                                                  {coverImg ? (
+                                                      <div style={{height: '150px', width: '100%', background: 'var(--bg-hover)', position: 'relative'}}>
+                                                          <img src={coverImg} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                                          <span style={{position: 'absolute', bottom: '10px', right: '10px', background: 'rgba(17,24,39,0.82)', color: '#fff', padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '700', backdropFilter: 'blur(6px)'}}>
+                                                              {nbEtapes} étape{nbEtapes > 1 ? 's' : ''}{dureeTotale > 0 ? ` • ${dureeTotale} min` : ''}
+                                                          </span>
+                                                      </div>
+                                                  ) : (
+                                                      <div style={{height: '6px', width: '100%', background: 'var(--text-main)'}}></div>
+                                                  )}
+
+                                                  <div style={{padding: '18px'}}>
+                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '10px'}}>
+                                                          <span style={{fontSize: '15.5px', fontWeight: '700', lineHeight: 1.35}}>{proto.nom_prestation}</span>
+                                                          <span style={{
+                                                              padding: '3px 8px', borderRadius: '999px', fontSize: '10.5px', fontWeight: '700', flexShrink: 0,
+                                                              background: stockSuffisant ? 'var(--bg-success)' : 'var(--bg-danger)',
+                                                              color: stockSuffisant ? 'var(--color-success)' : 'var(--color-danger)'
+                                                          }}>
+                                                              {stockSuffisant ? 'Stock OK' : 'Stock bas'}
+                                                          </span>
+                                                      </div>
+
+                                                      <div style={{display: 'flex', alignItems: 'center', gap: '14px', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px'}}>
+                                                          <span style={{display: 'inline-flex', alignItems: 'center', gap: '5px'}}>
+                                                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                                              {nbEtapes} étape{nbEtapes > 1 ? 's' : ''}
+                                                          </span>
+                                                          <span style={{display: 'inline-flex', alignItems: 'center', gap: '5px'}}>
+                                                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><line x1="5.52" y1="16" x2="18.48" y2="16"/></svg>
+                                                              {ingsTotaux.length} produit{ingsTotaux.length > 1 ? 's' : ''}
+                                                          </span>
+                                                          {dureeTotale > 0 && (
+                                                              <span style={{display: 'inline-flex', alignItems: 'center', gap: '4px'}}>
+                                                                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                                                  {dureeTotale} min
+                                                              </span>
+                                                          )}
+                                                      </div>
+
+                                                      <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
+                                                          {(proto.tags || []).map(t => <span key={t} style={{fontSize: '10.5px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '3px 9px', borderRadius: '999px', color: 'var(--text-secondary)', fontWeight: '600'}}>{t}</span>)}
+                                                      </div>
                                                   </div>
                                               </div>
                                           </div>
                                       );
                                   })}
-                                  {(protocolesListe || []).length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><p>L'Académie est vide.</p></div>}
+                                  {(protocolesListe || []).length === 0 && <div className="empty-state" style={{gridColumn: '1 / -1'}}><SvgEmptyState /><p>Aucun tutoriel enregistré dans l'Académie.</p></div>}
                               </div>
                           </div>
                       )}
 
+                      {/* 2. ÉDITEUR DE TUTORIEL ÉTAPE PAR ÉTAPE (CRÉATION & MODIFICATION) */}
                       {modeEditionProtocole === 'NEW' && (
-                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '24px' }}>
-                              <h3 style={{margin: '0 0 24px 0', color: 'var(--text-main)'}}>Création de Fiche Technique</h3>
-                              
-                              <div style={{marginBottom: '16px'}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px'}}>Prestation cible (Sélecteur catalogue)</label>
-                                  <select className="input-fournisseur" value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
-                                      <option value="">-- Choisir une prestation --</option>
-                                      {(catalogueListe || []).filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix}€)</option>)}
-                                  </select>
+                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '920px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '32px' }}>
+                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px'}}>
+                                  <div>
+                                      <span style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em'}}>{nouveauProtocole.id_protocole ? 'Édition du tutoriel' : 'Nouveau tutoriel'}</span>
+                                      <h3 style={{margin: '2px 0 0 0', color: 'var(--text-main)', fontSize: '20px'}}>Configuration de la Fiche & des Étapes</h3>
+                                  </div>
+                                  <button type="button" onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontWeight: '600', fontSize: '12.5px', display: 'inline-flex', alignItems: 'center', gap: '6px'}}>
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                                      Retour
+                                  </button>
                               </div>
 
-                              <div style={{marginBottom: '24px'}}>
-                                  <label style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px'}}>Catégories (Tags)</label>
-                                  <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
-                                      {TAGS_DISPONIBLES.map(tag => (
-                                          <button key={tag} onClick={() => toggleTag(tag)} style={{background: (nouveauProtocole.tags || []).includes(tag) ? 'var(--btn-primary)' : 'var(--bg-app)', color: (nouveauProtocole.tags || []).includes(tag) ? 'white' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'}}>{tag}</button>
-                                      ))}
+                              {/* Bloc 1 : Prestation cible, Tags & Temps de nettoyage */}
+                              <div className="carte" style={{marginBottom: '20px', padding: isMobile ? '16px' : '20px'}}>
+                                  <div style={{display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1fr', gap: '16px', marginBottom: '16px'}}>
+                                      <div>
+                                          <label style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '6px'}}>Prestation du catalogue associée</label>
+                                          <select className="input-fournisseur" style={{marginBottom: 0}} value={nouveauProtocole.nom_prestation} onChange={e => setNouveauProtocole({...nouveauProtocole, nom_prestation: e.target.value})}>
+                                              <option value="">-- Sélectionner une prestation --</option>
+                                              {(catalogueListe || []).filter(a => a.type_article === 'PRESTATION').map(p => <option key={p.id_article} value={p.nom}>{p.nom} ({p.prix} €)</option>)}
+                                          </select>
+                                      </div>
+
+                                      <div>
+                                          <label style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '6px'}}>Temps de nettoyage après RDV</label>
+                                          <div style={{display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg-app)', padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border-color)', minHeight: '42px', boxSizing: 'border-box'}}>
+                                              <input type="checkbox" checked={!!nouveauProtocole.a_temps_nettoyage} onChange={e => setNouveauProtocole({...nouveauProtocole, a_temps_nettoyage: e.target.checked, temps_nettoyage_minutes: e.target.checked ? (nouveauProtocole.temps_nettoyage_minutes || 5) : 0})} style={{width: '17px', height: '17px', accentColor: 'var(--btn-primary)', cursor: 'pointer'}} />
+                                              <span style={{fontSize: '12.5px', fontWeight: '600', color: 'var(--text-main)', flex: 1}}>Bloquer du temps à l'agenda</span>
+                                              {nouveauProtocole.a_temps_nettoyage && (
+                                                  <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                                                      <input type="number" min="0" className="input-fournisseur" style={{width: '60px', padding: '5px 8px', marginBottom: 0, textAlign: 'center', fontWeight: '700'}} value={nouveauProtocole.temps_nettoyage_minutes} onChange={e => setNouveauProtocole({...nouveauProtocole, temps_nettoyage_minutes: parseInt(e.target.value, 10) || 0})} />
+                                                      <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>min</span>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      </div>
+                                  </div>
+
+                                  <div>
+                                      <label style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '8px'}}>Catégories & Spécialités (Tags)</label>
+                                      <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                                          {TAGS_DISPONIBLES.map(tag => {
+                                              const actif = (nouveauProtocole.tags || []).includes(tag);
+                                              return (
+                                                  <button type="button" key={tag} onClick={() => toggleTag(tag)} style={{background: actif ? 'var(--text-main)' : 'var(--bg-app)', color: actif ? 'var(--bg-card)' : 'var(--text-secondary)', border: '1px solid var(--border-color)', padding: '6px 13px', borderRadius: '999px', fontSize: '12px', cursor: 'pointer', fontWeight: '700', transition: 'all 0.15s ease'}}>{tag}</button>
+                                              );
+                                          })}
+                                      </div>
                                   </div>
                               </div>
 
-                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px dashed var(--border-color)'}}>
-                                  <label style={{display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer'}}>
-                                      <input type="checkbox" checked={nouveauProtocole.a_temps_nettoyage} onChange={e => setNouveauProtocole({...nouveauProtocole, a_temps_nettoyage: e.target.checked, temps_nettoyage_minutes: e.target.checked ? (nouveauProtocole.temps_nettoyage_minutes || 5) : 0})} style={{width: '18px', height: '18px', accentColor: 'var(--btn-primary)'}} />
-                                      <span style={{fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)'}}>Temps de nettoyage automatique à l'agenda</span>
-                                  </label>
-                                  {nouveauProtocole.a_temps_nettoyage && (
-                                      <div style={{marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                          <input type="number" min="0" className="input-fournisseur" style={{width: '80px', padding: '8px'}} value={nouveauProtocole.temps_nettoyage_minutes} onChange={e => setNouveauProtocole({...nouveauProtocole, temps_nettoyage_minutes: parseInt(e.target.value) || 0})} />
-                                          <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>minutes bloquées après chaque prestation</span>
+                              {/* Bloc 2 : Liste des étapes déjà créées (avec édition directe photo + ingrédients + proportions) */}
+                              <div style={{marginBottom: '20px'}}>
+                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                          <h4 style={{fontSize: '15px', margin: 0, color: 'var(--text-main)'}}>Déroulé du Tutoriel ({(nouveauProtocole.etapes || []).length} étape{(nouveauProtocole.etapes || []).length > 1 ? 's' : ''})</h4>
                                       </div>
-                                  )}
+                                      <span style={{fontSize: '12.5px', fontWeight: '700', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: '5px'}}>
+                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                          Durée cumulée : {(nouveauProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e?.duree_minutes ?? e?.timer_min, 10) || 0), 0)} min
+                                      </span>
+                                  </div>
+
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '14px'}}>
+                                      {(nouveauProtocole.etapes || []).map((rawEtape, index) => {
+                                          const etape = normaliserEtapeUI(rawEtape, index);
+                                          return (
+                                              <div key={etape.id_etape || index} className="carte" style={{padding: isMobile ? '14px' : '18px', marginBottom: 0, border: '1px solid var(--border-color)'}}>
+                                                  {/* En-tête de l'étape */}
+                                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap'}}>
+                                                      <div style={{display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '200px'}}>
+                                                          <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '26px', height: '26px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '800', flexShrink: 0}}>{index + 1}</span>
+                                                          <input
+                                                              type="text"
+                                                              className="input-fournisseur"
+                                                              placeholder={`Titre de l'étape ${index + 1}`}
+                                                              value={etape.titre}
+                                                              onChange={e => modifierChampEtapeExistante(index, 'titre', e.target.value)}
+                                                              style={{marginBottom: 0, fontWeight: '700', fontSize: '14px', padding: '8px 12px'}}
+                                                          />
+                                                      </div>
+
+                                                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                                          <div style={{display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                                              <input
+                                                                  type="number"
+                                                                  min="0"
+                                                                  placeholder="Min"
+                                                                  value={etape.duree_minutes || ''}
+                                                                  onChange={e => modifierChampEtapeExistante(index, 'duree_minutes', parseInt(e.target.value, 10) || 0)}
+                                                                  style={{width: '44px', border: 'none', background: 'transparent', color: 'var(--text-main)', fontWeight: '700', fontSize: '12.5px', textAlign: 'center', outline: 'none'}}
+                                                              />
+                                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)'}}>min</span>
+                                                          </div>
+
+                                                          <button type="button" disabled={index === 0} onClick={() => deplacerEtapeRecette(index, -1)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: index === 0 ? 'not-allowed' : 'pointer', opacity: index === 0 ? 0.35 : 1, color: 'var(--text-main)'}} title="Monter">
+                                                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                                                          </button>
+                                                          <button type="button" disabled={index === (nouveauProtocole.etapes || []).length - 1} onClick={() => deplacerEtapeRecette(index, 1)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: index === (nouveauProtocole.etapes || []).length - 1 ? 'not-allowed' : 'pointer', opacity: index === (nouveauProtocole.etapes || []).length - 1 ? 0.35 : 1, color: 'var(--text-main)'}} title="Descendre">
+                                                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                                                          </button>
+                                                          <button type="button" onClick={() => supprimerEtapeRecette(etape.id_etape || index)} style={{background: 'var(--bg-danger)', border: 'none', borderRadius: '8px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--color-danger)'}} title="Supprimer l'étape">
+                                                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                                          </button>
+                                                      </div>
+                                                  </div>
+
+                                                  {/* Corps de l'étape : Instructions + Photo de l'étape */}
+                                                  <div style={{display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 160px', gap: '12px', marginBottom: '12px'}}>
+                                                      <textarea
+                                                          rows="2"
+                                                          className="input-fournisseur"
+                                                          placeholder="Instructions techniques détaillées de cette étape..."
+                                                          value={etape.description}
+                                                          onChange={e => modifierChampEtapeExistante(index, 'description', e.target.value)}
+                                                          style={{marginBottom: 0, resize: 'vertical', fontSize: '13px'}}
+                                                      />
+
+                                                      <div style={{height: '84px', borderRadius: '10px', border: '1px dashed var(--border-color)', background: 'var(--bg-app)', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                                          {etape.photo_url ? (
+                                                              <>
+                                                                  <img src={etape.photo_url} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                                                  <button type="button" onClick={() => modifierChampEtapeExistante(index, 'photo_url', null)} style={{position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', borderRadius: '50%', width: '22px', height: '22px', cursor: 'pointer', fontSize: '11px', zIndex: 2}}>✕</button>
+                                                              </>
+                                                          ) : (
+                                                              <div style={{textAlign: 'center', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '600', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px'}}>
+                                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                                                                  <span>Photo de l'étape</span>
+                                                              </div>
+                                                          )}
+                                                          <input type="file" accept="image/*" onChange={e => uploaderPhotoSurEtape(e, index)} style={{position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer'}} />
+                                                      </div>
+                                                  </div>
+
+                                                  {/* Ingrédients & Proportions rattachés à cette étape */}
+                                                  <div style={{background: 'var(--bg-app)', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-color)'}}>
+                                                      <div style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><line x1="5.52" y1="16" x2="18.48" y2="16"/></svg>
+                                                          Produits & Proportions utilisés à l'étape {index + 1}
+                                                      </div>
+
+                                                      {(etape.ingredients || []).length > 0 && (
+                                                          <div style={{display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px'}}>
+                                                              {etape.ingredients.map((ing, idxIng) => (
+                                                                  <span key={idxIng} style={{display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '4px 10px', borderRadius: '8px', fontSize: '12px', color: 'var(--text-main)'}}>
+                                                                      <strong>{ing.nom}</strong>
+                                                                      <span style={{color: 'var(--text-secondary)'}}>• {ing.proportion ? `${ing.proportion} (${formatPortion(ing.quantite_necessaire)} dose)` : `${formatPortion(ing.quantite_necessaire)} dose(s)`}</span>
+                                                                      <button type="button" onClick={() => supprimerIngredientDuneEtape(index, idxIng)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0, fontWeight: '700'}}>✕</button>
+                                                                  </span>
+                                                              ))}
+                                                          </div>
+                                                      )}
+
+                                                      <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
+                                                          <select id={`sel_art_etape_${index}`} className="input-fournisseur" style={{flex: '2 1 160px', marginBottom: 0, padding: '7px 10px', fontSize: '12px'}}>
+                                                              <option value="">+ Lier un produit du stock à cette étape...</option>
+                                                              {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => (
+                                                                  <option key={a.id_article} value={a.id_article}>{a.nom} (Stock: {a.stock_actuel})</option>
+                                                              ))}
+                                                          </select>
+                                                          <input id={`inp_prop_etape_${index}`} type="text" className="input-fournisseur" placeholder="Dosage (ex: 30g, 45ml, 1:1.5)" style={{flex: '1 1 130px', marginBottom: 0, padding: '7px 10px', fontSize: '12px'}} />
+                                                          <select id={`sel_qte_etape_${index}`} className="input-fournisseur" defaultValue="1" style={{width: '100px', marginBottom: 0, padding: '7px 8px', fontSize: '12px'}}>
+                                                              <option value="0.13">1/8 dose</option>
+                                                              <option value="0.25">1/4 dose</option>
+                                                              <option value="0.33">1/3 dose</option>
+                                                              <option value="0.5">1/2 dose</option>
+                                                              <option value="0.75">3/4 dose</option>
+                                                              <option value="1">1 dose</option>
+                                                              <option value="1.5">1.5 dose</option>
+                                                              <option value="2">2 doses</option>
+                                                          </select>
+                                                          <button
+                                                              type="button"
+                                                              onClick={() => {
+                                                                  const selArt = document.getElementById(`sel_art_etape_${index}`);
+                                                                  const inpProp = document.getElementById(`inp_prop_etape_${index}`);
+                                                                  const selQte = document.getElementById(`sel_qte_etape_${index}`);
+                                                                  ajouterIngredientSurEtapeExistante(index, selArt?.value, selQte?.value, inpProp?.value);
+                                                                  if (selArt) selArt.value = '';
+                                                                  if (inpProp) inpProp.value = '';
+                                                              }}
+                                                              style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', borderRadius: '8px', padding: '0 12px', fontWeight: '700', fontSize: '12px', cursor: 'pointer'}}
+                                                          >
+                                                              + Produit
+                                                          </button>
+                                                      </div>
+                                                  </div>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
                               </div>
 
-                              <div style={{marginBottom: '24px', background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                  <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Galerie Multimédia</h4>
-                                  <div style={{display: 'flex', gap: '12px'}}>
+                              {/* Bloc 3 : Constructeur d'une nouvelle étape (Photo + Produits + Proportions + Minuteur) */}
+                              <div className="carte" style={{background: 'var(--bg-app)', border: '1.5px dashed var(--border-color)', padding: isMobile ? '16px' : '20px', marginBottom: '20px'}}>
+                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px'}}>
+                                      <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '800'}}>
+                                          {(nouveauProtocole.etapes || []).length + 1}
+                                      </span>
+                                      <h4 style={{margin: 0, fontSize: '14.5px', color: 'var(--text-main)'}}>Ajouter l'étape {(nouveauProtocole.etapes || []).length + 1} au tutoriel</h4>
+                                  </div>
+
+                                  <div style={{display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 140px', gap: '10px', marginBottom: '10px'}}>
+                                      <input
+                                          type="text"
+                                          className="input-fournisseur"
+                                          placeholder="Titre de l'étape (ex: Préparation du mélange décolorant, Application racines...)"
+                                          value={etapeTemp.titre || ''}
+                                          onChange={e => setEtapeTemp({...etapeTemp, titre: e.target.value})}
+                                          style={{marginBottom: 0, background: 'var(--bg-card)'}}
+                                      />
+                                      <input
+                                          type="number"
+                                          min="0"
+                                          className="input-fournisseur"
+                                          placeholder="Durée (min)"
+                                          value={etapeTemp.duree_minutes ?? etapeTemp.timer_min ?? ''}
+                                          onChange={e => setEtapeTemp({...etapeTemp, duree_minutes: e.target.value, timer_min: e.target.value})}
+                                          style={{marginBottom: 0, background: 'var(--bg-card)'}}
+                                      />
+                                  </div>
+
+                                  <div style={{display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 160px', gap: '10px', marginBottom: '12px'}}>
+                                      <textarea
+                                          rows="3"
+                                          className="input-fournisseur"
+                                          placeholder="Décrivez précisément le geste technique, le temps de pause ou le conseil d'application..."
+                                          value={etapeTemp.description ?? etapeTemp.texte ?? ''}
+                                          onChange={e => setEtapeTemp({...etapeTemp, description: e.target.value, texte: e.target.value})}
+                                          style={{marginBottom: 0, background: 'var(--bg-card)', resize: 'vertical'}}
+                                      />
+
+                                      <div style={{height: '88px', borderRadius: '10px', border: '1px dashed var(--border-color)', background: 'var(--bg-card)', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                          {etapeTemp.photo_url ? (
+                                              <>
+                                                  <img src={etapeTemp.photo_url} alt="Aperçu étape" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                                  <button type="button" onClick={() => setEtapeTemp({...etapeTemp, photo_url: null})} style={{position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', borderRadius: '50%', width: '22px', height: '22px', cursor: 'pointer', fontSize: '11px', zIndex: 2}}>✕</button>
+                                              </>
+                                          ) : (
+                                              <div style={{textAlign: 'center', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '600', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '6px'}}>
+                                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                                                  <span>Illustrer l'étape (Photo)</span>
+                                              </div>
+                                          )}
+                                          <input type="file" accept="image/*" onChange={e => uploaderPhotoSurEtape(e, null)} style={{position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer'}} />
+                                      </div>
+                                  </div>
+
+                                  {/* Lier des ingrédients et proportions à cette étape en cours de création */}
+                                  <div style={{background: 'var(--bg-card)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-color)', marginBottom: '12px'}}>
+                                      <span style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '8px'}}>
+                                          Produits & Proportions à préparer pour cette étape (Optionnel)
+                                      </span>
+
+                                      {Array.isArray(etapeTemp.ingredients) && etapeTemp.ingredients.length > 0 && (
+                                          <div style={{display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px'}}>
+                                              {etapeTemp.ingredients.map((ing, i) => (
+                                                  <span key={i} style={{display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', padding: '4px 10px', borderRadius: '8px', fontSize: '12px'}}>
+                                                      <strong>{ing.nom}</strong>
+                                                      <span style={{color: 'var(--text-secondary)'}}>• {ing.proportion ? `${ing.proportion} (${formatPortion(ing.quantite_necessaire)} dose)` : `${formatPortion(ing.quantite_necessaire)} dose(s)`}</span>
+                                                      <button type="button" onClick={() => setEtapeTemp({...etapeTemp, ingredients: etapeTemp.ingredients.filter((_, idx) => idx !== i)})} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0, fontWeight: '700'}}>✕</button>
+                                                  </span>
+                                              ))}
+                                          </div>
+                                      )}
+
+                                      <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                                          <select className="input-fournisseur" style={{flex: '2 1 180px', marginBottom: 0, fontSize: '12.5px'}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
+                                              <option value="">-- Choisir un produit du stock --</option>
+                                              {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => (
+                                                  <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix || 0).toFixed(2)} €)</option>
+                                              ))}
+                                          </select>
+                                          <input
+                                              type="text"
+                                              className="input-fournisseur"
+                                              placeholder="Proportion (ex: 30g, 45ml, 1:1.5)"
+                                              style={{flex: '1 1 140px', marginBottom: 0, fontSize: '12.5px'}}
+                                              value={ingredientTemp.proportion || ''}
+                                              onChange={e => setIngredientTemp({...ingredientTemp, proportion: e.target.value})}
+                                          />
+                                          <select className="input-fournisseur" style={{width: '110px', marginBottom: 0, fontSize: '12.5px'}} value={ingredientTemp.quantite_necessaire || '1'} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})}>
+                                              <option value="0.13">1/8 dose</option>
+                                              <option value="0.25">1/4 dose</option>
+                                              <option value="0.33">1/3 dose</option>
+                                              <option value="0.5">1/2 dose</option>
+                                              <option value="0.75">3/4 dose</option>
+                                              <option value="1">1 dose</option>
+                                              <option value="1.5">1.5 dose</option>
+                                              <option value="2">2 doses</option>
+                                              <option value="3">3 doses</option>
+                                          </select>
+                                          <button type="button" onClick={ajouterIngredientBrouillonEtape} style={{background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '0 14px', borderRadius: '10px', fontWeight: '700', fontSize: '12.5px', cursor: 'pointer'}}>
+                                              + Lier le produit
+                                          </button>
+                                      </div>
+                                  </div>
+
+                                  <button type="button" className="btn-action" style={{width: '100%', padding: '12px'}} onClick={ajouterEtapeRecette}>
+                                      + Valider et ajouter cette étape au tutoriel
+                                  </button>
+                              </div>
+
+                              {/* Bloc 4 : Galerie Résultat Avant / Après (Optionnel) & Rentabilité */}
+                              <div className="carte" style={{padding: isMobile ? '16px' : '20px', marginBottom: '20px'}}>
+                                  <h4 style={{fontSize: '13.5px', margin: '0 0 12px 0', color: 'var(--text-main)'}}>Photos de couverture Avant / Pendant / Après (Optionnel)</h4>
+                                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px'}}>
                                       {['avant', 'pendant', 'apres'].map(type => (
-                                          <div key={type} style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
-                                              <label style={{fontSize: '11px', textTransform: 'capitalize', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
-                                              <div style={{height: '100px', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
-                                                  {nouveauProtocole.medias[type] ? <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <span style={{fontSize: '20px', color: 'var(--text-muted)'}}>+</span>}
-                                                  <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer'}} />
+                                          <div key={type} style={{display: 'flex', flexDirection: 'column', gap: '6px'}}>
+                                              <label style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: '700', color: 'var(--text-secondary)', textAlign: 'center'}}>{type}</label>
+                                              <div style={{height: '96px', borderRadius: '10px', border: '1px dashed var(--border-color)', background: 'var(--bg-app)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'}}>
+                                                  {nouveauProtocole.medias?.[type] ? (
+                                                      <img src={nouveauProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                                  ) : (
+                                                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--text-muted)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                                  )}
+                                                  <input type="file" accept="image/*" onChange={(e) => uploadMediaProtocole(e, type)} style={{position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer'}} />
                                               </div>
                                           </div>
                                       ))}
                                   </div>
-                              </div>
-
-                              <div style={{marginBottom: '24px'}}>
-                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', marginBottom: '12px'}}>
-                                      <h4 style={{fontSize: '13px', margin: 0}}>Le Pas-à-Pas</h4>
-                                      <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(nouveauProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
-                                  </div>
-                                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px'}}>
-                                      {(nouveauProtocole.etapes || []).map((etape, index) => (
-                                          <div key={etape.id_etape} draggable onDragStart={(e) => e.dataTransfer.setData("dragIndex", index)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const dragIndex = Number(e.dataTransfer.getData("dragIndex")); const dropIndex = index; const nouvellesEtapes = [...(nouveauProtocole.etapes || [])]; const [draggedEtape] = nouvellesEtapes.splice(dragIndex, 1); nouvellesEtapes.splice(dropIndex, 0, draggedEtape); setNouveauProtocole({ ...nouveauProtocole, etapes: nouvellesEtapes }); }} style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', gap: '12px', alignItems: 'center', cursor: 'grab'}} title="Maintenez cliqué pour déplacer">
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5}}>
-                                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                                              </div>
-                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '11px', fontWeight: 'bold'}}>{index + 1}</span>
-                                              <div style={{flex: 1, fontSize: '13px'}}>{etape.texte}</div>
-                                              {etape.timer_min && <div style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px'}}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> {etape.timer_min} min</div>}
-                                              <button onClick={() => supprimerEtapeRecette(etape.id_etape)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer'}}>✕</button>
-                                          </div>
-                                      ))}
-                                  </div>
-                                  <div style={{display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '6px'}}>
-                                      <input type="text" className="input-fournisseur" placeholder="Décrire l'étape..." style={{flex: 3}} value={etapeTemp.texte} onChange={e => setEtapeTemp({...etapeTemp, texte: e.target.value})} />
-                                      <input type="number" className="input-fournisseur" placeholder="Min (Optionnel)" style={{flex: 1}} value={etapeTemp.timer_min} onChange={e => setEtapeTemp({...etapeTemp, timer_min: e.target.value})} />
-                                      <button className="btn-action" style={{padding: '0 16px'}} onClick={ajouterEtapeRecette}>Ajouter</button>
-                                  </div>
-                              </div>
-
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px'}}>Nomenclature (Recette)</h4>
-                              <div style={{display: 'flex', gap: '8px', marginBottom: '12px'}}>
-                                  <select className="input-fournisseur" style={{flex: 2}} value={ingredientTemp.id_article} onChange={e => setIngredientTemp({...ingredientTemp, id_article: e.target.value})}>
-                                      <option value="">-- Ajouter un produit --</option>
-                                      {(catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').map(a => <option key={a.id_article} value={a.id_article}>{a.nom} ({parseFloat(a.prix).toFixed(2)}€)</option>)}
-                                  </select>
-                                  <select className="input-fournisseur" style={{width: '110px', padding: '11px 8px'}} value={ingredientTemp.quantite_necessaire} onChange={e => setIngredientTemp({...ingredientTemp, quantite_necessaire: e.target.value})}>
-                                      <option value="">Portion</option>
-                                      <option value="0.13">1/8 dose</option>
-                                      <option value="0.25">1/4 dose</option>
-                                      <option value="0.33">1/3 dose</option>
-                                      <option value="0.5">1/2 dose</option>
-                                      <option value="0.67">2/3 dose</option>
-                                      <option value="0.75">3/4 dose</option>
-                                      <option value="1">1 dose</option>
-                                      <option value="1.5">1.5 dose</option>
-                                      <option value="2">2 doses</option>
-                                      <option value="3">3 doses</option>
-                                  </select>
-                                  <button onClick={ajouterIngredientRecette} style={{background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '0 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer'}}>+</button>
-                              </div>
-                              
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px'}}>
-                                  {(nouveauProtocole.ingredients || []).map(ing => (
-                                      <div key={ing.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '4px', border: '1px solid var(--border-color)'}}>
-                                          <span><strong style={{color: 'var(--btn-primary)'}}>{formatPortion(ing.quantite_necessaire)} dose(s)</strong> de {ing.nom}</span>
-                                          <button onClick={() => supprimerIngredientRecette(ing.id_article)} style={{color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold'}}>✕</button>
-                                      </div>
-                                  ))}
                               </div>
 
                               {(() => {
                                   const prestaChoisie = (catalogueListe || []).find(a => a.nom === nouveauProtocole.nom_prestation && a.type_article === 'PRESTATION');
                                   const prixVente = prestaChoisie ? parseFloat(prestaChoisie.prix) : 0;
-                                  const coutProduits = (nouveauProtocole.ingredients || []).reduce((acc, ing) => { const art = (catalogueListe || []).find(a => a.id_article === ing.id_article); return acc + (art ? parseFloat(art.prix) * ing.quantite_necessaire : 0); }, 0);
+                                  const ingsCumules = calculerIngredientsTotauxProtocole(nouveauProtocole);
+                                  const coutProduits = ingsCumules.reduce((acc, ing) => {
+                                      const art = (catalogueListe || []).find(a => Number(a.id_article) === Number(ing.id_article));
+                                      return acc + (art ? parseFloat(art.prix || 0) * (parseFloat(ing.quantite_necessaire) || 1) : 0);
+                                  }, 0);
                                   const margeValeur = prixVente - coutProduits;
                                   const margePourcentage = prixVente > 0 ? (margeValeur / prixVente) * 100 : 0;
                                   const couleurMarge = margePourcentage > 60 ? 'var(--color-success)' : (margePourcentage > 30 ? 'var(--color-info)' : 'var(--color-danger)');
 
                                   return (nouveauProtocole.nom_prestation && (
-                                      <div style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '16px 20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                                           <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
-                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Rentabilité</span>
-                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix de Vente : <strong>{prixVente.toFixed(2)} €</strong></span>
-                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Coût Produits : <strong>{coutProduits.toFixed(2)} €</strong></span>
+                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '700'}}>Rentabilité & Déstockage Automatique</span>
+                                              <span style={{fontSize: '13px', color: 'var(--text-main)'}}>Prix Prestation : <strong>{prixVente.toFixed(2)} €</strong> • Coût Produits ({ingsCumules.length}) : <strong>{coutProduits.toFixed(2)} €</strong></span>
                                           </div>
-                                          <div style={{textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
-                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600'}}>Marge Brute Estimée</span>
-                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                  <span style={{fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
+                                          <div style={{textAlign: 'right'}}>
+                                              <span style={{fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '700', display: 'block'}}>Marge Brute Estimée</span>
+                                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'flex-end'}}>
+                                                  <span style={{fontSize: '14px', fontWeight: '700', color: 'var(--text-main)'}}>+{margeValeur.toFixed(2)} €</span>
                                                   <span style={{fontSize: '18px', fontWeight: '900', color: couleurMarge}}>{margePourcentage.toFixed(0)}%</span>
                                               </div>
                                           </div>
@@ -5277,75 +5776,159 @@ function App() {
                               })()}
 
                               <div style={{display: 'flex', gap: '12px'}}>
-                                  <button onClick={() => setModeEditionProtocole(null)} style={{flex: 1, padding: '16px', borderRadius: 'var(--radius-input)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: 'bold', cursor: 'pointer'}}>Annuler</button>
-                                  <button className="btn-action" style={{flex: 2, padding: '16px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Sauvegarder la Fiche</button>
+                                  <button type="button" onClick={() => setModeEditionProtocole(null)} style={{flex: 1, padding: '15px', borderRadius: 'var(--radius-input)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontWeight: '700', cursor: 'pointer'}}>Annuler</button>
+                                  <button type="button" className="btn-action" style={{flex: 2, padding: '15px', fontSize: '15px'}} disabled={!nouveauProtocole.nom_prestation} onClick={creerProtocole}>Enregistrer le Tutoriel</button>
                               </div>
                           </div>
                       )}
-                      
-                      {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (
-                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '900px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '24px' }}>
-                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px'}}>
-                                  <div>
-                                      <button onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '12px', fontSize: '11px'}}>← Retour à la liste</button>
-                                      <h2 style={{margin: '0 0 8px 0'}}>{modeEditionProtocole.nom_prestation}</h2>
-                                      <div style={{display: 'flex', gap: '8px'}}>
-                                          {(modeEditionProtocole.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--btn-primary)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>{t}</span>)}
-                                      </div>
-                                  </div>
-                                  <div style={{display: 'flex', gap: '8px'}}>
-                                      <button onClick={() => { setNouveauProtocole({...modeEditionProtocole, a_temps_nettoyage: (modeEditionProtocole.temps_nettoyage_minutes > 0), temps_nettoyage_minutes: modeEditionProtocole.temps_nettoyage_minutes || 5}); setModeEditionProtocole('NEW'); }} style={{background: 'var(--btn-primary)', border: 'none', color: 'var(--btn-text)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
-                                          Modifier la fiche
-                                      </button>
-                                      <button onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)} style={{color: 'var(--color-danger)', background: 'var(--bg-app)', border: '1px solid var(--color-danger)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'}}>
-                                          Supprimer la fiche
-                                      </button>
-                                  </div>
-                              </div>
 
-                              <div style={{display: 'flex', gap: '12px', marginBottom: '24px'}}>
-                                  {['avant', 'pendant', 'apres'].map(type => (
-                                      modeEditionProtocole.medias && modeEditionProtocole.medias[type] && (
-                                          <div key={type} style={{flex: 1}}>
-                                              <div style={{height: '140px', borderRadius: '8px', overflow: 'hidden', background: '#000'}}><img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '100%', objectFit: 'cover'}} /></div>
-                                              <span style={{fontSize: '10px', display: 'block', textAlign: 'center', marginTop: '4px', textTransform: 'capitalize', color: 'var(--text-secondary)'}}>{type}</span>
+                      {/* 3. LECTEUR DE TUTORIEL INTERACTIF (CONSULTATION D'UNE FICHE) */}
+                      {modeEditionProtocole && modeEditionProtocole !== 'NEW' && (() => {
+                          const ingsTotaux = calculerIngredientsTotauxProtocole(modeEditionProtocole);
+                          const dureeTotale = (modeEditionProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e?.duree_minutes ?? e?.timer_min, 10) || 0), 0);
+
+                          return (
+                              <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '920px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '32px' }}>
+                                  <div className="carte" style={{padding: isMobile ? '18px' : '24px', marginBottom: '20px'}}>
+                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '18px'}}>
+                                          <div>
+                                              <button type="button" onClick={() => setModeEditionProtocole(null)} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '999px', cursor: 'pointer', fontWeight: '700', marginBottom: '12px', fontSize: '11.5px', display: 'inline-flex', alignItems: 'center', gap: '6px'}}>
+                                                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                                                  Retour à l'Académie
+                                              </button>
+                                              <h2 style={{margin: '0 0 8px 0', fontSize: isMobile ? '20px' : '24px'}}>{modeEditionProtocole.nom_prestation}</h2>
+                                              <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center'}}>
+                                                  {(modeEditionProtocole.tags || []).map(t => <span key={t} style={{fontSize: '11px', background: 'var(--text-main)', color: 'var(--bg-card)', padding: '3px 10px', borderRadius: '999px', fontWeight: '700'}}>{t}</span>)}
+                                                  {dureeTotale > 0 && (
+                                                      <span style={{fontSize: '11.5px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '3px 10px', borderRadius: '999px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px'}}>
+                                                          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                                          Temps technique : {dureeTotale} min
+                                                      </span>
+                                                  )}
+                                                  {modeEditionProtocole.temps_nettoyage_minutes > 0 && (
+                                                      <span style={{fontSize: '11.5px', background: 'var(--bg-app)', color: 'var(--text-secondary)', padding: '3px 10px', borderRadius: '999px', border: '1px solid var(--border-color)', fontWeight: '600'}}>
+                                                          +{modeEditionProtocole.temps_nettoyage_minutes} min nettoyage
+                                                      </span>
+                                                  )}
+                                              </div>
                                           </div>
-                                      )
-                                  ))}
-                              </div>
 
-                              <h4 style={{fontSize: '13px', margin: '0 0 12px 0'}}>Recette Laboratoire</h4>
-                              <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px'}}>
-                                  {(modeEditionProtocole.ingredients || []).map((ing, i) => (
-                                      <div key={i} style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i !== (modeEditionProtocole.ingredients || []).length - 1 ? '1px solid var(--border-color)' : 'none', fontSize: '13px'}}>
-                                          <span>{ing.nom}</span><strong style={{color: 'var(--text-main)'}}>{formatPortion(ing.quantite_necessaire)} dose(s)</strong>
-                                      </div>
-                                  ))}
-                                  {(!modeEditionProtocole.ingredients || (modeEditionProtocole.ingredients || []).length === 0) && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit lié.</span>}
-                              </div>
-
-                              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '12px'}}>
-                                  <h4 style={{fontSize: '13px', margin: 0}}>Étapes de réalisation</h4>
-                                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                      <span style={{fontSize: '10px', color: 'var(--text-muted)'}}>Auto-calcul depuis la recette du protocole</span>
-                                      {modeEditionProtocole.temps_nettoyage_minutes > 0 && <span style={{fontSize: '10px', color: 'var(--color-info)', background: 'var(--bg-info)', padding: '2px 6px', borderRadius: '12px'}}>+{modeEditionProtocole.temps_nettoyage_minutes} min nettoyage</span>}
-                                      <span style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--btn-primary)'}}>Temps global : {(modeEditionProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e.timer_min) || 0), 0)} min</span>
-                                  </div>
-                              </div>
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {(modeEditionProtocole.etapes || []).map((etape, index) => (
-                                      <div key={index} style={{display: 'flex', gap: '12px', background: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
-                                          <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '12px', fontWeight: 'bold', flexShrink: 0}}>{index + 1}</span>
-                                          <div style={{flex: 1}}>
-                                              <p style={{margin: '0 0 8px 0', fontSize: '14px', lineHeight: '1.5'}}>{etape.texte}</p>
-                                              {etape.timer_min && <span style={{fontSize: '11px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold'}}>⏱ Minuteur : {etape.timer_min} min</span>}
+                                          <div style={{display: 'flex', gap: '8px'}}>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                      const etapesNorm = (modeEditionProtocole.etapes || []).map((et, i) => normaliserEtapeUI(et, i));
+                                                      setNouveauProtocole({
+                                                          ...modeEditionProtocole,
+                                                          etapes: etapesNorm,
+                                                          medias: modeEditionProtocole.medias || { avant: null, pendant: null, apres: null },
+                                                          a_temps_nettoyage: (modeEditionProtocole.temps_nettoyage_minutes > 0),
+                                                          temps_nettoyage_minutes: modeEditionProtocole.temps_nettoyage_minutes || 5
+                                                      });
+                                                      setModeEditionProtocole('NEW');
+                                                  }}
+                                                  style={{background: 'var(--text-main)', border: 'none', color: 'var(--bg-card)', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontWeight: '700', fontSize: '12.5px', display: 'inline-flex', alignItems: 'center', gap: '6px'}}
+                                              >
+                                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                                  Modifier
+                                              </button>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => supprimerProtocole(modeEditionProtocole.id_protocole)}
+                                                  style={{color: 'var(--color-danger)', background: 'var(--bg-danger)', border: 'none', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontWeight: '700', fontSize: '12.5px'}}
+                                              >
+                                                  Supprimer
+                                              </button>
                                           </div>
                                       </div>
-                                  ))}
-                                  {(!modeEditionProtocole.etapes || (modeEditionProtocole.etapes || []).length === 0) && <div style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{modeEditionProtocole.description || "Aucune instruction."}</div>}
+
+                                      {/* Galerie Avant / Pendant / Après si renseignée */}
+                                      {modeEditionProtocole.medias && (modeEditionProtocole.medias.avant || modeEditionProtocole.medias.pendant || modeEditionProtocole.medias.apres) && (
+                                          <div style={{display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px'}}>
+                                              {['avant', 'pendant', 'apres'].map(type => (
+                                                  modeEditionProtocole.medias[type] && (
+                                                      <div key={type} style={{borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
+                                                          <img src={modeEditionProtocole.medias[type]} alt={type} style={{width: '100%', height: '160px', objectFit: 'cover', display: 'block'}} />
+                                                          <span style={{fontSize: '11px', fontWeight: '700', display: 'block', textAlign: 'center', padding: '6px', textTransform: 'uppercase', color: 'var(--text-secondary)'}}>{type}</span>
+                                                      </div>
+                                                  )
+                                              ))}
+                                          </div>
+                                      )}
+
+                                      {/* Récapitulatif Laboratoire (Total des produits nécessaires) */}
+                                      <div style={{background: 'var(--bg-app)', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)'}}>
+                                          <div style={{fontSize: '11.5px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><line x1="5.52" y1="16" x2="18.48" y2="16"/></svg>
+                                              Préparation Laboratoire Globale ({ingsTotaux.length} produit{ingsTotaux.length > 1 ? 's' : ''})
+                                          </div>
+                                          {ingsTotaux.length > 0 ? (
+                                              <div style={{display: 'flex', flexWrap: 'wrap', gap: '8px'}}>
+                                                  {ingsTotaux.map((ing, i) => (
+                                                      <span key={i} style={{fontSize: '12.5px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '9px', border: '1px solid var(--border-color)', color: 'var(--text-main)'}}>
+                                                          <strong>{ing.nom}</strong> • <span style={{color: 'var(--text-secondary)', fontWeight: '600'}}>{ing.proportion ? `${ing.proportion} (${formatPortion(ing.quantite_necessaire)} dose)` : `${formatPortion(ing.quantite_necessaire)} dose(s)`}</span>
+                                                      </span>
+                                                  ))}
+                                              </div>
+                                          ) : (
+                                              <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun produit technique rattaché.</span>
+                                          )}
+                                      </div>
+                                  </div>
+
+                                  {/* Cartes Tutoriel Étape par Étape */}
+                                  <div style={{display: 'flex', flexDirection: 'column', gap: '16px'}}>
+                                      {(modeEditionProtocole.etapes || []).map((rawEtape, index) => {
+                                          const etape = normaliserEtapeUI(rawEtape, index);
+                                          return (
+                                              <div key={index} className="carte" style={{padding: isMobile ? '16px' : '22px', marginBottom: 0, display: 'grid', gridTemplateColumns: (etape.photo_url && !isMobile) ? '1fr 240px' : '1fr', gap: '20px', alignItems: 'start'}}>
+                                                  <div>
+                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '10px', flexWrap: 'wrap'}}>
+                                                          <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                                              <span style={{background: 'var(--text-main)', color: 'var(--bg-card)', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontSize: '13px', fontWeight: '800', flexShrink: 0}}>{index + 1}</span>
+                                                              <h4 style={{margin: 0, fontSize: '16px', color: 'var(--text-main)'}}>{etape.titre}</h4>
+                                                          </div>
+                                                          {etape.duree_minutes > 0 && (
+                                                              <span style={{fontSize: '12px', background: 'var(--bg-info)', color: 'var(--color-info)', padding: '4px 10px', borderRadius: '999px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px'}}>
+                                                                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                                                  {etape.duree_minutes} min
+                                                              </span>
+                                                          )}
+                                                      </div>
+
+                                                      {etape.description && (
+                                                          <p style={{margin: '0 0 14px 0', fontSize: '14px', lineHeight: '1.6', color: 'var(--text-secondary)', whiteSpace: 'pre-line'}}>{etape.description}</p>
+                                                      )}
+
+                                                      {etape.ingredients && etape.ingredients.length > 0 && (
+                                                          <div style={{background: 'var(--bg-app)', padding: '12px 14px', borderRadius: '10px', border: '1px solid var(--border-color)'}}>
+                                                              <div style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                                                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><line x1="5.52" y1="16" x2="18.48" y2="16"/></svg>
+                                                                  Ingrédients & Proportions de l'étape {index + 1}
+                                                              </div>
+                                                              <div style={{display: 'flex', flexWrap: 'wrap', gap: '8px'}}>
+                                                                  {etape.ingredients.map((ing, i) => (
+                                                                      <span key={i} style={{fontSize: '12.5px', background: 'var(--bg-card)', color: 'var(--text-main)', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                                                                          <strong>{ing.nom}</strong> • <span style={{color: 'var(--btn-primary)', fontWeight: '700'}}>{ing.proportion ? ing.proportion : `${formatPortion(ing.quantite_necessaire)} dose(s)`}</span>
+                                                                      </span>
+                                                                  ))}
+                                                              </div>
+                                                          </div>
+                                                      )}
+                                                  </div>
+
+                                                  {etape.photo_url && (
+                                                      <div style={{borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--bg-app)'}}>
+                                                          <img src={etape.photo_url} alt={etape.titre} style={{width: '100%', height: '165px', objectFit: 'cover', display: 'block'}} />
+                                                      </div>
+                                                  )}
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
                               </div>
-                          </div>
-                      )}
+                          );
+                      })()}
                   </div>
                   
                   {!modeEditionProtocole && (
@@ -5356,10 +5939,10 @@ function App() {
                                   <div className="empty-state"><p>Aucune prestation au catalogue.</p></div>
                               ) : (catalogueListe || []).filter(art => art.type_article === 'PRESTATION').map(art => (
                                   <div key={art.id_article} style={{display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-color)', fontSize: '13px', alignItems: 'center'}}>
-                                      <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> - {art.prix} € </span>
+                                      <span><strong style={{color: 'var(--text-main)'}}>{art.nom}</strong> — {art.prix} € </span>
                                       <div style={{display: 'flex', gap: '16px'}}>
-                                          <button onClick={() => setModifNomDialog({ id_article: art.id_article, nom: art.nom })} style={{background:'none', border:'none', color:'var(--text-secondary)', cursor:'pointer', fontWeight: '500'}}>Renommer</button>
-                                          <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '500'}}>Supprimer</button>
+                                          <button onClick={() => setModifNomDialog({ id_article: art.id_article, nom: art.nom })} style={{background:'none', border:'none', color:'var(--text-secondary)', cursor:'pointer', fontWeight: '600'}}>Renommer</button>
+                                          <button onClick={() => supprimerArticle(art.id_article)} style={{background:'none', border:'none', color:'var(--color-danger)', cursor:'pointer', fontWeight: '600'}}>Supprimer</button>
                                       </div>
                                   </div>
                               ))}
