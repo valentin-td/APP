@@ -6901,9 +6901,10 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         const dateDebutStr = formatYMD(firstDayOfMonth);
         const dateFinStr = formatYMD(lastDayOfMonth);
 
-        // --- STATUT ET LÉGALITÉ (Basé sur la validation scellée du gérant) ---
+        // --- STATUT ET LÉGALITÉ (Basé sur la validation scellée du gérant + signature manuscrite) ---
+        await pool.query('ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS signature_base64 TEXT').catch(() => {});
         const moisCibleStr = `${referenceDate.getFullYear()}-${String(referenceDate.getMonth() + 1).padStart(2, '0')}`;
-        const validationRes = await pool.query('SELECT valide_par, date_validation, signature_hash, hash_precedent FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisCibleStr]);
+        const validationRes = await pool.query('SELECT valide_par, date_validation, signature_hash, hash_precedent, signature_base64 FROM liasses_mensuelles_validees WHERE id_salon = $1 AND mois_annee = $2', [id_salon, moisCibleStr]);
         
         const estMoisCloture = validationRes.rowCount > 0;
         const statutDocument = estMoisCloture ? "DÉFINITIF (CLÔTURÉ ET SIGNÉ)" : "BROUILLON PROVISOIRE - NON SIGNÉ";
@@ -8049,36 +8050,79 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
         }
 
         // --- 6. MENTIONS LÉGALES & VALIDATION ---
-        currentY += 30;
-        if (currentY > 600) { doc.addPage(); currentY = 40; }
+        currentY += 24;
+        if (currentY > 565) { doc.addPage(); currentY = 40; }
         
-        doc.rect(40, currentY, 515, 85).fillAndStroke('#f9fafb', BORDER_COLOR);
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances)', 50, currentY + 10);
+        doc.rect(40, currentY, 515, 82).fillAndStroke('#f9fafb', BORDER_COLOR);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances - NF525)', 50, currentY + 9);
         doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
             "• L'éditeur du logiciel STACK v1.0 atteste que ce système satisfait aux conditions d'inaltérabilité, de sécurisation, de conservation et d'archivage des données en vue du contrôle de l'administration fiscale, prévues au 3° bis du I de l'article 286 du CGI.\n" +
             "• Conservation : Les pièces fiscales doivent être conservées 6 ans, et les documents comptables 10 ans.\n" +
             "• RGPD : Les motifs médicaux exacts des arrêts de travail ont été masqués sur ce document de transmission comptable.\n" +
             "• Dépenses : Je confirme l'exactitude des frais déclarés et m'engage à fournir les justificatifs non-scannés à mon comptable.",
-            50, currentY + 25, { width: 495, lineGap: 2 }
+            50, currentY + 23, { width: 495, lineGap: 1.8 }
         );
 
-        currentY += 100;
+        currentY += 94;
 
-        // --- BLOC "BON POUR TRANSMISSION" ---
-        doc.rect(40, currentY, 515, 90).stroke(BORDER_COLOR);
-        doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text("BON POUR TRANSMISSION COMPTABLE", 50, currentY + 10);
-        
+        // --- BLOC "BON POUR TRANSMISSION COMPTABLE & SIGNATURE SCELLÉE NF525" ---
         if (estMoisCloture) {
             const dateValidationScellee = validationRes.rows[0].date_validation ? new Date(validationRes.rows[0].date_validation) : today;
             const signataireScelle = validationRes.rows[0].valide_par || nomGerant;
-            doc.font('Helvetica').fontSize(10).text(`Nom du ${titreDirigeant} : ${signataireScelle}`, 50, currentY + 30);
-            doc.text(`Date : ${dateValidationScellee.toLocaleDateString('fr-FR')} à ${dateValidationScellee.toLocaleTimeString('fr-FR')}`, 50, currentY + 45);
-            
-            doc.font('Helvetica-Bold').text(`Signature :`, 350, currentY + 30);
-            // Espace pour signer (plus large pour être bien sous "Bon pour transmission")
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text("(Signature valant certification des données et validation du document)", 350, currentY + 65, { width: 150 });
+            const sigBase64 = validationRes.rows[0].signature_base64 || null;
+
+            doc.roundedRect(40, currentY, 515, 118, 6).fillAndStroke('#f0fdf4', '#16a34a');
+
+            // Colonne gauche : Informations du signataire et empreinte cryptographique NF525
+            doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#166534').text("BON POUR TRANSMISSION COMPTABLE — LIASSE CERTIFIÉE", 52, currentY + 10);
+            doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text(`Signataire (${titreDirigeant}) : ${signataireScelle}`, 52, currentY + 28);
+            doc.font('Helvetica').fontSize(8.5).fillColor(SEC_COLOR).text(
+                `Certifié le : ${dateValidationScellee.toLocaleDateString('fr-FR')} à ${dateValidationScellee.toLocaleTimeString('fr-FR')} (Code PIN vérifié)`,
+                52, currentY + 42
+            );
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(MAIN_COLOR).text(
+                "Mention : « Bon pour accord — Certifié sincère, véritable et conforme aux écritures »",
+                52, currentY + 56, { width: 268 }
+            );
+            doc.font('Helvetica-Bold').fontSize(7).fillColor('#166534').text("SCEAU D'INTÉGRITÉ SHA-256 (NF525) :", 52, currentY + 74);
+            doc.font('Courier-Bold').fontSize(6.8).fillColor(MAIN_COLOR).text(fullHashArchive, 52, currentY + 84, { width: 270 });
+            doc.font('Helvetica').fontSize(7).fillColor(SEC_COLOR).text(`Réf. Archive : ${numeroArchive}`, 52, currentY + 102);
+
+            // Colonne droite : Cadre contenant la signature manuscrite du gérant
+            doc.roundedRect(334, currentY + 10, 210, 98, 5).fillAndStroke('#ffffff', '#bbf7d0');
+            doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#166534').text(
+                "SIGNATURE DU DIRIGEANT :",
+                342, currentY + 16, { width: 194, align: 'center' }
+            );
+
+            if (sigBase64 && sigBase64.includes('base64,')) {
+                try {
+                    const cleanBase64 = sigBase64.split('base64,')[1];
+                    const sigBuffer = Buffer.from(cleanBase64, 'base64');
+                    doc.image(sigBuffer, 346, currentY + 28, {
+                        fit: [186, 56],
+                        align: 'center',
+                        valign: 'center'
+                    });
+                } catch (errImg) {
+                    doc.font('Helvetica-BoldOblique').fontSize(11).fillColor(MAIN_COLOR).text(signataireScelle, 342, currentY + 48, { width: 194, align: 'center' });
+                }
+            } else {
+                doc.font('Helvetica-BoldOblique').fontSize(11).fillColor(MAIN_COLOR).text(signataireScelle, 342, currentY + 48, { width: 194, align: 'center' });
+            }
+
+            doc.font('Helvetica-Oblique').fontSize(6.8).fillColor(SEC_COLOR).text(
+                "Signature scellée électroniquement (Art. 1367 C. civ. & NF525)",
+                342, currentY + 92, { width: 194, align: 'center' }
+            );
         } else {
-            doc.font('Helvetica-Bold').fontSize(14).fillColor('#ea580c').text("DOCUMENT PROVISOIRE - NON SIGNÉ", 150, currentY + 35);
+            doc.roundedRect(40, currentY, 515, 90, 6).fillAndStroke('#fff7ed', '#ea580c');
+            doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text("BON POUR TRANSMISSION COMPTABLE", 52, currentY + 12);
+            doc.font('Helvetica-Bold').fontSize(13).fillColor('#ea580c').text("DOCUMENT PROVISOIRE (BROUILLON) — NON SIGNÉ", 52, currentY + 38, { width: 490, align: 'center' });
+            doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(SEC_COLOR).text(
+                "Ce document doit être validé et signé par le gérant dans l'onglet Comptabilité pour acquérir sa valeur définitive NF525.",
+                52, currentY + 62, { width: 490, align: 'center' }
+            );
         }
 
         // --- PAGINATION DYNAMIQUE (Correction : ancrage absolu sans saut de page) ---
@@ -8841,7 +8885,7 @@ async function envoyerBilanComptable(id_salon, mois_annee) {
 }
 
 app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
-    const { mois_annee, code_pin } = req.body; // YYYY-MM attendu
+    const { mois_annee, code_pin, signature_base64 } = req.body; // YYYY-MM attendu + signature manuscrite Base64
     const id_salon = req.user.id_salon;
     
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider et signer la liasse comptable." });
@@ -8946,6 +8990,8 @@ app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
         `, [id_salon, dateFinStr]);
         const cumulPerpetuel = Number(dernierZMois.rows[0]?.cumul || 0).toFixed(2);
 
+        await clientDB.query(`ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS signature_base64 TEXT`);
+
         const prevLiasse = await clientDB.query(`
             SELECT signature_hash FROM liasses_mensuelles_validees
             WHERE id_salon = $1 AND signature_hash IS NOT NULL
@@ -8957,10 +9003,19 @@ app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
             .update(`LIASSE-${id_salon}-${mois_annee}-${totalHT}-${totalTVA}-${totalTTC}-${cumulPerpetuel}-${gerant.nom}-${dateValISO}-${hashPrecedent}`)
             .digest('hex');
 
+        const signaturePropre = (signature_base64 && typeof signature_base64 === 'string' && signature_base64.startsWith('data:image/'))
+            ? signature_base64
+            : null;
+        const hashSignatureManuscrite = signaturePropre
+            ? crypto.createHash('sha256').update(signaturePropre).digest('hex')
+            : null;
+
         await clientDB.query(
-            `INSERT INTO liasses_mensuelles_validees (id_salon, mois_annee, date_validation, valide_par, total_ht, total_tva, total_ttc, cumul_perpetuel_ttc, hash_precedent, signature_hash)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id_salon, mois_annee) DO NOTHING`,
-            [id_salon, mois_annee, dateValISO, gerant.nom, totalHT, totalTVA, totalTTC, cumulPerpetuel, hashPrecedent, signatureHash]
+            `INSERT INTO liasses_mensuelles_validees (id_salon, mois_annee, date_validation, valide_par, total_ht, total_tva, total_ttc, cumul_perpetuel_ttc, hash_precedent, signature_hash, signature_base64)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             ON CONFLICT (id_salon, mois_annee) DO UPDATE
+             SET signature_base64 = COALESCE(liasses_mensuelles_validees.signature_base64, EXCLUDED.signature_base64)`,
+            [id_salon, mois_annee, dateValISO, gerant.nom, totalHT, totalTVA, totalTTC, cumulPerpetuel, hashPrecedent, signatureHash, signaturePropre]
         );
 
         await enregistrerJET(id_salon, 'CLOTURE_MENSUELLE_SCELLEE', {
@@ -8970,7 +9025,8 @@ app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
             total_ttc: totalTTC,
             cumul_perpetuel_ttc: cumulPerpetuel,
             valide_par: gerant.nom,
-            signature_hash: signatureHash
+            signature_hash: signatureHash,
+            empreinte_signature_manuscrite: hashSignatureManuscrite
         }, clientDB);
 
         await clientDB.query('COMMIT');
