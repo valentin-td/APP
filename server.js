@@ -241,6 +241,8 @@ pool.query(`
     ALTER TABLE catalogue ADD COLUMN IF NOT EXISTS duree_estimee_minutes INT DEFAULT 30;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS temps_nettoyage_minutes INT DEFAULT 0;
     CREATE TABLE IF NOT EXISTS recettes_articles (id_recette SERIAL PRIMARY KEY, id_protocole INT REFERENCES protocoles(id_protocole) ON DELETE CASCADE, id_article INT, quantite_necessaire NUMERIC(10,2) DEFAULT 1);
+    ALTER TABLE recettes_articles ADD COLUMN IF NOT EXISTS numero_etape INT DEFAULT 0;
+    ALTER TABLE recettes_articles ADD COLUMN IF NOT EXISTS proportion VARCHAR(120) DEFAULT NULL;
     ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_reader_id VARCHAR(255);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS prenom VARCHAR(100);
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;
@@ -8289,13 +8291,92 @@ app.delete('/api/taches/:id', verifierToken, async (req, res) => {
 
 
 // =========================================================================
-// --- PROTOCOLES & RECETTES ---
+// --- PROTOCOLES & RECETTES (TUTORIELS ÉTAPE PAR ÉTAPE : MÉDIAS & DOSAGES) ---
 // =========================================================================
+function normaliserEtapesEtExtraireIngredients(etapesBrutes = [], ingredientsGlobaux = []) {
+    const etapesNormalisees = [];
+    const lignesRecetteSQL = [];
+
+    if (Array.isArray(etapesBrutes)) {
+        etapesBrutes.forEach((etape, index) => {
+            if (typeof etape === 'string') {
+                etapesNormalisees.push({
+                    numero: index + 1,
+                    titre: `Étape ${index + 1}`,
+                    description: etape,
+                    duree_minutes: 0,
+                    photo_url: null,
+                    video_url: null,
+                    ingredients: []
+                });
+            } else if (etape && typeof etape === 'object') {
+                const ingsEtape = Array.isArray(etape.ingredients)
+                    ? etape.ingredients
+                        .filter(ing => ing && ing.id_article)
+                        .map(ing => ({
+                            id_article: parseInt(ing.id_article, 10),
+                            nom: ing.nom || null,
+                            quantite_necessaire: parseFloat(String(ing.quantite_necessaire || 1).replace(',', '.')) || 1,
+                            proportion: ing.proportion ? String(ing.proportion).trim().substring(0, 120) : ''
+                        }))
+                    : [];
+
+                ingsEtape.forEach(ing => {
+                    lignesRecetteSQL.push({
+                        id_article: ing.id_article,
+                        quantite_necessaire: ing.quantite_necessaire,
+                        numero_etape: index + 1,
+                        proportion: ing.proportion || null
+                    });
+                });
+
+                etapesNormalisees.push({
+                    numero: index + 1,
+                    titre: etape.titre ? String(etape.titre).trim() : `Étape ${index + 1}`,
+                    description: etape.description ? String(etape.description).trim() : (etape.texte ? String(etape.texte).trim() : ''),
+                    duree_minutes: parseInt(etape.duree_minutes, 10) || 0,
+                    photo_url: etape.photo_url || null,
+                    video_url: etape.video_url || null,
+                    ingredients: ingsEtape
+                });
+            }
+        });
+    }
+
+    // Rétrocompatibilité si des ingrédients globaux (hors étape ou avec numero_etape) sont aussi envoyés
+    if (lignesRecetteSQL.length === 0 && Array.isArray(ingredientsGlobaux)) {
+        ingredientsGlobaux.forEach(ing => {
+            if (!ing || !ing.id_article) return;
+            lignesRecetteSQL.push({
+                id_article: parseInt(ing.id_article, 10),
+                quantite_necessaire: parseFloat(String(ing.quantite_necessaire || 1).replace(',', '.')) || 1,
+                numero_etape: parseInt(ing.numero_etape, 10) || 0,
+                proportion: ing.proportion ? String(ing.proportion).trim().substring(0, 120) : null
+            });
+        });
+    }
+
+    return { etapesNormalisees, lignesRecetteSQL };
+}
+
 app.get('/api/protocoles', verifierToken, async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT p.*, 
-                   COALESCE(json_agg(json_build_object('id_article', r.id_article, 'quantite_necessaire', r.quantite_necessaire, 'nom', c.nom)) FILTER (WHERE r.id_article IS NOT NULL), '[]') as ingredients
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'id_recette', r.id_recette,
+                               'id_article', r.id_article,
+                               'quantite_necessaire', r.quantite_necessaire,
+                               'numero_etape', COALESCE(r.numero_etape, 0),
+                               'proportion', r.proportion,
+                               'nom', c.nom,
+                               'stock_actuel', c.stock_actuel
+                           ) ORDER BY COALESCE(r.numero_etape, 0) ASC, r.id_recette ASC
+                       ) FILTER (WHERE r.id_article IS NOT NULL),
+                       '[]'
+                   ) as ingredients
             FROM protocoles p
             LEFT JOIN recettes_articles r ON p.id_protocole = r.id_protocole
             LEFT JOIN catalogue c ON r.id_article = c.id_article
@@ -8303,31 +8384,93 @@ app.get('/api/protocoles', verifierToken, async (req, res) => {
             GROUP BY p.id_protocole
             ORDER BY p.nom_prestation ASC
         `, [req.user.id_salon]);
-        res.json(result.rows);
+
+        // Enrichit automatiquement chaque étape avec les noms à jour du catalogue et convertit les anciennes étapes texte en objets structurés
+        const rowsEnrichies = result.rows.map(proto => {
+            const ingsList = Array.isArray(proto.ingredients) ? proto.ingredients : [];
+            const rawEtapes = Array.isArray(proto.etapes) ? proto.etapes : [];
+
+            const etapesStructurees = rawEtapes.map((et, idx) => {
+                const numEtape = idx + 1;
+                const ingsDeCetteEtape = ingsList.filter(i => Number(i.numero_etape) === numEtape);
+
+                if (typeof et === 'string') {
+                    return {
+                        numero: numEtape,
+                        titre: `Étape ${numEtape}`,
+                        description: et,
+                        duree_minutes: 0,
+                        photo_url: null,
+                        video_url: null,
+                        ingredients: ingsDeCetteEtape
+                    };
+                }
+
+                const ingsDansJson = Array.isArray(et.ingredients) ? et.ingredients : [];
+                const ingsFusionnes = ingsDeCetteEtape.length > 0
+                    ? ingsDeCetteEtape
+                    : ingsDansJson.map(ij => {
+                        const matchCat = ingsList.find(x => Number(x.id_article) === Number(ij.id_article));
+                        return {
+                            ...ij,
+                            nom: matchCat?.nom || ij.nom || 'Produit technique'
+                        };
+                    });
+
+                return {
+                    numero: numEtape,
+                    titre: et.titre || `Étape ${numEtape}`,
+                    description: et.description || et.texte || '',
+                    duree_minutes: parseInt(et.duree_minutes, 10) || 0,
+                    photo_url: et.photo_url || null,
+                    video_url: et.video_url || null,
+                    ingredients: ingsFusionnes
+                };
+            });
+
+            return {
+                ...proto,
+                etapes: etapesStructurees
+            };
+        });
+
+        res.json(rowsEnrichies);
     } catch (e) { res.status(500).json({ erreur: "Erreur lecture protocoles." }); }
 });
 
 app.post('/api/protocoles', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
-    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
+    const { nom_prestation, description, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
+        const { etapesNormalisees, lignesRecetteSQL } = normaliserEtapesEtExtraireIngredients(etapes, ingredients);
+
         const protoRes = await clientDB.query(
-            `INSERT INTO protocoles (id_salon, nom_prestation, etapes, medias, tags, delai_livraison_jours, temps_nettoyage_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id_protocole`,
-            [req.user.id_salon, nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, temps_nettoyage_minutes || 0]
+            `INSERT INTO protocoles (id_salon, nom_prestation, description, etapes, medias, tags, delai_livraison_jours, temps_nettoyage_minutes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_protocole`,
+            [
+                req.user.id_salon,
+                nom_prestation,
+                description || null,
+                JSON.stringify(etapesNormalisees),
+                JSON.stringify(medias || {}),
+                JSON.stringify(tags || []),
+                delai_livraison_jours || 3,
+                temps_nettoyage_minutes || 0
+            ]
         );
         const idProto = protoRes.rows[0].id_protocole;
 
-        if (ingredients && ingredients.length > 0) {
-            for (let ing of ingredients) {
-                await clientDB.query(
-                    `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire) VALUES ($1, $2, $3)`,
-                    [idProto, ing.id_article, ing.quantite_necessaire]
-                );
-            }
+        for (const ing of lignesRecetteSQL) {
+            await clientDB.query(
+                `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire, numero_etape, proportion)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [idProto, ing.id_article, ing.quantite_necessaire, ing.numero_etape || 0, ing.proportion || null]
+            );
         }
+
         await clientDB.query('COMMIT');
-        res.status(201).json({ message: "Protocole ajouté avec succès !" });
+        res.status(201).json({ message: "Protocole et étapes enregistrés avec succès !" });
     } catch (e) {
         await clientDB.query('ROLLBACK');
         res.status(500).json({ erreur: "Erreur création protocole." });
@@ -8335,15 +8478,29 @@ app.post('/api/protocoles', verifierToken, verifierPlan(['PRO', 'PREMIUM']), asy
 });
 
 app.put('/api/protocoles/:id', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
-    const { nom_prestation, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
+    const { nom_prestation, description, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
     const clientDB = await pool.connect();
     try {
         await clientDB.query('BEGIN');
-        
+        const { etapesNormalisees, lignesRecetteSQL } = normaliserEtapesEtExtraireIngredients(etapes, ingredients);
+
         // 1. Mise à jour de la fiche (AVEC VÉRIFICATION DES DROITS)
         const updateRes = await clientDB.query(
-            `UPDATE protocoles SET nom_prestation = $1, etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8 WHERE id_protocole = $6 AND id_salon = $7 RETURNING id_protocole`,
-            [nom_prestation, JSON.stringify(etapes || []), JSON.stringify(medias || {}), JSON.stringify(tags || []), delai_livraison_jours || 3, req.params.id, req.user.id_salon, temps_nettoyage_minutes || 0]
+            `UPDATE protocoles
+             SET nom_prestation = $1, description = COALESCE($9, description), etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8
+             WHERE id_protocole = $6 AND id_salon = $7
+             RETURNING id_protocole`,
+            [
+                nom_prestation,
+                JSON.stringify(etapesNormalisees),
+                JSON.stringify(medias || {}),
+                JSON.stringify(tags || []),
+                delai_livraison_jours || 3,
+                req.params.id,
+                req.user.id_salon,
+                temps_nettoyage_minutes || 0,
+                description !== undefined ? description : null
+            ]
         );
 
         // 🚨 SÉCURITÉ (IDOR) : Si l'update ne touche aucune ligne, le protocole n'existe pas ou appartient à un autre salon.
@@ -8352,17 +8509,16 @@ app.put('/api/protocoles/:id', verifierToken, verifierPlan(['PRO', 'PREMIUM']), 
             return res.status(404).json({ erreur: "Protocole introuvable ou accès refusé." });
         }
 
-        // 2. Remplacement des ingrédients de la recette (Sécurisé car la propriété est confirmée au-dessus)
+        // 2. Remplacement des ingrédients étape par étape de la recette
         await clientDB.query(`DELETE FROM recettes_articles WHERE id_protocole = $1`, [req.params.id]);
-        if (ingredients && ingredients.length > 0) {
-            for (let ing of ingredients) {
-                await clientDB.query(
-                    `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire) VALUES ($1, $2, $3)`,
-                    [req.params.id, ing.id_article, ing.quantite_necessaire]
-                );
-            }
+        for (const ing of lignesRecetteSQL) {
+            await clientDB.query(
+                `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire, numero_etape, proportion)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [req.params.id, ing.id_article, ing.quantite_necessaire, ing.numero_etape || 0, ing.proportion || null]
+            );
         }
-        
+
         await clientDB.query('COMMIT');
         res.json({ message: "Protocole modifié avec succès !" });
     } catch (e) {
