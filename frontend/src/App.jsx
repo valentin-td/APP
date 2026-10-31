@@ -3811,313 +3811,639 @@ function App() {
                   </div>
               )}
 
-              {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
-              {role === 'salon' && activeTab === 'accueil' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Tableau de bord</h1><span className="date-subtitle" style={{margin: 0}}>{configSalon.nom_salon || 'Salon'}</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
+              {/* VUE : TABLEAU DE BORD (ACCUEIL) — REFONTE EXECUTIVE PREMIUM & RESPONSIVE */}
+              {role === 'salon' && activeTab === 'accueil' && (() => {
+                const evoSalon = parseFloat(salonDashboardData?.evolution_pourcentage) || 0;
+                const listeRdvsSalon = Array.isArray(planningData) ? planningData : (planningData?.rendez_vous || []);
+                const rdvsAujourdhuiSalon = listeRdvsSalon.filter(r => r?.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', '')))).length;
+
+                return (
+                  <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
+                    <div className={isMobile ? "mobile-fixed-header-top" : ""}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px', flexWrap: 'wrap' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <h1 style={{ margin: 0 }}>Tableau de Bord</h1>
+                            <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '700', background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
+                              Poste Salon • #{decodeToken(token)?.id_salon}
+                            </span>
+                          </div>
+                          <span className="date-subtitle" style={{ margin: '2px 0 0 0', display: 'block' }}>
+                            {configSalon.nom_salon || 'Salon'} — {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('caisse')}
+                            className="btn-action"
+                            style={{ padding: isMobile ? '9px 14px' : '10px 18px', borderRadius: '10px', fontSize: '13px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '7px' }}
+                          >
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                            <span>Ouvrir la Caisse</span>
+                          </button>
                           <ThemeToggle />
                           <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
                           </button>
+                        </div>
                       </div>
-                  </div>
-                  
-                  <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap'}}>
-                      <div className="carte" style={{padding: '28px', textAlign: 'center', flex: 1, minWidth: '300px'}}>
-                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Clients ce mois-ci</span>
-                          <div style={{fontSize: '48px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{salonDashboardData?.nb_clients_mois ?? '—'}</div>
-                          {salonDashboardData && (
-                              <span style={{fontSize: '14px', fontWeight: '600', color: salonDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
-                                  {salonDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(salonDashboardData.evolution_pourcentage)}% vs mois dernier
+                    </div>
+
+                    <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                      {/* 3 KPIs Salon */}
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '14px', marginBottom: '20px' }}>
+                        <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Passages Clients (Mois)</span>
+                            {salonDashboardData && (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '800',
+                                background: evoSalon >= 0 ? 'var(--bg-success)' : 'var(--bg-danger)',
+                                color: evoSalon >= 0 ? 'var(--color-success)' : 'var(--color-danger)'
+                              }}>
+                                {evoSalon >= 0 ? (
+                                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+                                ) : (
+                                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="7" x2="17" y2="17"/><polyline points="17 7 17 17 7 17"/></svg>
+                                )}
+                                {Math.abs(evoSalon)}%
                               </span>
-                          )}
+                            )}
+                          </div>
+                          <div style={{ fontSize: '36px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
+                            {salonDashboardData?.nb_clients_mois ?? '—'}
+                          </div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tickets validés vs mois précédent</span>
+                        </div>
+
+                        <div onClick={() => setActiveTab('agenda')} className="carte hover-lift" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Rendez-vous du Jour</span>
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-secondary)" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          </div>
+                          <div style={{ fontSize: '36px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
+                            {rdvsAujourdhuiSalon}
+                          </div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Accéder au planning de l'équipe</span>
+                        </div>
+
+                        <div onClick={() => setActiveTab('actions')} className="carte hover-lift" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Centre d'Action</span>
+                            <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: nbTachesUrgentes > 0 ? 'var(--color-danger)' : 'var(--color-success)' }} />
+                          </div>
+                          <div style={{ fontSize: '36px', fontWeight: '900', color: nbTachesUrgentes > 0 ? 'var(--color-danger)' : 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
+                            {nbTachesUrgentes}
+                          </div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{nbTachesUrgentes > 0 ? 'Tâche(s) prioritaire(s) à traiter' : 'Aucune urgence en attente'}</span>
+                        </div>
                       </div>
 
-                      {/* WIDGET : L'ÉQUIPE EN DIRECT (POUR LE RÔLE SALON) */}
+                      {/* WIDGET : L'ÉQUIPE EN DIRECT (SALON) */}
                       {configSalon.mode_suivi_heures === 'POINTEUSE' && (
-                          <div className="carte" style={{flex: 1, minWidth: '300px', alignSelf: 'flex-start'}}>
-                              <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>L'Équipe en direct</h3>
-                              <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                  {(employesListe || []).map(emp => {
+                        <div className="carte" style={{ padding: isMobile ? '18px' : '22px', borderRadius: '18px', marginBottom: 0 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                            <div>
+                              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Présence de l'Équipe en Direct</h3>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Statut de pointage en temps réel des collaborateurs</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPointeuse({ open: true, step: 1, employe: null, pin: '' })}
+                              style={{ background: 'var(--text-main)', color: 'var(--bg-card)', border: 'none', padding: '8px 14px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                            >
+                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                              Ouvrir la Pointeuse
+                            </button>
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(250px, 1fr))', gap: '12px' }}>
+                            {(employesListe || []).map(emp => {
+                              const statutData = statutsEquipe[emp.id_employe];
+                              const statut = statutData ? statutData.action : null;
+                              let pastilleCouleur = 'var(--text-muted)';
+                              let badgeBg = 'var(--bg-card)';
+                              let texteStatut = 'Non pointé';
+
+                              if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
+                                pastilleCouleur = 'var(--color-success)';
+                                badgeBg = 'var(--bg-success)';
+                                texteStatut = 'En service';
+                              } else if (statut === 'PAUSE_DEBUT') {
+                                pastilleCouleur = '#d97706';
+                                badgeBg = 'rgba(245, 158, 11, 0.14)';
+                                texteStatut = 'En pause';
+                              } else if (statut === 'SORTIE') {
+                                pastilleCouleur = 'var(--color-danger)';
+                                badgeBg = 'var(--bg-danger)';
+                                texteStatut = 'Service terminé';
+                              }
+
+                              return (
+                                <div key={emp.id_employe} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', background: 'var(--bg-app)', padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                    {renderAvatar(emp.photo_url, emp.nom, 38)}
+                                    <div style={{ minWidth: 0 }}>
+                                      <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-main)', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{emp.nom}</span>
+                                      <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>{emp.role || 'Collaborateur'}</span>
+                                    </div>
+                                  </div>
+                                  <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '700', background: badgeBg, color: pastilleCouleur, flexShrink: 0 }}>
+                                    {texteStatut}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {role === 'employe' && activeTab === 'accueil' && (() => {
+                const monIdEmp = decodeToken(token)?.id_employe;
+                const monProfilEmp = (employesListe || []).find(e => e.id_employe === monIdEmp);
+                const evoEmp = parseFloat(employeDashboardData?.evolution_pourcentage) || 0;
+                const listeRdvsEmp = Array.isArray(planningData) ? planningData : (planningData?.rendez_vous || []);
+                const mesRdvsJour = listeRdvsEmp
+                  .filter(r => Number(r?.id_employe) === Number(monIdEmp) && r?.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', ''))))
+                  .sort((a, b) => new Date(a.date_heure_debut.replace('Z', '')) - new Date(b.date_heure_debut.replace('Z', '')));
+
+                return (
+                  <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
+                    <div className={isMobile ? "mobile-fixed-header-top" : ""}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          {renderAvatar(monProfilEmp?.photo_url, monProfilEmp?.nom || 'Collaborateur', 46)}
+                          <div>
+                            <h1 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>Bonjour {(monProfilEmp?.nom || 'Collaborateur').split(' ')[0]}</h1>
+                            <span className="date-subtitle" style={{ margin: 0 }}>Synthèse personnelle du mois en cours</span>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                          <ThemeToggle />
+                          <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '14px', marginBottom: '20px' }}>
+                        <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Clients Coiffés</span>
+                            {employeDashboardData && (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '800',
+                                background: evoEmp >= 0 ? 'var(--bg-success)' : 'var(--bg-danger)',
+                                color: evoEmp >= 0 ? 'var(--color-success)' : 'var(--color-danger)'
+                              }}>
+                                {evoEmp >= 0 ? '+' : '-'}{Math.abs(evoEmp)}%
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0' }}>
+                            {employeDashboardData?.nb_clients_mois ?? '—'}
+                          </div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Sur le mois en cours</span>
+                        </div>
+
+                        <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Prime & Commissions</span>
+                          <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--color-success)', margin: '10px 0 4px 0' }}>
+                            {(employeDashboardData?.commission_mois ?? 0).toFixed(2)} <span style={{ fontSize: '18px' }}>€</span>
+                          </div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Cumul HT du mois en cours</span>
+                        </div>
+
+                        <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Produits Vendus</span>
+                          <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0' }}>
+                            {employeDashboardData?.nb_produits_vendus ?? 0}
+                          </div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Reventes enregistrées en caisse</span>
+                        </div>
+                      </div>
+
+                      {/* Rappel des RDV du jour de l'employé */}
+                      <div className="carte" style={{ padding: isMobile ? '18px' : '22px', borderRadius: '18px', marginBottom: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                          <h3 style={{ margin: 0, fontSize: '15.5px', fontWeight: '800', color: 'var(--text-main)' }}>Mes Rendez-vous d'Aujourd'hui ({mesRdvsJour.length})</h3>
+                          <button type="button" onClick={() => setActiveTab('agenda')} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+                            Voir mon agenda
+                          </button>
+                        </div>
+                        {mesRdvsJour.length === 0 ? (
+                          <div style={{ padding: '18px', textAlign: 'center', background: 'var(--bg-app)', borderRadius: '12px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                            Aucun rendez-vous planifié aujourd'hui.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {mesRdvsJour.map(rdv => {
+                              const dRdv = new Date(rdv.date_heure_debut.replace('Z', ''));
+                              return (
+                                <div key={rdv.id_rdv} onClick={() => setActiveTab('agenda')} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', background: 'var(--bg-app)', borderRadius: '10px', border: '1px solid var(--border-color)', cursor: 'pointer' }}>
+                                  <div>
+                                    <strong style={{ fontSize: '14px', color: 'var(--text-main)', display: 'block' }}>{rdv.nom_client}</strong>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{rdv.prestation} ({rdv.duree_minutes || 30} min)</span>
+                                  </div>
+                                  <span style={{ padding: '5px 10px', borderRadius: '8px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', fontWeight: '800', fontSize: '13px', color: 'var(--text-main)' }}>
+                                    {dRdv.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {role === 'gerant' && activeTab === 'accueil' && (() => {
+                const caTotalGerant = parseFloat(dashboardData?.finances?.chiffre_affaires_total) || 0;
+                const panierMoyenGerant = parseFloat(dashboardData?.finances?.panier_moyen) || 0;
+                const commissionsAPayerGerant = parseFloat(dashboardData?.finances?.commissions_a_payer) || 0;
+                const noteMoyenneCampagne = avisStats?.note_moyenne || (dashboardData?.marketing?.note_actuelle > 0 ? dashboardData.marketing.note_actuelle : null);
+                const npsScore = dashboardData?.marketing?.nps;
+                const verbatimsListe = dashboardData?.marketing?.verbatims || [];
+
+                const renderSvgStars = (noteVal, size = 13) => {
+                  const n = Math.round(parseFloat(noteVal) || 0);
+                  return (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                      {[1, 2, 3, 4, 5].map(idx => (
+                        <svg key={idx} viewBox="0 0 24 24" width={size} height={size} fill={idx <= n ? '#f59e0b' : 'none'} stroke={idx <= n ? '#f59e0b' : 'var(--border-color)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                        </svg>
+                      ))}
+                    </span>
+                  );
+                };
+
+                return (
+                  <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
+                    {/* EN-TÊTE FIXE EXECUTIVE */}
+                    <div className={isMobile ? "mobile-fixed-header-top" : ""}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', gap: '12px', flexWrap: 'wrap' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <h1 style={{ margin: 0 }}>Tableau de Bord</h1>
+                            <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '700', background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
+                              ID Salon : #{decodeToken(token)?.id_salon}
+                            </span>
+                            <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '800', background: 'var(--text-main)', color: 'var(--bg-card)' }}>
+                              {configSalon.plan_actuel === 'PREMIUM_TRIAL' ? 'Essai Premium 30j' : (configSalon.plan_actuel || 'PREMIUM')}
+                            </span>
+                          </div>
+                          <span className="date-subtitle" style={{ margin: '2px 0 0 0', display: 'block', textTransform: 'capitalize' }}>
+                            {configSalon.nom_salon ? `${configSalon.nom_salon} — ` : ''}{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                          <ThemeToggle />
+                          <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres du salon">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ZONE DÉFILANTE */}
+                    <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                      {!dashboardData ? (
+                        <div className="skeleton-loading" style={{ height: '220px', borderRadius: '18px' }}></div>
+                      ) : (
+                        <>
+                          {/* 1. BANDEAU DES 4 KPIS FINANCIERS & SATISFACTION */}
+                          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : isTablet ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '14px', marginBottom: '20px' }}>
+                            {/* KPI 1 : Chiffre d'affaires */}
+                            <div onClick={() => handleTabClick('admin')} className="carte hover-lift" style={{ padding: isMobile ? '16px' : '20px 22px', marginBottom: 0, borderRadius: '18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Chiffre d'Affaires</span>
+                                <div style={{ width: '32px', height: '32px', borderRadius: '9px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)' }}>
+                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
+                                {caTotalGerant.toFixed(2)} <span style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: '700' }}>€</span>
+                              </div>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Total TTC scellé NF525</span>
+                            </div>
+
+                            {/* KPI 2 : Panier Moyen */}
+                            <div className="carte" style={{ padding: isMobile ? '16px' : '20px 22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Panier Moyen</span>
+                                <div style={{ width: '32px', height: '32px', borderRadius: '9px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)' }}>
+                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
+                                {panierMoyenGerant.toFixed(2)} <span style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: '700' }}>€</span>
+                              </div>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Par passage client</span>
+                            </div>
+
+                            {/* KPI 3 : Commissions Équipe */}
+                            <div onClick={() => handleTabClick('rh')} className="carte hover-lift" style={{ padding: isMobile ? '16px' : '20px 22px', marginBottom: 0, borderRadius: '18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Primes Équipe</span>
+                                <div style={{ width: '32px', height: '32px', borderRadius: '9px', background: 'var(--bg-success)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--color-success)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
+                                {commissionsAPayerGerant.toFixed(2)} <span style={{ fontSize: '14px', fontWeight: '700' }}>€</span>
+                              </div>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Variables de paie cumulées</span>
+                            </div>
+
+                            {/* KPI 4 : Satisfaction & NPS */}
+                            <div className="carte" style={{ padding: isMobile ? '16px' : '20px 22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Satisfaction</span>
+                                {npsScore !== null && npsScore !== undefined ? (
+                                  <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: '800', background: npsScore >= 0 ? 'var(--bg-success)' : 'var(--bg-danger)', color: npsScore >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                    NPS {npsScore > 0 ? `+${npsScore}` : npsScore}
+                                  </span>
+                                ) : (
+                                  <div style={{ width: '32px', height: '32px', borderRadius: '9px', background: 'rgba(245, 158, 11, 0.12)', color: '#d97706', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="currentColor" strokeWidth="1"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
+                                {noteMoyenneCampagne ? `${noteMoyenneCampagne} / 5` : '—'}
+                              </div>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                                {verbatimsListe.length > 0 ? `${verbatimsListe.length} retour(s) vérifié(s)` : 'Enquêtes SMS post-visite'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* 2. GRILLE PRINCIPALE BENTO : MUR DES VERBATIMS & COLONNE DROITE (TOP PRESTATIONS + GOOGLE + ÉQUIPE LIVE) */}
+                          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.25fr 1fr', gap: '18px', alignItems: 'start' }}>
+
+                            {/* COLONNE GAUCHE : MUR DES VERBATIMS & SAUVETAGE CLIENT WINBACK */}
+                            <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', maxHeight: isMobile ? 'none' : '540px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '16px', flexShrink: 0 }}>
+                                <div>
+                                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Retours Clients & Winback</h3>
+                                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Suivi des enquêtes de satisfaction et détection des clients insatisfaits</span>
+                                </div>
+                                {npsScore !== null && npsScore !== undefined && (
+                                  <div style={{ background: 'var(--bg-app)', padding: '5px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '700', border: '1px solid var(--border-color)', display: 'inline-flex', alignItems: 'center', gap: '6px', flexShrink: 0 }} title="Net Promoter Score (-100 à +100)">
+                                    <span style={{ color: 'var(--text-secondary)' }}>Score NPS :</span>
+                                    <span style={{ color: npsScore > 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: '800' }}>{npsScore > 0 ? '+' : ''}{npsScore}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Statistiques d'entonnoir SMS Avis */}
+                              {avisStats && parseInt(avisStats.nb_envoyes, 10) > 0 && (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', marginBottom: '16px', flexShrink: 0, border: '1px solid var(--border-color)', textAlign: 'center' }}>
+                                  <div>
+                                    <span style={{ display: 'block', fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>{avisStats.nb_envoyes}</span>
+                                    <span style={{ fontSize: '10.5px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>SMS Envoyés</span>
+                                  </div>
+                                  <div style={{ borderLeft: '1px solid var(--border-color)', borderRight: '1px solid var(--border-color)' }}>
+                                    <span style={{ display: 'block', fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>
+                                      {avisStats.nb_repondus} <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>({Math.round((avisStats.nb_repondus / avisStats.nb_envoyes) * 100)}%)</span>
+                                    </span>
+                                    <span style={{ fontSize: '10.5px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Réponses</span>
+                                  </div>
+                                  <div>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '16px', fontWeight: '800', color: '#d97706' }}>
+                                      {avisStats.note_moyenne || '—'}
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                    </span>
+                                    <span style={{ display: 'block', fontSize: '10.5px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Moyenne</span>
+                                  </div>
+                                </div>
+                              )}
+
+                              <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px' }}>
+                                {verbatimsListe.length === 0 ? (
+                                  <div style={{ padding: '28px 16px', textAlign: 'center', background: 'var(--bg-app)', borderRadius: '12px', border: '1px dashed var(--border-color)' }}>
+                                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>Aucun avis client reçu récemment.</p>
+                                  </div>
+                                ) : (
+                                  verbatimsListe.map(avis => {
+                                    const isPositif = avis.note >= 4;
+                                    return (
+                                      <div
+                                        key={avis.id_demande}
+                                        style={{
+                                          background: isPositif ? 'var(--bg-app)' : 'var(--bg-danger)',
+                                          border: `1px solid ${isPositif ? 'var(--border-color)' : 'var(--color-danger)'}`,
+                                          borderLeft: `4px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`,
+                                          borderRadius: '12px',
+                                          padding: '14px'
+                                        }}
+                                      >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                            <strong style={{ color: isPositif ? 'var(--text-main)' : 'var(--color-danger)', fontSize: '14px' }}>{avis.prenom || 'Client'}</strong>
+                                            {renderSvgStars(avis.note, 13)}
+                                          </div>
+                                          <span style={{
+                                            fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '999px',
+                                            background: isPositif ? 'var(--bg-success)' : 'rgba(220, 38, 38, 0.15)',
+                                            color: isPositif ? 'var(--color-success)' : 'var(--color-danger)'
+                                          }}>
+                                            {isPositif ? 'Ambassadeur' : 'Alerte Winback'}
+                                          </span>
+                                        </div>
+
+                                        {avis.commentaire && (
+                                          <p style={{ margin: '0 0 10px 0', fontSize: '13px', lineHeight: 1.45, fontStyle: 'italic', color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)' }}>
+                                            "{avis.commentaire}"
+                                          </p>
+                                        )}
+
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                                          <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '500' }}>
+                                            {new Date(avis.date_creation).toLocaleDateString('fr-FR')} {avis.nom_employe ? `• Coiffé(e) par ${avis.nom_employe}` : ''}
+                                          </span>
+                                          {!isPositif && avis.telephone && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSauvetageClient({ telephone: avis.telephone, prenom: avis.prenom });
+                                                setSmsSauvetage(`Bonjour ${avis.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre dernière expérience. Voici -20% sur votre prochaine visite pour nous faire pardonner. À très vite !`);
+                                              }}
+                                              style={{
+                                                fontSize: '11.5px', background: 'var(--color-danger)', color: '#ffffff',
+                                                padding: '5px 12px', borderRadius: '8px', fontWeight: '700', border: 'none',
+                                                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '5px'
+                                              }}
+                                            >
+                                              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                              Sauver ce client
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+
+                            {/* COLONNE DROITE : TOP PRESTATIONS, AVIS GOOGLE & ÉQUIPE EN DIRECT */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                              {/* Carte 1 : Top 3 Prestations */}
+                              <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: 0, borderRadius: '18px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                  <div>
+                                    <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Meilleures Prestations</h3>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Services générant le plus de chiffre d'affaires</span>
+                                  </div>
+                                  <button type="button" onClick={() => handleTabClick('protocoles')} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '5px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer' }}>
+                                    Catalogue
+                                  </button>
+                                </div>
+
+                                {(dashboardData.top_3_prestations || []).length > 0 ? (
+                                  <div className="rank-list">
+                                    {(() => {
+                                      const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
+                                      return (dashboardData.top_3_prestations || []).map((p, i) => {
+                                        const val = parseFloat(p.total_genere || 0);
+                                        const pctDuCa = caTotalGerant > 0 ? Math.round((val / caTotalGerant) * 100) : 0;
+                                        return (
+                                          <div key={i} className="rank-row">
+                                            <span className="rank-badge" style={{ background: i === 0 ? 'var(--text-main)' : 'var(--bg-app)', color: i === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)' }}>{i + 1}</span>
+                                            <div className="rank-info">
+                                              <div className="rank-info-top">
+                                                <span className="rank-name" style={{ fontWeight: '700' }}>{p.nom}</span>
+                                                <span className="rank-value" style={{ fontWeight: '800' }}>
+                                                  {val.toFixed(2)} € <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>({pctDuCa}%)</span>
+                                                </span>
+                                              </div>
+                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{ width: `${(val / maxVal) * 100}%` }}></div></div>
+                                            </div>
+                                          </div>
+                                        );
+                                      });
+                                    })()}
+                                  </div>
+                                ) : (
+                                  <div style={{ padding: '18px', textAlign: 'center', background: 'var(--bg-app)', borderRadius: '12px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                                    Pas encore assez de ventes pour établir le palmarès.
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Carte 2 : L'Équipe en direct (si Pointeuse active) */}
+                              {configSalon.mode_suivi_heures === 'POINTEUSE' && (
+                                <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: 0, borderRadius: '18px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                    <div>
+                                      <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>L'Équipe en Direct</h3>
+                                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Suivi temps réel de la pointeuse numérique</span>
+                                    </div>
+                                    <button type="button" onClick={() => handleTabClick('rh')} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '5px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer' }}>
+                                      Équipe RH
+                                    </button>
+                                  </div>
+
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    {(employesListe || []).map(emp => {
                                       const statutData = statutsEquipe[emp.id_employe];
                                       const statut = statutData ? statutData.action : null;
                                       let pastilleCouleur = 'var(--text-muted)';
-                                      let texteStatut = 'Absent / Non arrivé';
-                                      let iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
-                                      
+                                      let badgeBg = 'var(--bg-card)';
+                                      let texteStatut = 'Non arrivé';
+                                      let chronoText = null;
+
                                       if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
-                                          pastilleCouleur = 'var(--color-success)';
-                                          texteStatut = 'En service';
-                                          iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+                                        pastilleCouleur = 'var(--color-success)';
+                                        badgeBg = 'var(--bg-success)';
+                                        texteStatut = 'En service';
                                       } else if (statut === 'PAUSE_DEBUT') {
-                                          pastilleCouleur = '#f59e0b';
-                                          texteStatut = 'En pause';
-                                          iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
+                                        pastilleCouleur = '#d97706';
+                                        badgeBg = 'rgba(245, 158, 11, 0.14)';
+                                        texteStatut = 'En pause';
+                                        if (statutData?.heure) {
+                                          const diffMin = Math.floor((heureActuelle.getTime() - new Date(statutData.heure).getTime()) / 60000);
+                                          chronoText = diffMin > 0 ? `${diffMin} min` : '1 min';
+                                        }
                                       } else if (statut === 'SORTIE') {
-                                          pastilleCouleur = 'var(--color-danger)';
-                                          texteStatut = 'Service terminé';
-                                          iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+                                        pastilleCouleur = 'var(--color-danger)';
+                                        badgeBg = 'var(--bg-danger)';
+                                        texteStatut = 'Terminé';
                                       }
 
                                       return (
-                                          <div key={emp.id_employe} style={{display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
-                                              <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-card)', color: pastilleCouleur, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px solid ${pastilleCouleur}`}}>
-                                                  {iconSVG}
-                                              </div>
-                                              <div style={{flex: 1}}>
-                                                  <span style={{fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
-                                                  <span style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
-                                                      {texteStatut} 
-                                                  </span>
-                                              </div>
+                                        <div key={emp.id_employe} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: 'var(--bg-app)', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                            {renderAvatar(emp.photo_url, emp.nom, 34)}
+                                            <span style={{ fontSize: '13.5px', fontWeight: '700', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{emp.nom}</span>
                                           </div>
-                                      )
-                                  })}
-                                  {(employesListe || []).length === 0 && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun employé dans l'équipe.</span>}
-                              </div>
-                          </div>
-                      )}
-                  </div>
-                </div>
-              )}
-
-              {role === 'employe' && activeTab === 'accueil' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                      <div><h1 style={{margin: 0}}>Bienvenue {(employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe)?.nom || ''}</h1><span className="date-subtitle" style={{margin: 0}}>Votre tableau de bord — ce mois-ci</span></div>
-                      <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                          <ThemeToggle />
-                          <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                          </button>
-                      </div>
-                  </div>
-                  <div style={{display: 'flex', gap: '16px', flexWrap: 'wrap'}}>
-                      <div className="carte" style={{padding: '24px', textAlign: 'center', flex: '1 1 200px'}}>
-                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Mes clients</span>
-                          <div style={{fontSize: '40px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{employeDashboardData?.nb_clients_mois ?? '—'}</div>
-                          {employeDashboardData && (
-                              <span style={{fontSize: '13px', fontWeight: '600', color: employeDashboardData.evolution_pourcentage >= 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>
-                                  {employeDashboardData.evolution_pourcentage >= 0 ? '↗' : '↘'} {Math.abs(employeDashboardData.evolution_pourcentage)}%
-                              </span>
-                          )}
-                      </div>
-                      <div className="carte" style={{padding: '24px', textAlign: 'center', flex: '1 1 200px'}}>
-                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Ma commission</span>
-                          <div style={{fontSize: '40px', fontWeight: '700', color: 'var(--text-main)', margin: '8px 0'}}>{(employeDashboardData?.commission_mois ?? 0).toFixed(2)} €</div>
-                          <span style={{fontSize: '13px', color: 'var(--text-muted)'}}>Mois en cours</span>
-                      </div>
-                  </div>
-                </div>
-              )}
-
-              {role === 'gerant' && activeTab === 'accueil' && (
-                <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
-                  {/* EN-TÊTE FIXE */}
-                  <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div>
-                              <h1 style={{margin: 0}}>Tableau de Bord <span style={{fontSize: '14px', color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: '10px'}}>(ID : {decodeToken(token)?.id_salon})</span></h1>
-                              <span className="date-subtitle" style={{margin: 0}}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
-                          </div>
-                          <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-                              <ThemeToggle />
-                              <button onClick={() => setActiveTab('parametres')} className="theme-toggle-btn" title="Paramètres">
-                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                              </button>
-                          </div>
-                      </div>
-                  </div>
-                  {/* ZONE DÉFILANTE */}
-                  <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-                  {!dashboardData ? (
-                      <div className="skeleton-loading" style={{height: '200px', borderRadius: 'var(--radius-card)'}}></div>
-                  ) : (
-                      <>
-                          <div className="kpi-grid">
-                              <div className="kpi-card">
-                                  <span className="kpi-label">Chiffre d'affaires</span>
-                                  <p className="kpi-value">{dashboardData.finances?.chiffre_affaires_total?.toFixed(2) || '0.00'} <span className="kpi-currency">€</span></p>
-                              </div>
-                              <div className="kpi-card">
-                                  <span className="kpi-label">Panier moyen</span>
-                                  <p className="kpi-value">{dashboardData.finances?.panier_moyen || '0.00'} <span className="kpi-currency">€</span></p>
-                              </div>
-                          </div>
-                          <div style={{display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '8px'}}>
-                              <div className="carte" style={{flex: 1, minWidth: '300px', display: 'flex', flexDirection: 'column', maxHeight: '400px'}}>
-                                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0}}>
-                                      <h3 style={{marginTop: 0, marginBottom: 0, color: 'var(--text-main)'}}>Mur des Verbatims</h3>
-                                      {dashboardData.marketing?.nps !== null && dashboardData.marketing?.nps !== undefined && (
-                                          <div style={{background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px'}} title="Net Promoter Score (-100 à +100)">
-                                              NPS : <span style={{color: dashboardData.marketing.nps > 0 ? 'var(--color-success)' : 'var(--color-danger)'}}>{dashboardData.marketing.nps > 0 ? '+' : ''}{dashboardData.marketing.nps}</span>
-                                          </div>
-                                      )}
+                                          <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '700', background: badgeBg, color: pastilleCouleur, flexShrink: 0 }}>
+                                            {texteStatut}{chronoText ? ` (${chronoText})` : ''}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                    {(employesListe || []).length === 0 && <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Aucun collaborateur enregistré.</span>}
                                   </div>
-
-                                  {/* --- RETOUR DES STATISTIQUES GLOBALES DE CAMPAGNE --- */}
-                                  {avisStats && parseInt(avisStats.nb_envoyes) > 0 && (
-                                      <div style={{display: 'flex', gap: '12px', background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '16px', flexShrink: 0, border: '1px solid var(--border-color)'}}>
-                                          <div style={{flex: 1, textAlign: 'center', borderRight: '1px solid var(--border-color)'}}>
-                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)'}}>{avisStats.nb_envoyes}</span>
-                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>SMS Envoyés</span>
-                                          </div>
-                                          <div style={{flex: 1, textAlign: 'center', borderRight: '1px solid var(--border-color)'}}>
-                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)'}}>{avisStats.nb_repondus} <span style={{fontSize: '10px', fontWeight: 'normal', color: 'var(--text-secondary)'}}>({Math.round((avisStats.nb_repondus / avisStats.nb_envoyes) * 100)}%)</span></span>
-                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>Réponses</span>
-                                          </div>
-                                          <div style={{flex: 1, textAlign: 'center'}}>
-                                              <span style={{display: 'block', fontSize: '15px', fontWeight: 'bold', color: '#f59e0b'}}>{avisStats.note_moyenne || '-'} ★</span>
-                                              <span style={{fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>Moyenne</span>
-                                          </div>
-                                      </div>
-                                  )}
-                                  
-                                  <div style={{overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px'}}>
-                                      {(dashboardData.marketing?.verbatims || []).length === 0 ? (
-                                          <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun avis client reçu récemment.</p>
-                                      ) : (
-                                          dashboardData.marketing.verbatims.map(avis => {
-                                              const isPositif = avis.note >= 4;
-                                              return (
-                                                  <div key={avis.id_demande} style={{background: isPositif ? 'var(--bg-card)' : 'var(--bg-danger)', border: `1px solid ${isPositif ? 'var(--color-success)' : 'var(--color-danger)'}`, borderLeftWidth: '4px', borderRadius: '8px', padding: '12px', position: 'relative'}}>
-                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
-                                                          <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                                                              <strong style={{color: isPositif ? 'var(--text-main)' : 'var(--color-danger)', fontSize: '14px'}}>{avis.prenom || 'Client'}</strong>
-                                                              <span style={{color: '#f59e0b', fontSize: '13px'}}>{'★'.repeat(avis.note)}{'☆'.repeat(5 - avis.note)}</span>
-                                                          </div>
-                                                          {isPositif && <span style={{fontSize: '10px', background: 'var(--bg-success)', color: 'var(--color-success)', padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold'}}>Fidélisé</span>}
-                                                      </div>
-                                                      {avis.commentaire && <p style={{margin: '0 0 8px 0', fontSize: '13px', fontStyle: 'italic', color: isPositif ? 'var(--text-secondary)' : 'var(--color-danger)'}}>"{avis.commentaire}"</p>}
-                                                      
-                                                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px'}}>
-                                                          <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>
-                                                              {new Date(avis.date_creation).toLocaleDateString('fr-FR')} {avis.nom_employe ? `• Par ${avis.nom_employe}` : ''}
-                                                          </span>
-                                                          {!isPositif && avis.telephone && (
-                                                              <button onClick={() => { setSauvetageClient({ telephone: avis.telephone, prenom: avis.prenom }); setSmsSauvetage(`Bonjour ${avis.prenom || ''}, je suis le gérant du salon. Vraiment navré pour votre dernière expérience. Voici -20% sur votre prochaine visite pour nous faire pardonner. À très vite !`); }} style={{fontSize: '11px', background: 'var(--color-danger)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontWeight: '600', border: 'none', cursor: 'pointer'}}>Sauver</button>
-                                                          )}
-                                                      </div>
-                                                  </div>
-                                              )
-                                          })
-                                      )}
-                                  </div>
-                              </div>
-
-                              {/* WIDGET : L'ÉQUIPE EN DIRECT (POUR LE GÉRANT) */}
-                              {configSalon.mode_suivi_heures === 'POINTEUSE' && (
-                                  <div className="carte" style={{flex: 1, minWidth: '300px', alignSelf: 'flex-start'}}>
-                                      <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>L'Équipe en direct</h3>
-                                      <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                          {(employesListe || []).map(emp => {
-                                              const statutData = statutsEquipe[emp.id_employe];
-                                              const statut = statutData ? statutData.action : null;
-                                              let pastilleCouleur = 'var(--text-muted)';
-                                              let texteStatut = 'Absent / Non arrivé';
-                                              let iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
-                                              let chronoText = null;
-                                              
-                                              if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
-                                                  pastilleCouleur = 'var(--color-success)';
-                                                  texteStatut = 'En service';
-                                                  iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
-                                              } else if (statut === 'PAUSE_DEBUT') {
-                                                  pastilleCouleur = '#f59e0b';
-                                                  texteStatut = 'En pause';
-                                                  iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
-                                                  
-                                                  // Pause Chronométrée
-                                                  if (statutData.heure) {
-                                                      const diffMin = Math.floor((heureActuelle.getTime() - new Date(statutData.heure).getTime()) / 60000);
-                                                      chronoText = diffMin > 0 ? `depuis ${diffMin} min` : "à l'instant";
-                                                  }
-                                              } else if (statut === 'SORTIE') {
-                                                  pastilleCouleur = 'var(--color-danger)';
-                                                  texteStatut = 'Service terminé';
-                                                  iconSVG = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
-                                              }
-
-                                              return (
-                                                  <div key={emp.id_employe} style={{display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)'}}>
-                                                      <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-card)', color: pastilleCouleur, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px solid ${pastilleCouleur}`}}>
-                                                          {iconSVG}
-                                                      </div>
-                                                      <div style={{flex: 1}}>
-                                                          <span style={{fontSize: '15px', fontWeight: 'bold', color: 'var(--text-main)', display: 'block'}}>{emp.nom}</span>
-                                                          <span style={{fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
-                                                              {texteStatut} 
-                                                              {chronoText && (
-                                                                  <span style={{background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px'}}>
-                                                                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                                                          <circle cx="12" cy="12" r="10"/>
-                                                                          <polyline points="12 6 12 12 15 15"/>
-                                                                      </svg>
-                                                                      {chronoText}
-                                                                  </span>
-                                                              )}
-                                                          </span>
-                                                      </div>
-                                                  </div>
-                                              )
-                                          })}
-                                          {(employesListe || []).length === 0 && <span style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Aucun employé dans l'équipe.</span>}
-                                      </div>
-                                  </div>
+                                </div>
                               )}
 
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Top Prestations</h3>
-                                  {(dashboardData.top_3_prestations || []).length > 0 ? (
-                                      <div className="rank-list">
-                                          {(() => {
-                                              const maxVal = Math.max(...(dashboardData.top_3_prestations || []).map(p => parseFloat(p.total_genere || 0)), 1);
-                                              return (dashboardData.top_3_prestations || []).map((p, i) => {
-                                                  const val = parseFloat(p.total_genere || 0);
-                                                  return (
-                                                      <div key={i} className="rank-row">
-                                                          <span className="rank-badge">{i + 1}</span>
-                                                          <div className="rank-info">
-                                                              <div className="rank-info-top">
-                                                                  <span className="rank-name">{p.nom}</span>
-                                                                  <span className="rank-value">{val.toFixed(2)} €</span>
-                                                              </div>
-                                                              <div className="rank-bar-track"><div className="rank-bar-fill" style={{width: `${(val / maxVal) * 100}%`}}></div></div>
-                                                          </div>
-                                                      </div>
-                                                  );
-                                              });
-                                          })()}
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Pas assez de données pour afficher le classement.</p>}
-                              </div>
+                              {/* Carte 3 : Réputation Google Business */}
+                              <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: 0, borderRadius: '18px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                  <div>
+                                    <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Visibilité Google Business</h3>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Évolution de la note publique sur 6 mois</span>
+                                  </div>
+                                  <button type="button" onClick={() => setActiveTab('parametres')} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '5px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer' }}>
+                                    Configurer
+                                  </button>
+                                </div>
 
-                              <div className="carte" style={{flex: 1, minWidth: '300px'}}>
-                                  <h3 style={{marginTop: 0, marginBottom: '16px', color: 'var(--text-main)'}}>Avis Google Business</h3>
-                                  {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '24px'}}>
-                                          <div style={{textAlign: 'center'}}>
-                                              <div style={{fontSize: '48px', fontWeight: '900', color: '#f59e0b'}}>{dashboardData.marketing.note_actuelle}</div>
-                                              <div style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Sur {dashboardData.marketing.total_avis} avis</div>
-                                          </div>
-                                          <div style={{flex: 1}}>
-                                              <span style={{fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block'}}>Tendance (6 mois)</span>
-                                              {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
-                                          </div>
-                                      </div>
-                                  ) : <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>Connectez votre compte Google dans les paramètres pour afficher les avis.</p>}
+                                {dashboardData.marketing && dashboardData.marketing.total_avis > 0 ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '20px', background: 'var(--bg-app)', padding: '16px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
+                                    <div style={{ textAlign: 'center', paddingRight: '16px', borderRight: '1px solid var(--border-color)' }}>
+                                      <div style={{ fontSize: '36px', fontWeight: '900', color: 'var(--text-main)', lineHeight: 1 }}>{dashboardData.marketing.note_actuelle}</div>
+                                      <div style={{ marginTop: '6px' }}>{renderSvgStars(dashboardData.marketing.note_actuelle, 12)}</div>
+                                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px', fontWeight: '600' }}>{dashboardData.marketing.total_avis} avis</div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                      <span style={{ fontSize: '10.5px', textTransform: 'uppercase', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block', letterSpacing: '0.04em' }}>Courbe de progression (6 mois)</span>
+                                      {dessinerCourbe(dashboardData.marketing.tendance_6_mois)}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div style={{ padding: '16px', background: 'var(--bg-app)', borderRadius: '12px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                                    <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                                      Reliez votre fiche Google Business dans vos paramètres pour suivre l'impact de vos campagnes SMS sur votre note Google.
+                                    </span>
+                                  </div>
+                                )}
                               </div>
-
-                              
+                            </div>
 
                           </div>
-                      </>
-                  )}
-                  </div> {/* FIN ZONE DÉFILANTE */}
-                </div>
-              )}
+                        </>
+                      )}
+                    </div> {/* FIN ZONE DÉFILANTE */}
+                  </div>
+                );
+              })()}
+
+              {/* VUE : PARAMÈTRES DU SALON */}
 
               {/* VUE : PARAMÈTRES DU SALON */}
               {activeTab === 'parametres' && (
