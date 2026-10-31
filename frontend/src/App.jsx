@@ -707,12 +707,66 @@ function App() {
   const [annulationDialog, setAnnulationDialog] = useState(null);
   const [cancellationRobot, setCancellationRobot] = useState(null);
 
-  // --- ÉTATS : WORKFLOW DE VALIDATION COMPTABLE ---
+  // --- ÉTATS : WORKFLOW DE VALIDATION & SIGNATURE MANUSCRITE COMPTABLE ---
   const [statutMoisPrecedent, setStatutMoisPrecedent] = useState(null);
   const [showModalValidationCompta, setShowModalValidationCompta] = useState(false);
   const [checklistCompta, setChecklistCompta] = useState({ caisse: false, paie: false, depenses: false });
   const [pinValidationCompta, setPinValidationCompta] = useState('');
   const [isValidatingCompta, setIsValidatingCompta] = useState(false);
+  const [hasSignedCompta, setHasSignedCompta] = useState(false);
+  const signatureCanvasRef = useRef(null);
+  const isDrawingSignatureRef = useRef(false);
+
+  const getCoordonneesSignature = (e, canvas) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
+      return {
+          x: (clientX - rect.left) * scaleX,
+          y: (clientY - rect.top) * scaleY
+      };
+  };
+
+  const demarrerTraceSignature = (e) => {
+      const canvas = signatureCanvasRef.current;
+      if (!canvas) return;
+      if (e.cancelable) e.preventDefault();
+      const ctx = canvas.getContext('2d');
+      const { x, y } = getCoordonneesSignature(e, canvas);
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      isDrawingSignatureRef.current = true;
+      setHasSignedCompta(true);
+  };
+
+  const dessinerTraceSignature = (e) => {
+      if (!isDrawingSignatureRef.current) return;
+      const canvas = signatureCanvasRef.current;
+      if (!canvas) return;
+      if (e.cancelable) e.preventDefault();
+      const ctx = canvas.getContext('2d');
+      const { x, y } = getCoordonneesSignature(e, canvas);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+  };
+
+  const arreterTraceSignature = () => {
+      isDrawingSignatureRef.current = false;
+  };
+
+  const effacerSignatureCompta = () => {
+      const canvas = signatureCanvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      setHasSignedCompta(false);
+  };
   const [selectedCancelRdvs, setSelectedCancelRdvs] = useState([]);
   const [cancelMessageTemplate, setCancelMessageTemplate] = useState('');
   const [auditNf525, setAuditNf525] = useState(null);
@@ -2687,19 +2741,27 @@ function App() {
 
   const validerEtEnvoyerMois = async () => {
       if (!checklistCompta.caisse || !checklistCompta.paie || !checklistCompta.depenses) return showToast("Veuillez cocher toutes les vérifications de conformité.", "error");
-      if (!pinValidationCompta || pinValidationCompta.length < 4) return showToast("Veuillez saisir votre code PIN pour signer.", "error");
+      if (!hasSignedCompta || !signatureCanvasRef.current) return showToast("Veuillez signer dans le cadre prévu à cet effet.", "error");
+      if (!pinValidationCompta || pinValidationCompta.length < 4) return showToast("Veuillez saisir votre code PIN pour sceller votre signature.", "error");
       
+      const signatureBase64 = signatureCanvasRef.current.toDataURL('image/png');
+
       setIsValidatingCompta(true);
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/compta/valider-mois', {
               method: 'POST', headers: getAuthHeaders(true),
-              body: JSON.stringify({ mois_annee: statutMoisPrecedent.mois, code_pin: pinValidationCompta })
+              body: JSON.stringify({
+                  mois_annee: statutMoisPrecedent.mois,
+                  code_pin: pinValidationCompta,
+                  signature_base64: signatureBase64
+              })
           });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
           setShowModalValidationCompta(false);
           setChecklistCompta({ caisse: false, paie: false, depenses: false });
           setPinValidationCompta('');
+          setHasSignedCompta(false);
           chargerStatutMoisCompta();
       } catch (e) {
           showToast(e.message || "Erreur lors de la validation", "error");
@@ -3662,27 +3724,30 @@ function App() {
 
               {/* La carte de validation de la liasse mensuelle est désormais intégrée directement dans la vue Compta ci-dessous */}
 
-              {/* MODALE DE VALIDATION ET SIGNATURE COMPTABLE */}
+              {/* MODALE DE VALIDATION ET SIGNATURE COMPTABLE (AVEC PAVÉ MANUSCRIT + PIN NF525) */}
               {showModalValidationCompta && statutMoisPrecedent && (
-                  <div className="modal-overlay">
-                      <div className="modal-content" style={{ maxWidth: '480px' }}>
+                  <div className="modal-overlay" style={{ zIndex: 100000 }}>
+                      <div className="modal-content" style={{ maxWidth: '520px', maxHeight: '92vh', overflowY: 'auto' }}>
                           <div className="modal-header">
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  <div className="icon" style={{ width: '34px', height: '34px', borderRadius: '10px' }}>
-                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                  <div className="icon" style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--text-main)', color: 'var(--bg-card)' }}>
+                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
                                   </div>
-                                  <h3 style={{ margin: 0, fontSize: '17px', color: 'var(--text-main)' }}>Conformité — {statutMoisPrecedent.libelle}</h3>
+                                  <div>
+                                      <h3 style={{ margin: 0, fontSize: '17px', color: 'var(--text-main)' }}>Certification — {statutMoisPrecedent.libelle}</h3>
+                                      <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Validation légale NF525 & Signature dirigeant</span>
+                                  </div>
                               </div>
-                              <button className="modal-close-btn" onClick={() => setShowModalValidationCompta(false)}>
+                              <button className="modal-close-btn" onClick={() => { setShowModalValidationCompta(false); setHasSignedCompta(false); }}>
                                   <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                               </button>
                           </div>
 
-                          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: 1.5 }}>
-                              Cochez les éléments vérifiés puis signez avec votre code PIN gérant pour sceller définitivement la liasse et la transmettre à l'expert-comptable.
+                          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
+                              Vérifiez les 3 points de contrôle ci-dessous, apposez votre signature manuscrite (qui figurera sur la liasse PDF finale) et confirmez avec votre code PIN gérant.
                           </p>
 
-                          <div className="checklist-container">
+                          <div className="checklist-container" style={{ marginBottom: '16px' }}>
                               <div className={`checklist-item ${checklistCompta.caisse ? 'checked' : ''}`} onClick={() => setChecklistCompta({ ...checklistCompta, caisse: !checklistCompta.caisse })}>
                                   <div className="checklist-checkbox">
                                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -3714,10 +3779,52 @@ function App() {
                               </div>
                           </div>
 
-                          <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
-                              <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                          {/* PAVÉ DE SIGNATURE MANUSCRITE (TACTILE & SOURIS) */}
+                          <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border-color)', marginBottom: '14px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                  <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                      <span>1. Signature manuscrite du gérant (Apposée sur le PDF)</span>
+                                  </label>
+                                  {hasSignedCompta && (
+                                      <button
+                                          type="button"
+                                          onClick={effacerSignatureCompta}
+                                          style={{ background: 'none', border: 'none', color: 'var(--color-danger)', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer', padding: '2px 6px' }}
+                                      >
+                                          Recommencer
+                                      </button>
+                                  )}
+                              </div>
+
+                              <div style={{ position: 'relative', background: '#ffffff', borderRadius: '10px', border: `1.5px dashed ${hasSignedCompta ? '#16a34a' : '#cbd5e1'}`, overflow: 'hidden', height: '130px', touchAction: 'none' }}>
+                                  {!hasSignedCompta && (
+                                      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: '#94a3b8', fontSize: '12px', fontWeight: '600' }}>
+                                          <span>Signez ici avec votre souris ou votre doigt</span>
+                                          <span style={{ fontSize: '10.5px', fontWeight: '500', marginTop: '2px' }}>« Certifié sincère et véritable »</span>
+                                      </div>
+                                  )}
+                                  <canvas
+                                      ref={signatureCanvasRef}
+                                      width={460}
+                                      height={130}
+                                      onMouseDown={demarrerTraceSignature}
+                                      onMouseMove={dessinerTraceSignature}
+                                      onMouseUp={arreterTraceSignature}
+                                      onMouseLeave={arreterTraceSignature}
+                                      onTouchStart={demarrerTraceSignature}
+                                      onTouchMove={dessinerTraceSignature}
+                                      onTouchEnd={arreterTraceSignature}
+                                      style={{ width: '100%', height: '130px', display: 'block', cursor: 'crosshair', touchAction: 'none' }}
+                                  />
+                              </div>
+                          </div>
+
+                          {/* CODE PIN DE SCELLEMENT CRYPTOGRAPHIQUE NF525 */}
+                          <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border-color)', marginBottom: '18px' }}>
+                              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
                                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                  <span>Code PIN du gérant (Signature électronique)</span>
+                                  <span>2. Code PIN gérant (Scellement cryptographique SHA-256)</span>
                               </label>
                               <input 
                                   type="password" 
@@ -3727,21 +3834,21 @@ function App() {
                                   placeholder="Saisissez votre code PIN" 
                                   value={pinValidationCompta}
                                   onChange={e => setPinValidationCompta(e.target.value)}
-                                  style={{ marginBottom: '6px', letterSpacing: '0.2em', fontWeight: '600', background: 'var(--bg-card)' }}
+                                  style={{ marginBottom: '6px', letterSpacing: '0.2em', fontWeight: '700', background: 'var(--bg-card)', textAlign: 'center' }}
                               />
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>
-                                  Cette signature scelle définitivement la liasse mensuelle aux normes NF525.
+                                  Scelle l'empreinte SHA-256 de votre signature et de la liasse aux normes NF525 (Art. 1367 C. civ.).
                               </span>
                           </div>
 
                           <button 
                               onClick={validerEtEnvoyerMois} 
                               className="btn-action" 
-                              disabled={isValidatingCompta || !checklistCompta.caisse || !checklistCompta.paie || !checklistCompta.depenses || pinValidationCompta.length < 4}
-                              style={{ width: '100%', gap: '8px' }}
+                              disabled={isValidatingCompta || !checklistCompta.caisse || !checklistCompta.paie || !checklistCompta.depenses || !hasSignedCompta || pinValidationCompta.length < 4}
+                              style={{ width: '100%', gap: '8px', padding: '14px' }}
                           >
                               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                              <span>{isValidatingCompta ? "Signature et envoi en cours..." : "Signer et transmettre"}</span>
+                              <span>{isValidatingCompta ? "Scellement et envoi en cours..." : "Certifier, Signer et Transmettre la Liasse"}</span>
                           </button>
                       </div>
                   </div>
