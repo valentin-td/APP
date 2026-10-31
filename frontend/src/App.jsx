@@ -70,15 +70,21 @@ function App() {
   const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
 
   useEffect(() => {
-  const params = new URLSearchParams(window.location.search);
-  const sbToken = params.get('sandbox_token');
-  if (sbToken) {
-    localStorage.setItem('ui_token', sbToken);
-    localStorage.setItem('api_token', sbToken);
-    window.history.replaceState({}, document.title, window.location.pathname + (params.get('partner') ? `?partner=${params.get('partner')}` : ''));
-    window.location.reload();
-  }
-}, []);
+    const params = new URLSearchParams(window.location.search);
+    const sbToken = params.get('sandbox_token');
+    const sbMode = params.get('sandbox_mode');
+    if (sbToken) {
+      localStorage.setItem('ui_token', sbToken);
+      localStorage.setItem('api_token', sbToken);
+      if (sbMode === 'DEMO' || sbMode === 'VIDE') {
+        localStorage.setItem('skip_legal_sandbox', 'true');
+      } else {
+        localStorage.removeItem('skip_legal_sandbox');
+      }
+      window.history.replaceState({}, document.title, window.location.pathname + (params.get('partner') ? `?partner=${params.get('partner')}` : ''));
+      window.location.reload();
+    }
+  }, []);
 
   useEffect(() => {
       const checkQueue = async () => {
@@ -263,24 +269,7 @@ function App() {
     statut_onboarding: 'EN_COURS' // Bloqué par défaut
   });
 
-  // Auto-connexion aux 3 Simulateurs Bacs à Sable depuis STACK Partners
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const sbToken = params.get('sandbox_token');
-    const sbMode = params.get('sandbox_mode'); // On récupère le mode
-    if (sbToken) {
-      localStorage.setItem('ui_token', sbToken);
-      localStorage.setItem('api_token', sbToken);
-      // Si c'est un salon DEMO ou VIDE, on skip le module légal
-      if (sbMode === 'DEMO' || sbMode === 'VIDE') {
-        localStorage.setItem('skip_legal_sandbox', 'true');
-      } else {
-        localStorage.removeItem('skip_legal_sandbox');
-      }
-      window.history.replaceState({}, document.title, window.location.pathname + (params.get('partner') ? `?partner=${params.get('partner')}` : ''));
-      window.location.reload();
-    }
-  }, []);
+  
   const [showChecklistModal, setShowChecklistModal] = useState(false);
   
   // Chargement automatique et systématique du verrou Go-Live dès qu'un token est présent
