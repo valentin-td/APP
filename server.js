@@ -4351,6 +4351,275 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
     return { fecContent, nomFichier, nbLignes: lignesFec.length, totalEquilibre: totalDebitCents / 100 };
 }
 
+// =========================================================================
+// --- EXPORT & PORTABILITÉ DES DONNÉES (RGPD ART. 20 / CGU ART. 7 / NF525) ---
+// =========================================================================
+app.get('/api/export-portabilite', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const format = (req.query.format || 'json_complet').toLowerCase();
+
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Accès refusé : seul le gérant peut exporter les données du salon." });
+    }
+
+    const safeQuery = async (sql, params = []) => {
+        try {
+            const r = await pool.query(sql, params);
+            return r.rows || [];
+        } catch (e) {
+            return [];
+        }
+    };
+
+    const escapeCsvCell = (val) => {
+        if (val === null || val === undefined) return '';
+        const str = String(val).replace(/\r?\n|\r/g, ' ').trim();
+        if (str.includes(';') || str.includes('"')) {
+            return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+    };
+
+    const buildCsvBuffer = (headers, rows) => {
+        const lines = [
+            headers.map(escapeCsvCell).join(';'),
+            ...rows.map(row => row.map(escapeCsvCell).join(';'))
+        ];
+        // Ajout du BOM UTF-8 (\uFEFF) pour affichage parfait des accents dans Excel
+        return Buffer.from('\uFEFF' + lines.join('\r\n'), 'utf-8');
+    };
+
+    try {
+        const dateJour = new Date().toISOString().slice(0, 10);
+        const salonRows = await safeQuery(
+            `SELECT id_salon, nom_salon, forme_juridique, siret, adresse_salon, tva_intra, capital_social, rcs_ville, email_comptable, plan_actuel
+             FROM configuration_salon WHERE id_salon = $1`,
+            [id_salon]
+        );
+        const salonInfo = salonRows[0] || { id_salon, nom_salon: `Salon_${id_salon}` };
+        const slugSalon = (salonInfo.nom_salon || `Salon_${id_salon}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+        // 1. EXPORT CSV : FICHIER CLIENTS (CRM + NOTES + FIDÉLITÉ)
+        if (format === 'csv_clients') {
+            const clients = await safeQuery(
+                `SELECT id_client, prenom, nom, telephone, email, date_naissance, points_fidelite, tampons_fidelite, remise_winback, notes, date_creation
+                 FROM clients WHERE id_salon = $1 ORDER BY nom ASC, prenom ASC`,
+                [id_salon]
+            );
+
+            const csvBuf = buildCsvBuffer(
+                ['ID Client', 'Prénom', 'Nom', 'Téléphone', 'E-mail', 'Date de naissance', 'Points Fidélité', 'Tampons Fidélité', 'Offre Winback', 'Notes & Formules Techniques', 'Date Création'],
+                clients.map(c => [
+                    c.id_client,
+                    c.prenom || '',
+                    c.nom || '',
+                    c.telephone || '',
+                    c.email || '',
+                    c.date_naissance ? new Date(c.date_naissance).toLocaleDateString('fr-FR') : '',
+                    c.points_fidelite || 0,
+                    c.tampons_fidelite || 0,
+                    c.remise_winback || '',
+                    c.notes || '',
+                    c.date_creation ? new Date(c.date_creation).toLocaleDateString('fr-FR') : ''
+                ])
+            );
+
+            await enregistrerJET(id_salon, 'EXPORT_PORTABILITE_CLIENTS_CSV', { nb_clients: clients.length });
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="Clients_${slugSalon}_${dateJour}.csv"`);
+            return res.send(csvBuf);
+        }
+
+        // 2. EXPORT CSV : CATALOGUE PRESTATIONS & STOCKS PRODUITS
+        if (format === 'csv_catalogue') {
+            const articles = await safeQuery(
+                `SELECT id_article, type_article, reference, nom, prix, taux_tva, stock_actuel, duree_estimee_minutes, delai_livraison_jours
+                 FROM catalogue WHERE id_salon = $1 ORDER BY type_article ASC, nom ASC`,
+                [id_salon]
+            );
+
+            const csvBuf = buildCsvBuffer(
+                ['ID Article', 'Catégorie', 'Référence', 'Désignation', 'Prix TTC (€)', 'Taux TVA (%)', 'Stock Actuel', 'Durée Prestation (min)', 'Délai Livraison (j)'],
+                articles.map(a => [
+                    a.id_article,
+                    a.type_article || 'PRESTATION',
+                    a.reference || '',
+                    a.nom || '',
+                    parseFloat(a.prix || 0).toFixed(2).replace('.', ','),
+                    a.taux_tva !== undefined && a.taux_tva !== null ? a.taux_tva : 20,
+                    a.type_article === 'PRESTATION' ? 'N/A' : (a.stock_actuel ?? 0),
+                    a.type_article === 'PRESTATION' ? (a.duree_estimee_minutes || 30) : 'N/A',
+                    a.delai_livraison_jours || 3
+                ])
+            );
+
+            await enregistrerJET(id_salon, 'EXPORT_PORTABILITE_CATALOGUE_CSV', { nb_articles: articles.length });
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="Catalogue_Stocks_${slugSalon}_${dateJour}.csv"`);
+            return res.send(csvBuf);
+        }
+
+        // 3. EXPORT CSV : HISTORIQUE & FUTURS RENDEZ-VOUS (AGENDA)
+        if (format === 'csv_rdv') {
+            const rdvs = await safeQuery(
+                `SELECT r.id_rdv, r.date_heure_debut, r.duree_minutes, r.nom_client, r.telephone_client, r.prestation, COALESCE(e.nom, 'Non assigné') as nom_employe
+                 FROM rdv r
+                 LEFT JOIN employes e ON r.id_employe = e.id_employe
+                 WHERE r.id_salon = $1
+                 ORDER BY r.date_heure_debut DESC`,
+                [id_salon]
+            );
+
+            const csvBuf = buildCsvBuffer(
+                ['ID RDV', 'Date', 'Heure', 'Durée (min)', 'Client', 'Téléphone Client', 'Prestation', 'Collaborateur'],
+                rdvs.map(r => {
+                    const dt = r.date_heure_debut ? new Date(r.date_heure_debut) : null;
+                    return [
+                        r.id_rdv,
+                        dt && !isNaN(dt) ? dt.toLocaleDateString('fr-FR') : '',
+                        dt && !isNaN(dt) ? dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '',
+                        r.duree_minutes || 30,
+                        r.nom_client || '',
+                        r.telephone_client || '',
+                        r.prestation || '',
+                        r.nom_employe || ''
+                    ];
+                })
+            );
+
+            await enregistrerJET(id_salon, 'EXPORT_PORTABILITE_RDV_CSV', { nb_rdv: rdvs.length });
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="Agenda_RDV_${slugSalon}_${dateJour}.csv"`);
+            return res.send(csvBuf);
+        }
+
+        // 4. EXPORT CSV : ARCHIVE FISCALE DES TICKETS & CLÔTURES Z (6 ANS NF525)
+        if (format === 'csv_caisse_z') {
+            const tickets = await safeQuery(
+                `SELECT t.id_ticket, t.numero_ticket_caisse, t.date_creation, t.type_ticket, t.statut, t.methode_paiement,
+                        t.total_ttc, COALESCE(t.montant_pourboire, 0) as pourboire, t.signature_hash, t.hash_precedent,
+                        COALESCE(e.nom, 'Non spécifié') as vendeur
+                 FROM tickets t
+                 LEFT JOIN employes e ON t.id_employe = e.id_employe
+                 WHERE t.id_salon = $1
+                 ORDER BY t.date_creation ASC, t.id_ticket ASC`,
+                [id_salon]
+            );
+
+            const csvBuf = buildCsvBuffer(
+                ['ID Interne', 'N° Ticket Séq.', 'Date & Heure', 'Type', 'Statut', 'Mode Paiement', 'Vendeur', 'Total TTC (€)', 'Pourboire (€)', 'Hash SHA-256 (NF525)', 'Hash Précédent'],
+                tickets.map(t => [
+                    t.id_ticket,
+                    t.numero_ticket_caisse || '',
+                    t.date_creation ? new Date(t.date_creation).toLocaleString('fr-FR') : '',
+                    t.type_ticket || 'VENTE',
+                    t.statut || 'VALIDE',
+                    t.methode_paiement || '',
+                    t.vendeur || '',
+                    parseFloat(t.total_ttc || 0).toFixed(2).replace('.', ','),
+                    parseFloat(t.pourboire || 0).toFixed(2).replace('.', ','),
+                    t.signature_hash || '',
+                    t.hash_precedent || ''
+                ])
+            );
+
+            await enregistrerJET(id_salon, 'EXPORT_PORTABILITE_TICKETS_NF525_CSV', { nb_tickets: tickets.length });
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="Archive_Tickets_NF525_${slugSalon}_${dateJour}.csv"`);
+            return res.send(csvBuf);
+        }
+
+        // 5. EXPORT COMPLET DE PORTABILITÉ (ARCHIVE GLOBALE JSON SCELLÉE SHA-256)
+        const [
+            clients,
+            employes,
+            catalogue,
+            protocoles,
+            rdvs,
+            facturesFournisseurs,
+            tickets,
+            lignesTickets,
+            cloturesZ,
+            mouvementsCaisse,
+            liassesValidees
+        ] = await Promise.all([
+            safeQuery(`SELECT * FROM clients WHERE id_salon = $1 ORDER BY id_client ASC`, [id_salon]),
+            safeQuery(`SELECT id_employe, nom, role, est_gerant, type_contrat, heures_mensuelles_base, taux_commission_prestation, taux_commission_produit FROM employes WHERE id_salon = $1 ORDER BY id_employe ASC`, [id_salon]),
+            safeQuery(`SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY id_article ASC`, [id_salon]),
+            safeQuery(`SELECT id_protocole, nom_prestation, description, tags, temps_nettoyage_minutes, etapes FROM protocoles WHERE id_salon = $1 ORDER BY id_protocole ASC`, [id_salon]),
+            safeQuery(`SELECT * FROM rdv WHERE id_salon = $1 ORDER BY date_heure_debut DESC`, [id_salon]),
+            safeQuery(`SELECT id_facture, nom_fournisseur, numero_facture, date_facture, mode_paiement, compte_comptable, montant_ht, montant_tva, montant_ttc, statut_verification FROM factures_fournisseurs WHERE id_salon = $1 ORDER BY id_facture ASC`, [id_salon]),
+            safeQuery(`SELECT * FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC`, [id_salon]),
+            safeQuery(`SELECT lt.* FROM lignes_ticket lt JOIN tickets t ON t.id_ticket = lt.id_ticket WHERE t.id_salon = $1 ORDER BY lt.id_ticket ASC`, [id_salon]),
+            safeQuery(`SELECT * FROM clotures_caisse WHERE id_salon = $1 ORDER BY date_cloture ASC`, [id_salon]),
+            safeQuery(`SELECT * FROM mouvements_caisse WHERE id_salon = $1 ORDER BY date_creation ASC`, [id_salon]),
+            safeQuery(`SELECT id_validation, mois_annee, date_validation, valide_par, total_ht, total_tva, total_ttc, cumul_perpetuel_ttc, hash_precedent, signature_hash FROM liasses_mensuelles_validees WHERE id_salon = $1 ORDER BY mois_annee ASC`, [id_salon])
+        ]);
+
+        const archivePayload = {
+            meta: {
+                logiciel: 'STACK SaaS v1.0',
+                type_export: 'ARCHIVE_INTEGRALE_PORTABILITE_RGPD_ET_NF525',
+                date_generation_iso: new Date().toISOString(),
+                id_salon,
+                nom_salon: salonInfo.nom_salon,
+                siret: salonInfo.siret || 'Non renseigné'
+            },
+            etablissement: salonInfo,
+            statistiques_export: {
+                nb_clients: clients.length,
+                nb_collaborateurs: employes.length,
+                nb_articles_catalogue: catalogue.length,
+                nb_protocoles_academie: protocoles.length,
+                nb_rendez_vous: rdvs.length,
+                nb_factures_fournisseurs: facturesFournisseurs.length,
+                nb_tickets_caisse: tickets.length,
+                nb_clotures_z: cloturesZ.length,
+                nb_liasses_mensuelles: liassesValidees.length
+            },
+            donnees: {
+                clients,
+                collaborateurs: employes,
+                catalogue_et_stocks: catalogue,
+                protocoles_academie: protocoles,
+                agenda_rendez_vous: rdvs,
+                achats_factures_fournisseurs: facturesFournisseurs,
+                caisse_tickets: tickets,
+                caisse_lignes_tickets: lignesTickets,
+                caisse_clotures_z: cloturesZ,
+                caisse_mouvements_especes: mouvementsCaisse,
+                comptabilite_liasses_scellees: liassesValidees
+            }
+        };
+
+        const empreinteArchive = crypto
+            .createHash('sha256')
+            .update(JSON.stringify(archivePayload))
+            .digest('hex');
+
+        const archiveFinale = {
+            ...archivePayload,
+            scellement_cryptographique_nf525: {
+                algorithme: 'SHA-256',
+                empreinte_sha256: empreinteArchive
+            }
+        };
+
+        await enregistrerJET(id_salon, 'EXPORT_PORTABILITE_INTEGRALE_JSON', {
+            empreinte_sha256: empreinteArchive,
+            nb_clients: clients.length,
+            nb_tickets: tickets.length
+        });
+
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="Archive_Portabilite_STACK_${slugSalon}_${dateJour}.json"`);
+        return res.send(JSON.stringify(archiveFinale, null, 2));
+    } catch (e) {
+        console.error("Erreur export portabilité:", e);
+        return res.status(500).json({ erreur: "Erreur lors de la génération de l'export de portabilité." });
+    }
+});
+
 app.get('/api/export-fec', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "L'export comptable FEC est strictement réservé au gérant." });
     const id_salon = req.user.id_salon;
