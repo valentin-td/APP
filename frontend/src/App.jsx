@@ -5004,6 +5004,121 @@ function App() {
                             </div>
                           </div>
 
+                          {/* 1 BIS. COCKPIT DE PILOTAGE GROUPE / FRANCHISE (AFFICHÉ SI LE GÉRANT POSSÈDE 2 SALONS OU PLUS) */}
+                          {(mesSalonsGroupe.salons || []).length > 1 && (() => {
+                            const synthese = mesSalonsGroupe.synthese_groupe || {};
+                            const salonsTries = [...(mesSalonsGroupe.salons || [])].sort((a, b) => (b.ca_mois_ttc || 0) - (a.ca_mois_ttc || 0));
+                            const maxCaSalon = Math.max(...salonsTries.map(s => s.ca_mois_ttc || 0), 1);
+                            const nbZFaits = salonsTries.filter(s => s.z_fait_aujourdhui).length;
+
+                            return (
+                              <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: '20px', borderRadius: '18px', border: '1.5px solid var(--border-color)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap', marginBottom: '16px', paddingBottom: '14px', borderBottom: '1px solid var(--border-color)' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                      <span style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '10.5px', fontWeight: '800', background: 'var(--text-main)', color: 'var(--bg-card)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        Vue Consolidée Groupe ({salonsTries.length} salons)
+                                      </span>
+                                      <span style={{
+                                        padding: '3px 9px', borderRadius: '999px', fontSize: '11px', fontWeight: '700',
+                                        background: nbZFaits === salonsTries.length ? 'var(--bg-success)' : 'rgba(245, 158, 11, 0.14)',
+                                        color: nbZFaits === salonsTries.length ? 'var(--color-success)' : '#d97706'
+                                      }}>
+                                        Clôtures Z du jour : {nbZFaits}/{salonsTries.length} scellées
+                                      </span>
+                                    </div>
+                                    <h3 style={{ margin: 0, fontSize: '16.5px', fontWeight: '800', color: 'var(--text-main)' }}>
+                                      Comparatif de Performance Multi-Établissements
+                                    </h3>
+                                  </div>
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                                    <div style={{ textAlign: isMobile ? 'left' : 'right' }}>
+                                      <span style={{ fontSize: '10.5px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block' }}>CA Cumulé Groupe (Mois)</span>
+                                      <strong style={{ fontSize: '20px', fontWeight: '900', color: 'var(--text-main)' }}>
+                                        {(synthese.ca_groupe_mois_ttc || 0).toFixed(2)} € <span style={{ fontSize: '12px', color: 'var(--color-success)', fontWeight: '700' }}>(+{(synthese.ca_groupe_jour_ttc || 0).toFixed(2)} € aujourd'hui)</span>
+                                      </strong>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowMultiSalonModal(true)}
+                                      style={{ background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '8px 13px', borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                                    >
+                                      Gérer mes adresses
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(265px, 1fr))', gap: '12px' }}>
+                                  {salonsTries.map((s, idx) => {
+                                    const estActif = Number(s.id_salon) === Number(decodeToken(token)?.id_salon);
+                                    const partGroupe = (synthese.ca_groupe_mois_ttc || 0) > 0
+                                      ? Math.round(((s.ca_mois_ttc || 0) / synthese.ca_groupe_mois_ttc) * 100)
+                                      : 0;
+
+                                    return (
+                                      <div
+                                        key={s.id_salon}
+                                        onClick={() => !estActif && changerDeSalonActif(s.id_salon)}
+                                        style={{
+                                          background: 'var(--bg-app)',
+                                          border: estActif ? '1.5px solid var(--text-main)' : '1px solid var(--border-color)',
+                                          borderRadius: '14px',
+                                          padding: '14px',
+                                          cursor: estActif ? 'default' : 'pointer',
+                                          display: 'flex',
+                                          flexDirection: 'column',
+                                          justifyContent: 'space-between',
+                                          gap: '10px'
+                                        }}
+                                      >
+                                        <div>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                                              <span style={{ width: '20px', height: '20px', borderRadius: '6px', background: idx === 0 ? 'var(--text-main)' : 'var(--bg-card)', color: idx === 0 ? 'var(--bg-card)' : 'var(--text-main)', border: '1px solid var(--border-color)', fontSize: '11px', fontWeight: '800', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                {idx + 1}
+                                              </span>
+                                              <strong style={{ fontSize: '13.5px', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {s.nom_salon}
+                                              </strong>
+                                            </div>
+                                            <span style={{ fontSize: '10.5px', fontWeight: '700', padding: '2px 7px', borderRadius: '999px', background: estActif ? 'var(--bg-success)' : 'var(--bg-card)', color: estActif ? 'var(--color-success)' : 'var(--text-secondary)', border: '1px solid var(--border-color)', flexShrink: 0 }}>
+                                              {estActif ? 'Actif' : `#${s.id_salon}`}
+                                            </span>
+                                          </div>
+
+                                          <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {s.adresse_salon || 'Adresse non renseignée'}
+                                          </div>
+
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                                            <span style={{ fontSize: '18px', fontWeight: '900', color: 'var(--text-main)' }}>
+                                              {(s.ca_mois_ttc || 0).toFixed(2)} €
+                                            </span>
+                                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)' }}>
+                                              {partGroupe}% du groupe
+                                            </span>
+                                          </div>
+
+                                          <div style={{ height: '6px', background: 'var(--bg-card)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                            <div style={{ width: `${Math.max(4, ((s.ca_mois_ttc || 0) / maxCaSalon) * 100)}%`, height: '100%', background: 'var(--text-main)', borderRadius: '999px' }} />
+                                          </div>
+                                        </div>
+
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--border-color)', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                          <span>Jour : <strong style={{ color: 'var(--text-main)' }}>{(s.ca_jour_ttc || 0).toFixed(2)} €</strong> • {s.nb_employes || 1} équip.</span>
+                                          <span style={{ fontWeight: '700', color: s.z_fait_aujourdhui ? 'var(--color-success)' : '#d97706' }}>
+                                            {s.z_fait_aujourdhui ? 'Z scellé ✓' : 'Z à faire'}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
                           {/* 2. GRILLE PRINCIPALE BENTO : MUR DES VERBATIMS & COLONNE DROITE (TOP PRESTATIONS + GOOGLE + ÉQUIPE LIVE) */}
                           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.25fr 1fr', gap: '18px', alignItems: 'start' }}>
 
