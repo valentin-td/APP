@@ -4350,6 +4350,383 @@ async function construireContenuFEC(id_salon, date_debut, date_fin) {
 
     return { fecContent, nomFichier, nbLignes: lignesFec.length, totalEquilibre: totalDebitCents / 100 };
 }
+// =========================================================================
+// --- ARCHITECTURE MULTI-SALONS / FRANCHISE (GROUPE D'ÉTABLISSEMENTS) ---
+// =========================================================================
+
+// Initialise la table de liaison Multi-Salons et rattache automatiquement le salon courant
+async function assurerTableMultiSalons(clientOrPool, emailGerant, idSalonActuel) {
+    await clientOrPool.query(`
+        CREATE TABLE IF NOT EXISTS gerants_multi_salons (
+            id_liaison SERIAL PRIMARY KEY,
+            email_gerant VARCHAR(255) NOT NULL,
+            id_salon INT NOT NULL,
+            role_groupe VARCHAR(50) DEFAULT 'PROPRIETAIRE',
+            date_ajout TIMESTAMP DEFAULT NOW(),
+            UNIQUE(email_gerant, id_salon)
+        );
+    `);
+
+    if (emailGerant && idSalonActuel) {
+        await clientOrPool.query(
+            `INSERT INTO gerants_multi_salons (email_gerant, id_salon, role_groupe)
+             VALUES (LOWER(TRIM($1)), $2, 'PROPRIETAIRE')
+             ON CONFLICT (email_gerant, id_salon) DO NOTHING`,
+            [emailGerant, idSalonActuel]
+        );
+    }
+}
+
+// Récupère l'email du gérant connecté (depuis le JWT ou la base de données)
+async function resoudreEmailGerant(clientOrPool, reqUser) {
+    if (reqUser?.email) return String(reqUser.email).toLowerCase().trim();
+    try {
+        const r = await clientOrPool.query(
+            `SELECT email FROM configuration_salon WHERE id_salon = $1 LIMIT 1`,
+            [reqUser.id_salon]
+        );
+        if (r.rows[0]?.email) return String(r.rows[0].email).toLowerCase().trim();
+    } catch (e) {}
+    try {
+        const r2 = await clientOrPool.query(
+            `SELECT email FROM salons WHERE id_salon = $1 LIMIT 1`,
+            [reqUser.id_salon]
+        );
+        if (r2.rows[0]?.email) return String(r2.rows[0].email).toLowerCase().trim();
+    } catch (e) {}
+    return `gerant_salon_${reqUser.id_salon}@stack.local`;
+}
+
+// 1. LISTER TOUS LES SALONS DU GÉRANT + VUE CONSOLIDÉE DU GROUPE
+app.get('/api/mes-salons', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Accès réservé au gérant." });
+    }
+
+    try {
+        const emailGerant = await resoudreEmailGerant(pool, req.user);
+        await assurerTableMultiSalons(pool, emailGerant, req.user.id_salon);
+
+        // Rattache aussi automatiquement tout autre salon qui possède déjà le même email de gérant
+        await pool.query(`
+            INSERT INTO gerants_multi_salons (email_gerant, id_salon, role_groupe)
+            SELECT LOWER(TRIM(email)), id_salon, 'PROPRIETAIRE'
+            FROM configuration_salon
+            WHERE LOWER(TRIM(email)) = $1
+            ON CONFLICT (email_gerant, id_salon) DO NOTHING
+        `, [emailGerant]).catch(() => {});
+
+        const salonsRes = await pool.query(`
+            SELECT 
+                c.id_salon,
+                COALESCE(c.nom_salon, 'Salon #' || c.id_salon) as nom_salon,
+                c.adresse_salon,
+                c.siret,
+                c.forme_juridique,
+                COALESCE(c.plan_actuel, 'PREMIUM_TRIAL') as plan_actuel,
+                COALESCE(c.statut_abonnement, 'actif') as statut_abonnement,
+                (
+                    SELECT COALESCE(SUM(t.total_ttc), 0)
+                    FROM tickets t
+                    WHERE t.id_salon = c.id_salon
+                      AND t.statut = 'VALIDE'
+                      AND DATE_TRUNC('month', t.date_creation) = DATE_TRUNC('month', CURRENT_DATE)
+                ) as ca_mois_ttc,
+                (
+                    SELECT COALESCE(SUM(t.total_ttc), 0)
+                    FROM tickets t
+                    WHERE t.id_salon = c.id_salon
+                      AND t.statut = 'VALIDE'
+                      AND DATE(t.date_creation) = CURRENT_DATE
+                ) as ca_jour_ttc,
+                EXISTS (
+                    SELECT 1 FROM clotures_caisse z
+                    WHERE z.id_salon = c.id_salon AND DATE(z.date_cloture) = CURRENT_DATE
+                ) as z_fait_aujourdhui,
+                (
+                    SELECT COUNT(*)::int FROM employes e WHERE e.id_salon = c.id_salon
+                ) as nb_employes
+            FROM gerants_multi_salons gms
+            JOIN configuration_salon c ON c.id_salon = gms.id_salon
+            WHERE gms.email_gerant = $1
+            ORDER BY c.id_salon ASC
+        `, [emailGerant]);
+
+        const listeSalons = salonsRes.rows.map(s => ({
+            ...s,
+            ca_mois_ttc: parseFloat(s.ca_mois_ttc) || 0,
+            ca_jour_ttc: parseFloat(s.ca_jour_ttc) || 0,
+            est_salon_actif: Number(s.id_salon) === Number(req.user.id_salon)
+        }));
+
+        const syntheseGroupe = {
+            nb_salons: listeSalons.length,
+            ca_groupe_mois_ttc: Number(listeSalons.reduce((acc, s) => acc + s.ca_mois_ttc, 0).toFixed(2)),
+            ca_groupe_jour_ttc: Number(listeSalons.reduce((acc, s) => acc + s.ca_jour_ttc, 0).toFixed(2)),
+            total_employes_groupe: listeSalons.reduce((acc, s) => acc + (parseInt(s.nb_employes, 10) || 0), 0),
+            nb_z_manquants_aujourdhui: listeSalons.filter(s => !s.z_fait_aujourdhui).length
+        };
+
+        res.json({
+            id_salon_courant: req.user.id_salon,
+            email_gerant: emailGerant,
+            synthese_groupe: syntheseGroupe,
+            salons: listeSalons
+        });
+    } catch (e) {
+        console.error("Erreur GET /api/mes-salons :", e);
+        res.status(500).json({ erreur: "Impossible de récupérer vos établissements." });
+    }
+});
+
+// 2. CRÉER UN NOUVEL ÉTABLISSEMENT SOUS LE MÊME COMPTE GÉRANT (AVEC OPTION DE CLONAGE DU CATALOGUE)
+app.post('/api/mes-salons/creer', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Seul le gérant peut ouvrir un nouvel établissement." });
+    }
+
+    const {
+        nom_salon,
+        adresse_salon,
+        siret,
+        forme_juridique,
+        tva_intra,
+        copier_catalogue = true,
+        copier_protocoles = true
+    } = req.body;
+
+    if (!nom_salon || !nom_salon.trim()) {
+        return res.status(400).json({ erreur: "Le nom du nouvel établissement est obligatoire." });
+    }
+
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+
+        const emailGerant = await resoudreEmailGerant(clientDB, req.user);
+        await assurerTableMultiSalons(clientDB, emailGerant, req.user.id_salon);
+
+        // 1. Lecture du salon source pour copier les identifiants du gérant (mot_de_passe, statut légal, etc.)
+        const sourceSalonRes = await clientDB.query(
+            `SELECT * FROM configuration_salon WHERE id_salon = $1 LIMIT 1`,
+            [req.user.id_salon]
+        );
+        if (sourceSalonRes.rowCount === 0) {
+            await clientDB.query('ROLLBACK');
+            return res.status(404).json({ erreur: "Salon principal introuvable." });
+        }
+        const src = sourceSalonRes.rows[0];
+
+        // 2. Création du nouveau salon dans configuration_salon
+        const newSalonRes = await clientDB.query(`
+            INSERT INTO configuration_salon (
+                nom_salon, email, mot_de_passe, forme_juridique, siret, adresse_salon, tva_intra,
+                heure_ouverture, heure_fermeture, mode_suivi_heures, plan_actuel, date_fin_essai, statut_abonnement
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, 'PREMIUM_TRIAL', NOW() + INTERVAL '30 days', 'actif'
+            ) RETURNING id_salon
+        `, [
+            nom_salon.trim(),
+            src.email || emailGerant,
+            src.mot_de_passe || null,
+            forme_juridique || src.forme_juridique || '',
+            siret ? siret.trim() : '',
+            adresse_salon ? adresse_salon.trim() : '',
+            tva_intra !== undefined ? tva_intra : (src.tva_intra || ''),
+            src.heure_ouverture || 8,
+            src.heure_fermeture || 20,
+            src.mode_suivi_heures || 'POINTEUSE'
+        ]);
+
+        const newIdSalon = newSalonRes.rows[0].id_salon;
+
+        // 3. Liaison au groupe Multi-Salons du gérant
+        await clientDB.query(
+            `INSERT INTO gerants_multi_salons (email_gerant, id_salon, role_groupe)
+             VALUES ($1, $2, 'PROPRIETAIRE')
+             ON CONFLICT (email_gerant, id_salon) DO NOTHING`,
+            [emailGerant, newIdSalon]
+        );
+
+        // 4. Duplication du profil Employé-Gérant (avec son code PIN hashé) dans le nouveau salon
+        const gerantEmpRes = await clientDB.query(
+            `SELECT nom, role, code_pin, photo_url FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1`,
+            [req.user.id_salon]
+        );
+        const gerantEmp = gerantEmpRes.rows[0] || { nom: 'Gérant', role: 'Gérant', code_pin: '0000', photo_url: null };
+
+        await clientDB.query(
+            `INSERT INTO employes (id_salon, nom, role, code_pin, photo_url, est_gerant, type_contrat, heures_mensuelles_base)
+             VALUES ($1, $2, $3, $4, $5, TRUE, '35H', 151.67)`,
+            [newIdSalon, gerantEmp.nom, gerantEmp.role || 'Gérant', gerantEmp.code_pin, gerantEmp.photo_url]
+        );
+
+        // 5. Duplication optionnelle du Catalogue (Prestations & Produits avec stock initialisé à 0 dans la nouvelle adresse)
+        const mapAncienVersNouvelArticle = new Map();
+        if (copier_catalogue) {
+            const catSourceRes = await clientDB.query(
+                `SELECT id_article, nom, type_article, prix, taux_tva, reference, delai_livraison_jours, duree_estimee_minutes
+                 FROM catalogue WHERE id_salon = $1`,
+                [req.user.id_salon]
+            );
+            for (const art of catSourceRes.rows) {
+                const insArt = await clientDB.query(
+                    `INSERT INTO catalogue (id_salon, nom, type_article, prix, taux_tva, stock_actuel, reference, delai_livraison_jours, duree_estimee_minutes)
+                     VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8) RETURNING id_article`,
+                    [
+                        newIdSalon,
+                        art.nom,
+                        art.type_article,
+                        art.prix,
+                        art.taux_tva ?? 20,
+                        art.reference || null,
+                        art.delai_livraison_jours || 3,
+                        art.duree_estimee_minutes || 30
+                    ]
+                );
+                mapAncienVersNouvelArticle.set(Number(art.id_article), insArt.rows[0].id_article);
+            }
+        }
+
+        // 6. Duplication optionnelle des Protocoles & Tutoriels de l'Académie
+        if (copier_catalogue && copier_protocoles) {
+            const protoSourceRes = await clientDB.query(
+                `SELECT * FROM protocoles WHERE id_salon = $1`,
+                [req.user.id_salon]
+            );
+            for (const pr of protoSourceRes.rows) {
+                const etapesRemappees = Array.isArray(pr.etapes)
+                    ? pr.etapes.map(et => {
+                        if (!et || typeof et !== 'object') return et;
+                        const ings = Array.isArray(et.ingredients)
+                            ? et.ingredients.map(ing => ({
+                                ...ing,
+                                id_article: mapAncienVersNouvelArticle.get(Number(ing.id_article)) || ing.id_article
+                            }))
+                            : [];
+                        return { ...et, ingredients: ings };
+                    })
+                    : [];
+
+                const insPr = await clientDB.query(
+                    `INSERT INTO protocoles (id_salon, nom_prestation, description, etapes, medias, tags, delai_livraison_jours, temps_nettoyage_minutes)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_protocole`,
+                    [
+                        newIdSalon,
+                        pr.nom_prestation,
+                        pr.description,
+                        JSON.stringify(etapesRemappees),
+                        JSON.stringify(pr.medias || {}),
+                        JSON.stringify(pr.tags || []),
+                        pr.delai_livraison_jours || 3,
+                        pr.temps_nettoyage_minutes || 0
+                    ]
+                );
+
+                const newIdProto = insPr.rows[0].id_protocole;
+                const recSource = await clientDB.query(
+                    `SELECT id_article, quantite_necessaire, numero_etape, proportion FROM recettes_articles WHERE id_protocole = $1`,
+                    [pr.id_protocole]
+                );
+                for (const r of recSource.rows) {
+                    const newArtId = mapAncienVersNouvelArticle.get(Number(r.id_article));
+                    if (newArtId) {
+                        await clientDB.query(
+                            `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire, numero_etape, proportion)
+                             VALUES ($1, $2, $3, $4, $5)`,
+                            [newIdProto, newArtId, r.quantite_necessaire, r.numero_etape || 0, r.proportion || null]
+                        );
+                    }
+                }
+            }
+        }
+
+        // 7. Scellement Genesis NF525 du nouvel établissement
+        await enregistrerJET(newIdSalon, 'CREATION_ETABLISSEMENT_GROUPE', {
+            cree_depuis_salon: req.user.id_salon,
+            nom_salon: nom_salon.trim(),
+            email_gerant: emailGerant
+        }, clientDB);
+
+        await clientDB.query('COMMIT');
+        res.status(201).json({
+            message: `Établissement "${nom_salon.trim()}" créé avec succès !`,
+            id_salon: newIdSalon
+        });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        console.error("Erreur création multi-salon :", e);
+        res.status(500).json({ erreur: e.message || "Erreur lors de la création du nouvel établissement." });
+    } finally {
+        clientDB.release();
+    }
+});
+
+// 3. BASCULER INSTANTANÉMENT D'UN SALON À UN AUTRE (SWITCH JWT SANS RECONNEXION)
+app.post('/api/mes-salons/switch/:id_salon_cible', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Seul le gérant peut changer d'établissement." });
+    }
+
+    const idSalonCible = parseInt(req.params.id_salon_cible, 10);
+    if (!idSalonCible) {
+        return res.status(400).json({ erreur: "Identifiant de salon invalide." });
+    }
+
+    try {
+        const emailGerant = await resoudreEmailGerant(pool, req.user);
+        await assurerTableMultiSalons(pool, emailGerant, req.user.id_salon);
+
+        // Vérification stricte d'appartenance (Empêche tout accès IDOR à un salon tiers)
+        const accesRes = await pool.query(
+            `SELECT 1 FROM gerants_multi_salons WHERE email_gerant = $1 AND id_salon = $2 LIMIT 1`,
+            [emailGerant, idSalonCible]
+        );
+        if (accesRes.rowCount === 0) {
+            return res.status(403).json({ erreur: "Accès refusé : cet établissement n'est pas rattaché à votre compte gérant." });
+        }
+
+        const empGerantCible = await pool.query(
+            `SELECT id_employe, nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1`,
+            [idSalonCible]
+        );
+        const idEmployeGerant = empGerantCible.rows[0]?.id_employe || null;
+
+        const payloadJwt = {
+            id_salon: idSalonCible,
+            email: emailGerant,
+            role: 'gerant',
+            id_employe: idEmployeGerant
+        };
+
+        const jwtSecret = process.env.JWT_SECRET || 'secret_temporaire_stack';
+        const newTokenApi = jwt.sign(payloadJwt, jwtSecret, { expiresIn: '7d' });
+        const newUiToken = jwt.sign(payloadJwt, jwtSecret, { expiresIn: '7d' });
+
+        res.cookie('token', newTokenApi, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'none',
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        });
+
+        await enregistrerJET(idSalonCible, 'CONNEXION_SWITCH_MULTI_SALON', {
+            depuis_salon: req.user.id_salon,
+            email_gerant: emailGerant
+        });
+
+        res.json({
+            message: "Bascule vers l'établissement réussie.",
+            id_salon: idSalonCible,
+            ui_token: newUiToken,
+            token_api: newTokenApi
+        });
+    } catch (e) {
+        console.error("Erreur switch salon :", e);
+        res.status(500).json({ erreur: "Erreur lors du changement d'établissement." });
+    }
+});
 
 // =========================================================================
 // --- EXPORT & PORTABILITÉ DES DONNÉES (RGPD ART. 20 / CGU ART. 7 / NF525) ---
