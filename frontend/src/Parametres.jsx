@@ -45,6 +45,7 @@ const TITRES = {
   mail: 'Boîte mail du salon',
   export_compta: 'Exportations comptable',
   config_compta: 'Configuration Comptable (FEC)',
+  portabilite: 'Export & Portabilité des données (RGPD)',
   tpe: 'TPE physique (Stripe Terminal)',
   cgu: 'Conditions générales',
   confidentialite: 'Politique de confidentialité',
@@ -84,6 +85,7 @@ export default function Parametres({
       { id: 'sync_planity', icone: ICONS.link, label: 'Synchronisation Planity (iCal)', valeur: '' },
       { id: 'export_compta', icone: ICONS.send, label: 'Envoi Bilan Comptable', valeur: statut(configSalon.email_comptable) },
       { id: 'config_compta', icone: ICONS.file, label: 'Configuration Comptable (FEC)' },
+      { id: 'portabilite', icone: ICONS.file, label: 'Export & Portabilité des données', valeur: 'CSV / JSON' },
       { id: 'tpe', icone: ICONS.card, label: 'TPE physique', valeur: statut(configSalon.stripe_reader_id) },
     ] },
     { titre: 'Ressources Humaines (RH)', lignes: [
@@ -204,6 +206,43 @@ const groupesBas = [
         window.URL.revokeObjectURL(url);
     } catch (err) {
         alert(err.message);
+    }
+  };
+
+  const [exportingFormat, setExportingFormat] = useState(null);
+
+  const telechargerExportPortabilite = async (format, nomFichierDefaut) => {
+    setExportingFormat(format);
+    try {
+      const apiBase = window.location.hostname === 'localhost'
+        ? 'http://localhost:3000'
+        : 'https://api-salon-backend.onrender.com';
+      const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
+
+      const response = await fetch(`${apiBase}/api/export-portabilite?format=${encodeURIComponent(format)}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {}
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.erreur || "Erreur lors de l'export des données.");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nomFichierDefaut;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -717,7 +756,113 @@ const groupesBas = [
                   </div>
         {carteSauvegarde}
       </>);
-case 'tpe': return (<>
+case 'portabilite': {
+          const slug = (configSalon.nom_salon || 'MonSalon').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const dJour = new Date().toISOString().slice(0, 10);
+          const exportsDispo = [
+              {
+                  id: 'csv_clients',
+                  titre: 'Fichier Clients CRM & Fidélité (.CSV)',
+                  desc: 'Prénom, nom, téléphone, e-mail, date de naissance, solde points/tampons, offres Winback et notes techniques. Compatible Excel et autres logiciels.',
+                  ext: 'CSV Excel',
+                  filename: `Clients_${slug}_${dJour}.csv`
+              },
+              {
+                  id: 'csv_catalogue',
+                  titre: 'Catalogue Prestations & État des Stocks (.CSV)',
+                  desc: 'Toutes vos prestations (tarifs TTC, durées) et votre inventaire produits (références, quantités en stock, délais fournisseurs).',
+                  ext: 'CSV Excel',
+                  filename: `Catalogue_Stocks_${slug}_${dJour}.csv`
+              },
+              {
+                  id: 'csv_rdv',
+                  titre: 'Historique & Futurs Rendez-vous Agenda (.CSV)',
+                  desc: 'Intégralité des rendez-vous passés et à venir avec dates, heures, durées, clients, prestations et collaborateurs.',
+                  ext: 'CSV Excel',
+                  filename: `Agenda_RDV_${slug}_${dJour}.csv`
+              },
+              {
+                  id: 'csv_caisse_z',
+                  titre: 'Journal Fiscal des Tickets de Caisse (.CSV — NF525)',
+                  desc: 'Registre chronologique inaltérable des tickets encaissés, modes de règlement, pourboires et empreintes SHA-256.',
+                  ext: 'CSV Fiscal',
+                  filename: `Archive_Tickets_NF525_${slug}_${dJour}.csv`
+              }
+          ];
+
+          return (
+              <>
+                  <div className="carte scan-carte">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                          <div style={{ width: '42px', height: '42px', minWidth: '42px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)' }}>
+                              <span style={{ width: '20px', height: '20px', display: 'flex' }}>{ICONS.shield}</span>
+                          </div>
+                          <div>
+                              <h3 style={{ margin: '0 0 2px 0', fontSize: '15px', color: 'var(--text-main)', fontWeight: '700' }}>Portabilité & Propriété de vos Données</h3>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Conformité RGPD (Art. 20), CGU STACK (Art. 7) & Conservation NF525</span>
+                          </div>
+                      </div>
+
+                      <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: '0 0 18px 0' }}>
+                          Vous êtes propriétaire à 100 % des données de votre établissement. Téléchargez à tout moment vos fichiers en format <strong>.CSV (compatible Excel et logiciels tiers)</strong> ou récupérez l'archive intégrale scellée de votre salon.
+                      </p>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+                          {exportsDispo.map(item => (
+                              <div key={item.id} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                                  <div style={{ flex: '1 1 240px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                          <strong style={{ fontSize: '13.5px', color: 'var(--text-main)' }}>{item.titre}</strong>
+                                          <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 7px', borderRadius: '6px', background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>{item.ext}</span>
+                                      </div>
+                                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4', display: 'block' }}>{item.desc}</span>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      disabled={exportingFormat !== null}
+                                      onClick={() => telechargerExportPortabilite(item.id, item.filename)}
+                                      style={{
+                                          background: 'var(--bg-card)',
+                                          color: 'var(--text-main)',
+                                          border: '1px solid var(--border-color)',
+                                          padding: '9px 14px',
+                                          borderRadius: '10px',
+                                          fontSize: '12.5px',
+                                          fontWeight: '700',
+                                          cursor: exportingFormat ? 'wait' : 'pointer',
+                                          flexShrink: 0
+                                      }}
+                                  >
+                                      {exportingFormat === item.id ? 'Export...' : 'Télécharger .CSV'}
+                                  </button>
+                              </div>
+                          ))}
+                      </div>
+
+                      {/* Archive Intégrale JSON Scellée SHA-256 */}
+                      <div style={{ background: 'var(--bg-app)', border: '1.5px solid var(--text-main)', borderRadius: '14px', padding: '16px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                              <strong style={{ fontSize: '14px', color: 'var(--text-main)' }}>Archive Intégrale de Portabilité & Départ (.JSON Scellé SHA-256)</strong>
+                              <span style={{ fontSize: '10.5px', fontWeight: '800', padding: '3px 8px', borderRadius: '999px', background: 'var(--text-main)', color: 'var(--bg-card)' }}>ARCHIVE COMPLÈTE</span>
+                          </div>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.45', margin: '0 0 14px 0' }}>
+                              Réunit en un seul fichier structuré : identité légale, fichier clients, équipe RH, catalogue, recettes Académie, agenda, factures fournisseurs, tickets, clôtures Z et liasses mensuelles, avec empreinte cryptographique SHA-256 inscrite au Journal des Événements Techniques (JET).
+                          </p>
+                          <button
+                              type="button"
+                              disabled={exportingFormat !== null}
+                              onClick={() => telechargerExportPortabilite('json_complet', `Archive_Portabilite_STACK_${slug}_${dJour}.json`)}
+                              className="btn-action"
+                              style={{ width: '100%', padding: '12px' }}
+                          >
+                              {exportingFormat === 'json_complet' ? 'Génération de l’archive scellée...' : 'Télécharger l’Archive Intégrale (.JSON)'}
+                          </button>
+                      </div>
+                  </div>
+              </>
+          );
+      }
+      case 'tpe': return (<>
                   <div className="carte scan-carte">
                     <span style={{fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px'}}>Connectez votre lecteur de carte physique au logiciel de caisse.</span>
                     <input type="text" className="input-fournisseur" placeholder="Identifiant du lecteur (ex: tmr_...)" value={configSalon.stripe_reader_id || ''} onChange={(e) => setConfigSalon({...configSalon, stripe_reader_id: e.target.value})} />
