@@ -8049,80 +8049,119 @@ async function genererBufferLiassePdf(id_salon, mois_annee) {
             }
         }
 
-        // --- 6. MENTIONS LÉGALES & VALIDATION ---
-        currentY += 24;
-        if (currentY > 565) { doc.addPage(); currentY = 40; }
+        // --- 6. MENTIONS LÉGALES & VALIDATION (AVEC ANTI-CHEVAUCHEMENT DE BAS DE PAGE) ---
+        currentY += 18;
+        if (currentY > 545) { doc.addPage(); currentY = 40; }
         
-        doc.rect(40, currentY, 515, 82).fillAndStroke('#f9fafb', BORDER_COLOR);
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text('MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances - NF525)', 50, currentY + 9);
-        doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+        doc.roundedRect(40, currentY, 515, 78, 5).fillAndStroke('#f9fafb', BORDER_COLOR);
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MAIN_COLOR).text(
+            'MENTIONS LÉGALES ET CONFORMITÉ (Loi de Finances - Norme NF525)',
+            50, currentY + 8, { width: 495, lineBreak: false }
+        );
+        doc.font('Helvetica').fontSize(7.8).fillColor(SEC_COLOR).text(
             "• L'éditeur du logiciel STACK v1.0 atteste que ce système satisfait aux conditions d'inaltérabilité, de sécurisation, de conservation et d'archivage des données en vue du contrôle de l'administration fiscale, prévues au 3° bis du I de l'article 286 du CGI.\n" +
             "• Conservation : Les pièces fiscales doivent être conservées 6 ans, et les documents comptables 10 ans.\n" +
             "• RGPD : Les motifs médicaux exacts des arrêts de travail ont été masqués sur ce document de transmission comptable.\n" +
             "• Dépenses : Je confirme l'exactitude des frais déclarés et m'engage à fournir les justificatifs non-scannés à mon comptable.",
-            50, currentY + 23, { width: 495, lineGap: 1.8 }
+            50, currentY + 21, { width: 495, lineGap: 1.5 }
         );
 
-        currentY += 94;
+        currentY += 90;
+        if (currentY + 130 > 790) { doc.addPage(); currentY = 40; }
 
         // --- BLOC "BON POUR TRANSMISSION COMPTABLE & SIGNATURE SCELLÉE NF525" ---
         if (estMoisCloture) {
             const dateValidationScellee = validationRes.rows[0].date_validation ? new Date(validationRes.rows[0].date_validation) : today;
             const signataireScelle = validationRes.rows[0].valide_par || nomGerant;
             const sigBase64 = validationRes.rows[0].signature_base64 || null;
+            const hashL1 = (fullHashArchive || '').substring(0, 32);
+            const hashL2 = (fullHashArchive || '').substring(32, 64);
 
-            doc.roundedRect(40, currentY, 515, 118, 6).fillAndStroke('#f0fdf4', '#16a34a');
+            // Cadre principal vert certifié (515 x 122 pt)
+            doc.roundedRect(40, currentY, 515, 122, 6).fillAndStroke('#f0fdf4', '#16a34a');
 
-            // Colonne gauche : Informations du signataire et empreinte cryptographique NF525
-            doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#166534').text("BON POUR TRANSMISSION COMPTABLE — LIASSE CERTIFIÉE", 52, currentY + 10);
-            doc.font('Helvetica-Bold').fontSize(9).fillColor(MAIN_COLOR).text(`Signataire (${titreDirigeant}) : ${signataireScelle}`, 52, currentY + 28);
-            doc.font('Helvetica').fontSize(8.5).fillColor(SEC_COLOR).text(
-                `Certifié le : ${dateValidationScellee.toLocaleDateString('fr-FR')} à ${dateValidationScellee.toLocaleTimeString('fr-FR')} (Code PIN vérifié)`,
-                52, currentY + 42
+            // Bandeau de titre pleine largeur en haut du cadre (évite toute collision avec la boîte de droite)
+            doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#166534').text(
+                "BON POUR TRANSMISSION COMPTABLE — LIASSE CERTIFIÉE & SIGNÉE NF525",
+                52, currentY + 9, { width: 490, lineBreak: false }
             );
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor(MAIN_COLOR).text(
-                "Mention : « Bon pour accord — Certifié sincère, véritable et conforme aux écritures »",
-                52, currentY + 56, { width: 268 }
-            );
-            doc.font('Helvetica-Bold').fontSize(7).fillColor('#166534').text("SCEAU D'INTÉGRITÉ SHA-256 (NF525) :", 52, currentY + 74);
-            doc.font('Courier-Bold').fontSize(6.8).fillColor(MAIN_COLOR).text(fullHashArchive, 52, currentY + 84, { width: 270 });
-            doc.font('Helvetica').fontSize(7).fillColor(SEC_COLOR).text(`Réf. Archive : ${numeroArchive}`, 52, currentY + 102);
+            doc.moveTo(52, currentY + 24).lineTo(543, currentY + 24).lineWidth(0.6).strokeColor('#bbf7d0').stroke();
 
-            // Colonne droite : Cadre contenant la signature manuscrite du gérant
-            doc.roundedRect(334, currentY + 10, 210, 98, 5).fillAndStroke('#ffffff', '#bbf7d0');
-            doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#166534').text(
-                "SIGNATURE DU DIRIGEANT :",
-                342, currentY + 16, { width: 194, align: 'center' }
+            // Colonne Gauche (x = 52, largeur stricte = 270 pt)
+            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MAIN_COLOR).text(
+                `Signataire (${titreDirigeant}) : ${signataireScelle}`,
+                52, currentY + 32, { width: 270, lineBreak: false }
+            );
+            doc.font('Helvetica').fontSize(8).fillColor(SEC_COLOR).text(
+                `Certifié le : ${dateValidationScellee.toLocaleDateString('fr-FR')} à ${dateValidationScellee.toLocaleTimeString('fr-FR')} (PIN vérifié)`,
+                52, currentY + 45, { width: 270, lineBreak: false }
+            );
+            doc.font('Helvetica-Oblique').fontSize(7.5).fillColor(MAIN_COLOR).text(
+                "« Bon pour accord — Certifié sincère et véritable »",
+                52, currentY + 58, { width: 270, lineBreak: false }
+            );
+            doc.font('Helvetica-Bold').fontSize(7).fillColor('#166534').text(
+                "SCEAU D'INTÉGRITÉ SHA-256 (NF525) :",
+                52, currentY + 72, { width: 270, lineBreak: false }
+            );
+            doc.font('Courier-Bold').fontSize(7).fillColor(MAIN_COLOR).text(
+                `${hashL1}\n${hashL2}`,
+                52, currentY + 82, { width: 270, lineGap: 1 }
+            );
+            doc.font('Helvetica-Bold').fontSize(7.2).fillColor(SEC_COLOR).text(
+                `Réf. Archive : ${numeroArchive}`,
+                52, currentY + 105, { width: 270, lineBreak: false }
+            );
+
+            // Colonne Droite : Encadré blanc dédié à la signature manuscrite (x = 335, y = currentY + 30, w = 208, h = 84)
+            doc.roundedRect(335, currentY + 30, 208, 84, 5).fillAndStroke('#ffffff', '#86efac');
+            doc.font('Helvetica-Bold').fontSize(7).fillColor('#166534').text(
+                "SIGNATURE MANUSCRITE DU DIRIGEANT",
+                335, currentY + 35, { width: 208, align: 'center', lineBreak: false }
             );
 
             if (sigBase64 && sigBase64.includes('base64,')) {
                 try {
                     const cleanBase64 = sigBase64.split('base64,')[1];
                     const sigBuffer = Buffer.from(cleanBase64, 'base64');
-                    doc.image(sigBuffer, 346, currentY + 28, {
-                        fit: [186, 56],
+                    doc.image(sigBuffer, 345, currentY + 45, {
+                        fit: [188, 52],
                         align: 'center',
                         valign: 'center'
                     });
                 } catch (errImg) {
-                    doc.font('Helvetica-BoldOblique').fontSize(11).fillColor(MAIN_COLOR).text(signataireScelle, 342, currentY + 48, { width: 194, align: 'center' });
+                    doc.font('Helvetica-BoldOblique').fontSize(10.5).fillColor(MAIN_COLOR).text(
+                        signataireScelle,
+                        335, currentY + 64, { width: 208, align: 'center', lineBreak: false }
+                    );
                 }
             } else {
-                doc.font('Helvetica-BoldOblique').fontSize(11).fillColor(MAIN_COLOR).text(signataireScelle, 342, currentY + 48, { width: 194, align: 'center' });
+                doc.font('Helvetica-BoldOblique').fontSize(10.5).fillColor(MAIN_COLOR).text(
+                    signataireScelle,
+                    335, currentY + 64, { width: 208, align: 'center', lineBreak: false }
+                );
             }
 
-            doc.font('Helvetica-Oblique').fontSize(6.8).fillColor(SEC_COLOR).text(
-                "Signature scellée électroniquement (Art. 1367 C. civ. & NF525)",
-                342, currentY + 92, { width: 194, align: 'center' }
+            doc.font('Helvetica-Oblique').fontSize(6.5).fillColor(SEC_COLOR).text(
+                "Scellée électroniquement (Art. 1367 C. civ. & NF525)",
+                335, currentY + 102, { width: 208, align: 'center', lineBreak: false }
             );
+            currentY += 128;
         } else {
-            doc.roundedRect(40, currentY, 515, 90, 6).fillAndStroke('#fff7ed', '#ea580c');
-            doc.font('Helvetica-Bold').fontSize(11).fillColor(MAIN_COLOR).text("BON POUR TRANSMISSION COMPTABLE", 52, currentY + 12);
-            doc.font('Helvetica-Bold').fontSize(13).fillColor('#ea580c').text("DOCUMENT PROVISOIRE (BROUILLON) — NON SIGNÉ", 52, currentY + 38, { width: 490, align: 'center' });
-            doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(SEC_COLOR).text(
-                "Ce document doit être validé et signé par le gérant dans l'onglet Comptabilité pour acquérir sa valeur définitive NF525.",
-                52, currentY + 62, { width: 490, align: 'center' }
+            doc.roundedRect(40, currentY, 515, 86, 6).fillAndStroke('#fff7ed', '#ea580c');
+            doc.font('Helvetica-Bold').fontSize(10.5).fillColor(MAIN_COLOR).text(
+                "BON POUR TRANSMISSION COMPTABLE",
+                52, currentY + 12, { width: 490, lineBreak: false }
             );
+            doc.font('Helvetica-Bold').fontSize(12.5).fillColor('#ea580c').text(
+                "DOCUMENT PROVISOIRE (BROUILLON) — NON SIGNÉ",
+                52, currentY + 36, { width: 490, align: 'center', lineBreak: false }
+            );
+            doc.font('Helvetica-Oblique').fontSize(8).fillColor(SEC_COLOR).text(
+                "Ce document doit être validé et signé par le gérant dans l'onglet Comptabilité pour acquérir sa valeur définitive NF525.",
+                52, currentY + 58, { width: 490, align: 'center', lineBreak: false }
+            );
+            currentY += 94;
         }
 
         // --- PAGINATION DYNAMIQUE (Correction : ancrage absolu sans saut de page) ---
@@ -8804,86 +8843,108 @@ async function executerRobotMarketingEtPredictif() {
 // =========================================================================
 // --- WORKFLOW COMPTABLE : ENVOI ET VALIDATION ---
 // =========================================================================
-async function envoyerBilanComptable(id_salon, mois_annee) {
+async function envoyerBilanComptable(id_salon, mois_annee = null) {
     try {
-        const today = new Date(); // <--- AJOUTE CETTE LIGNE ICI
-        const salonRes = await pool.query("SELECT * FROM configuration_salon WHERE id_salon = $1", [id_salon]);
-        if (salonRes.rowCount === 0) return;
-        const salon = salonRes.rows[0];
-        
-        if (!salon.email_comptable || !salon.email_reception_factures || !salon.mot_de_passe_app_email) return;
-
-        const [year, month] = mois_annee.split('-');
-        const firstDayPrevMonth = new Date(year, parseInt(month) - 1, 1);
-        const lastDayPrevMonth = new Date(year, parseInt(month), 0);
-        
-        const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const dateDebutStr = formatYMD(firstDayPrevMonth);
-        const dateFinStr = formatYMD(lastDayPrevMonth);
-
-        const facturesResult = await pool.query(`SELECT nom_fournisseur, TO_CHAR(date_traitement, 'DD/MM/YYYY') as date, montant_ttc FROM factures_fournisseurs WHERE id_salon = $1 AND DATE(date_traitement) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
-        const caResult = await pool.query(`SELECT COALESCE(SUM(total_ttc), 0) as ca_total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3`, [id_salon, dateDebutStr, dateFinStr]);
-        const caParMethodeResult = await pool.query(`SELECT methode_paiement, COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND DATE(date_creation) BETWEEN $2 AND $3 GROUP BY methode_paiement`, [id_salon, dateDebutStr, dateFinStr]);
-        const rhResult = await pool.query(`SELECT e.nom, COALESCE(SUM(c.montant_commission), 0) as total_prime FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 AND DATE(c.date_creation) BETWEEN $2 AND $3 WHERE e.id_salon = $1 GROUP BY e.nom`, [id_salon, dateDebutStr, dateFinStr]);
-        const absencesResult = await pool.query(`SELECT a.type_demande, a.nature_absence, a.date_debut, a.date_fin, a.fichier_cle_r2, e.nom as nom_employe FROM absences_employes a JOIN employes e ON a.id_employe = e.id_employe WHERE a.id_salon = $1 AND a.statut = 'VALIDE' AND a.date_debut <= $3 AND a.date_fin >= $2 ORDER BY e.nom ASC, a.date_debut ASC`, [id_salon, dateDebutStr, dateFinStr]);
-
-        const caTotal = parseFloat(caResult.rows[0].ca_total);
-
-        // --- GÉNÉRATION DU FEC (Moteur unifié normé Art. A.47 A-1 LPF) ---
-        let fecContent = null;
-        let nomFichierFec = `FEC_${salon.id_salon}_${dateDebutStr.replace(/-/g, '')}_${dateFinStr.replace(/-/g, '')}.txt`;
-        try {
-            const fecData = await construireContenuFEC(id_salon, dateDebutStr, dateFinStr);
-            if (fecData && fecData.nbLignes > 0) {
-                fecContent = fecData.fecContent;
-                nomFichierFec = fecData.nomFichier;
+        // 1. Si aucun mois_annee n'est fourni (ex: exécution automatique le X du mois par le CRON),
+        //    on cible automatiquement le mois qui vient de s'écouler (M-1).
+        let moisCible = mois_annee;
+        if (!moisCible) {
+            const now = new Date();
+            let prevM = now.getMonth(); // 0 = Janvier -> mois précédent = 12 (Décembre N-1)
+            let prevY = now.getFullYear();
+            if (prevM === 0) {
+                prevM = 12;
+                prevY -= 1;
             }
-        } catch(e) { console.error(`Erreur génération FEC pour le salon ${id_salon}:`, e); }
-
-        // --- GÉNÉRATION DU PDF DÉTAILLÉ ET ENVOI ---
-        try {
-            // L'appel magique : on génère le même document ultra-détaillé que la prévisualisation !
-            const { buffer, numeroArchive, firstDayOfMonth, lastDayOfMonth } = await genererBufferLiassePdf(id_salon, mois_annee);
-            
-            let transporter = nodemailer.createTransport({ 
-                host: 'smtp.gmail.com', port: 465, secure: true, 
-                auth: { user: salon.email_reception_factures, pass: dechiffrer(salon.mot_de_passe_app_email) } 
-            });
-            const libelleMois = firstDayOfMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
-            
-            const attachments = [
-                { filename: `Liasse_Comptable_${numeroArchive}.pdf`, content: buffer }
-            ];
-            
-            // Le fichier texte FEC normé DGFiP (SIRENFECYYYYMMDD.txt en UTF-8) est joint à l'email
-            if (fecContent) {
-                attachments.push({
-                    filename: nomFichierFec,
-                    content: fecContent,
-                    contentType: 'text/plain; charset=utf-8'
-                });
-            }
-
-            let textBody = `Bonjour,\n\nVeuillez trouver en pièce jointe la liasse comptable de ${salon.nom_salon} pour la période du ${firstDayOfMonth.toLocaleDateString('fr-FR')} au ${lastDayOfMonth.toLocaleDateString('fr-FR')}.\nCe document a été vérifié et signé électroniquement par le gérant.\n\n`;
-            if (fecContent) textBody += `Le fichier FEC (Fichier des Écritures Comptables) est également joint, prêt à être importé dans votre logiciel.\n\n`;
-            textBody += `Cordialement,`;
-
-            await transporter.sendMail({
-                from: `"${salon.nom_salon}" <${salon.email_reception_factures}>`, 
-                to: salon.email_comptable, 
-                subject: `✅ Liasse Comptable Mensuelle Validée - ${salon.nom_salon} (${libelleMois})`, 
-                text: textBody,
-                attachments: attachments
-            });
-        } catch (erreurEnvoi) {
-            console.error(`Erreur envoi email comptable pour le salon ${id_salon}:`, erreurEnvoi);
+            moisCible = `${prevY}-${String(prevM).padStart(2, '0')}`;
         }
 
+        // 2. Lecture des paramètres du salon
+        const confRes = await pool.query(
+            `SELECT nom_salon, email_comptable, email_reception_factures, brevo_api_key
+             FROM configuration_salon WHERE id_salon = $1`,
+            [id_salon]
+        );
+        const conf = confRes.rows[0] || {};
+        const emailComptable = (conf.email_comptable || '').trim();
+
+        if (!emailComptable) {
+            console.log(`ℹ️ [Compta Salon #${id_salon}] Aucun email_comptable renseigné, envoi ignoré.`);
+            return { sent: false, reason: "Aucune adresse e-mail comptable configurée." };
+        }
+
+        // 3. Génération du Buffer PDF de la Liasse Mensuelle
+        const { buffer, numeroArchive, nomDuSalon, firstDayOfMonth, estMoisCloture } = await genererBufferLiassePdf(id_salon, moisCible);
+        const periodeLabel = firstDayOfMonth.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+        const nomFichierPdf = `Liasse_Comptable_${(nomDuSalon || 'Salon').replace(/[^a-zA-Z0-9_-]/g, '_')}_${moisCible}.pdf`;
+        const pdfBase64 = buffer.toString('base64');
+
+        // 4. Clé API Brevo (Priorité à la clé globale Render process.env.BREVO_API_KEY, sinon celle du salon)
+        const brevoKey = (process.env.BREVO_API_KEY || conf.brevo_api_key || '').trim();
+        const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_EXPEDITEUR || 'contact@stack-app.fr').trim();
+        const replyToEmail = (conf.email_reception_factures || senderEmail).trim();
+
+        const sujetMail = `${estMoisCloture ? '[CERTIFIÉE NF525]' : '[BROUILLON]'} Liasse Comptable Mensuelle — ${nomDuSalon} (${periodeLabel})`;
+        const htmlBody = `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #111827; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 14px;">
+                <h2 style="margin: 0 0 8px 0; font-size: 18px; color: #111827;">Transmission de la Liasse Comptable Mensuelle</h2>
+                <p style="margin: 0 0 16px 0; font-size: 13.5px; color: #4b5563;">
+                    Bonjour,<br/><br/>
+                    Veuillez trouver ci-joint la liasse comptable mensuelle de l'établissement <strong>${nomDuSalon}</strong> pour la période de <strong>${periodeLabel}</strong>.
+                </p>
+                <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; font-size: 12.5px; color: #374151; margin-bottom: 16px;">
+                    <div><strong>Établissement :</strong> ${nomDuSalon}</div>
+                    <div><strong>Période :</strong> ${periodeLabel} (${moisCible})</div>
+                    <div><strong>Statut du document :</strong> ${estMoisCloture ? 'DÉFINITIF — Certifié, signé par le dirigeant et scellé SHA-256 (NF525)' : 'Brouillon provisoire'}</div>
+                    <div><strong>Référence d'archive :</strong> ${numeroArchive}</div>
+                </div>
+                <p style="margin: 0; font-size: 12px; color: #6b7280;">
+                    Ce document inclut la ventilation du chiffre d'affaires HT/TVA/TTC, le rapprochement bancaire et de caisse espèces, le journal des dépenses ventilé par compte PCG, les variables de paie RH et l'historique des clôtures Z scellées NF525.
+                </p>
+            </div>
+        `;
+
+        // 5. Envoi via HTTPS (Port 443 — Jamais bloqué par Render)
+        if (brevoKey) {
+            const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+                method: 'POST',
+                headers: {
+                    'accept': 'application/json',
+                    'api-key': brevoKey,
+                    'content-type': 'application/json'
+                },
+                body: JSON.stringify({
+                    sender: { name: `${nomDuSalon} (via STACK Compta)`, email: senderEmail },
+                    replyTo: { email: replyToEmail, name: nomDuSalon },
+                    to: [{ email: emailComptable, name: 'Expert-Comptable' }],
+                    subject: sujetMail,
+                    htmlContent: htmlBody,
+                    attachment: [
+                        {
+                            name: nomFichierPdf,
+                            content: pdfBase64
+                        }
+                    ]
+                })
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error(`❌ [Brevo HTTP API] Échec envoi liasse salon #${id_salon}:`, errText);
+                return { sent: false, reason: `Erreur API Brevo (${response.status})` };
+            }
+
+            console.log(`✅ [Brevo HTTP API] Liasse ${moisCible} envoyée avec succès à ${emailComptable} (Salon #${id_salon})`);
+            return { sent: true, email: emailComptable };
+        }
+
+        console.warn(`⚠️ [Compta Salon #${id_salon}] Aucune clé BREVO_API_KEY trouvée sur Render ou dans les paramètres du salon.`);
+        return { sent: false, reason: "Clé API Brevo manquante." };
     } catch (err) {
-        console.error("Erreur génération liasse comptable globale :", err);
+        console.error(`❌ Erreur envoyerBilanComptable (Salon #${id_salon}):`, err.message);
+        return { sent: false, reason: err.message };
     }
 }
-
 app.post('/api/compta/valider-mois', verifierToken, async (req, res) => {
     const { mois_annee, code_pin, signature_base64 } = req.body; // YYYY-MM attendu + signature manuscrite Base64
     const id_salon = req.user.id_salon;
