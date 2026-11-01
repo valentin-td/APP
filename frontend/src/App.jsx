@@ -4825,6 +4825,44 @@ function App() {
                             })}
                           </div>
 
+                          {(mesSalonsGroupe.salons || []).length > 1 && !showFormNouveauSalon && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const res = await fetch('https://api-salon-backend.onrender.com/api/mes-salons/synchroniser-catalogue', {
+                                    method: 'POST',
+                                    headers: getAuthHeaders(true),
+                                    credentials: 'include'
+                                  });
+                                  const data = await handleFetchError(res);
+                                  showToast(data.message, "success");
+                                } catch (e) {
+                                  showToast(e.message || "Erreur de synchronisation.", "error");
+                                }
+                              }}
+                              style={{
+                                width: '100%',
+                                marginBottom: '10px',
+                                padding: '11px 14px',
+                                borderRadius: '12px',
+                                border: '1px solid var(--border-color)',
+                                background: 'var(--bg-card)',
+                                color: 'var(--text-main)',
+                                fontWeight: '700',
+                                fontSize: '12.5px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px'
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                              <span>Propager le catalogue & les recettes de ce salon vers mes autres adresses</span>
+                            </button>
+                          )}
+
                           {/* Bouton ou Formulaire de création d'une nouvelle succursale */}
                           {!showFormNouveauSalon ? (
                             <button
