@@ -4727,6 +4727,127 @@ app.post('/api/mes-salons/switch/:id_salon_cible', verifierToken, async (req, re
         res.status(500).json({ erreur: "Erreur lors du changement d'établissement." });
     }
 });
+// 4. SYNCHRONISER LE CATALOGUE & LES TUTORIELS ACADÉMIE DU SALON ACTUEL VERS LES AUTRES SALONS DU GROUPE
+app.post('/api/mes-salons/synchroniser-catalogue', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Seul le gérant peut synchroniser le catalogue du groupe." });
+    }
+
+    const clientDB = await pool.connect();
+    try {
+        await clientDB.query('BEGIN');
+        const emailGerant = await resoudreEmailGerant(clientDB, req.user);
+        await assurerTableMultiSalons(clientDB, emailGerant, req.user.id_salon);
+
+        const ciblesRes = await clientDB.query(
+            `SELECT id_salon FROM gerants_multi_salons WHERE email_gerant = $1 AND id_salon != $2`,
+            [emailGerant, req.user.id_salon]
+        );
+        if (ciblesRes.rowCount === 0) {
+            await clientDB.query('ROLLBACK');
+            return res.status(400).json({ erreur: "Aucune autre succursale à synchroniser." });
+        }
+
+        const catSource = await clientDB.query(
+            `SELECT * FROM catalogue WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+        const protoSource = await clientDB.query(
+            `SELECT * FROM protocoles WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+
+        let nbArticlesSync = 0;
+        let nbProtosSync = 0;
+
+        for (const rowCible of ciblesRes.rows) {
+            const idCible = rowCible.id_salon;
+            const mapSourceVersCible = new Map();
+
+            // 1. Synchronisation des articles du catalogue (mise à jour du prix/durée si même nom, sinon création avec stock = 0)
+            for (const art of catSource.rows) {
+                const existArt = await clientDB.query(
+                    `SELECT id_article FROM catalogue
+                     WHERE id_salon = $1 AND LOWER(TRIM(nom)) = LOWER(TRIM($2)) AND type_article = $3
+                     LIMIT 1`,
+                    [idCible, art.nom, art.type_article]
+                );
+
+                if (existArt.rowCount > 0) {
+                    const idArtCible = existArt.rows[0].id_article;
+                    await clientDB.query(
+                        `UPDATE catalogue
+                         SET prix = $1, duree_estimee_minutes = $2, delai_livraison_jours = $3, reference = COALESCE($4, reference)
+                         WHERE id_article = $5`,
+                        [art.prix, art.duree_estimee_minutes || 30, art.delai_livraison_jours || 3, art.reference || null, idArtCible]
+                    );
+                    mapSourceVersCible.set(Number(art.id_article), idArtCible);
+                } else {
+                    const ins = await clientDB.query(
+                        `INSERT INTO catalogue (id_salon, nom, type_article, prix, taux_tva, stock_actuel, reference, delai_livraison_jours, duree_estimee_minutes)
+                         VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8) RETURNING id_article`,
+                        [idCible, art.nom, art.type_article, art.prix, art.taux_tva ?? 20, art.reference || null, art.delai_livraison_jours || 3, art.duree_estimee_minutes || 30]
+                    );
+                    mapSourceVersCible.set(Number(art.id_article), ins.rows[0].id_article);
+                    nbArticlesSync++;
+                }
+            }
+
+            // 2. Synchronisation des protocoles de l'Académie
+            for (const pr of protoSource.rows) {
+                const existPr = await clientDB.query(
+                    `SELECT id_protocole FROM protocoles
+                     WHERE id_salon = $1 AND LOWER(TRIM(nom_prestation)) = LOWER(TRIM($2))
+                     LIMIT 1`,
+                    [idCible, pr.nom_prestation]
+                );
+
+                const etapesRemappees = Array.isArray(pr.etapes)
+                    ? pr.etapes.map(et => {
+                        if (!et || typeof et !== 'object') return et;
+                        const ings = Array.isArray(et.ingredients)
+                            ? et.ingredients.map(ing => ({
+                                ...ing,
+                                id_article: mapSourceVersCible.get(Number(ing.id_article)) || ing.id_article
+                            }))
+                            : [];
+                        return { ...et, ingredients: ings };
+                    })
+                    : [];
+
+                if (existPr.rowCount === 0) {
+                    await clientDB.query(
+                        `INSERT INTO protocoles (id_salon, nom_prestation, description, etapes, medias, tags, delai_livraison_jours, temps_nettoyage_minutes)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                        [
+                            idCible,
+                            pr.nom_prestation,
+                            pr.description,
+                            JSON.stringify(etapesRemappees),
+                            JSON.stringify(pr.medias || {}),
+                            JSON.stringify(pr.tags || []),
+                            pr.delai_livraison_jours || 3,
+                            pr.temps_nettoyage_minutes || 0
+                        ]
+                    );
+                    nbProtosSync++;
+                }
+            }
+        }
+
+        await clientDB.query('COMMIT');
+        res.json({
+            message: `Catalogue et Académie synchronisés vers ${ciblesRes.rowCount} succursale(s) (${nbArticlesSync} nouvel(s) article(s), ${nbProtosSync} nouvelle(s) recette(s)).`
+        });
+    } catch (e) {
+        await clientDB.query('ROLLBACK');
+        console.error("Erreur synchro catalogue groupe :", e);
+        res.status(500).json({ erreur: "Erreur lors de la synchronisation du catalogue." });
+    } finally {
+        clientDB.release();
+    }
+});
+
 
 // =========================================================================
 // --- EXPORT & PORTABILITÉ DES DONNÉES (RGPD ART. 20 / CGU ART. 7 / NF525) ---
