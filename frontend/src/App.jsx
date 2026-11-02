@@ -4594,7 +4594,7 @@ function App() {
                           {renderAvatar(monProfilEmp?.photo_url, monProfilEmp?.nom || 'Collaborateur', 46)}
                           <div>
                             <h1 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>Bonjour {(monProfilEmp?.nom || 'Collaborateur').split(' ')[0]}</h1>
-                            <span className="date-subtitle" style={{ margin: 0 }}>Synthèse personnelle du mois en cours</span>
+                            <span className="date-subtitle" style={{ margin: 0 }}></span>
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -4624,7 +4624,7 @@ function App() {
                           <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0' }}>
                             {employeDashboardData?.nb_clients_mois ?? '—'}
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Sur le mois en cours</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
                         </div>
 
                         <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
@@ -4632,7 +4632,7 @@ function App() {
                           <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--color-success)', margin: '10px 0 4px 0' }}>
                             {(employeDashboardData?.commission_mois ?? 0).toFixed(2)} <span style={{ fontSize: '18px' }}>€</span>
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Cumul HT du mois en cours</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
                         </div>
 
                         <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
@@ -4640,7 +4640,7 @@ function App() {
                           <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0' }}>
                             {employeDashboardData?.nb_produits_vendus ?? 0}
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Reventes enregistrées en caisse</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
                         </div>
                       </div>
 
@@ -8442,7 +8442,7 @@ function App() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                       <div>
                           <h1 style={{ margin: 0 }}>Mon Activité & Relevés</h1>
-                          <span className="date-subtitle" style={{ margin: 0 }}>Historique de mon chiffre d'affaires et bilans journaliers</span>
+                          <span className="date-subtitle" style={{ margin: 0 }}></span>
                       </div>
                       <ThemeToggle />
                   </div>
