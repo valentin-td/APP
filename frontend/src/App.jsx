@@ -5916,7 +5916,7 @@ function App() {
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
                           <div>
                               <h1 style={{margin: 0}}>Centre d'Action</h1>
-                              <span className="date-subtitle" style={{margin: 0}}>Pilotez vos urgences administratives</span>
+                              <span className="date-subtitle" style={{margin: 0}}></span>
                           </div>
                           <ThemeToggle />
                       </div>
@@ -5932,7 +5932,7 @@ function App() {
                                       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-main)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                                       <h3 style={{ margin: 0, color: 'var(--text-main)', fontSize: '15px' }}>Factures & Dépenses</h3>
                                   </div>
-                                  <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>Alimentez la comptabilité par saisie manuelle ou analyse automatique IA.</span>
+                                  <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}></span>
                               </div>
                               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', flex: '1 1 300px', justifyContent: 'flex-end' }}>
                                   <button
@@ -6627,7 +6627,7 @@ function App() {
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '12px'}}>
                           <div>
                               <h1 style={{margin: 0}}>L'Académie</h1>
-                              <span className="date-subtitle" style={{margin: 0}}>Tutoriels pas-à-pas, dosages laboratoire & fiches techniques</span>
+                              <span className="date-subtitle" style={{margin: 0}}></span>
                           </div>
                           <div style={{display: 'flex', gap: isMobile ? '8px' : '12px', alignItems: 'center'}}>
                               <ThemeToggle />
@@ -7284,7 +7284,7 @@ function App() {
                   {/* EN-TÊTE FIXE */}
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-                          <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}>Gestion intelligente des stocks</span></div>
+                          <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}></span></div>
                           <div style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
                               <ThemeToggle />
                               <button 
@@ -7468,7 +7468,7 @@ function App() {
                           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', marginBottom: '16px', flexDirection: isMobile ? 'column' : 'row', gap: '12px'}}>
                               <div>
                                   <h1 style={{margin: 0}}>Équipe & Ressources Humaines</h1>
-                                  <span className="date-subtitle" style={{margin: 0}}>Pilotage des performances, commissions et temps de travail</span>
+                                  <span className="date-subtitle" style={{margin: 0}}></span>
                               </div>
 
                               <div style={{display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'space-between' : 'flex-end'}}>
@@ -7529,19 +7529,19 @@ function App() {
                           <div className="carte" style={{padding: '16px 18px', marginBottom: 0}}>
                               <span style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em'}}>Volume CA Équipe</span>
                               <div style={{fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: 'var(--text-main)', marginTop: '6px'}}>{totalCaEquipe.toFixed(0)} <span style={{fontSize: '14px', color: 'var(--text-secondary)'}}>€</span></div>
-                              <span style={{fontSize: '11.5px', color: 'var(--text-muted)'}}>Ventes attribuées</span>
+                              <span style={{fontSize: '11.5px', color: 'var(--text-muted)'}}></span>
                           </div>
                           <div className="carte" style={{padding: '16px 18px', marginBottom: 0}}>
                               <span style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em'}}>Enveloppe Primes</span>
                               <div style={{fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: 'var(--color-success)', marginTop: '6px'}}>{totalPrimesEquipe.toFixed(2)} <span style={{fontSize: '14px'}}>€</span></div>
-                              <span style={{fontSize: '11.5px', color: 'var(--text-muted)'}}>Commissions HT cumulées</span>
+                              <span style={{fontSize: '11.5px', color: 'var(--text-muted)'}}></span>
                           </div>
                           <div className="carte" style={{padding: '16px 18px', marginBottom: 0}}>
                               <span style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em'}}>
                                   Heures ({rhPeriodeHeures === 'aujourdhui' ? 'Jour' : rhPeriodeHeures === 'semaine' ? 'Semaine' : 'Mois'})
                               </span>
                               <div style={{fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: 'var(--text-main)', marginTop: '6px'}}>{totalHeuresPeriode.toFixed(1)} <span style={{fontSize: '14px', color: 'var(--text-secondary)'}}>h</span></div>
-                              <span style={{fontSize: '11.5px', color: 'var(--text-muted)'}}>Temps salarié enregistré</span>
+                              <span style={{fontSize: '11.5px', color: 'var(--text-muted)'}}></span>
                           </div>
                       </div>
 
@@ -8506,7 +8506,7 @@ function App() {
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
                           <div>
                               <h1 style={{margin: 0}}>Messagerie</h1>
-                              <span className="date-subtitle" style={{margin: 0}}>Échanges d'équipe sécurisés</span>
+                              <span className="date-subtitle" style={{margin: 0}}></span>
                           </div>
                           <ThemeToggle />
                       </div>
