@@ -784,15 +784,36 @@ function App() {
 
   const [toast, setToast] = useState(null);
 
-  // Intercepte les retours de Stripe pour afficher un message
+  // Intercepte les retours de Stripe (Paiement ou Prise d'empreinte CB 0 € à l'installation)
   useEffect(() => {
-      const paiementStatus = urlParams.get('paiement');
-      if (paiementStatus === 'succes') {
-          setToast({ message: "Paiement réussi ! Votre abonnement est activé.", type: 'success' });
-          setTimeout(() => setToast(null), 4000);
-          window.history.replaceState({}, document.title, "/"); // Nettoie l'URL
+      const params = new URLSearchParams(window.location.search);
+      const paiementStatus = params.get('paiement');
+      const sessionId = params.get('session_id');
+      const planUrl = params.get('plan');
+
+      if (paiementStatus === 'succes' || paiementStatus === 'empreinte_ok') {
+          fetch('https://api-salon-backend.onrender.com/api/stripe/confirmer-session', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
+              },
+              body: JSON.stringify({ session_id: sessionId, plan: planUrl })
+          })
+              .then(r => r.ok ? r.json() : null)
+              .then(data => {
+                  setChecklistOnboarding(prev => ({ ...prev, etape_stripe_ok: true }));
+                  if (typeof chargerTout === 'function') chargerTout();
+                  setToast({
+                      message: data?.message || "Empreinte bancaire Stripe validée (0 € aujourd'hui) ! Étape 4 Go-Live cochée.",
+                      type: 'success'
+                  });
+                  setTimeout(() => setToast(null), 5000);
+              })
+              .catch(() => {});
+          window.history.replaceState({}, document.title, "/");
       } else if (paiementStatus === 'annule') {
-          setToast({ message: "Paiement annulé.", type: 'error' });
+          setToast({ message: "Enregistrement de l'empreinte bancaire annulé.", type: 'error' });
           setTimeout(() => setToast(null), 4000);
           window.history.replaceState({}, document.title, "/");
       }
@@ -2000,13 +2021,25 @@ function App() {
       if (socket) socket.disconnect();
   };
 
-  const lancerPaiementStripe = async () => {
+  const [planEmpreinteOnboarding, setPlanEmpreinteOnboarding] = useState('PREMIUM');
+
+  const lancerPaiementStripe = async (planChoisi = 'PREMIUM') => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', { method: 'POST', headers: getAuthHeaders() });
+          const planFinal = typeof planChoisi === 'string' ? planChoisi : planEmpreinteOnboarding;
+          const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', {
+              method: 'POST',
+              headers: getAuthHeaders(true),
+              body: JSON.stringify({ plan: planFinal })
+          });
           const data = await res.json();
-          if(data.url) { window.location.href = data.url; } 
-          else { showToast("Erreur lors de la création du lien de paiement.", "error"); }
-      } catch (e) { showToast("Erreur réseau avec Stripe.", "error"); }
+          if (data.url) {
+              window.location.href = data.url;
+          } else {
+              showToast(data.erreur || "Erreur lors de la création du lien Stripe.", "error");
+          }
+      } catch (e) {
+          showToast("Erreur réseau avec Stripe.", "error");
+      }
   };
 
   const ouvrirFicheClient = async (client) => {
@@ -5504,33 +5537,59 @@ function App() {
                         { key: 'etape_materiel_ok', title: '1. Matériel & Imprimante connectés', desc: 'Tablette/PC configuré et impression ticket testée.' },
                         { key: 'etape_catalogue_ok', title: '2. Catalogue de prestations paramétré', desc: 'Prestations, produits, tarifs TTC et TVA vérifiés.' },
                         { key: 'etape_equipe_ok', title: '3. Collaborateurs & Codes PIN créés', desc: 'Comptes employés actifs pour la pointeuse et la caisse.' },
-                        { key: 'etape_stripe_ok', title: '4. Terminal TPE & Compte reliés', desc: 'Liaison monétique prête pour les paiements.' },
+                        { key: 'etape_stripe_ok', title: '4. Empreinte Bancaire Stripe (0 € aujourd’hui — Essai 30j)', desc: 'Enregistrement sécurisé de la CB sur Stripe (aucun débit avant la fin des 30 jours d’essai gratuit).' },
                         { key: 'etape_formation_ok', title: '5. Formation Clôture Z de caisse effectuée', desc: 'Procédure Blind Close NF525 expliquée au gérant.' }
                       ].map(item => (
-                        <label
+                        <div
                           key={item.key}
                           style={{
                             display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: '12px',
+                            flexDirection: 'column',
+                            gap: '10px',
                             padding: '12px 14px',
                             borderRadius: '14px',
                             border: checklistOnboarding[item.key] ? '1.5px solid #16a34a' : '1px solid var(--border-color, #e5e7eb)',
-                            backgroundColor: checklistOnboarding[item.key] ? 'rgba(22, 163, 74, 0.06)' : 'transparent',
-                            cursor: 'pointer'
+                            backgroundColor: checklistOnboarding[item.key] ? 'rgba(22, 163, 74, 0.06)' : 'transparent'
                           }}
                         >
-                          <input
-                            type="checkbox"
-                            checked={!!checklistOnboarding[item.key]}
-                            onChange={() => basculerEtapeChecklist(item.key)}
-                            style={{ width: '19px', height: '19px', marginTop: '2px', accentColor: '#16a34a', cursor: 'pointer' }}
-                          />
-                          <div>
-                            <div style={{ fontSize: '13.5px', fontWeight: '700', color: 'var(--text-primary, #111827)' }}>{item.title}</div>
-                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{item.desc}</div>
-                          </div>
-                        </label>
+                          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!checklistOnboarding[item.key]}
+                              onChange={() => basculerEtapeChecklist(item.key)}
+                              style={{ width: '19px', height: '19px', marginTop: '2px', accentColor: '#16a34a', cursor: 'pointer' }}
+                            />
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: '13.5px', fontWeight: '700', color: 'var(--text-primary, #111827)' }}>{item.title}</div>
+                              <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{item.desc}</div>
+                            </div>
+                          </label>
+
+                          {item.key === 'etape_stripe_ok' && !checklistOnboarding.etape_stripe_ok && (
+                            <div style={{ paddingLeft: '31px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                              <select
+                                value={planEmpreinteOnboarding}
+                                onChange={e => setPlanEmpreinteOnboarding(e.target.value)}
+                                style={{
+                                  padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-color, #d1d5db)',
+                                  fontSize: '12px', fontWeight: '700', backgroundColor: 'var(--bg-card, #fff)', color: 'var(--text-main, #111827)'
+                                }}
+                              >
+                                <option value="PREMIUM">Après 30j : Premium (99 € HT/m)</option>
+                                <option value="PRO">Après 30j : Pro (69 € HT/m)</option>
+                                <option value="ESSENTIAL">Après 30j : Essential (39 € HT/m)</option>
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => lancerPaiementStripe(planEmpreinteOnboarding)}
+                                className="btn-action"
+                                style={{ padding: '8px 14px', fontSize: '12px', borderRadius: '8px' }}
+                              >
+                                Enregistrer l’empreinte CB (0,00 €) →
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </div>
