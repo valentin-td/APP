@@ -4852,6 +4852,16 @@ app.post('/api/mes-salons/synchroniser-catalogue', verifierToken, async (req, re
 // --- GESTION D'ABONNEMENT : CHANGEMENT DE FORFAIT & RÉSILIATION GUIDÉE ---
 // =========================================================================
 
+async function assurerColonnesAbonnement() {
+    await pool.query(`
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(50) DEFAULT 'PREMIUM_TRIAL';
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS statut_abonnement VARCHAR(50) DEFAULT 'actif';
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS date_fin_essai TIMESTAMP;
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+    `).catch(() => {});
+}
+assurerColonnesAbonnement();
+
 // 1. Changer de forfait (Upgrade ou Downgrade : PREMIUM <-> PRO <-> ESSENTIAL)
 app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') {
@@ -4867,8 +4877,10 @@ app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
     }
 
     try {
+        await assurerColonnesAbonnement();
+
         const curRes = await pool.query(
-            `SELECT plan_actuel, statut_abonnement FROM configuration_salon WHERE id_salon = $1`,
+            `SELECT plan_actuel FROM configuration_salon WHERE id_salon = $1`,
             [req.user.id_salon]
         );
         const ancienPlan = curRes.rows[0]?.plan_actuel || 'PREMIUM_TRIAL';
@@ -4881,23 +4893,27 @@ app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
             [planCible, req.user.id_salon]
         );
 
-        await enregistrerJET(req.user.id_salon, 'CHANGEMENT_FORFAIT_ABONNEMENT', {
-            ancien_plan: ancienPlan,
-            nouveau_plan: planCible,
-            motif: motif || 'Changement depuis les paramètres'
-        });
+        try {
+            if (typeof enregistrerJET === 'function') {
+                await enregistrerJET(req.user.id_salon, 'CHANGEMENT_FORFAIT_ABONNEMENT', {
+                    ancien_plan: ancienPlan,
+                    nouveau_plan: planCible,
+                    motif: motif || 'Changement depuis les paramètres'
+                });
+            }
+        } catch (errJet) {}
 
         res.json({
-            message: `Votre formule a bien été basculée sur le forfait ${planCible}.`,
+            message: `Forfait mis à jour sur STACK ${planCible}.`,
             plan_actuel: planCible
         });
     } catch (e) {
         console.error("Erreur changement forfait :", e);
-        res.status(500).json({ erreur: "Erreur lors de la mise à jour de votre formule." });
+        res.status(500).json({ erreur: e.message || "Erreur lors de la mise à jour de votre formule." });
     }
 });
 
-// 2. Demander la résiliation de l'abonnement (avec conservation de l'accès export NF525)
+// 2. Demander la résiliation de l'abonnement
 app.post('/api/abonnement/resilier', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') {
         return res.status(403).json({ erreur: "Seul le gérant peut résilier l'abonnement du salon." });
@@ -4906,13 +4922,8 @@ app.post('/api/abonnement/resilier', verifierToken, async (req, res) => {
     const { motif_resiliation, commentaire } = req.body;
 
     try {
-        const curRes = await pool.query(
-            `SELECT nom_salon, plan_actuel, date_fin_essai FROM configuration_salon WHERE id_salon = $1`,
-            [req.user.id_salon]
-        );
-        const salon = curRes.rows[0] || {};
+        await assurerColonnesAbonnement();
 
-        // On marque la résiliation en fin de période sans supprimer les données fiscales (obligation 6 ans NF525)
         await pool.query(
             `UPDATE configuration_salon
              SET statut_abonnement = 'resilie_fin_periode'
@@ -4920,40 +4931,41 @@ app.post('/api/abonnement/resilier', verifierToken, async (req, res) => {
             [req.user.id_salon]
         );
 
-        await enregistrerJET(req.user.id_salon, 'DEMANDE_RESILIATION_ABONNEMENT', {
-            plan_lors_resiliation: salon.plan_actuel || 'INCONNU',
-            motif: motif_resiliation || 'Non précisé',
-            commentaire: commentaire || ''
-        });
+        try {
+            if (typeof enregistrerJET === 'function') {
+                await enregistrerJET(req.user.id_salon, 'DEMANDE_RESILIATION_ABONNEMENT', {
+                    motif: motif_resiliation || 'Non précisé',
+                    commentaire: commentaire || ''
+                });
+            }
+        } catch (errJet) {}
 
         res.json({
-            message: "Votre demande de résiliation a été enregistrée. Vos accès restent actifs jusqu'à la fin de votre période en cours et vos exports comptables/NF525 restent garantis.",
+            message: "Résiliation enregistrée pour la fin de période.",
             statut_abonnement: 'resilie_fin_periode'
         });
     } catch (e) {
         console.error("Erreur résiliation abonnement :", e);
-        res.status(500).json({ erreur: "Erreur lors de l'enregistrement de la résiliation." });
+        res.status(500).json({ erreur: e.message || "Erreur lors de l'enregistrement de la résiliation." });
     }
 });
 
-// 3. Réactiver un abonnement en cours de résiliation en 1 clic
+// 3. Réactiver un abonnement en 1 clic
 app.post('/api/abonnement/reactiver', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') {
         return res.status(403).json({ erreur: "Seul le gérant peut réactiver l'abonnement." });
     }
 
     try {
+        await assurerColonnesAbonnement();
+
         await pool.query(
             `UPDATE configuration_salon SET statut_abonnement = 'actif' WHERE id_salon = $1`,
             [req.user.id_salon]
         );
 
-        await enregistrerJET(req.user.id_salon, 'REACTIVATION_ABONNEMENT', {
-            action: 'Annulation de la demande de résiliation par le gérant'
-        });
-
         res.json({
-            message: "Votre abonnement a été réactivé avec succès !",
+            message: "Abonnement réactivé !",
             statut_abonnement: 'actif'
         });
     } catch (e) {
