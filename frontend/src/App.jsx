@@ -5213,8 +5213,8 @@ function App() {
                             <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', maxHeight: isMobile ? 'none' : '540px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '16px', flexShrink: 0 }}>
                                 <div>
-                                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Retours Clients & Winback</h3>
-                                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Suivi des enquêtes de satisfaction et détection des clients insatisfaits</span>
+                                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Retours Clients</h3>
+                                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}></span>
                                 </div>
                                 {npsScore !== null && npsScore !== undefined && (
                                   <div style={{ background: 'var(--bg-app)', padding: '5px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '700', border: '1px solid var(--border-color)', display: 'inline-flex', alignItems: 'center', gap: '6px', flexShrink: 0 }} title="Net Promoter Score (-100 à +100)">
@@ -5322,7 +5322,7 @@ function App() {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                   <div>
                                     <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Meilleures Prestations</h3>
-                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Services générant le plus de chiffre d'affaires</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}></span>
                                   </div>
                                   <button type="button" onClick={() => handleTabClick('protocoles')} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '5px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer' }}>
                                     Catalogue
