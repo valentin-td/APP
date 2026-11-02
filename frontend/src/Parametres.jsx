@@ -255,6 +255,28 @@ const groupesBas = [
   const [commentaireResiliation, setCommentaireResiliation] = useState('');
   const [isUpdatingSub, setIsUpdatingSub] = useState(false);
   const [statutAboLocal, setStatutAboLocal] = useState('actif');
+  const [etatQuotaSms, setEtatQuotaSms] = useState({ sms_utilises: 0, sms_quota: 100, empreinte_cb_validee: false });
+
+  useEffect(() => {
+    const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://api-salon-backend.onrender.com';
+    const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
+    fetch(`${apiBase}/api/abonnement/etat`, {
+      credentials: 'include',
+      headers: tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {}
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d) {
+          setEtatQuotaSms({
+            sms_utilises: d.sms_utilises || 0,
+            sms_quota: d.sms_quota || 100,
+            empreinte_cb_validee: !!d.empreinte_cb_validee
+          });
+          if (d.statut_abonnement) setStatutAboLocal(d.statut_abonnement);
+        }
+      })
+      .catch(() => {});
+  }, [configSalon.plan_actuel]);
 
   const FORFAITS_STACK = [
     {
@@ -1002,6 +1024,11 @@ case 'portabilite': {
           const rangActuel = ordrePlans[codePlanActuel] || 3;
           const slug = (configSalon.nom_salon || 'MonSalon').replace(/[^a-zA-Z0-9_-]/g, '_');
           const dJour = new Date().toISOString().slice(0, 10);
+       
+          <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '700', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)' }}>
+            SMS ce mois : {etatQuotaSms.sms_utilises} / {etatQuotaSms.sms_quota}
+          </span>
+         
 
           return (
               <>
