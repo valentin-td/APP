@@ -4848,6 +4848,119 @@ app.post('/api/mes-salons/synchroniser-catalogue', verifierToken, async (req, re
     }
 });
 
+// =========================================================================
+// --- GESTION D'ABONNEMENT : CHANGEMENT DE FORFAIT & RÉSILIATION GUIDÉE ---
+// =========================================================================
+
+// 1. Changer de forfait (Upgrade ou Downgrade : PREMIUM <-> PRO <-> ESSENTIAL)
+app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Seul le gérant peut modifier le forfait du salon." });
+    }
+
+    const { nouveau_plan, motif } = req.body;
+    const plansAutorises = ['ESSENTIAL', 'PRO', 'PREMIUM'];
+    const planCible = (nouveau_plan || '').toUpperCase().trim();
+
+    if (!plansAutorises.includes(planCible)) {
+        return res.status(400).json({ erreur: "Forfait sélectionné invalide." });
+    }
+
+    try {
+        const curRes = await pool.query(
+            `SELECT plan_actuel, statut_abonnement FROM configuration_salon WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+        const ancienPlan = curRes.rows[0]?.plan_actuel || 'PREMIUM_TRIAL';
+
+        await pool.query(
+            `UPDATE configuration_salon
+             SET plan_actuel = $1,
+                 statut_abonnement = 'actif'
+             WHERE id_salon = $2`,
+            [planCible, req.user.id_salon]
+        );
+
+        await enregistrerJET(req.user.id_salon, 'CHANGEMENT_FORFAIT_ABONNEMENT', {
+            ancien_plan: ancienPlan,
+            nouveau_plan: planCible,
+            motif: motif || 'Changement depuis les paramètres'
+        });
+
+        res.json({
+            message: `Votre formule a bien été basculée sur le forfait ${planCible}.`,
+            plan_actuel: planCible
+        });
+    } catch (e) {
+        console.error("Erreur changement forfait :", e);
+        res.status(500).json({ erreur: "Erreur lors de la mise à jour de votre formule." });
+    }
+});
+
+// 2. Demander la résiliation de l'abonnement (avec conservation de l'accès export NF525)
+app.post('/api/abonnement/resilier', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Seul le gérant peut résilier l'abonnement du salon." });
+    }
+
+    const { motif_resiliation, commentaire } = req.body;
+
+    try {
+        const curRes = await pool.query(
+            `SELECT nom_salon, plan_actuel, date_fin_essai FROM configuration_salon WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+        const salon = curRes.rows[0] || {};
+
+        // On marque la résiliation en fin de période sans supprimer les données fiscales (obligation 6 ans NF525)
+        await pool.query(
+            `UPDATE configuration_salon
+             SET statut_abonnement = 'resilie_fin_periode'
+             WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+
+        await enregistrerJET(req.user.id_salon, 'DEMANDE_RESILIATION_ABONNEMENT', {
+            plan_lors_resiliation: salon.plan_actuel || 'INCONNU',
+            motif: motif_resiliation || 'Non précisé',
+            commentaire: commentaire || ''
+        });
+
+        res.json({
+            message: "Votre demande de résiliation a été enregistrée. Vos accès restent actifs jusqu'à la fin de votre période en cours et vos exports comptables/NF525 restent garantis.",
+            statut_abonnement: 'resilie_fin_periode'
+        });
+    } catch (e) {
+        console.error("Erreur résiliation abonnement :", e);
+        res.status(500).json({ erreur: "Erreur lors de l'enregistrement de la résiliation." });
+    }
+});
+
+// 3. Réactiver un abonnement en cours de résiliation en 1 clic
+app.post('/api/abonnement/reactiver', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') {
+        return res.status(403).json({ erreur: "Seul le gérant peut réactiver l'abonnement." });
+    }
+
+    try {
+        await pool.query(
+            `UPDATE configuration_salon SET statut_abonnement = 'actif' WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+
+        await enregistrerJET(req.user.id_salon, 'REACTIVATION_ABONNEMENT', {
+            action: 'Annulation de la demande de résiliation par le gérant'
+        });
+
+        res.json({
+            message: "Votre abonnement a été réactivé avec succès !",
+            statut_abonnement: 'actif'
+        });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lors de la réactivation." });
+    }
+});
+
 
 // =========================================================================
 // --- EXPORT & PORTABILITÉ DES DONNÉES (RGPD ART. 20 / CGU ART. 7 / NF525) ---
