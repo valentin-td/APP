@@ -8012,7 +8012,7 @@ function App() {
                               <div style={{ fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: soldePetiteCaisseJour > 0 ? 'var(--color-success)' : soldePetiteCaisseJour < 0 ? 'var(--color-danger)' : 'var(--text-main)', marginTop: '6px' }}>
                                   {soldePetiteCaisseJour > 0 ? '+' : ''}{soldePetiteCaisseJour.toFixed(2)} <span style={{ fontSize: '14px' }}>€</span>
                               </div>
-                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>{(mouvementsCaisse || []).length} mouvement(s) hors ventes</span>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
                           </div>
 
                           {estGerant && (
@@ -8030,7 +8030,7 @@ function App() {
                                       </span>
                                   </div>
                                   <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
-                                      {statutMoisPrecedent?.valide ? 'Archive mensuelle scellée' : 'En attente de validation PIN'}
+                                      {statutMoisPrecedent?.valide ? '' : 'En attente de validation PIN'}
                                   </span>
                               </div>
                           )}
@@ -8263,7 +8263,7 @@ function App() {
                                           </div>
                                           <h3 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: '800', color: 'var(--text-main)' }}>Liasse Comptable Mensuelle</h3>
                                           <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-                                              Synthèse CA HT/TTC, ventilation TVA, rapprochement de caisse, achats PCG et variables de paie RH.
+                                             
                                           </p>
                                       </div>
                                       <button type="button" onClick={declencherExport} className="btn-action" style={{ width: '100%', padding: '10px', fontSize: '12.5px', borderRadius: '10px' }}>
@@ -8282,7 +8282,7 @@ function App() {
                                           </div>
                                           <h3 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: '800', color: 'var(--text-main)' }}>Fichier des Écritures (FEC)</h3>
                                           <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-                                              Export normé DGFiP en partie double équilibrée (Journaux VT, AC, CA) importable dans Pennylane, Sage ou Cegid.
+                                             
                                           </p>
                                       </div>
                                       <button type="button" onClick={declencherExportFEC} className="btn-action" style={{ width: '100%', padding: '10px', fontSize: '12.5px', borderRadius: '10px', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)' }}>
@@ -8301,7 +8301,7 @@ function App() {
                                           </div>
                                           <h3 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: '800', color: 'var(--text-main)' }}>Audit d'Intégrité NF525</h3>
                                           <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-                                              Vérifie en temps réel toute la chaîne de hachage depuis le bloc Genesis (Tickets, Clôtures Z, Mouvements et JET).
+                                              
                                           </p>
                                       </div>
                                       <button type="button" onClick={lancerAuditNF525} className="btn-action" style={{ width: '100%', padding: '10px', fontSize: '12.5px', borderRadius: '10px', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)' }}>
