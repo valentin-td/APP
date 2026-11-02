@@ -7987,7 +7987,7 @@ function App() {
                                   <div style={{ fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: 'var(--text-main)', marginTop: '6px' }}>
                                       {caMoisCourant.toFixed(2)} <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>€</span>
                                   </div>
-                                  <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>{nbJoursActifsMois} journée(s) enregistrée(s)</span>
+                                  <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
                               </div>
                           )}
 
@@ -8003,7 +8003,7 @@ function App() {
                                   </span>
                               </div>
                               <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
-                                  {clotureFaiteAujourdhui ? 'Chaînage SHA-256 à jour' : 'À sceller en fin de service'}
+                                  {clotureFaiteAujourdhui ? 'Chaînage SHA-256 à jour' : ''}
                               </span>
                           </div>
 
