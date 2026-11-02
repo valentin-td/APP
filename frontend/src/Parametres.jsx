@@ -260,7 +260,7 @@ const groupesBas = [
     {
       code: 'ESSENTIAL',
       nom: 'Essential',
-      prix: '29 €',
+      prix: '39 €',
       cible: 'Caisse NF525 & Agenda',
       inclus: ['Caisse NF525 & Clôtures Z', 'Agenda & Synchro Planity', 'Fichier clients & Stocks'],
       perduSiChoisi: 'Désactive L’Académie, la Pointeuse RH, la Compta (Liasse/FEC) et le Scan IA.'
@@ -268,7 +268,7 @@ const groupesBas = [
     {
       code: 'PRO',
       nom: 'Pro',
-      prix: '59 €',
+      prix: '69 €',
       cible: 'Équipe RH, Académie & Avis',
       inclus: ['Tout Essential inclus', 'Académie & Recettes labo', 'Pointeuse PIN, RH & Avis SMS'],
       perduSiChoisi: 'Désactive la Liasse Comptable signée, l’export FEC et le Scan IA des factures.'
@@ -276,7 +276,7 @@ const groupesBas = [
     {
       code: 'PREMIUM',
       nom: 'Premium',
-      prix: '89 €',
+      prix: '99 €',
       cible: 'IA Complète & Comptabilité',
       inclus: ['Tout Pro inclus', 'Scan IA Factures, RDV & Absences', 'Liasse Compta, FEC & Multi-salons'],
       perduSiChoisi: null
