@@ -5071,7 +5071,7 @@ function App() {
                             {/* KPI 4 : Satisfaction & NPS */}
                             <div className="carte" style={{ padding: isMobile ? '16px' : '20px 22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>ENQUÈTE Satisfaction</span>
+                                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}> Satisfaction</span>
                                 {npsScore !== null && npsScore !== undefined ? (
                                   <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: '800', background: npsScore >= 0 ? 'var(--bg-success)' : 'var(--bg-danger)', color: npsScore >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                     NPS {npsScore > 0 ? `+${npsScore}` : npsScore}
