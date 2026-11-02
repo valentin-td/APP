@@ -46,6 +46,7 @@ const TITRES = {
   export_compta: 'Exportations comptable',
   config_compta: 'Configuration Comptable (FEC)',
   portabilite: 'Export & Portabilité des données (RGPD)',
+  abonnement: 'Mon Abonnement & Forfait',
   tpe: 'TPE physique (Stripe Terminal)',
   cgu: 'Conditions générales',
   confidentialite: 'Politique de confidentialité',
@@ -75,6 +76,7 @@ export default function Parametres({
     ] },
     { titre: 'Salon', lignes: [
       { id: 'identite', icone: ICONS.shield, label: 'Identité & Légal', valeur: statut(configSalon.siret) },
+      { id: 'abonnement', icone: ICONS.card, label: 'Mon Abonnement & Forfait', valeur: configSalon.plan_actuel === 'PREMIUM_TRIAL' ? 'Essai 30j' : (configSalon.plan_actuel || 'PREMIUM') },
       { id: 'securite', icone: ICONS.lock, label: 'Sécurité', valeur: configSalon.securite_pin_salon_active !== false ? 'Activée' : 'Désactivée' },
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
       { id: 'alertes', icone: ICONS.bell, label: 'Alertes urgences', valeur: statut(configSalon.alertes_sms_actives, 'Activées', 'Désactivées') },
