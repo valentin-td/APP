@@ -4488,7 +4488,7 @@ function App() {
                           <div style={{ fontSize: '36px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                             {salonDashboardData?.nb_clients_mois ?? '—'}
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Tickets validés vs mois précédent</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
                         </div>
 
                         <div onClick={() => setActiveTab('agenda')} className="carte hover-lift" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -4499,7 +4499,7 @@ function App() {
                           <div style={{ fontSize: '36px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                             {rdvsAujourdhuiSalon}
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Accéder au planning de l'équipe</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}e</span>
                         </div>
 
                         <div onClick={() => setActiveTab('actions')} className="carte hover-lift" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -4510,7 +4510,7 @@ function App() {
                           <div style={{ fontSize: '36px', fontWeight: '900', color: nbTachesUrgentes > 0 ? 'var(--color-danger)' : 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                             {nbTachesUrgentes}
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{nbTachesUrgentes > 0 ? 'Tâche(s) prioritaire(s) à traiter' : 'Aucune urgence en attente'}</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{nbTachesUrgentes > 0 ? 'Tâche(s) prioritaire(s) à traiter' : ''}</span>
                         </div>
                       </div>
 
@@ -7944,7 +7944,7 @@ function App() {
                                       </span>
                                   </div>
                                   <span className="date-subtitle" style={{ margin: '2px 0 0 0', display: 'block' }}>
-                                      {estGerant ? '' : 'Gestion des mouvements espèces, factures fournisseurs et clôture Z du soir'}
+                                      {estGerant ? '' : ''}
                                   </span>
                               </div>
 
@@ -8003,7 +8003,7 @@ function App() {
                                   </span>
                               </div>
                               <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
-                                  {clotureFaiteAujourdhui ? 'Chaînage SHA-256 à jour' : ''}
+                                  {clotureFaiteAujourdhui ? '' : ''}
                               </span>
                           </div>
 
