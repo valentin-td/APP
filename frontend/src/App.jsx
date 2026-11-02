@@ -4499,7 +4499,7 @@ function App() {
                           <div style={{ fontSize: '36px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                             {rdvsAujourdhuiSalon}
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}e</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
                         </div>
 
                         <div onClick={() => setActiveTab('actions')} className="carte hover-lift" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
