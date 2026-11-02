@@ -1506,13 +1506,23 @@ function App() {
 
   const [showSimIAMenu, setShowSimIAMenu] = useState(false);
 
-  // Détecte automatiquement si l'utilisateur est dans un Salon de Démo STACK Partners
-  const isSalonDemoActif = Boolean(
-      localStorage.getItem('skip_legal_sandbox') === 'true' ||
-      (decodeToken(token)?.email || '').toLowerCase().includes('sandbox.demo') ||
-      (configSalon?.nom_salon || '').toLowerCase().includes('démo') ||
-      (configSalon?.nom_salon || '').toLowerCase().includes('demo')
-  );
+  // Détecte strictement si le salon actuellement ouvert est un Salon de Démo STACK Partners
+  const isSalonDemoActif = useMemo(() => {
+      const emailCourant = (decodeToken(token)?.email || '').toLowerCase().trim();
+      const nomCourant = (configSalon?.nom_salon || '').toLowerCase().trim();
+      const estVraiSalonDemo =
+          emailCourant.includes('sandbox.demo') ||
+          emailCourant.includes('@stack-sim.fr') ||
+          nomCourant.includes('maison éclat') ||
+          nomCourant.includes('salon démo') ||
+          nomCourant.includes('salon vierge');
+
+      // Si on est sur un vrai salon client, on purge immédiatement le flag sandbox résiduel du navigateur
+      if (token && configSalon?.nom_salon && !estVraiSalonDemo) {
+          localStorage.removeItem('skip_legal_sandbox');
+      }
+      return estVraiSalonDemo;
+  }, [token, configSalon?.nom_salon]);
 
   // Génère une facture fournisseur visuelle haute définition (L'Oréal Professionnel) pour l'aperçu Split-Screen
   const genererFactureExempleUrl = () => {
@@ -1981,7 +1991,13 @@ function App() {
 
   const seDeconnecter = () => {
       fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(e => console.log(e));
-      localStorage.removeItem('ui_token'); localStorage.removeItem('api_token'); setToken(null); setIsAbonnementInactif(false); setUserRole('gerant'); if(socket) socket.disconnect(); 
+      localStorage.removeItem('ui_token');
+      localStorage.removeItem('api_token');
+      localStorage.removeItem('skip_legal_sandbox');
+      setToken(null);
+      setIsAbonnementInactif(false);
+      setUserRole('gerant');
+      if (socket) socket.disconnect();
   };
 
   const lancerPaiementStripe = async () => {
