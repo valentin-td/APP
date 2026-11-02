@@ -5036,9 +5036,7 @@ function App() {
                               </div>
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {caTotalGerant.toFixed(2)} <span style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: '700' }}>€</span>
-                              </div>
-                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
-                            </div>
+                              
 
                             {/* KPI 2 : Panier Moyen */}
                             <div className="carte" style={{ padding: isMobile ? '16px' : '20px 22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
