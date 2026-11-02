@@ -4855,102 +4855,109 @@ app.post('/api/mes-salons/synchroniser-catalogue', verifierToken, async (req, re
 async function assurerColonnesAbonnement() {
     await pool.query(`
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(50) DEFAULT 'PREMIUM_TRIAL';
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_choisi_apres_essai VARCHAR(50) DEFAULT 'PREMIUM';
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS statut_abonnement VARCHAR(50) DEFAULT 'actif';
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS date_fin_essai TIMESTAMP;
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255);
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255);
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email VARCHAR(255);
     `).catch(() => {});
 }
 assurerColonnesAbonnement();
 
-// 1. Changer de forfait (Upgrade ou Downgrade : PREMIUM <-> PRO <-> ESSENTIAL)
+const STRIPE_PRICES_PAR_PLAN = {
+    ESSENTIAL: process.env.STRIPE_PRICE_ESSENTIAL,
+    PRO: process.env.STRIPE_PRICE_PRO,
+    PREMIUM: process.env.STRIPE_PRICE_PREMIUM
+};
+
+// 1. Changer de forfait avec mise à jour automatique sur Stripe pour le mois suivant
 app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') {
         return res.status(403).json({ erreur: "Seul le gérant peut modifier le forfait du salon." });
     }
 
-    const { nouveau_plan, motif } = req.body;
-    const plansAutorises = ['ESSENTIAL', 'PRO', 'PREMIUM'];
+    const { nouveau_plan } = req.body;
     const planCible = (nouveau_plan || '').toUpperCase().trim();
-
-    if (!plansAutorises.includes(planCible)) {
+    if (!['ESSENTIAL', 'PRO', 'PREMIUM'].includes(planCible)) {
         return res.status(400).json({ erreur: "Forfait sélectionné invalide." });
     }
 
     try {
         await assurerColonnesAbonnement();
-
         const curRes = await pool.query(
-            `SELECT plan_actuel FROM configuration_salon WHERE id_salon = $1`,
+            `SELECT plan_actuel, stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`,
             [req.user.id_salon]
         );
-        const ancienPlan = curRes.rows[0]?.plan_actuel || 'PREMIUM_TRIAL';
+        const salon = curRes.rows[0] || {};
 
+        // Si le salon a déjà un abonnement Stripe actif, on modifie le tarif chez Stripe
+        if (salon.stripe_subscription_id && typeof stripe !== 'undefined' && STRIPE_PRICES_PAR_PLAN[planCible]) {
+            const sub = await stripe.subscriptions.retrieve(salon.stripe_subscription_id);
+            const itemId = sub.items?.data?.[0]?.id;
+            if (itemId) {
+                await stripe.subscriptions.update(salon.stripe_subscription_id, {
+                    cancel_at_period_end: false,
+                    proration_behavior: 'none', // Applique le nouveau prix à la prochaine facture mensuelle sans prorata surprise
+                    items: [{ id: itemId, price: STRIPE_PRICES_PAR_PLAN[planCible] }]
+                });
+            }
+        }
+
+        // Si le salon était en essai gratuit (PREMIUM_TRIAL), on garde sa date de fin d'essai
+        // mais on applique le nouveau plan choisi
         await pool.query(
             `UPDATE configuration_salon
              SET plan_actuel = $1,
+                 plan_choisi_apres_essai = $1,
                  statut_abonnement = 'actif'
              WHERE id_salon = $2`,
             [planCible, req.user.id_salon]
         );
 
-        try {
-            if (typeof enregistrerJET === 'function') {
-                await enregistrerJET(req.user.id_salon, 'CHANGEMENT_FORFAIT_ABONNEMENT', {
-                    ancien_plan: ancienPlan,
-                    nouveau_plan: planCible,
-                    motif: motif || 'Changement depuis les paramètres'
-                });
-            }
-        } catch (errJet) {}
-
         res.json({
-            message: `Forfait mis à jour sur STACK ${planCible}.`,
+            message: `Forfait mis à jour sur STACK ${planCible}. Le tarif correspondant s'appliquera automatiquement sur votre prochaine échéance.`,
             plan_actuel: planCible
         });
     } catch (e) {
-        console.error("Erreur changement forfait :", e);
+        console.error("Erreur changement forfait Stripe/BDD :", e);
         res.status(500).json({ erreur: e.message || "Erreur lors de la mise à jour de votre formule." });
     }
 });
 
-// 2. Demander la résiliation de l'abonnement
+// 2. Résilier à la fin du mois en cours (Stoppe le renouvellement automatique sur Stripe)
 app.post('/api/abonnement/resilier', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') {
-        return res.status(403).json({ erreur: "Seul le gérant peut résilier l'abonnement du salon." });
+        return res.status(403).json({ erreur: "Seul le gérant peut résilier l'abonnement." });
     }
-
-    const { motif_resiliation, commentaire } = req.body;
 
     try {
         await assurerColonnesAbonnement();
+        const curRes = await pool.query(
+            `SELECT stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+        const subId = curRes.rows[0]?.stripe_subscription_id;
+
+        if (subId && typeof stripe !== 'undefined') {
+            await stripe.subscriptions.update(subId, { cancel_at_period_end: true });
+        }
 
         await pool.query(
-            `UPDATE configuration_salon
-             SET statut_abonnement = 'resilie_fin_periode'
-             WHERE id_salon = $1`,
+            `UPDATE configuration_salon SET statut_abonnement = 'resilie_fin_periode' WHERE id_salon = $1`,
             [req.user.id_salon]
         );
 
-        try {
-            if (typeof enregistrerJET === 'function') {
-                await enregistrerJET(req.user.id_salon, 'DEMANDE_RESILIATION_ABONNEMENT', {
-                    motif: motif_resiliation || 'Non précisé',
-                    commentaire: commentaire || ''
-                });
-            }
-        } catch (errJet) {}
-
         res.json({
-            message: "Résiliation enregistrée pour la fin de période.",
+            message: "Résiliation enregistrée : aucun prélèvement ne sera effectué le mois prochain.",
             statut_abonnement: 'resilie_fin_periode'
         });
     } catch (e) {
-        console.error("Erreur résiliation abonnement :", e);
-        res.status(500).json({ erreur: e.message || "Erreur lors de l'enregistrement de la résiliation." });
+        res.status(500).json({ erreur: e.message || "Erreur lors de la résiliation." });
     }
 });
 
-// 3. Réactiver un abonnement en 1 clic
+// 3. Réactiver l'abonnement avant la fin du mois
 app.post('/api/abonnement/reactiver', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') {
         return res.status(403).json({ erreur: "Seul le gérant peut réactiver l'abonnement." });
@@ -4958,16 +4965,22 @@ app.post('/api/abonnement/reactiver', verifierToken, async (req, res) => {
 
     try {
         await assurerColonnesAbonnement();
+        const curRes = await pool.query(
+            `SELECT stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+        const subId = curRes.rows[0]?.stripe_subscription_id;
+
+        if (subId && typeof stripe !== 'undefined') {
+            await stripe.subscriptions.update(subId, { cancel_at_period_end: false });
+        }
 
         await pool.query(
             `UPDATE configuration_salon SET statut_abonnement = 'actif' WHERE id_salon = $1`,
             [req.user.id_salon]
         );
 
-        res.json({
-            message: "Abonnement réactivé !",
-            statut_abonnement: 'actif'
-        });
+        res.json({ message: "Abonnement réactivé sur Stripe !", statut_abonnement: 'actif' });
     } catch (e) {
         res.status(500).json({ erreur: "Erreur lors de la réactivation." });
     }
