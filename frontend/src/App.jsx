@@ -5366,7 +5366,7 @@ function App() {
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                                     <div>
                                       <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>L'Équipe en Direct</h3>
-                                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Suivi temps réel de la pointeuse numérique</span>
+                                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}></span>
                                     </div>
                                     <button type="button" onClick={() => handleTabClick('rh')} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '5px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer' }}>
                                       Équipe RH
@@ -5422,7 +5422,7 @@ function App() {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                                   <div>
                                     <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Visibilité Google Business</h3>
-                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Évolution de la note publique sur 6 mois</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}></span>
                                   </div>
                                   <button type="button" onClick={() => setActiveTab('parametres')} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '5px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer' }}>
                                     Configurer
