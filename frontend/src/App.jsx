@@ -5036,7 +5036,9 @@ function App() {
                               </div>
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {caTotalGerant.toFixed(2)} <span style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: '700' }}>€</span>
-                              
+                              </div>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
+                            </div>
 
                             {/* KPI 2 : Panier Moyen */}
                             <div className="carte" style={{ padding: isMobile ? '16px' : '20px 22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -5049,7 +5051,7 @@ function App() {
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {panierMoyenGerant.toFixed(2)} <span style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: '700' }}>€</span>
                               </div>
-                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Par passage client</span>
                             </div>
 
                             {/* KPI 3 : Commissions Équipe */}
@@ -5063,7 +5065,7 @@ function App() {
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--color-success)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {commissionsAPayerGerant.toFixed(2)} <span style={{ fontSize: '14px', fontWeight: '700' }}>€</span>
                               </div>
-                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Variables de paie cumulées</span>
                             </div>
 
                             {/* KPI 4 : Satisfaction & NPS */}
@@ -5083,7 +5085,9 @@ function App() {
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {noteMoyenneCampagne ? `${noteMoyenneCampagne} / 5` : '—'}
                               </div>
-                              
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                                {verbatimsListe.length > 0 ? `${verbatimsListe.length} retour(s) vérifié(s)` : 'Enquêtes SMS post-visite'}
+                              </span>
                             </div>
                           </div>
 
@@ -5449,7 +5453,7 @@ function App() {
 
                           </div>
                         </>
-
+                      )}
                     </div> {/* FIN ZONE DÉFILANTE */}
                   </div>
                 );
