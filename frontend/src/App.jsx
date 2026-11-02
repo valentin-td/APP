@@ -5449,7 +5449,7 @@ function App() {
 
                           </div>
                         </>
-                      )}
+
                     </div> {/* FIN ZONE DÉFILANTE */}
                   </div>
                 );
