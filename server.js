@@ -2904,9 +2904,15 @@ app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
         const ticketData = await pool.query('SELECT numero_ticket_caisse, total_ttc, date_creation, methode_paiement FROM tickets WHERE id_ticket = $1 AND id_salon = $2', [id_ticket, id_salon]);
         if (ticketData.rowCount === 0) return res.status(404).json({ erreur: "Ticket introuvable." });
         const ticket = ticketData.rows[0];
+        
+        const verifSms = await verifierEtIncrementerQuotaSMS(req.user.id_salon, 1);
+        if (!verifSms.autorise) {
+            return res.status(403).json({ erreur: verifSms.erreur });
+        }
+        
 
         const textRecap = `Merci pour votre visite chez ${config.nom_salon} !\nTicket n°${ticket.numero_ticket_caisse} du ${new Date(ticket.date_creation).toLocaleDateString()}.\nMontant total : ${parseFloat(ticket.total_ttc).toFixed(2)} € (Réglé par ${ticket.methode_paiement}).\nÀ très bientôt !`;
-
+        
         if (methode === 'email') {
             if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
             let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: dechiffrer(config.mot_de_passe_app_email) } });
@@ -4852,26 +4858,273 @@ app.post('/api/mes-salons/synchroniser-catalogue', verifierToken, async (req, re
 // --- GESTION D'ABONNEMENT : CHANGEMENT DE FORFAIT & RÉSILIATION GUIDÉE ---
 // =========================================================================
 
-async function assurerColonnesAbonnement() {
+// =========================================================================
+// --- 1. COLONNES BDD : ABONNEMENT, EMPREINTE STRIPE & QUOTA MENSUEL SMS ---
+// =========================================================================
+async function assurerColonnesAbonnementEtSms() {
     await pool.query(`
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_actuel VARCHAR(50) DEFAULT 'PREMIUM_TRIAL';
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS plan_choisi_apres_essai VARCHAR(50) DEFAULT 'PREMIUM';
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS statut_abonnement VARCHAR(50) DEFAULT 'actif';
-        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS date_fin_essai TIMESTAMP;
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS date_fin_essai TIMESTAMP DEFAULT (NOW() + INTERVAL '30 days');
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255);
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255);
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS empreinte_cb_validee BOOLEAN DEFAULT FALSE;
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS sms_envoyes_mois INT DEFAULT 0;
+        ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS mois_compteur_sms VARCHAR(7);
         ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS email VARCHAR(255);
     `).catch(() => {});
 }
-assurerColonnesAbonnement();
+assurerColonnesAbonnementEtSms();
 
-const STRIPE_PRICES_PAR_PLAN = {
-    ESSENTIAL: process.env.STRIPE_PRICE_ESSENTIAL,
-    PRO: process.env.STRIPE_PRICE_PRO,
-    PREMIUM: process.env.STRIPE_PRICE_PREMIUM
+const TARIFS_FORFAITS_STACK = {
+    ESSENTIAL: { nom: 'STACK Essential', montant_cents: 3900, quota_sms: 100, env_price: process.env.STRIPE_PRICE_ESSENTIAL },
+    PRO:       { nom: 'STACK Pro',       montant_cents: 6900, quota_sms: 250, env_price: process.env.STRIPE_PRICE_PRO },
+    PREMIUM:   { nom: 'STACK Premium',   montant_cents: 9900, quota_sms: 500, env_price: process.env.STRIPE_PRICE_PREMIUM }
 };
 
-// 1. Changer de forfait avec mise à jour automatique sur Stripe pour le mois suivant
+function getQuotaSmsParPlan(plan) {
+    const p = (plan || 'PREMIUM_TRIAL').toUpperCase().trim();
+    if (p === 'ESSENTIAL') return 100;
+    if (p === 'PRO') return 250;
+    return 500; // PREMIUM et PREMIUM_TRIAL
+}
+
+// =========================================================================
+// --- 2. GARDIEN CENTRAL DES QUOTAS SMS MENSUELS (100 / 250 / 500 SMS) ---
+// =========================================================================
+// Appelle cette fonction avant tout envoi de SMS : await verifierEtIncrementerQuotaSMS(id_salon, 1)
+async function verifierEtIncrementerQuotaSMS(id_salon, nbSms = 1) {
+    await assurerColonnesAbonnementEtSms();
+    const moisActuel = new Date().toISOString().slice(0, 7); // ex: "2026-11"
+
+    const resConf = await pool.query(
+        `SELECT plan_actuel, brevo_api_key, sms_envoyes_mois, mois_compteur_sms
+         FROM configuration_salon WHERE id_salon = $1`,
+        [id_salon]
+    );
+    if (resConf.rowCount === 0) return { autorise: false, erreur: "Salon introuvable." };
+
+    const conf = resConf.rows[0];
+    const quotaMax = getQuotaSmsParPlan(conf.plan_actuel);
+
+    // Remise à zéro automatique si on a changé de mois
+    let compteurActuel = parseInt(conf.sms_envoyes_mois, 10) || 0;
+    if (conf.mois_compteur_sms !== moisActuel) {
+        compteurActuel = 0;
+        await pool.query(
+            `UPDATE configuration_salon SET sms_envoyes_mois = 0, mois_compteur_sms = $1 WHERE id_salon = $2`,
+            [moisActuel, id_salon]
+        );
+    }
+
+    // Si le salon utilise sa propre clé API Brevo personnelle (et non celle de STACK), pas de blocage de quota
+    const utiliseSaPropreCleBrevo = Boolean(
+        conf.brevo_api_key &&
+        conf.brevo_api_key.trim() !== '' &&
+        conf.brevo_api_key.trim() !== (process.env.BREVO_API_KEY || '').trim()
+    );
+
+    if (!utiliseSaPropreCleBrevo && (compteurActuel + nbSms) > quotaMax) {
+        return {
+            autorise: false,
+            utilise: compteurActuel,
+            quota: quotaMax,
+            restants: Math.max(0, quotaMax - compteurActuel),
+            erreur: `Quota mensuel de SMS atteint (${compteurActuel}/${quotaMax} SMS utilisés ce mois-ci avec votre forfait ${conf.plan_actuel === 'ESSENTIAL' ? 'Essential (100 SMS/mois)' : conf.plan_actuel}). Passez sur la formule supérieure ou privilégiez l'envoi gratuit par E-mail.`
+        };
+    }
+
+    const upd = await pool.query(
+        `UPDATE configuration_salon
+         SET sms_envoyes_mois = COALESCE(sms_envoyes_mois, 0) + $1,
+             mois_compteur_sms = $2
+         WHERE id_salon = $3
+         RETURNING sms_envoyes_mois`,
+        [nbSms, moisActuel, id_salon]
+    );
+
+    const nouveauTotal = parseInt(upd.rows[0]?.sms_envoyes_mois, 10) || (compteurActuel + nbSms);
+    return {
+        autorise: true,
+        utilise: nouveauTotal,
+        quota: quotaMax,
+        restants: Math.max(0, quotaMax - nouveauTotal)
+    };
+}
+
+// Route pour lire l'état du compteur SMS et de l'empreinte CB
+app.get('/api/abonnement/etat', verifierToken, async (req, res) => {
+    try {
+        await assurerColonnesAbonnementEtSms();
+        const moisActuel = new Date().toISOString().slice(0, 7);
+        const r = await pool.query(
+            `SELECT plan_actuel, plan_choisi_apres_essai, statut_abonnement, date_fin_essai,
+                    empreinte_cb_validee, stripe_subscription_id, sms_envoyes_mois, mois_compteur_sms
+             FROM configuration_salon WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+        const c = r.rows[0] || {};
+        const smsUtilises = c.mois_compteur_sms === moisActuel ? (parseInt(c.sms_envoyes_mois, 10) || 0) : 0;
+        const quotaSms = getQuotaSmsParPlan(c.plan_actuel);
+
+        res.json({
+            plan_actuel: c.plan_actuel || 'PREMIUM_TRIAL',
+            plan_choisi_apres_essai: c.plan_choisi_apres_essai || 'PREMIUM',
+            statut_abonnement: c.statut_abonnement || 'actif',
+            empreinte_cb_validee: Boolean(c.empreinte_cb_validee || c.stripe_subscription_id),
+            sms_utilises: smsUtilises,
+            sms_quota: quotaSms,
+            sms_restants: Math.max(0, quotaSms - smsUtilises)
+        });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lecture état abonnement." });
+    }
+});
+
+// =========================================================================
+// --- 3. EMPREINTE BANCAIRE STRIPE (0 € PENDANT 30J) & CHECKOUT PAR PLAN ---
+// =========================================================================
+app.post('/api/creer-checkout', verifierToken, async (req, res) => {
+    try {
+        await assurerColonnesAbonnementEtSms();
+        if (typeof stripe === 'undefined' || !process.env.STRIPE_SECRET_KEY) {
+            return res.status(500).json({ erreur: "Clé STRIPE_SECRET_KEY non configurée sur le serveur." });
+        }
+
+        const planDemande = ((req.body && req.body.plan) || 'PREMIUM').toUpperCase().trim();
+        const codePlan = ['ESSENTIAL', 'PRO', 'PREMIUM'].includes(planDemande) ? planDemande : 'PREMIUM';
+        const tarifObj = TARIFS_FORFAITS_STACK[codePlan];
+
+        const salonRes = await pool.query(
+            `SELECT nom_salon, email, plan_actuel, date_fin_essai, stripe_customer_id
+             FROM configuration_salon WHERE id_salon = $1`,
+            [req.user.id_salon]
+        );
+        const salon = salonRes.rows[0] || {};
+
+        // Calcul du nombre de jours d'essai gratuit restants (si le salon est en période d'installation / essai 30j)
+        let joursEssaiRestants = 0;
+        if (salon.date_fin_essai) {
+            const diffMs = new Date(salon.date_fin_essai).getTime() - Date.now();
+            joursEssaiRestants = Math.max(0, Math.min(30, Math.ceil(diffMs / (1000 * 3600 * 24))));
+        } else if (salon.plan_actuel === 'PREMIUM_TRIAL') {
+            joursEssaiRestants = 30;
+        }
+
+        const frontendOrigin = req.headers.origin || process.env.FRONTEND_URL || 'https://app-salon-caiss.onrender.com';
+
+        const lineItem = tarifObj.env_price
+            ? { price: tarifObj.env_price, quantity: 1 }
+            : {
+                price_data: {
+                    currency: 'eur',
+                    product_data: {
+                        name: `${tarifObj.nom} — Abonnement Mensuel`,
+                        description: `Formule ${tarifObj.nom} (${tarifObj.quota_sms} SMS/mois inclus) — Sans engagement`
+                    },
+                    unit_amount: tarifObj.montant_cents,
+                    recurring: { interval: 'month' }
+                },
+                quantity: 1
+            };
+
+        const sessionConfig = {
+            mode: 'subscription',
+            payment_method_types: ['card'],
+            payment_method_collection: 'always', // Force la prise d'empreinte CB même à 0 € aujourd'hui
+            customer_email: salon.stripe_customer_id ? undefined : (salon.email || req.user.email || undefined),
+            customer: salon.stripe_customer_id || undefined,
+            line_items: [lineItem],
+            metadata: {
+                id_salon: String(req.user.id_salon),
+                plan_choisi: codePlan
+            },
+            subscription_data: {
+                metadata: {
+                    id_salon: String(req.user.id_salon),
+                    plan_choisi: codePlan
+                },
+                ...(joursEssaiRestants > 0 ? { trial_period_days: joursEssaiRestants } : {})
+            },
+            success_url: `${frontendOrigin}/?paiement=empreinte_ok&plan=${codePlan}&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${frontendOrigin}/?paiement=annule`
+        };
+
+        const session = await stripe.checkout.sessions.create(sessionConfig);
+
+        // On mémorise déjà le forfait choisi pour l'après-essai
+        await pool.query(
+            `UPDATE configuration_salon SET plan_choisi_apres_essai = $1 WHERE id_salon = $2`,
+            [codePlan, req.user.id_salon]
+        );
+
+        res.json({ url: session.url });
+    } catch (e) {
+        console.error("Erreur création Checkout Stripe :", e);
+        res.status(500).json({ erreur: e.message || "Erreur lors de la création du lien Stripe." });
+    }
+});
+
+// Confirmation automatique au retour de Stripe : enregistre l'empreinte CB et coche l'étape 4 du Go-Live !
+app.post('/api/stripe/confirmer-session', verifierToken, async (req, res) => {
+    const { session_id, plan } = req.body;
+    try {
+        await assurerColonnesAbonnementEtSms();
+        let customerId = null;
+        let subscriptionId = null;
+        let planRetenu = ['ESSENTIAL', 'PRO', 'PREMIUM'].includes((plan || '').toUpperCase())
+            ? plan.toUpperCase()
+            : 'PREMIUM';
+
+        if (session_id && typeof stripe !== 'undefined' && process.env.STRIPE_SECRET_KEY) {
+            const session = await stripe.checkout.sessions.retrieve(session_id);
+            customerId = session.customer || null;
+            subscriptionId = session.subscription || null;
+            if (session.metadata?.plan_choisi) {
+                planRetenu = session.metadata.plan_choisi;
+            }
+        }
+
+        // Met à jour configuration_salon (si le salon est encore en essai, il garde ses droits PREMIUM_TRIAL jusqu'à la fin des 30j)
+        await pool.query(
+            `UPDATE configuration_salon
+             SET stripe_customer_id = COALESCE($1, stripe_customer_id),
+                 stripe_subscription_id = COALESCE($2, stripe_subscription_id),
+                 empreinte_cb_validee = TRUE,
+                 plan_choisi_apres_essai = $3,
+                 statut_abonnement = 'actif',
+                 plan_actuel = CASE WHEN plan_actuel = 'PREMIUM_TRIAL' AND date_fin_essai > NOW() THEN 'PREMIUM_TRIAL' ELSE $3 END
+             WHERE id_salon = $4`,
+            [customerId, subscriptionId, planRetenu, req.user.id_salon]
+        );
+
+        // Coche automatiquement l'étape 4 (etape_stripe_ok) dans la Checklist Go-Live d'onboarding !
+        await pool.query(
+            `UPDATE onboarding_salons
+             SET etape_stripe_ok = TRUE,
+                 statut_onboarding = CASE
+                     WHEN etape_materiel_ok AND etape_catalogue_ok AND etape_equipe_ok AND etape_formation_ok THEN 'TERMINE'
+                     ELSE statut_onboarding
+                 END
+             WHERE id_salon = $1`,
+            [req.user.id_salon]
+        ).catch(() => {});
+
+        res.json({
+            message: "Empreinte bancaire validée avec succès ! L'étape 4 de votre Checklist Go-Live est débloquée.",
+            empreinte_cb_validee: true,
+            plan_choisi: planRetenu
+        });
+    } catch (e) {
+        console.error("Erreur confirmation session Stripe :", e);
+        res.status(500).json({ erreur: "Erreur lors de la validation de l'empreinte Stripe." });
+    }
+});
+
+// =========================================================================
+// --- 4. CHANGEMENT DE FORFAIT (39€ / 69€ / 99€) SYNCHRONISÉ AVEC STRIPE ---
+// =========================================================================
 app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') {
         return res.status(403).json({ erreur: "Seul le gérant peut modifier le forfait du salon." });
@@ -4884,28 +5137,42 @@ app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
     }
 
     try {
-        await assurerColonnesAbonnement();
+        await assurerColonnesAbonnementEtSms();
         const curRes = await pool.query(
             `SELECT plan_actuel, stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`,
             [req.user.id_salon]
         );
         const salon = curRes.rows[0] || {};
+        const tarifCible = TARIFS_FORFAITS_STACK[planCible];
 
-        // Si le salon a déjà un abonnement Stripe actif, on modifie le tarif chez Stripe
-        if (salon.stripe_subscription_id && typeof stripe !== 'undefined' && STRIPE_PRICES_PAR_PLAN[planCible]) {
-            const sub = await stripe.subscriptions.retrieve(salon.stripe_subscription_id);
-            const itemId = sub.items?.data?.[0]?.id;
-            if (itemId) {
-                await stripe.subscriptions.update(salon.stripe_subscription_id, {
-                    cancel_at_period_end: false,
-                    proration_behavior: 'none', // Applique le nouveau prix à la prochaine facture mensuelle sans prorata surprise
-                    items: [{ id: itemId, price: STRIPE_PRICES_PAR_PLAN[planCible] }]
-                });
+        // Mise à jour automatique de l'abonnement Stripe existant pour le mois suivant
+        if (salon.stripe_subscription_id && typeof stripe !== 'undefined' && process.env.STRIPE_SECRET_KEY) {
+            try {
+                const sub = await stripe.subscriptions.retrieve(salon.stripe_subscription_id);
+                const itemId = sub.items?.data?.[0]?.id;
+                if (itemId) {
+                    const updateItem = tarifCible.env_price
+                        ? { id: itemId, price: tarifCible.env_price }
+                        : {
+                            id: itemId,
+                            price_data: {
+                                currency: 'eur',
+                                product: sub.items.data[0].price.product,
+                                unit_amount: tarifCible.montant_cents,
+                                recurring: { interval: 'month' }
+                            }
+                        };
+                    await stripe.subscriptions.update(salon.stripe_subscription_id, {
+                        cancel_at_period_end: false,
+                        proration_behavior: 'none',
+                        items: [updateItem]
+                    });
+                }
+            } catch (stripeErr) {
+                console.warn("⚠️ Avertissement synchro Stripe changement de plan :", stripeErr.message);
             }
         }
 
-        // Si le salon était en essai gratuit (PREMIUM_TRIAL), on garde sa date de fin d'essai
-        // mais on applique le nouveau plan choisi
         await pool.query(
             `UPDATE configuration_salon
              SET plan_actuel = $1,
@@ -4916,71 +5183,47 @@ app.post('/api/abonnement/changer-forfait', verifierToken, async (req, res) => {
         );
 
         res.json({
-            message: `Forfait mis à jour sur STACK ${planCible}. Le tarif correspondant s'appliquera automatiquement sur votre prochaine échéance.`,
-            plan_actuel: planCible
+            message: `Forfait basculé sur ${tarifCible.nom} (${tarifCible.montant_cents / 100} € HT/mois — ${tarifCible.quota_sms} SMS/mois inclus).`,
+            plan_actuel: planCible,
+            sms_quota: tarifCible.quota_sms
         });
     } catch (e) {
-        console.error("Erreur changement forfait Stripe/BDD :", e);
+        console.error("Erreur changement forfait :", e);
         res.status(500).json({ erreur: e.message || "Erreur lors de la mise à jour de votre formule." });
     }
 });
 
-// 2. Résilier à la fin du mois en cours (Stoppe le renouvellement automatique sur Stripe)
+// Résiliation en fin de mois (stoppe le prélèvement Stripe suivant)
 app.post('/api/abonnement/resilier', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') {
-        return res.status(403).json({ erreur: "Seul le gérant peut résilier l'abonnement." });
-    }
-
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
     try {
-        await assurerColonnesAbonnement();
-        const curRes = await pool.query(
-            `SELECT stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`,
-            [req.user.id_salon]
-        );
+        await assurerColonnesAbonnementEtSms();
+        const curRes = await pool.query(`SELECT stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`, [req.user.id_salon]);
         const subId = curRes.rows[0]?.stripe_subscription_id;
 
-        if (subId && typeof stripe !== 'undefined') {
-            await stripe.subscriptions.update(subId, { cancel_at_period_end: true });
+        if (subId && typeof stripe !== 'undefined' && process.env.STRIPE_SECRET_KEY) {
+            await stripe.subscriptions.update(subId, { cancel_at_period_end: true }).catch(() => {});
         }
-
-        await pool.query(
-            `UPDATE configuration_salon SET statut_abonnement = 'resilie_fin_periode' WHERE id_salon = $1`,
-            [req.user.id_salon]
-        );
-
-        res.json({
-            message: "Résiliation enregistrée : aucun prélèvement ne sera effectué le mois prochain.",
-            statut_abonnement: 'resilie_fin_periode'
-        });
+        await pool.query(`UPDATE configuration_salon SET statut_abonnement = 'resilie_fin_periode' WHERE id_salon = $1`, [req.user.id_salon]);
+        res.json({ message: "Résiliation enregistrée : aucun prélèvement ne sera effectué le mois prochain.", statut_abonnement: 'resilie_fin_periode' });
     } catch (e) {
-        res.status(500).json({ erreur: e.message || "Erreur lors de la résiliation." });
+        res.status(500).json({ erreur: "Erreur lors de la résiliation." });
     }
 });
 
-// 3. Réactiver l'abonnement avant la fin du mois
+// Réactivation en 1 clic
 app.post('/api/abonnement/reactiver', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') {
-        return res.status(403).json({ erreur: "Seul le gérant peut réactiver l'abonnement." });
-    }
-
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
     try {
-        await assurerColonnesAbonnement();
-        const curRes = await pool.query(
-            `SELECT stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`,
-            [req.user.id_salon]
-        );
+        await assurerColonnesAbonnementEtSms();
+        const curRes = await pool.query(`SELECT stripe_subscription_id FROM configuration_salon WHERE id_salon = $1`, [req.user.id_salon]);
         const subId = curRes.rows[0]?.stripe_subscription_id;
 
-        if (subId && typeof stripe !== 'undefined') {
-            await stripe.subscriptions.update(subId, { cancel_at_period_end: false });
+        if (subId && typeof stripe !== 'undefined' && process.env.STRIPE_SECRET_KEY) {
+            await stripe.subscriptions.update(subId, { cancel_at_period_end: false }).catch(() => {});
         }
-
-        await pool.query(
-            `UPDATE configuration_salon SET statut_abonnement = 'actif' WHERE id_salon = $1`,
-            [req.user.id_salon]
-        );
-
-        res.json({ message: "Abonnement réactivé sur Stripe !", statut_abonnement: 'actif' });
+        await pool.query(`UPDATE configuration_salon SET statut_abonnement = 'actif' WHERE id_salon = $1`, [req.user.id_salon]);
+        res.json({ message: "Abonnement réactivé !", statut_abonnement: 'actif' });
     } catch (e) {
         res.status(500).json({ erreur: "Erreur lors de la réactivation." });
     }
