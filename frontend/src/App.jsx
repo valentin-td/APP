@@ -7944,7 +7944,7 @@ function App() {
                                       </span>
                                   </div>
                                   <span className="date-subtitle" style={{ margin: '2px 0 0 0', display: 'block' }}>
-                                      {estGerant ? 'Scellement fiscal SHA-256, liasse expert-comptable et journal des dépenses' : 'Gestion des mouvements espèces, factures fournisseurs et clôture Z du soir'}
+                                      {estGerant ? '' : 'Gestion des mouvements espèces, factures fournisseurs et clôture Z du soir'}
                                   </span>
                               </div>
 
@@ -8105,7 +8105,7 @@ function App() {
                                           </div>
                                           <div>
                                               <h3 style={{ margin: 0, fontSize: '15.5px', fontWeight: '800', color: 'var(--text-main)' }}>Petite Caisse (Espèces)</h3>
-                                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Apports de monnaie, dépôts banque et frais du jour</span>
+                                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}></span>
                                           </div>
                                       </div>
 
@@ -8168,12 +8168,12 @@ function App() {
                                       </div>
                                       <div>
                                           <h3 style={{ margin: 0, fontSize: '15.5px', fontWeight: '800', color: 'var(--text-main)' }}>Achats & Factures Fournisseurs</h3>
-                                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Intégration directe au journal des achats (FEC) et mise à jour des stocks</span>
+                                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}></span>
                                       </div>
                                   </div>
 
                                   <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5, margin: '0 0 16px 0' }}>
-                                      Enregistrez vos factures d'achat (L'Oréal, Wella, loyer, énergie) par saisie rapide ou laissez l'IA extraire automatiquement la TVA, le compte PCG et l'inventaire.
+                                      
                                   </p>
 
                                   {erreurAnalyseIA && (
