@@ -5085,7 +5085,9 @@ function App() {
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {noteMoyenneCampagne ? `${noteMoyenneCampagne} / 5` : '—'}
                               </div>
-                              
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                                {verbatimsListe.length > 0 ? `${verbatimsListe.length} retour(s) vérifié(s)` : 'Enquêtes SMS post-visite'}
+                              </span>
                             </div>
                           </div>
 
