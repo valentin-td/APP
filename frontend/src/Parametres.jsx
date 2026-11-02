@@ -247,6 +247,159 @@ const groupesBas = [
       setExportingFormat(null);
     }
   };
+ // --- ÉTATS : CHANGEMENT DE FORFAIT (DOWNGRADE / UPGRADE) & RÉSILIATION GUIDÉE ---
+  const [planCibleSelectionne, setPlanCibleSelectionne] = useState(null);
+  const [showTunnelResiliation, setShowTunnelResiliation] = useState(false);
+  const [etapeResiliation, setEtapeResiliation] = useState(1);
+  const [motifResiliation, setMotifResiliation] = useState('');
+  const [commentaireResiliation, setCommentaireResiliation] = useState('');
+  const [isUpdatingSub, setIsUpdatingSub] = useState(false);
+  const [statutAboLocal, setStatutAboLocal] = useState('actif');
+
+  const FORFAITS_STACK = [
+    {
+      code: 'ESSENTIAL',
+      nom: 'STACK Essential',
+      prix: '29 € HT / mois',
+      resume: 'L’essentiel pour encaisser aux normes NF525 et gérer votre planning.',
+      inclus: [
+        'Caisse certifiée NF525 & Clôtures Z (Blind Close)',
+        'Agenda multi-collaborateurs & Synchronisation iCal Planity',
+        'Fichier clients CRM, Notes techniques & Programme de fidélité',
+        'Gestion des stocks produits & Messagerie interne d’équipe'
+      ],
+      nonInclus: [
+        'L’Académie (Tutoriels recettes pas-à-pas, minuteurs & calcul de marge)',
+        'Suivi RH avancé (Pointeuse PIN, calculs de commissions HT & congés)',
+        'Module Comptabilité (Liasse mensuelle signée, FEC & Rapprochement)',
+        'Cerveau IA (Scan automatique des factures fournisseurs, RDV & Absences)'
+      ]
+    },
+    {
+      code: 'PRO',
+      nom: 'STACK Pro',
+      prix: '59 € HT / mois',
+      resume: 'Idéal pour structurer votre équipe RH, vos fiches techniques Académie et vos stocks.',
+      inclus: [
+        'Tout le forfait Essential inclus',
+        'L’Académie : Recettes étape par étape, dosages labo & déstockage auto',
+        'Gestion Équipe & RH : Pointeuse numérique PIN, commissions HT & absences',
+        'Enquêtes de satisfaction SMS, Score NPS & Sauvetage client (Winback)'
+      ],
+      nonInclus: [
+        'Module Comptabilité (Liasse PDF signée, Export FEC & Bilan auto au comptable)',
+        'Scan IA des factures fournisseurs en Split-Screen & connexion boîtes mail'
+      ]
+    },
+    {
+      code: 'PREMIUM',
+      nom: 'STACK Premium (Complet)',
+      prix: '89 € HT / mois',
+      resume: 'Automatisation totale avec Intelligence Artificielle et Pré-Comptabilité légale.',
+      inclus: [
+        'Tout le forfait Pro inclus',
+        'Cerveau IA : Scan automatique des factures fournisseurs, RDV, stocks & arrêts maladie',
+        'Pré-Comptabilité complète : Liasse mensuelle signée, Export FEC & envoi auto au comptable',
+        'Multi-Salons / Franchise & Robot SMS d’annulation/reprogrammation des RDV'
+      ],
+      nonInclus: []
+    }
+  ];
+
+  const confirmerChangementForfait = async (nouveauPlan) => {
+    setIsUpdatingSub(true);
+    try {
+      const apiBase = window.location.hostname === 'localhost'
+        ? 'http://localhost:3000'
+        : 'https://api-salon-backend.onrender.com';
+      const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
+
+      const res = await fetch(`${apiBase}/api/abonnement/changer-forfait`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {})
+        },
+        body: JSON.stringify({ nouveau_plan: nouveauPlan })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.erreur || "Impossible de modifier le forfait.");
+
+      setConfigSalon(prev => ({ ...prev, plan_actuel: nouveauPlan }));
+      setPlanCibleSelectionne(null);
+      setShowTunnelResiliation(false);
+      alert(data.message || `Votre abonnement est désormais passé sur la formule ${nouveauPlan}.`);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsUpdatingSub(false);
+    }
+  };
+
+  const confirmerResiliationAbonnement = async () => {
+    if (!motifResiliation) {
+      return alert("Veuillez sélectionner la raison principale de votre résiliation.");
+    }
+    setIsUpdatingSub(true);
+    try {
+      const apiBase = window.location.hostname === 'localhost'
+        ? 'http://localhost:3000'
+        : 'https://api-salon-backend.onrender.com';
+      const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
+
+      const res = await fetch(`${apiBase}/api/abonnement/resilier`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {})
+        },
+        body: JSON.stringify({
+          motif_resiliation: motifResiliation,
+          commentaire: commentaireResiliation
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.erreur || "Erreur lors de la résiliation.");
+
+      setStatutAboLocal('resilie_fin_periode');
+      setShowTunnelResiliation(false);
+      setEtapeResiliation(1);
+      alert(data.message);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsUpdatingSub(false);
+    }
+  };
+
+  const reactiverMonAbonnement = async () => {
+    setIsUpdatingSub(true);
+    try {
+      const apiBase = window.location.hostname === 'localhost'
+        ? 'http://localhost:3000'
+        : 'https://api-salon-backend.onrender.com';
+      const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
+
+      const res = await fetch(`${apiBase}/api/abonnement/reactiver`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {}
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.erreur || "Erreur lors de la réactivation.");
+
+      setStatutAboLocal('actif');
+      alert(data.message);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsUpdatingSub(false);
+    }
+  };
 
   const renderSection = (id) => {
     switch (id) {
@@ -860,6 +1013,372 @@ case 'portabilite': {
                               {exportingFormat === 'json_complet' ? 'Génération de l’archive scellée...' : 'Télécharger l’Archive Intégrale (.JSON)'}
                           </button>
                       </div>
+                  </div>
+              </>
+          );
+      }
+      case 'abonnement': {
+          const planBrut = configSalon.plan_actuel || 'PREMIUM_TRIAL';
+          const estEnEssai = planBrut === 'PREMIUM_TRIAL';
+          const codePlanActuel = estEnEssai ? 'PREMIUM' : planBrut;
+          const ordrePlans = { ESSENTIAL: 1, PRO: 2, PREMIUM: 3 };
+          const rangActuel = ordrePlans[codePlanActuel] || 3;
+          const forfaitCibleObj = FORFAITS_STACK.find(f => f.code === planCibleSelectionne);
+          const slug = (configSalon.nom_salon || 'MonSalon').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const dJour = new Date().toISOString().slice(0, 10);
+
+          return (
+              <>
+                  {/* 1. CARTE STATUT ACTUEL DE L'ABONNEMENT */}
+                  <div className="carte scan-carte" style={{ marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                          <div>
+                              <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '4px' }}>
+                                  Formule actuelle de votre établissement
+                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: 'var(--text-main)' }}>
+                                      {estEnEssai ? 'STACK Premium — Essai Gratuit 30 Jours' : `STACK ${codePlanActuel}`}
+                                  </h3>
+                                  <span style={{
+                                      padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '800',
+                                      background: statutAboLocal === 'resilie_fin_periode' ? 'var(--bg-danger)' : 'var(--bg-success)',
+                                      color: statutAboLocal === 'resilie_fin_periode' ? 'var(--color-danger)' : 'var(--color-success)'
+                                  }}>
+                                      {statutAboLocal === 'resilie_fin_periode' ? 'Résiliation programmée en fin de période' : 'Sans engagement • Actif'}
+                                  </span>
+                              </div>
+                          </div>
+
+                          {statutAboLocal === 'resilie_fin_periode' && (
+                              <button
+                                  type="button"
+                                  disabled={isUpdatingSub}
+                                  onClick={reactiverMonAbonnement}
+                                  className="btn-action"
+                                  style={{ padding: '9px 14px', fontSize: '12.5px' }}
+                              >
+                                  Maintenir mon abonnement actif
+                              </button>
+                          )}
+                      </div>
+
+                      <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: 0 }}>
+                          Vous pouvez passer à tout moment d'une formule à une autre (par exemple de <strong>Premium à Pro</strong> ou de <strong>Pro à Essential</strong>) selon les besoins de votre salon. Toutes vos données historiques, votre fichier clients et vos archives fiscales NF525 sont intégralement conservés lors d'un changement de formule.
+                      </p>
+                  </div>
+
+                  {/* 2. COMPARATEUR & PASSAGE ENTRE FORMULES (PREMIUM <-> PRO <-> ESSENTIAL) */}
+                  <div className="carte scan-carte" style={{ marginBottom: '16px' }}>
+                      <h3 style={{ margin: '0 0 4px 0', fontSize: '15.5px', color: 'var(--text-main)', fontWeight: '800' }}>
+                          Ajuster ou réduire ma formule (Premium, Pro, Essential)
+                      </h3>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px' }}>
+                          Sélectionnez la formule souhaitée pour voir le détail des fonctionnalités incluses avant de confirmer :
+                      </span>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+                          {FORFAITS_STACK.map(f => {
+                              const estActuel = f.code === codePlanActuel && !estEnEssai;
+                              const estSelectionne = planCibleSelectionne === f.code;
+                              const rangForfait = ordrePlans[f.code];
+                              const estDowngrade = rangForfait < rangActuel;
+
+                              return (
+                                  <div
+                                      key={f.code}
+                                      onClick={() => !estActuel && setPlanCibleSelectionne(estSelectionne ? null : f.code)}
+                                      style={{
+                                          background: estSelectionne ? 'var(--bg-card)' : 'var(--bg-app)',
+                                          border: estSelectionne ? '2px solid var(--text-main)' : estActuel ? '1.5px solid var(--color-success)' : '1px solid var(--border-color)',
+                                          borderRadius: '14px',
+                                          padding: '16px',
+                                          cursor: estActuel ? 'default' : 'pointer',
+                                          transition: 'all 0.15s ease'
+                                      }}
+                                  >
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                              <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>{f.nom}</strong>
+                                              {estActuel && (
+                                                  <span style={{ fontSize: '10.5px', fontWeight: '800', padding: '2px 8px', borderRadius: '999px', background: 'var(--bg-success)', color: 'var(--color-success)' }}>
+                                                      Forfait actuel
+                                                  </span>
+                                              )}
+                                              {!estActuel && estDowngrade && (
+                                                  <span style={{ fontSize: '10.5px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px', background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
+                                                      Réduction de forfait
+                                                  </span>
+                                              )}
+                                          </div>
+                                          <span style={{ fontSize: '14.5px', fontWeight: '900', color: 'var(--text-main)' }}>{f.prix}</span>
+                                      </div>
+
+                                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 10px 0' }}>{f.resume}</p>
+
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: 'var(--text-main)' }}>
+                                          {f.inclus.map((inc, i) => (
+                                              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                  <span style={{ color: 'var(--color-success)', fontWeight: '800' }}>✓</span>
+                                                  <span>{inc}</span>
+                                              </div>
+                                          ))}
+                                      </div>
+
+                                      {/* Si c'est un Downgrade et que la carte est sélectionnée, on explique clairement ce qui sera désactivé */}
+                                      {estSelectionne && f.nonInclus.length > 0 && (
+                                          <div style={{ marginTop: '12px', padding: '12px', borderRadius: '10px', background: 'var(--bg-danger)', border: '1px solid var(--color-danger)' }}>
+                                              <strong style={{ fontSize: '12px', color: 'var(--color-danger)', display: 'block', marginBottom: '6px' }}>
+                                                  Attention — En passant sur {f.nom}, les outils suivants seront verrouillés :
+                                              </strong>
+                                              {f.nonInclus.map((ni, idxNi) => (
+                                                  <div key={idxNi} style={{ fontSize: '11.5px', color: 'var(--color-danger)', marginBottom: '3px' }}>
+                                                      • {ni}
+                                                  </div>
+                                              ))}
+                                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginTop: '6px' }}>
+                                                  Vos données existantes (recettes, factures passées, liasses) ne seront pas supprimées : elles resteront archivées et réapparaîtront si vous repassez sur la formule supérieure.
+                                              </span>
+                                          </div>
+                                      )}
+
+                                      {!estActuel && (
+                                          <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end' }}>
+                                              <button
+                                                  type="button"
+                                                  disabled={isUpdatingSub}
+                                                  onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      if (estSelectionne) {
+                                                          confirmerChangementForfait(f.code);
+                                                      } else {
+                                                          setPlanCibleSelectionne(f.code);
+                                                      }
+                                                  }}
+                                                  className={estSelectionne ? "btn-action" : ""}
+                                                  style={estSelectionne ? { padding: '9px 16px', fontSize: '12.5px' } : {
+                                                      background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)',
+                                                      padding: '8px 14px', borderRadius: '9px', fontSize: '12px', fontWeight: '700', cursor: 'pointer'
+                                                  }}
+                                              >
+                                                  {isUpdatingSub && estSelectionne
+                                                      ? 'Mise à jour...'
+                                                      : estSelectionne
+                                                          ? `Confirmer le passage sur ${f.nom}`
+                                                          : `Choisir ${f.nom}`}
+                                              </button>
+                                          </div>
+                                      )}
+                                  </div>
+                              );
+                          })}
+                      </div>
+                  </div>
+
+                  {/* 3. ENCART D'ACCOMPAGNEMENT À LA RÉSILIATION GUIDÉE */}
+                  <div className="carte scan-carte" style={{ border: '1px solid var(--border-color)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                          <div>
+                              <h3 style={{ margin: '0 0 2px 0', fontSize: '14.5px', color: 'var(--text-main)', fontWeight: '700' }}>
+                                  Vous souhaitez suspendre ou résilier votre abonnement ?
+                              </h3>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                  Procédure guidée en 3 étapes avec récupération garantie de vos archives fiscales et clients.
+                              </span>
+                          </div>
+                          {!showTunnelResiliation && (
+                              <button
+                                  type="button"
+                                  onClick={() => { setShowTunnelResiliation(true); setEtapeResiliation(1); }}
+                                  style={{
+                                      background: 'transparent', color: 'var(--color-danger)', border: '1px solid var(--color-danger)',
+                                      padding: '8px 14px', borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer'
+                                  }}
+                              >
+                                  Démarrer la procédure de résiliation
+                              </button>
+                          )}
+                      </div>
+
+                      {showTunnelResiliation && (
+                          <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                              {/* Indicateur des 3 étapes */}
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                  {[
+                                      { num: 1, label: '1. Diagnostic & Alternative' },
+                                      { num: 2, label: '2. Sauvegarde RGPD / NF525' },
+                                      { num: 3, label: '3. Validation finale' }
+                                  ].map(st => (
+                                      <div
+                                          key={st.num}
+                                          style={{
+                                              flex: 1, padding: '8px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: '700', textAlign: 'center',
+                                              background: etapeResiliation === st.num ? 'var(--text-main)' : 'var(--bg-app)',
+                                              color: etapeResiliation === st.num ? 'var(--bg-card)' : 'var(--text-secondary)',
+                                              border: '1px solid var(--border-color)'
+                                          }}
+                                      >
+                                          {st.label}
+                                      </div>
+                                  ))}
+                              </div>
+
+                              {/* ÉTAPE 1 : MOTIF & PROPOSITION DE DOWNGRADE */}
+                              {etapeResiliation === 1 && (
+                                  <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                                      <strong style={{ fontSize: '13.5px', color: 'var(--text-main)', display: 'block', marginBottom: '10px' }}>
+                                          Pour quelle raison principale envisagez-vous de quitter STACK ?
+                                      </strong>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+                                          {[
+                                              { id: 'PRIX', label: 'Le tarif mensuel est trop élevé pour mon salon actuellement' },
+                                              { id: 'FONCTIONNALITES_TROP_COMPLEXES', label: 'Je n’utilise pas toutes les fonctionnalités (IA, Académie ou Compta)' },
+                                              { id: 'FERMETURE_SALON', label: 'Cessation d’activité ou vente du fonds de commerce' },
+                                              { id: 'AUTRE_LOGICIEL', label: 'Je retourne sur mon ancien système de caisse / agenda' }
+                                          ].map(opt => (
+                                              <label key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12.5px', color: 'var(--text-main)', cursor: 'pointer', padding: '8px 10px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                  <input
+                                                      type="radio"
+                                                      name="motif_resiliation"
+                                                      checked={motifResiliation === opt.id}
+                                                      onChange={() => setMotifResiliation(opt.id)}
+                                                  />
+                                                  <span>{opt.label}</span>
+                                              </label>
+                                          ))}
+                                      </div>
+
+                                      {/* Suggestion automatique de Downgrade si le motif est le prix ou la complexité */}
+                                      {(motifResiliation === 'PRIX' || motifResiliation === 'FONCTIONNALITES_TROP_COMPLEXES') && codePlanActuel !== 'ESSENTIAL' && (
+                                          <div style={{ padding: '14px', borderRadius: '10px', background: 'var(--bg-info)', border: '1px solid var(--color-info)', marginBottom: '14px' }}>
+                                              <strong style={{ fontSize: '13px', color: 'var(--color-info)', display: 'block', marginBottom: '4px' }}>
+                                                  Conseil : Passez plutôt sur une formule allégée sans perdre votre caisse NF525 !
+                                              </strong>
+                                              <p style={{ fontSize: '12px', color: 'var(--text-main)', margin: '0 0 10px 0', lineHeight: 1.45 }}>
+                                                  Au lieu de résilier et de perdre votre historique client et votre certification fiscale NF525, vous pouvez basculer en 1 clic sur <strong>{codePlanActuel === 'PREMIUM' ? 'STACK Pro (59 € HT/mois) ou STACK Essential (29 € HT/mois)' : 'STACK Essential (29 € HT/mois)'}</strong>.
+                                              </p>
+                                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                                  {codePlanActuel === 'PREMIUM' && (
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => confirmerChangementForfait('PRO')}
+                                                          className="btn-action"
+                                                          style={{ padding: '8px 12px', fontSize: '12px' }}
+                                                      >
+                                                          Passer sur STACK Pro (59 € HT)
+                                                      </button>
+                                                  )}
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => confirmerChangementForfait('ESSENTIAL')}
+                                                      className="btn-action"
+                                                      style={{ padding: '8px 12px', fontSize: '12px' }}
+                                                  >
+                                                      Passer sur STACK Essential (29 € HT)
+                                                  </button>
+                                              </div>
+                                          </div>
+                                      )}
+
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+                                          <button type="button" onClick={() => setShowTunnelResiliation(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '12.5px', cursor: 'pointer' }}>
+                                              Annuler
+                                          </button>
+                                          <button
+                                              type="button"
+                                              disabled={!motifResiliation}
+                                              onClick={() => setEtapeResiliation(2)}
+                                              style={{ background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '9px 16px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '700', cursor: motifResiliation ? 'pointer' : 'not-allowed', opacity: motifResiliation ? 1 : 0.5 }}
+                                          >
+                                              Continuer vers l'étape 2 →
+                                          </button>
+                                      </div>
+                                  </div>
+                              )}
+
+                              {/* ÉTAPE 2 : EXPORT DE PORTABILITÉ OBLIGATOIRE AVANT DÉPART */}
+                              {etapeResiliation === 2 && (
+                                  <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                                      <strong style={{ fontSize: '13.5px', color: 'var(--text-main)', display: 'block', marginBottom: '6px' }}>
+                                          Étape 2 — Sauvegardez vos données clients et vos archives fiscales (NF525)
+                                      </strong>
+                                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, margin: '0 0 12px 0' }}>
+                                          En vertu de l'article L. 102 B du Livre des Procédures Fiscales, vous devez conserver vos archives de caisse pendant 6 ans. Téléchargez dès maintenant votre fichier clients (.CSV) et votre archive intégrale scellée (.JSON) :
+                                      </p>
+
+                                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                                          <button
+                                              type="button"
+                                              onClick={() => telechargerExportPortabilite('csv_clients', `Clients_${slug}_${dJour}.csv`)}
+                                              style={{ flex: 1, minWidth: '180px', background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px 12px', borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                                          >
+                                              1. Télécharger mon Fichier Clients (.CSV)
+                                          </button>
+                                          <button
+                                              type="button"
+                                              onClick={() => telechargerExportPortabilite('json_complet', `Archive_Portabilite_STACK_${slug}_${dJour}.json`)}
+                                              style={{ flex: 1, minWidth: '180px', background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '10px 12px', borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                                          >
+                                              2. Télécharger l’Archive Fiscale Complète (.JSON)
+                                          </button>
+                                      </div>
+
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+                                          <button type="button" onClick={() => setEtapeResiliation(1)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '12.5px', cursor: 'pointer' }}>
+                                              ← Retour
+                                          </button>
+                                          <button
+                                              type="button"
+                                              onClick={() => setEtapeResiliation(3)}
+                                              style={{ background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '9px 16px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer' }}
+                                          >
+                                              Continuer vers la confirmation →
+                                          </button>
+                                      </div>
+                                  </div>
+                              )}
+
+                              {/* ÉTAPE 3 : CONFIRMATION DÉFINITIVE DE RÉSILIATION */}
+                              {etapeResiliation === 3 && (
+                                  <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px solid var(--color-danger)' }}>
+                                      <strong style={{ fontSize: '13.5px', color: 'var(--color-danger)', display: 'block', marginBottom: '6px' }}>
+                                          Étape 3 — Confirmation de fin d'abonnement
+                                      </strong>
+                                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, margin: '0 0 12px 0' }}>
+                                          • Vos accès restent <strong>100 % fonctionnels jusqu'à la fin de votre période mensuelle en cours</strong>.<br/>
+                                          • Aucun prélèvement supplémentaire ne sera effectué le mois suivant.<br/>
+                                          • Vos exports comptables (FEC, Liasse PDF, Portabilité) resteront accessibles en lecture seule.
+                                      </p>
+
+                                      <textarea
+                                          className="input-fournisseur"
+                                          rows="2"
+                                          placeholder="Un dernier commentaire pour nous aider à améliorer STACK ? (Optionnel)"
+                                          value={commentaireResiliation}
+                                          onChange={e => setCommentaireResiliation(e.target.value)}
+                                          style={{ marginBottom: '12px', background: 'var(--bg-card)' }}
+                                      />
+
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                          <button type="button" onClick={() => setEtapeResiliation(2)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '12.5px', cursor: 'pointer' }}>
+                                              ← Retour
+                                          </button>
+                                          <button
+                                              type="button"
+                                              disabled={isUpdatingSub}
+                                              onClick={confirmerResiliationAbonnement}
+                                              style={{
+                                                  background: 'var(--color-danger)', color: '#ffffff', border: 'none',
+                                                  padding: '10px 18px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '800', cursor: 'pointer'
+                                              }}
+                                          >
+                                              {isUpdatingSub ? 'Enregistrement...' : 'Confirmer la résiliation en fin de mois'}
+                                          </button>
+                                      </div>
+                                  </div>
+                              )}
+                          </div>
+                      )}
                   </div>
               </>
           );
