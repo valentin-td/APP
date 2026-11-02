@@ -5086,7 +5086,7 @@ function App() {
                                 {noteMoyenneCampagne ? `${noteMoyenneCampagne} / 5` : '—'}
                               </div>
                               <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
-                                {verbatimsListe.length > 0 ? `${verbatimsListe.length} retour(s) vérifié(s)` : 'Enquêtes SMS post-visite'}
+                                {verbatimsListe.length > 0 ? `` : 'Enquêtes SMS post-visite'}
                               </span>
                             </div>
                           </div>
