@@ -1024,13 +1024,38 @@ case 'portabilite': {
           const rangActuel = ordrePlans[codePlanActuel] || 3;
           const slug = (configSalon.nom_salon || 'MonSalon').replace(/[^a-zA-Z0-9_-]/g, '_');
           const dJour = new Date().toISOString().slice(0, 10);
-       
-          <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '700', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)' }}>
-            SMS ce mois : {etatQuotaSms.sms_utilises} / {etatQuotaSms.sms_quota}
-          </span>
-         
 
           return (
+              <>
+                  {/* EN-TÊTE COMPACT DU FORFAIT ACTUEL */}
+                  <div className="carte scan-carte" style={{ marginBottom: '14px', padding: '16px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Forfait actif</span>
+                              {/* BADGE QUOTA SMS INTÉGRÉ ICI */}
+                              <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10.5px', fontWeight: '700', background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)' }}>
+                                  SMS utilisés : {etatQuotaSms.sms_utilises} / {etatQuotaSms.sms_quota}
+                              </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                              <strong style={{ fontSize: '17px', color: 'var(--text-main)' }}>
+                                  {estEnEssai ? 'STACK Premium (Essai 30j)' : `STACK ${codePlanActuel}`}
+                              </strong>
+                              <span style={{
+                                  padding: '3px 9px', borderRadius: '999px', fontSize: '11px', fontWeight: '800',
+                                  background: statutAboLocal === 'resilie_fin_periode' ? 'var(--bg-danger)' : 'var(--bg-success)',
+                                  color: statutAboLocal === 'resilie_fin_periode' ? 'var(--color-danger)' : 'var(--color-success)'
+                              }}>
+                                  {statutAboLocal === 'resilie_fin_periode' ? 'Fin programmée' : 'Sans engagement'}
+                              </span>
+                          </div>
+                      </div>
+                      {statutAboLocal === 'resilie_fin_periode' && (
+                          <button type="button" disabled={isUpdatingSub} onClick={reactiverMonAbonnement} className="btn-action" style={{ padding: '8px 14px', fontSize: '12px' }}>
+                              Réactiver
+                          </button>
+                      )}
+                  </div>
               <>
                   {/* EN-TÊTE COMPACT DU FORFAIT ACTUEL */}
                   <div className="carte scan-carte" style={{ marginBottom: '14px', padding: '16px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
