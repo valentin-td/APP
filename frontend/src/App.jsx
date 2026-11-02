@@ -5051,7 +5051,7 @@ function App() {
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {panierMoyenGerant.toFixed(2)} <span style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: '700' }}>€</span>
                               </div>
-                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Par passage client</span>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
                             </div>
 
                             {/* KPI 3 : Commissions Équipe */}
@@ -5065,7 +5065,7 @@ function App() {
                               <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: 'var(--color-success)', margin: '10px 0 4px 0', letterSpacing: '-0.02em' }}>
                                 {commissionsAPayerGerant.toFixed(2)} <span style={{ fontSize: '14px', fontWeight: '700' }}>€</span>
                               </div>
-                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Variables de paie cumulées</span>
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}></span>
                             </div>
 
                             {/* KPI 4 : Satisfaction & NPS */}
