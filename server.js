@@ -5520,96 +5520,59 @@ app.get('/api/export-fec', verifierToken, async (req, res) => {
 });
 
 // =========================================================================
-// --- MESSAGERIE INTERNE (CORRIGÉE & SÉCURISÉE) ---
+// --- MESSAGERIE INTERNE ---
 // =========================================================================
-
-// Fonction utilitaire : normalise un message pour que le frontend (App.jsx)
-// associe toujours id_destinataire = null à la clé 'gerant'
-function formaterMessagePourFrontend(row) {
-    return {
-        ...row,
-        id_destinataire: row.id_destinataire === null ? 'gerant' : row.id_destinataire,
-        reactions: typeof row.reactions === 'string'
-            ? (() => { try { return JSON.parse(row.reactions); } catch (e) { return {}; } })()
-            : (row.reactions || {}),
-        vu_par: Array.isArray(row.vu_par) ? row.vu_par : []
-    };
-}
-
 app.get('/api/messages', verifierToken, async (req, res) => {
     try {
-        await pool.query(`ALTER TABLE messages ALTER COLUMN id_destinataire DROP NOT NULL`).catch(() => {});
-
         let query = `
-            SELECT m.*,
-                   COALESCE(e.nom, CASE WHEN m.id_expediteur = -1 THEN 'Salon' ELSE 'Gérant' END) as nom_expediteur,
-                   e.photo_url as photo_expediteur
-            FROM messages m
+            SELECT m.*, COALESCE(e.nom, CASE WHEN m.id_expediteur = -1 THEN 'Salon' ELSE 'Gérant' END) as nom_expediteur, e.photo_url as photo_expediteur 
+            FROM messages m 
             LEFT JOIN employes e ON m.id_expediteur = e.id_employe AND e.id_salon = m.id_salon
             WHERE m.id_salon = $1
         `;
         const params = [req.user.id_salon];
 
-        // 🔒 SÉCURITÉ & ISOLATION DES CONVERSATIONS PAR RÔLE :
+        // 🔒 SÉCURITÉ : Un employé récupère les messages du groupe (0) et ceux où il est expéditeur ou destinataire
         if (req.user.role === 'employe') {
-            // Un employé voit : le groupe (0) + ses propres échanges avec le gérant ou ses collègues
-            const idEmp = parseInt(req.user.id_employe, 10);
             query += ` AND (m.id_destinataire = 0 OR m.id_expediteur = $2 OR m.id_destinataire = $2)`;
-            params.push(idEmp);
-        } else if (req.user.role === 'salon') {
-            // Le poste Salon (-1) voit : le groupe (0) + les messages envoyés/reçus par le poste Salon (-1)
-            query += ` AND (m.id_destinataire = 0 OR m.id_expediteur = -1 OR m.id_destinataire = -1)`;
+            params.push(parseInt(req.user.id_employe, 10));
         }
-        // Le gérant voit le groupe (0) et tous ses échanges (id_expediteur IS NULL / id_destinataire IS NULL)
 
         query += ` ORDER BY m.date_creation ASC`;
         const result = await pool.query(query, params);
-        res.json(result.rows.map(formaterMessagePourFrontend));
+        res.json(result.rows);
     } catch (e) {
-        console.error("Erreur GET /api/messages :", e);
-        res.status(500).json({ erreur: "Erreur lors de la récupération des messages." });
+        res.status(500).json({ erreur: "Erreur messages." });
     }
 });
 
 app.post('/api/messages', verifierToken, async (req, res) => {
     const { id_destinataire, contenu, fichier_url } = req.body;
     const textePropre = typeof contenu === 'string' ? contenu.trim() : '';
-    const fichierNettoye = typeof fichier_url === 'string' ? fichier_url.replace(/\s/g, '') : null;
 
-    if (!textePropre && !fichierNettoye) {
+    if (!textePropre && !fichier_url) {
         return res.status(400).json({ erreur: "Le message ne peut pas être vide." });
     }
     if (textePropre.length > 5000) {
         return res.status(400).json({ erreur: "Le message dépasse la limite autorisée (5000 caractères)." });
     }
 
-    // Validation souple et sécurisée de l'image jointe (supporte Base64 & URLs HTTPS)
-    if (fichierNettoye) {
-        if (fichierNettoye.length > 7000000) {
-            return res.status(400).json({ erreur: "Image trop volumineuse (max 5 Mo)." });
+    if (fichier_url) {
+        if (typeof fichier_url !== 'string' || fichier_url.length > 6500000) {
+            return res.status(400).json({ erreur: "Fichier trop volumineux (max 4 Mo)." });
         }
-        const estImageValide =
-            /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(fichierNettoye) ||
-            fichierNettoye.startsWith('https://');
-        if (!estImageValide) {
-            return res.status(400).json({ erreur: "Format d'image non autorisé (JPG, PNG, WEBP, GIF)." });
+        const mimeValide = /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(fichier_url) || fichier_url.startsWith('https://');
+        if (!mimeValide) {
+            return res.status(400).json({ erreur: "Format d'image non autorisé (seuls JPG, PNG, WEBP et GIF sont acceptés)." });
         }
     }
 
-    const id_expediteur = req.user.role === 'employe'
-        ? parseInt(req.user.id_employe, 10)
-        : (req.user.role === 'salon' ? -1 : null);
-
+    const id_expediteur = req.user.role === 'employe' ? parseInt(req.user.id_employe, 10) : (req.user.role === 'salon' ? -1 : null);
     try {
-        await pool.query(`ALTER TABLE messages ALTER COLUMN id_destinataire DROP NOT NULL`).catch(() => {});
-
         let nom_expediteur = 'Gérant';
         let photo_expediteur = null;
         if (req.user.role === 'employe') {
-            const empRes = await pool.query(
-                'SELECT nom, photo_url FROM employes WHERE id_employe = $1 AND id_salon = $2',
-                [id_expediteur, req.user.id_salon]
-            );
+            const empRes = await pool.query('SELECT nom, photo_url FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_expediteur, req.user.id_salon]);
             if (empRes.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable." });
             nom_expediteur = empRes.rows[0].nom;
             photo_expediteur = empRes.rows[0].photo_url;
@@ -5617,80 +5580,70 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             nom_expediteur = 'Salon';
         }
 
-        // Résolution stricte du destinataire :
-        // 0 = Groupe Salon | null = Gérant | -1 = Poste Salon | >0 = Employé précis
+        // 0 = Groupe Salon | null = Gérant | >0 = Employé précis
         let dest = null;
         if (id_destinataire === 'salon' || id_destinataire === 0 || id_destinataire === '0') {
             dest = 0;
-        } else if (id_destinataire === -1 || id_destinataire === '-1') {
-            dest = -1;
-        } else if (id_destinataire === 'gerant' || id_destinataire === null || id_destinataire === undefined || id_destinataire === '') {
+        } else if (id_destinataire === 'gerant' || id_destinataire === null || id_destinataire === undefined || id_destinataire === '' || id_destinataire === -1) {
             dest = null;
         } else {
             const parsedDest = parseInt(id_destinataire, 10);
-            if (isNaN(parsedDest)) {
-                dest = null;
-            } else {
-                const checkDest = await pool.query(
-                    'SELECT id_employe, est_gerant FROM employes WHERE id_employe = $1 AND id_salon = $2',
-                    [parsedDest, req.user.id_salon]
-                );
-                if (checkDest.rowCount === 0) {
-                    return res.status(404).json({ erreur: "Destinataire introuvable dans ce salon." });
-                }
-                dest = parsedDest;
-            }
+            if (isNaN(parsedDest)) return res.status(400).json({ erreur: "Destinataire invalide." });
+            const checkDest = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [parsedDest, req.user.id_salon]);
+            if (checkDest.rowCount === 0) return res.status(404).json({ erreur: "Destinataire introuvable dans ce salon." });
+            dest = parsedDest;
         }
 
         const result = await pool.query(
-            `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING id_message, date_creation`,
-            [req.user.id_salon, id_expediteur, dest, textePropre, fichierNettoye || null]
+            `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url) VALUES ($1, $2, $3, $4, $5) RETURNING id_message, date_creation`,
+            [req.user.id_salon, id_expediteur, dest, textePropre, fichier_url || null]
         );
-
-        const newMessage = formaterMessagePourFrontend({
+        const newMessage = {
             id_message: result.rows[0].id_message,
             id_salon: req.user.id_salon,
             id_expediteur,
             id_destinataire: dest,
             contenu: textePropre,
-            fichier_url: fichierNettoye || null,
+            fichier_url: fichier_url || null,
             date_creation: result.rows[0].date_creation,
             nom_expediteur,
             photo_expediteur,
             reactions: {},
             vu_par: []
-        });
+        };
 
-        // Diffusion temps réel sur la room principale du salon (comme pour les messages de groupe qui fonctionnent)
         const salonRoom = req.user.id_salon.toString();
-        io.to(salonRoom).emit('nouveauMessage', newMessage);
+        if (dest === 0) {
+            io.to(salonRoom)
+              .to(`${salonRoom}_gerant`)
+              .to(`${salonRoom}_salon`)
+              .emit('nouveauMessage', newMessage);
+        } else {
+            let emitter = io.to(salonRoom).to(`${salonRoom}_gerant`).to(`${salonRoom}_salon`);
+            if (id_expediteur && id_expediteur > 0) emitter = emitter.to(`${salonRoom}_emp_${id_expediteur}`);
+            if (dest && dest > 0) emitter = emitter.to(`${salonRoom}_emp_${dest}`);
+            emitter.emit('nouveauMessage', newMessage);
+        }
 
-        // Notification Push ciblée
         let cibleNotif;
         if (dest === 0) {
             cibleNotif = 'salon';
         } else if (dest === null) {
             cibleNotif = 'gerant';
-        } else if (dest > 0) {
+        } else {
             cibleNotif = { type: 'employe', id_employe: dest };
         }
-        if (cibleNotif && typeof envoyerNotificationPush === 'function') {
-            const apercuNotif = textePropre
-                ? (textePropre.length > 40 ? textePropre.substring(0, 40) + '...' : textePropre)
-                : 'Photo envoyée';
-            envoyerNotificationPush(req.user.id_salon, cibleNotif, {
-                title: `Nouveau message de ${newMessage.nom_expediteur}`,
-                body: apercuNotif,
-                url: '/?tab=messagerie'
-            });
-        }
+        const apercuNotif = textePropre ? (textePropre.length > 40 ? textePropre.substring(0, 40) + '...' : textePropre) : '📷 Photo envoyée';
+        envoyerNotificationPush(req.user.id_salon, cibleNotif, {
+            title: `Nouveau message de ${newMessage.nom_expediteur}`,
+            body: apercuNotif,
+            url: '/?tab=messagerie'
+        });
 
         res.status(201).json(newMessage);
     } catch (e) {
-        console.error("Erreur POST /api/messages :", e);
-        res.status(500).json({ erreur: "Erreur lors de l'envoi du message." });
+        console.error("Erreur envoi message :", e);
+        res.status(500).json({ erreur: "Erreur envoi message." });
     }
 });
 
@@ -5698,7 +5651,7 @@ app.put('/api/messages/:id', verifierToken, async (req, res) => {
     const textePropre = typeof req.body.contenu === 'string' ? req.body.contenu.trim() : '';
     if (!textePropre || textePropre.length > 5000) return res.status(400).json({ erreur: "Contenu invalide." });
 
-    const id_expediteur = req.user.role === 'employe' ? parseInt(req.user.id_employe, 10) : (req.user.role === 'salon' ? -1 : null);
+    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
     try {
         const updateRes = await pool.query(
             'UPDATE messages SET contenu = $1 WHERE id_message = $2 AND id_salon = $3 AND id_expediteur IS NOT DISTINCT FROM $4 RETURNING id_message',
@@ -5709,13 +5662,11 @@ app.put('/api/messages/:id', verifierToken, async (req, res) => {
         }
         io.to(req.user.id_salon.toString()).emit('messageModifie', { id_message: parseInt(req.params.id, 10), contenu: textePropre });
         res.json({ message: "Message modifié" });
-    } catch (e) {
-        res.status(500).json({ erreur: "Erreur lors de la modification" });
-    }
+    } catch(e) { res.status(500).json({erreur: "Erreur lors de la modification"}); }
 });
 
 app.delete('/api/messages/:id', verifierToken, async (req, res) => {
-    const id_expediteur = req.user.role === 'employe' ? parseInt(req.user.id_employe, 10) : (req.user.role === 'salon' ? -1 : null);
+    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
     try {
         let deleteRes;
         if (req.user.role === 'gerant') {
@@ -5728,23 +5679,17 @@ app.delete('/api/messages/:id', verifierToken, async (req, res) => {
         }
         io.to(req.user.id_salon.toString()).emit('messageSupprime', { id_message: parseInt(req.params.id, 10) });
         res.json({ message: "Message supprimé" });
-    } catch (e) {
-        res.status(500).json({ erreur: "Erreur lors de la suppression" });
-    }
+    } catch(e) { res.status(500).json({erreur: "Erreur lors de la suppression"}); }
 });
 
 app.post('/api/messages/vu', verifierToken, async (req, res) => {
     const ids = Array.isArray(req.body.ids) ? req.body.ids.map(id => parseInt(id, 10)).filter(n => !isNaN(n)) : [];
     if (ids.length === 0) return res.json({ message: "Rien à marquer." });
-    const monId = req.user.role === 'employe' ? parseInt(req.user.id_employe, 10) : (req.user.role === 'salon' ? -1 : null);
+    const monId = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
     const monProfilId = req.user.role === 'employe' ? `emp_${req.user.id_employe}` : (req.user.role === 'salon' ? 'salon' : 'gerant');
     try {
         const result = await pool.query(
-            `UPDATE messages
-             SET vu_par = CASE
-                 WHEN COALESCE(vu_par::jsonb, '[]'::jsonb) @> to_jsonb($1::text) THEN COALESCE(vu_par::jsonb, '[]'::jsonb)
-                 ELSE COALESCE(vu_par::jsonb, '[]'::jsonb) || to_jsonb($1::text)
-             END
+            `UPDATE messages SET vu_par = CASE WHEN COALESCE(vu_par, '[]'::jsonb) @> to_jsonb($1::text) THEN COALESCE(vu_par, '[]'::jsonb) ELSE COALESCE(vu_par, '[]'::jsonb) || to_jsonb($1::text) END
              WHERE id_message = ANY($2::int[]) AND id_salon = $3 AND id_expediteur IS DISTINCT FROM $4
              RETURNING id_message, vu_par`,
             [monProfilId, ids, req.user.id_salon, monId]
@@ -5753,9 +5698,7 @@ app.post('/api/messages/vu', verifierToken, async (req, res) => {
             io.to(req.user.id_salon.toString()).emit('messageVu', { id_message: row.id_message, vu_par: row.vu_par });
         });
         res.json({ message: "Marqué comme vu." });
-    } catch (e) {
-        res.status(500).json({ erreur: "Erreur marquage vu." });
-    }
+    } catch (e) { res.status(500).json({ erreur: "Erreur marquage vu." }); }
 });
 
 app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
@@ -5772,25 +5715,26 @@ app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
             await clientDB.query('ROLLBACK');
             return res.status(404).json({ erreur: "Message introuvable" });
         }
-
+        
         let reactions = msgRes.rows[0].reactions || {};
-        if (typeof reactions === 'string') reactions = JSON.parse(reactions);
+        if (typeof reactions === 'string') reactions = JSON.parse(reactions); 
+        
         if (!Array.isArray(reactions[emoji])) reactions[emoji] = [];
-
+        
         if (reactions[emoji].includes(monProfilId)) {
             reactions[emoji] = reactions[emoji].filter(id => id !== monProfilId);
             if (reactions[emoji].length === 0) delete reactions[emoji];
         } else {
             reactions[emoji].push(monProfilId);
         }
-
+        
         await clientDB.query('UPDATE messages SET reactions = $1 WHERE id_message = $2 AND id_salon = $3', [JSON.stringify(reactions), req.params.id, req.user.id_salon]);
         await clientDB.query('COMMIT');
         io.to(req.user.id_salon.toString()).emit('messageReaction', { id_message: parseInt(req.params.id, 10), reactions });
         res.json({ message: "Réaction mise à jour" });
-    } catch (e) {
+    } catch(e) {
         await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: "Erreur de réaction" });
+        res.status(500).json({erreur: "Erreur de réaction"});
     } finally {
         clientDB.release();
     }
