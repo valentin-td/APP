@@ -2935,47 +2935,79 @@ function App() {
       if (fichiers.length === 0) return;
 
       setIsUploadingFacture(true);
+      setErreurAnalyseIA(null);
       setProgressionBatch({ actuel: 0, total: fichiers.length });
 
       const tachesAnalysees = [];
       let erreursCount = 0;
 
-      const lireFichierEnBase64 = (file) => new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result.split(',')[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
+      // Compresse automatiquement les photos lourdes (ex: iPhone) pour éviter les échecs aléatoires de l'IA
+      const lireFichierOptimiseEnBase64 = (file) => new Promise((resolve, reject) => {
+          if (file.type.startsWith('image/')) {
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                  const img = new Image();
+                  img.onload = () => {
+                      const maxDim = 1600;
+                      let w = img.width, h = img.height;
+                      if (w > maxDim || h > maxDim) {
+                          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+                          else { w = Math.round((w * maxDim) / h); h = maxDim; }
+                      }
+                      const canvas = document.createElement('canvas');
+                      canvas.width = w;
+                      canvas.height = h;
+                      const ctx = canvas.getContext('2d');
+                      ctx.drawImage(img, 0, 0, w, h);
+                      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+                      resolve({ base64: dataUrl.split(',')[1], mime: 'image/jpeg' });
+                  };
+                  img.onerror = reject;
+                  img.src = ev.target.result;
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+          } else {
+              const reader = new FileReader();
+              reader.onload = () => resolve({ base64: reader.result.split(',')[1], mime: file.type });
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+          }
       });
 
       for (let i = 0; i < fichiers.length; i++) {
           const file = fichiers[i];
           setProgressionBatch({ actuel: i + 1, total: fichiers.length });
-          
+
           const isAccepted = file.type === 'application/pdf' || file.type.startsWith('image/');
           if (!isAccepted) {
               erreursCount++;
-              continue; // On passe au fichier suivant si le format est mauvais
+              continue;
           }
 
           try {
-              const base64 = await lireFichierEnBase64(file);
+              const { base64, mime } = await lireFichierOptimiseEnBase64(file);
               const res = await fetch('https://api-salon-backend.onrender.com/api/ia/upload-facture', {
                   method: 'POST',
                   headers: getAuthHeaders(true),
                   body: JSON.stringify({
                       fichier_base64: base64,
-                      mime_type: file.type
+                      mime_type: mime
                   })
               });
 
-              const data = await handleFetchError(res); // Sécurisé par ta gestion d'erreur globale
-              
+              const data = await handleFetchError(res);
+
               if (data && data.tache) {
                   tachesAnalysees.push({
                       ...data.tache,
-                      id_tache: `${data.tache.id_tache}_${i}`, // ID unique pour la file d'attente
+                      // IMPORTANT : On garde le vrai id_tache numérique de PostgreSQL pour que "Ignorer" et "Valider" suppriment bien la tâche en BDD !
+                      id_tache: data.tache.id_tache,
+                      cle_file_ui: `${data.tache.id_tache}_${i}`,
                       nom_fichier_origine: file.name
                   });
+              } else {
+                  erreursCount++;
               }
           } catch (err) {
               erreursCount++;
@@ -2984,7 +3016,7 @@ function App() {
 
       setIsUploadingFacture(false);
       setProgressionBatch({ actuel: 0, total: 0 });
-      e.target.value = null; // Réinitialise l'input
+      e.target.value = null;
 
       if (tachesAnalysees.length > 0) {
           setErreurAnalyseIA(null);
