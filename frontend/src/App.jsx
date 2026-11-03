@@ -8156,89 +8156,97 @@ function App() {
                               </div>
                           </div>
 
-                          {/* COLONNE DROITE : FACTURES & DÉPENSES FOURNISSEURS (MANUEL + SCAN IA) */}
-                          <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                              <div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                                      <div style={{ width: '40px', height: '40px', borderRadius: '11px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)', flexShrink: 0 }}>
-                                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                                      </div>
-                                      <div>
-                                          <h3 style={{ margin: 0, fontSize: '15.5px', fontWeight: '800', color: 'var(--text-main)' }}>Achats & Factures Fournisseurs</h3>
-                                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}></span>
-                                      </div>
+                          {/* COLONNE DROITE : FACTURES & DÉPENSES FOURNISSEURS (MANUEL + SCAN IA AVEC PROGRESSION) */}
+                      <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: 0, borderRadius: '18px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                          <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                                  <div style={{ width: '40px', height: '40px', borderRadius: '11px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-main)', flexShrink: 0 }}>
+                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                                   </div>
-
-                                  <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5, margin: '0 0 16px 0' }}>
-                                      
-                                  </p>
-
-                                  {erreurAnalyseIA && (
-                                      <div style={{ background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', borderRadius: '10px', marginBottom: '14px', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                                          <div style={{ color: 'var(--color-danger)', fontSize: '12px', lineHeight: 1.4 }}>
-                                              <strong style={{ display: 'block' }}>Document non reconnu</strong>
-                                              <span>{erreurAnalyseIA}</span>
-                                          </div>
-                                          <button onClick={() => setErreurAnalyseIA(null)} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '2px' }}>✕</button>
-                                      </div>
-                                  )}
+                                  <div>
+                                      <h3 style={{ margin: 0, fontSize: '15.5px', fontWeight: '800', color: 'var(--text-main)' }}>Achats & Factures Fournisseurs</h3>
+                                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Extraction intelligente (IA) & Saisie</span>
+                                  </div>
                               </div>
 
-                              <div>
-                                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
-                                      <button
-                                          type="button"
-                                          onClick={() => setShowSaisieManuelleFacture(true)}
-                                          className="btn-action"
-                                          style={{ padding: '12px 14px', fontSize: '12.5px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                                      >
-                                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                                          <span>Saisie Manuelle</span>
-                                      </button>
+                              {erreurAnalyseIA && (
+                                  <div style={{ background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', borderRadius: '10px', marginBottom: '14px', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                                      <div style={{ color: 'var(--color-danger)', fontSize: '12px', lineHeight: 1.4 }}>
+                                          <strong style={{ display: 'block' }}>Document non reconnu</strong>
+                                          <span>{erreurAnalyseIA}</span>
+                                      </div>
+                                      <button onClick={() => setErreurAnalyseIA(null)} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '2px' }}>✕</button>
+                                  </div>
+                              )}
+                          </div>
 
-                                      {aLeNiveau('PREMIUM') ? (
-                                          <>
-                                              <input
-                                                  type="file"
-                                                  id={`upload-facture-compta-${role}`}
-                                                  accept="application/pdf, image/jpeg, image/png, image/jpg"
-                                                  multiple
-                                                  style={{ display: 'none' }}
-                                                  onChange={handleUploadFactureManuel}
-                                              />
-                                              <button
-                                                  type="button"
-                                                  onClick={() => document.getElementById(`upload-facture-compta-${role}`).click()}
-                                                  disabled={isUploadingFacture}
-                                                  className="btn-action"
-                                                  style={{ background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px 14px', fontSize: '12.5px', borderRadius: '10px', opacity: isUploadingFacture ? 0.5 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                                              >
-                                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-                                                  <span>
-                                                      {isUploadingFacture
-                                                          ? (progressionBatch.total > 1 ? `Scan IA (${progressionBatch.actuel}/${progressionBatch.total})...` : 'Scan IA...')
-                                                          : 'Scan Facture (IA)'}
-                                                  </span>
-                                              </button>
-                                          </>
-                                      ) : (
+                          <div>
+                              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
+                                  <button
+                                      type="button"
+                                      onClick={() => setShowSaisieManuelleFacture(true)}
+                                      className="btn-action"
+                                      style={{ padding: '12px 14px', fontSize: '12.5px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                                  >
+                                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                      <span>Saisie Manuelle</span>
+                                  </button>
+
+                                  {aLeNiveau('PREMIUM') ? (
+                                      <>
+                                          <input
+                                              type="file"
+                                              id={`upload-facture-compta-${role}`}
+                                              accept="application/pdf, image/jpeg, image/png, image/jpg"
+                                              multiple
+                                              style={{ display: 'none' }}
+                                              onChange={handleUploadFactureManuel}
+                                          />
                                           <button
                                               type="button"
-                                              onClick={() => setShowPricingModal(true)}
-                                              style={{ background: 'var(--bg-app)', color: 'var(--text-muted)', border: '1px solid var(--border-color)', padding: '12px 14px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: 0.7 }}
+                                              onClick={() => document.getElementById(`upload-facture-compta-${role}`).click()}
+                                              disabled={isUploadingFacture}
+                                              className="btn-action"
+                                              style={{ background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px 14px', fontSize: '12.5px', borderRadius: '10px', opacity: isUploadingFacture ? 0.7 : 1, cursor: isUploadingFacture ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                                           >
-                                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                              <span>Scan IA (Premium)</span>
+                                              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                                              <span>
+                                                  {isUploadingFacture
+                                                      ? (progressionBatch.total > 1 ? `Analyse (${progressionBatch.actuel}/${progressionBatch.total})...` : 'Analyse IA...')
+                                                      : 'Scan Facture (IA)'}
+                                              </span>
                                           </button>
-                                      )}
-                                  </div>
-
-                                  {isUploadingFacture && progressionBatch.total > 1 && (
-                                      <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)', marginTop: '10px' }}>
-                                          <div style={{ height: '100%', width: `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%`, backgroundColor: 'var(--btn-primary)', borderRadius: '999px', transition: 'width 0.3s ease' }} />
-                                      </div>
+                                      </>
+                                  ) : (
+                                      <button
+                                          type="button"
+                                          onClick={() => setShowPricingModal(true)}
+                                          style={{ background: 'var(--bg-app)', color: 'var(--text-muted)', border: '1px solid var(--border-color)', padding: '12px 14px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: 0.7 }}
+                                      >
+                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                          <span>Scan IA (Premium)</span>
+                                      </button>
                                   )}
                               </div>
+
+                              {/* BARRE DE PROGRESSION DISCRÈTE ET FLUIDE */}
+                              {isUploadingFacture && (
+                                  <div style={{ marginTop: '12px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                                          <span>Traitement OCR & Extraction comptable...</span>
+                                          <span>{progressionBatch.total > 1 ? `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%` : 'En cours'}</span>
+                                      </div>
+                                      <div style={{ height: '5px', width: '100%', backgroundColor: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                          <div style={{
+                                              height: '100%',
+                                              width: progressionBatch.total > 1 ? `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%` : '65%',
+                                              backgroundColor: 'var(--btn-primary)',
+                                              borderRadius: '999px',
+                                              transition: 'width 0.4s ease'
+                                          }} />
+                                      </div>
+                                  </div>
+                              )}
                           </div>
                       </div>
 
