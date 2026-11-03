@@ -3621,9 +3621,8 @@ function App() {
   const envoyerMessage = async () => {
       if (!msgInput.trim() && !msgFile) return;
       try {
-          const destinataire = chatActif === 'salon' ? null : chatActif;
-          const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
-          
+          const destinataire = chatActif === 'salon' ? 0 : (chatActif === 'gerant' ? null : chatActif);
+
           const res = await fetch(`https://api-salon-backend.onrender.com/api/messages`, {
               method: 'POST',
               headers: {
@@ -3638,10 +3637,14 @@ function App() {
           });
 
           if (res.ok) {
+              const nouveauMsg = await res.json();
+              setMessagesListe(prev => {
+                  const liste = Array.isArray(prev) ? prev : [];
+                  if (liste.some(m => Number(m.id_message) === Number(nouveauMsg.id_message))) return liste;
+                  return [...liste, nouveauMsg];
+              });
               setMsgInput('');
               setMsgFile(null);
-              // Recharge instantanément les messages pour afficher la trace sans recharger la page
-              if (typeof chargerMessages === 'function') chargerMessages();
           } else {
               const errData = await res.json().catch(() => ({}));
               showToast(errData.erreur || "Erreur lors de l'envoi du message.", "error");
@@ -8593,15 +8596,19 @@ function App() {
                           <div className="chat-messages" ref={chatMessagesRef}>
                                   {(messagesListe || []).filter(m => {
                                       const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
-                                      let cle = getCleConversation(m, role, myId);
-                                      if (m.id_destinataire === 0 || m.id_destinataire === '0') {
-                                          cle = 'salon';
-                                      } else if (role === 'employe' && (m.id_destinataire === null || m.id_destinataire === -1 || m.id_expediteur === null || m.id_expediteur === -1)) {
-                                          cle = 'gerant';
-                                      } else if ((role === 'gerant' || role === 'salon') && (m.id_destinataire === null || m.id_destinataire === -1) && m.id_expediteur > 0) {
-                                          cle = m.id_expediteur;
+                                      // 1. Message du Groupe Salon (id_destinataire === 0)
+                                      if (m.id_destinataire === 0 || m.id_destinataire === '0' || m.id_destinataire === 'salon') {
+                                          return String(chatActif) === 'salon';
                                       }
-                                      return String(cle) === String(chatActif);
+                                      // 2. Quand un employé discute avec le Gérant (dans un sens ou dans l'autre)
+                                      if (role === 'employe' && (m.id_destinataire === null || m.id_destinataire === -1 || m.id_expediteur === null || m.id_expediteur === -1)) {
+                                          return String(chatActif) === 'gerant';
+                                      }
+                                      // 3. Quand le Gérant ou le Salon consulte la discussion d'un employé qui lui a écrit
+                                      if ((role === 'gerant' || role === 'salon') && (m.id_destinataire === null || m.id_destinataire === -1) && m.id_expediteur > 0) {
+                                          return String(m.id_expediteur) === String(chatActif);
+                                      }
+                                      return String(getCleConversation(m, role, myId)) === String(chatActif);
                                   }).map((msg, idxMsg, tableauMsgsConv) => {
                                       const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
                                       const isMine = (myId === null && msg.id_expediteur === null) || (myId !== null && Number(msg.id_expediteur) === Number(myId));
