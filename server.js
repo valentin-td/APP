@@ -9516,7 +9516,23 @@ async function executerRobotComptable() {
                             }
                             
                             const tachesTrouvees = await analyserEmailAvecIA(sujetEmail, texteEmail, urlPdfCloudflare, cleR2Email);
+                            
                             for (let t of tachesTrouvees) {
+                                // AUTO-MATCH COLLABORATEUR PLANITY -> STACK
+                                if (t.type_tache === 'RDV' && t.donnees && t.donnees.nom_employe_suggere) {
+                                    const nomSuggere = t.donnees.nom_employe_suggere.trim().toLowerCase();
+                                    if (nomSuggere) {
+                                        // On cherche un employé dont le nom correspond (même partiellement) au prénom Planity
+                                        const empMatch = await clientDB.query(
+                                            `SELECT id_employe FROM employes WHERE id_salon = $1 AND LOWER(nom) ILIKE $2 LIMIT 1`,
+                                            [salon.id_salon, `%${nomSuggere}%`]
+                                        );
+                                        if (empMatch.rowCount > 0) {
+                                            t.donnees.id_employe = empMatch.rows[0].id_employe;
+                                        }
+                                    }
+                                }
+
                                 await clientDB.query(
                                     `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees) VALUES ($1, $2, $3)`,
                                     [salon.id_salon, t.type_tache || t.type, t.donnees] 
