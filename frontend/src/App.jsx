@@ -8561,7 +8561,15 @@ function App() {
                           <div className="chat-messages" ref={chatMessagesRef}>
                                   {(messagesListe || []).filter(m => {
                                       const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
-                                      return String(getCleConversation(m, role, myId)) === String(chatActif);
+                                      let cle = getCleConversation(m, role, myId);
+                                      if (m.id_destinataire === 0 || m.id_destinataire === '0') {
+                                          cle = 'salon';
+                                      } else if (role === 'employe' && (m.id_destinataire === null || m.id_destinataire === -1 || m.id_expediteur === null || m.id_expediteur === -1)) {
+                                          cle = 'gerant';
+                                      } else if ((role === 'gerant' || role === 'salon') && (m.id_destinataire === null || m.id_destinataire === -1) && m.id_expediteur > 0) {
+                                          cle = m.id_expediteur;
+                                      }
+                                      return String(cle) === String(chatActif);
                                   }).map((msg, idxMsg, tableauMsgsConv) => {
                                       const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
                                       const isMine = (myId === null && msg.id_expediteur === null) || (myId !== null && Number(msg.id_expediteur) === Number(myId));
