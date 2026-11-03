@@ -1503,16 +1503,24 @@ function App() {
       if (!modalIA && tachesIA && (tachesIA || []).length > 0) {
           let premiereTache = { ...tachesIA[0] };
           
-          // L'IA n'a pas trouvé de durée ? On cherche dans notre catalogue (Auto-Match) !
-          if (premiereTache.type_tache === 'RDV' && !premiereTache.donnees.duree_minutes) {
-              const nomPrestaIA = nettoyerTexteRecherche(premiereTache.donnees.prestation || '');
-              const prestaMatch = (catalogueListe || []).find(p => p.type_article === 'PRESTATION' && nettoyerTexteRecherche(p.nom).includes(nomPrestaIA));
-              premiereTache.donnees.duree_minutes = prestaMatch && prestaMatch.duree_estimee_minutes ? prestaMatch.duree_estimee_minutes : 30;
+          if (premiereTache.type_tache === 'RDV') {
+              // L'IA n'a pas trouvé de durée ? On cherche dans notre catalogue (Auto-Match) !
+              if (!premiereTache.donnees.duree_minutes) {
+                  const nomPrestaIA = nettoyerTexteRecherche(premiereTache.donnees.prestation || '');
+                  const prestaMatch = (catalogueListe || []).find(p => p.type_article === 'PRESTATION' && nettoyerTexteRecherche(p.nom).includes(nomPrestaIA));
+                  premiereTache.donnees.duree_minutes = prestaMatch && prestaMatch.duree_estimee_minutes ? prestaMatch.duree_estimee_minutes : 30;
+              }
+              // Sécurité frontend : Auto-Match du collaborateur si l'ID n'a pas été posé par le serveur
+              if (!premiereTache.donnees.id_employe && premiereTache.donnees.nom_employe_suggere) {
+                  const nomSugg = nettoyerTexteRecherche(premiereTache.donnees.nom_employe_suggere);
+                  const empMatch = (employesListe || []).find(e => nettoyerTexteRecherche(e.nom).includes(nomSugg));
+                  if (empMatch) premiereTache.donnees.id_employe = empMatch.id_employe;
+              }
           }
           
           setModalIA(premiereTache);
       }
-  }, [tachesIA, modalIA, catalogueListe]);
+  }, [tachesIA, modalIA, catalogueListe, employesListe]);
 
   // Fonction qui gère la transition automatique vers la facture suivante du lot
     const passerAuDocumentSuivant = (idTacheTraitee) => {
