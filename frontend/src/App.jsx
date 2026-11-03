@@ -8234,9 +8234,21 @@ function App() {
                                       )}
                                   </div>
 
-                                  {isUploadingFacture && progressionBatch.total > 1 && (
-                                      <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)', marginTop: '10px' }}>
-                                          <div style={{ height: '100%', width: `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%`, backgroundColor: 'var(--btn-primary)', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                                  {isUploadingFacture && (
+                                      <div style={{ marginTop: '12px', background: 'var(--bg-app)', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                              <span>
+                                                  {progressionBatch.total > 1
+                                                      ? `Analyse IA (${progressionBatch.actuel}/${progressionBatch.total})...`
+                                                      : 'Analyse et extraction IA en cours...'}
+                                              </span>
+                                              <span style={{ color: 'var(--text-main)' }}>
+                                                  {progressionBatch.total > 1 ? `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%` : 'Patientez...'}
+                                              </span>
+                                          </div>
+                                          <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--bg-card)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                              <div style={{ height: '100%', width: progressionBatch.total > 1 ? `${Math.max(15, Math.round((progressionBatch.actuel / progressionBatch.total) * 100))}%` : '70%', backgroundColor: 'var(--btn-primary)', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                                          </div>
                                       </div>
                                   )}
                               </div>
