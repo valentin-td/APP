@@ -7021,7 +7021,24 @@ app.post('/api/ia/upload-facture', verifierToken, verifierPlan(['PREMIUM']), asy
         res.status(500).json({ erreur: "Erreur lors de l'analyse du document par l'IA." });
     }
 });
+// Route pour ignorer/supprimer proprement une facture en attente sans effet de boucle
+app.delete('/api/ia/taches/:id', verifierToken, async (req, res) => {
+    try {
+        const id_salon = req.user.id_salon;
+        const id_tache = req.params.id;
 
+        // Supprime la tâche ciblée
+        await pool.query(
+            `DELETE FROM ia_taches_attente WHERE id_tache = $1 AND id_salon = $2`,
+            [id_tache, id_salon]
+        );
+
+        res.json({ message: "Facture ignorée et retirée de la file d'attente." });
+    } catch (e) {
+        console.error("Erreur suppression tâche IA :", e);
+        res.status(500).json({ erreur: "Erreur lors de la suppression de la tâche." });
+    }
+});
 app.post('/api/ia/taches/:id/valider', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider une tâche IA." });
     const { id } = req.params;
