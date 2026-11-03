@@ -5579,17 +5579,22 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             nom_expediteur = 'Salon';
         }
 
+        await pool.query(`ALTER TABLE messages ALTER COLUMN id_destinataire DROP NOT NULL`).catch(() => {});
+
         let dest = null;
         if (id_destinataire === 'salon' || id_destinataire === 0 || id_destinataire === '0') {
             dest = 0;
-        } else if (id_destinataire === 'gerant' || id_destinataire === null || id_destinataire === -1) {
+        } else if (id_destinataire === 'gerant' || id_destinataire === null || id_destinataire === undefined || id_destinataire === '' || id_destinataire === -1) {
             dest = null;
         } else {
             const parsedDest = parseInt(id_destinataire, 10);
-            if (isNaN(parsedDest)) return res.status(400).json({ erreur: "Destinataire invalide." });
-            const checkDest = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [parsedDest, req.user.id_salon]);
-            if (checkDest.rowCount === 0) return res.status(404).json({ erreur: "Destinataire introuvable dans ce salon." });
-            dest = parsedDest;
+            if (isNaN(parsedDest)) {
+                dest = null;
+            } else {
+                const checkDest = await pool.query('SELECT est_gerant FROM employes WHERE id_employe = $1 AND id_salon = $2', [parsedDest, req.user.id_salon]);
+                if (checkDest.rowCount === 0) return res.status(404).json({ erreur: "Destinataire introuvable dans ce salon." });
+                dest = parsedDest;
+            }
         }
 
         const result = await pool.query(
