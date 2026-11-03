@@ -3587,38 +3587,35 @@ function App() {
   };
 
   const envoyerMessage = async () => {
-      if ((!msgInput.trim() && !msgFile) || isSendingMsgRef.current) return;
-      isSendingMsgRef.current = true;
-      
-      const monProfil = role === 'employe' ? (employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe) : null;
-      
-      const payload = {
-          id_destinataire: chatActif,
-          contenu: msgInput.trim(),
-          fichier_url: msgFile,
-          nom_expediteur: monProfil?.nom,
-          photo_expediteur: monProfil?.photo_url
-      };
-
+      if (!msgInput.trim() && !msgFile) return;
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/messages', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
-          const data = await handleFetchError(res);
-          setMsgInput('');
-          setMsgFile(null);
-          // Marquage "lu" immédiat, sans attendre l'effet ni l'écho du socket : évite le faux badge si on ferme/recharge juste après
-          if (data && data.id_message) {
-              const cleStr = String(chatActif);
-              setDernierLuParConv(prev => {
-                  if (Number(prev[cleStr] || 0) >= Number(data.id_message)) return prev;
-                  const next = { ...prev, [cleStr]: Number(data.id_message) };
-                  localforage.setItem('dernierLuParConv', next);
-                  return next;
-              });
+          const destinataire = chatActif === 'salon' ? null : chatActif;
+          const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
+          
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/messages`, {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
+              },
+              body: JSON.stringify({
+                  contenu: msgInput.trim(),
+                  id_destinataire: destinataire,
+                  fichier_url: msgFile || null
+              })
+          });
+
+          if (res.ok) {
+              setMsgInput('');
+              setMsgFile(null);
+              // Recharge instantanément les messages pour afficher la trace sans recharger la page
+              if (typeof chargerMessages === 'function') chargerMessages();
+          } else {
+              const errData = await res.json().catch(() => ({}));
+              showToast(errData.erreur || "Erreur lors de l'envoi du message.", "error");
           }
       } catch (e) {
-          if (e.message !== "Session expirée" && e.message !== "Abonnement inactif") showToast(e.message || "Erreur d'envoi du message", "error");
-      } finally {
-          isSendingMsgRef.current = false;
+          showToast("Erreur réseau lors de l'envoi du message.", "error");
       }
   };
 
