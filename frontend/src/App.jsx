@@ -5975,7 +5975,28 @@ function App() {
                                       </button>
                                   )}
                               </div>
+                              {/* BARRE DE PROGRESSION DISCRÈTE ET FLUIDE */}
+                              {isUploadingFacture && (
+                                  <div style={{ marginTop: '12px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                                          <span>Traitement OCR & Extraction comptable...</span>
+                                          <span>{progressionBatch.total > 1 ? `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%` : 'En cours'}</span>
+                                      </div>
+                                      <div style={{ height: '5px', width: '100%', backgroundColor: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                          <div style={{
+                                              height: '100%',
+                                              width: progressionBatch.total > 1 ? `${Math.round((progressionBatch.actuel / progressionBatch.total) * 100)}%` : '65%',
+                                              backgroundColor: 'var(--btn-primary)',
+                                              borderRadius: '999px',
+                                              transition: 'width 0.4s ease'
+                                          }} />
+                                      </div>
+                                  </div>
+                              )}
                           </div>
+                      </div>
+                        
+                          
 
                           {erreurAnalyseIA && (
                               <div className="carte" style={{ background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', marginBottom: '16px', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
