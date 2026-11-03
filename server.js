@@ -2059,9 +2059,10 @@ app.get('/api/ical/:id_salon/:id_employe.ics', limiteurAvisPublic, async (req, r
 
         // RDVs futurs et passés récents
         const rdvs = await pool.query(
-            `SELECT id_rdv, date_heure_debut, duree_minutes 
+            `SELECT id_rdv, date_heure_debut, duree_minutes, type_coupe 
              FROM rendez_vous 
-             WHERE id_salon = $1 AND id_employe = $2 AND date_heure_debut >= NOW() - INTERVAL '30 days'`,
+             WHERE id_salon = $1 AND id_employe = $2 AND date_heure_debut >= NOW() - INTERVAL '15 days'
+             ORDER BY date_heure_debut ASC`,
             [id_salon, id_employe]
         );
 
@@ -2069,22 +2070,28 @@ app.get('/api/ical/:id_salon/:id_employe.ics', limiteurAvisPublic, async (req, r
         const absences = await pool.query(
             `SELECT id_absence, date_debut, date_fin 
              FROM absences_employes 
-             WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND date_fin >= CURRENT_DATE - INTERVAL '30 days'`,
+             WHERE id_salon = $1 AND id_employe = $2 AND statut = 'VALIDE' AND date_fin >= CURRENT_DATE - INTERVAL '15 days'`,
             [id_salon, id_employe]
         );
 
         const configRes = await pool.query('SELECT temps_nettoyage_minutes FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const tempsNettoyage = configRes.rowCount > 0 ? (configRes.rows[0].temps_nettoyage_minutes || 0) : 0;
+        const tempsNettoyageSalon = configRes.rowCount > 0 ? (parseInt(configRes.rows[0].temps_nettoyage_minutes, 10) || 0) : 0;
 
-        // Fonction de formatage au format iCal (YYYYMMDDThhmmssZ)
+        // Temps de nettoyage spécifiques par prestation (Académie)
+        const protoRes = await pool.query('SELECT nom_prestation, temps_nettoyage_minutes FROM protocoles WHERE id_salon = $1', [id_salon]).catch(() => ({ rows: [] }));
+        const mapNettoyagePresta = {};
+        (protoRes.rows || []).forEach(p => {
+            if (p.nom_prestation) mapNettoyagePresta[p.nom_prestation.trim().toLowerCase()] = parseInt(p.temps_nettoyage_minutes, 10) || 0;
+        });
+
         const formatICSDate = (date) => date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-        
-        // Pour les absences (Jours entiers), le format est YYYYMMDD
         const formatICSAllDay = (dateStr, addDays = 0) => {
             const d = new Date(dateStr);
             d.setDate(d.getDate() + addDays);
             return d.toISOString().split('T')[0].replace(/-/g, '');
         };
+
+        const nowStamp = formatICSDate(new Date());
 
         let icsContent = "BEGIN:VCALENDAR\r\n";
         icsContent += "VERSION:2.0\r\n";
@@ -2093,38 +2100,56 @@ app.get('/api/ical/:id_salon/:id_employe.ics', limiteurAvisPublic, async (req, r
         icsContent += "METHOD:PUBLISH\r\n";
         icsContent += `X-WR-CALNAME:STACK - ${nomEmploye}\r\n`;
         icsContent += "X-WR-TIMEZONE:Europe/Paris\r\n";
+        // Force les moteurs externes (Planity, Treatwell, Google, Apple) à rafraîchir au rythme maximum (5 min)
+        icsContent += "REFRESH-INTERVAL;VALUE=DURATION:PT5M\r\n";
+        icsContent += "X-PUBLISHED-TTL:PT5M\r\n";
 
-        // Ajout des Créneaux RDV
+        // Ajout des Créneaux RDV (OPAQUE + BUSY pour bloquer immédiatement le créneau sur Planity)
         for (let rdv of rdvs.rows) {
             const start = new Date(rdv.date_heure_debut);
-            const end = new Date(start.getTime() + ((rdv.duree_minutes + tempsNettoyage) * 60000));
-            
+            if (isNaN(start.getTime())) continue;
+            const clePresta = (rdv.type_coupe || '').trim().toLowerCase();
+            const bonusNettoyage = mapNettoyagePresta[clePresta] !== undefined ? mapNettoyagePresta[clePresta] : tempsNettoyageSalon;
+            const dureeTotale = (parseInt(rdv.duree_minutes, 10) || 30) + bonusNettoyage;
+            const end = new Date(start.getTime() + (dureeTotale * 60000));
+
             icsContent += "BEGIN:VEVENT\r\n";
-            icsContent += `UID:rdv-${rdv.id_rdv}@stack.fr\r\n`;
-            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `UID:rdv-${rdv.id_rdv}-s${id_salon}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${nowStamp}\r\n`;
+            icsContent += `LAST-MODIFIED:${nowStamp}\r\n`;
+            icsContent += `SEQUENCE:0\r\n`;
             icsContent += `DTSTART:${formatICSDate(start)}\r\n`;
             icsContent += `DTEND:${formatICSDate(end)}\r\n`;
             icsContent += "SUMMARY:Indisponible (STACK)\r\n";
             icsContent += "STATUS:CONFIRMED\r\n";
+            icsContent += "TRANSP:OPAQUE\r\n";
+            icsContent += "X-MICROSOFT-CDO-BUSYSTATUS:BUSY\r\n";
             icsContent += "END:VEVENT\r\n";
         }
 
         // Ajout des Absences
         for (let abs of absences.rows) {
             icsContent += "BEGIN:VEVENT\r\n";
-            icsContent += `UID:abs-${abs.id_absence}@stack.fr\r\n`;
-            icsContent += `DTSTAMP:${formatICSDate(new Date())}\r\n`;
+            icsContent += `UID:abs-${abs.id_absence}-s${id_salon}@stack.fr\r\n`;
+            icsContent += `DTSTAMP:${nowStamp}\r\n`;
+            icsContent += `LAST-MODIFIED:${nowStamp}\r\n`;
             icsContent += `DTSTART;VALUE=DATE:${formatICSAllDay(abs.date_debut, 0)}\r\n`;
-            icsContent += `DTEND;VALUE=DATE:${formatICSAllDay(abs.date_fin, 1)}\r\n`; // Fin exclusive en iCal (+1 jour)
+            icsContent += `DTEND;VALUE=DATE:${formatICSAllDay(abs.date_fin, 1)}\r\n`;
             icsContent += "SUMMARY:Absence (STACK)\r\n";
+            icsContent += "STATUS:CONFIRMED\r\n";
             icsContent += "TRANSP:OPAQUE\r\n";
+            icsContent += "X-MICROSOFT-CDO-BUSYSTATUS:OOF\r\n";
             icsContent += "END:VEVENT\r\n";
         }
 
         icsContent += "END:VCALENDAR\r\n";
 
+        // En-têtes HTTP anti-cache stricts pour que Planity obtienne toujours la version temps réel
         res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="agenda-${id_employe}.ics"`);
+        res.setHeader('Content-Disposition', `inline; filename="agenda-${id_employe}.ics"`);
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.send(icsContent);
 
     } catch (err) {
@@ -6692,9 +6717,9 @@ app.get('/api/dashboard', verifierToken, async (req, res) => {
 });
 
 // =========================================================================
-// --- L'INTELLIGENCE ARTIFICIELLE (ANALYSE D'EMAILS) ---
+// --- L'INTELLIGENCE ARTIFICIELLE (ANALYSE D'EMAILS & SYNCHRO PLANITY) ---
 // =========================================================================
-const PROMPT_SYSTEME_IA = `Tu es l'assistant pré-comptable d'un salon de coiffure. Analyse le contenu (email ou PDF) et retourne un JSON strict.
+const PROMPT_SYSTEME_IA = `Tu es l'assistant pré-comptable et agenda d'un salon de coiffure. Analyse le contenu (email ou PDF) et retourne un JSON strict.
 
 CAS 1 - FACTURE FOURNISSEUR (L'Oréal, Wella, Matériel, etc.) : Si c'est une facture d'achat de produits/matériel/services.
 -> Renvoie EXACTEMENT ce format :
@@ -6714,7 +6739,19 @@ CAS 1 - FACTURE FOURNISSEUR (L'Oréal, Wella, Matériel, etc.) : Si c'est une fa
 }}
 IMPORTANT: Devine si le produit est destiné à la "REVENTE" (shampooing grand public, soins beauté) ou si c'est un "CONSOMMABLE" technique (coloration, oxydant, décoloration, produit bac). Essaie de déduire le compte_comptable le plus logique selon le fournisseur.
 
-CAS 2 - RDV : Réservation de client. -> Renvoie {"type": "RDV", "donnees": {"nom_client": "nom", "telephone": "numero", "prestation": "coupe...", "date_heure_debut": "YYYY-MM-DDTHH:MM", "duree_minutes": 30}}
+CAS 2 - RDV (Email direct, Planity, Treatwell, Wavy) : Réservation, modification ou annulation d'un rendez-vous client.
+-> Renvoie EXACTEMENT :
+{"type": "RDV", "donnees": {
+  "action_rdv": "CREATION, MODIFICATION ou ANNULATION",
+  "plateforme": "PLANITY, TREATWELL ou DIRECT",
+  "nom_client": "Prénom Nom du client",
+  "telephone": "numéro de téléphone (si présent, sinon '')",
+  "prestation": "Nom de la prestation (ex: Coupe + Balayage)",
+  "date_heure_debut": "YYYY-MM-DDTHH:MM",
+  "duree_minutes": 30,
+  "nom_employe": "Prénom du coiffeur/collaborateur mentionné dans l'e-mail (sinon '')"
+}}
+
 CAS 3 - ABSENCE : Un employé sera absent. -> Renvoie {"type": "ABSENCE", "donnees": {"nom_employe": "nom", "type_demande": "ARRET_MALADIE ou CONGES", "date_debut": "YYYY-MM-DD", "date_fin": "YYYY-MM-DD"}}
 CAS 4 - ACTION : Facture générale (EDF, Urssaf) ou urgence. -> Renvoie {"type": "ACTION", "donnees": {"titre": "Urssaf", "description": "...", "date_echeance": "YYYY-MM-DD"}}
 CAS 5 - AUTRE : -> Renvoie {"type": "NONE"}`;
@@ -6722,7 +6759,6 @@ CAS 5 - AUTRE : -> Renvoie {"type": "NONE"}`;
 async function analyserEmailAvecIA(sujet, texte, pdfUrl = null, fichierCleR2 = null) {
     if (!process.env.GROQ_API_KEY) return [];
 
-    // On augmente la limite pour pouvoir traiter le texte extrait des PDF (souvent assez long)
     const texteTronque = (texte || '').substring(0, 15000); 
 
     try {
@@ -6731,7 +6767,7 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null, fichierCleR2 = n
         
         const completion = await groq.chat.completions.create({
             model: 'qwen/qwen3.8-27b',
-            max_tokens: 800, // Augmenté pour les longues listes de produits d'une facture
+            max_tokens: 800,
             temperature: 0,
             response_format: { type: 'json_object' },
             messages: [
@@ -6750,7 +6786,7 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null, fichierCleR2 = n
             console.log("✅ L'IA a compris :", analyse.type);
         } catch (erreurParsing) { return []; }
 
-        // --- NOUVEAU CAS : FACTURE FOURNISSEUR PRÉ-COMPTABLE ---
+        // --- CAS 1 : FACTURE FOURNISSEUR PRÉ-COMPTABLE ---
         if (analyse.type === 'FACTURE_ACHAT' && analyse.donnees && analyse.donnees.fournisseur) {
             return [{
                 type_tache: 'FACTURE_ACHAT',
@@ -6764,12 +6800,13 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null, fichierCleR2 = n
                     mode_paiement: analyse.donnees.mode_paiement || 'NON_SPECIFIE',
                     compte_comptable: analyse.donnees.compte_comptable || null,
                     produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
-                    pdf_url: pdfUrl, // On attache le lien du PDF pour le Split-Screen
+                    pdf_url: pdfUrl,
                     fichier_cle_r2: fichierCleR2 || null
                 }
             }];
         }
 
+        // --- CAS 2 : STOCK ---
         if (analyse.type === 'STOCK' && analyse.donnees && analyse.donnees.nom_produit) {
             const quantite = parseInt(analyse.donnees.quantite, 10);
             if (!quantite || quantite <= 0) return [];
@@ -6784,20 +6821,26 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null, fichierCleR2 = n
             }];
         }
 
+        // --- CAS 3 : RDV (DIRECT OU SYNCHRO PLANITY / TREATWELL) ---
         if (analyse.type === 'RDV' && analyse.donnees && analyse.donnees.nom_client) {
+            const dateHeurePropre = analyse.donnees.date_heure_debut || analyse.donnees.date_heure || '';
             return [{
                 type_tache: 'RDV',
                 donnees: {
+                    action_rdv: analyse.donnees.action_rdv || 'CREATION',
+                    plateforme: analyse.donnees.plateforme || 'DIRECT',
                     nom_client: String(analyse.donnees.nom_client).trim().substring(0, 100),
                     telephone: analyse.donnees.telephone ? String(analyse.donnees.telephone).replace(/[^\d+]/g, '').substring(0, 20) : '',
                     prestation: analyse.donnees.prestation ? String(analyse.donnees.prestation).trim().substring(0, 100) : 'Prestation à définir',
-                    date_heure_debut: analyse.donnees.date_heure || '',
-                    duree_minutes: analyse.donnees.duree_minutes ? parseInt(analyse.donnees.duree_minutes) : null,
+                    date_heure_debut: dateHeurePropre,
+                    duree_minutes: analyse.donnees.duree_minutes ? parseInt(analyse.donnees.duree_minutes, 10) : 30,
+                    nom_employe_suggere: analyse.donnees.nom_employe ? String(analyse.donnees.nom_employe).trim() : '',
                     id_employe: ''
                 }
             }];
         }
 
+        // --- CAS 4 : ABSENCE ---
         if (analyse.type === 'ABSENCE' && analyse.donnees && analyse.donnees.nom_employe) {
             return [{
                 type_tache: 'ABSENCE',
@@ -6811,6 +6854,7 @@ async function analyserEmailAvecIA(sujet, texte, pdfUrl = null, fichierCleR2 = n
             }];
         }
 
+        // --- CAS 5 : ACTION ---
         if (analyse.type === 'ACTION' && analyse.donnees && analyse.donnees.titre) {
             return [{
                 type_tache: 'ACTION',
