@@ -6671,7 +6671,7 @@ function App() {
                       </div>
                   )}
 
-                  <div className="caisse-split-container" style={{ display: 'block' }}>
+                  <div className="caisse-split-container" style={{ display: 'block', height: 'auto', minHeight: 'unset', maxHeight: 'none', overflow: 'visible', padding: isMobile ? '16px 14px' : '28px 32px', boxSizing: 'border-box' }}>
                       {/* 1. GRILLE DES FICHES TUTORIELS */}
                       {!modeEditionProtocole && (
                           <div className="caisse-left-panel" style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
@@ -6745,7 +6745,7 @@ function App() {
 
                       {/* 2. ÉDITEUR DE TUTORIEL ÉTAPE PAR ÉTAPE (CRÉATION & MODIFICATION) */}
                       {modeEditionProtocole === 'NEW' && (
-                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '920px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '32px' }}>
+                          <div className="caisse-right-panel" style={isMobile ? { width: '100%', height: 'auto', maxHeight: 'none', boxSizing: 'border-box', overflow: 'visible', padding: '4px 2px 110px 2px', border: 'none' } : { width: '100%', maxWidth: '880px', height: 'auto', maxHeight: 'none', margin: '0 auto', border: 'none', padding: '4px 12px 20px 12px', boxSizing: 'border-box', overflow: 'visible' }}>
                               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px'}}>
                                   <div>
                                       <span style={{fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em'}}>{nouveauProtocole.id_protocole ? 'Édition du tutoriel' : 'Nouveau tutoriel'}</span>
@@ -7112,7 +7112,7 @@ function App() {
                           const dureeTotale = (modeEditionProtocole.etapes || []).reduce((acc, e) => acc + (parseInt(e?.duree_minutes ?? e?.timer_min, 10) || 0), 0);
 
                           return (
-                              <div className="caisse-right-panel" style={isMobile ? { width: '100%', boxSizing: 'border-box', overflowY: 'visible', paddingBottom: '130px' } : { width: '100%', maxWidth: '920px', margin: '0 auto', borderLeft: 'none', paddingLeft: 0, overflowY: 'visible', paddingBottom: '32px' }}>
+                              <div className="caisse-right-panel" style={isMobile ? { width: '100%', height: 'auto', maxHeight: 'none', boxSizing: 'border-box', overflow: 'visible', padding: '4px 2px 110px 2px', border: 'none' } : { width: '100%', maxWidth: '880px', height: 'auto', maxHeight: 'none', margin: '0 auto', border: 'none', padding: '4px 12px 20px 12px', boxSizing: 'border-box', overflow: 'visible' }}>
                                   <div className="carte" style={{padding: isMobile ? '18px' : '24px', marginBottom: '20px'}}>
                                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '18px'}}>
                                           <div>
@@ -8691,7 +8691,18 @@ function App() {
                               <button className="chat-btn chat-file-btn" onClick={() => document.getElementById('chat-file-upload').click()}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
                               <input type="file" id="chat-file-upload" accept="image/*" style={{display:'none'}} onChange={handleChatFileUpload} />
                               <div style={{flex: 1, position: 'relative'}}>
-                                  {msgFile && <div style={{position: 'absolute', bottom: '100%', left: '16px', marginBottom: '8px', background: 'var(--bg-hover)', padding: '4px 8px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>📷 Image jointe <button onClick={() => setMsgFile(null)} style={{background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: 0}}>✕</button></div>}
+                                  {msgFile && (
+                                      <div style={{ position: 'absolute', bottom: '100%', left: '12px', marginBottom: '10px', background: 'var(--bg-card)', padding: '5px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 6px 18px rgba(0,0,0,0.2)', display: 'inline-flex', alignItems: 'center', zIndex: 30 }}>
+                                          <img src={msgFile} alt="Aperçu" style={{ width: '58px', height: '58px', objectFit: 'cover', borderRadius: '8px', display: 'block' }} />
+                                          <button
+                                              type="button"
+                                              onClick={() => setMsgFile(null)}
+                                              style={{ position: 'absolute', top: '-7px', right: '-7px', width: '22px', height: '22px', borderRadius: '50%', background: 'var(--color-danger, #ef4444)', color: '#fff', border: '2px solid var(--bg-card)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '800', padding: 0, lineHeight: 1 }}
+                                          >
+                                              ✕
+                                          </button>
+                                      </div>
+                                  )}
                                   <textarea className="chat-input" placeholder="Écrire un nouveau message..." value={msgInput} onChange={e => setMsgInput(e.target.value)} onKeyDown={e => {if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }}} />
                               </div>
                               <button className="chat-btn" disabled={!msgInput.trim() && !msgFile} onClick={envoyerMessage}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
