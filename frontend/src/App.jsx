@@ -505,7 +505,35 @@ function App() {
   const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
   const [planningData, setPlanningData] = useState([]); 
   const [superAdminData, setSuperAdminData] = useState(null);
-  const [superAdminSalons, setSuperAdminSalons] = useState([]);
+    const [superAdminSalons, setSuperAdminSalons] = useState([]);
+
+  // --- SYNCHRONISATION GAMIFICATION & OBJECTIFS D'ÉQUIPE (REMONTÉ POUR ÉVITER REACT #310) ---
+  const chargerObjectifsEquipe = async () => {
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/equipe/objectifs', {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
+          });
+          if (res.ok) {
+              const data = await res.json();
+              setObjectifsEquipeListe(Array.isArray(data) ? data : []);
+          }
+      } catch (e) {}
+  };
+
+  useEffect(() => {
+      const currentRole = userRole;
+      if (currentRole === 'employe' && token && activeTab === 'accueil') {
+          fetch('https://api-salon-backend.onrender.com/api/employes/gamification-kpis', {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
+          })
+              .then(r => r.ok ? r.json() : null)
+              .then(data => { if (data) setEmpGamificationKpis(data); })
+              .catch(() => {});
+      }
+      if (currentRole === 'gerant' && token && activeTab === 'rh') {
+          chargerObjectifsEquipe();
+      }
+  }, [userRole, token, activeTab]);
 
   // --- ÉTATS : GESTION MULTI-SALONS & FRANCHISE ---
   const [mesSalonsGroupe, setMesSalonsGroupe] = useState({ synthese_groupe: null, salons: [] });
@@ -4221,7 +4249,7 @@ function App() {
       }
   };
 
-  // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (FONCTIONS SANS HOOKS CONDITIONNELS) ---
+    // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (FONCTIONS SANS HOOKS CONDITIONNELS) ---
   const chargerKpisEmploye = async () => {
       try {
           const res = await fetch('https://api-salon-backend.onrender.com/api/employes/gamification-kpis', {
@@ -4230,18 +4258,6 @@ function App() {
           if (res.ok) {
               const data = await res.json();
               if (data) setEmpGamificationKpis(data);
-          }
-      } catch (e) {}
-  };
-
-  const chargerObjectifsEquipe = async () => {
-      try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/equipe/objectifs', {
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
-          });
-          if (res.ok) {
-              const data = await res.json();
-              setObjectifsEquipeListe(Array.isArray(data) ? data : []);
           }
       } catch (e) {}
   };
