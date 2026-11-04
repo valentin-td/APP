@@ -2884,7 +2884,104 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         } finally { clientDB.release(); }
 });
 
-// --- MODULE 5 : GAMIFICATION RH & KPIS INDIVIDUELS EMPLOYÉ ---
+// --- MODULE 5 & OBJECTIFS D'ÉQUIPE : KPIS INDIVIDUELS & GESTION DES OBJECTIFS PAR LE GÉRANT ---
+async function initialiserTableObjectifs() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS objectifs_equipe (
+            id_objectif SERIAL PRIMARY KEY,
+            id_salon INT NOT NULL,
+            id_employe INT DEFAULT NULL,
+            titre VARCHAR(160) NOT NULL,
+            type_indicateur VARCHAR(50) NOT NULL,
+            valeur_cible NUMERIC(10,2) NOT NULL,
+            recompense VARCHAR(160) DEFAULT NULL,
+            date_creation TIMESTAMP DEFAULT NOW()
+        )
+    `).catch(() => {});
+}
+
+async function calculerKpisIndividuelsEmploye(id_salon, id_employe) {
+    const ticketsRes = await pool.query(
+        `SELECT 
+            COUNT(DISTINCT CASE WHEN COALESCE(type_ticket, 'VENTE') = 'VENTE' AND total_ttc > 0 THEN id_ticket END) AS nb_tickets_mois,
+            COALESCE(SUM(CASE WHEN COALESCE(type_ticket, 'VENTE') != 'ANNULATION' THEN total_ttc ELSE 0 END), 0) AS ca_ttc_mois,
+            COALESCE(SUM(COALESCE(montant_pourboire, 0)), 0) AS pourboires_mois
+         FROM tickets
+         WHERE id_salon = $1
+           AND id_employe = $2
+           AND statut = 'VALIDE'
+           AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
+        [id_salon, id_employe]
+    );
+
+    const fidelesRes = await pool.query(
+        `SELECT COUNT(DISTINCT t.id_client) AS nb_fideles
+         FROM tickets t
+         WHERE t.id_salon = $1
+           AND t.id_employe = $2
+           AND t.id_client IS NOT NULL
+           AND DATE_TRUNC('month', t.date_creation) = DATE_TRUNC('month', CURRENT_DATE)
+           AND (SELECT COUNT(*) FROM tickets t2 WHERE t2.id_salon = $1 AND t2.id_client = t.id_client AND COALESCE(t2.type_ticket, 'VENTE') = 'VENTE') >= 2`,
+        [id_salon, id_employe]
+    );
+
+    const commRes = await pool.query(
+        `SELECT
+            COALESCE(SUM(CASE WHEN type_vente = 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_prestation,
+            COALESCE(SUM(CASE WHEN type_vente != 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_produit,
+            COUNT(DISTINCT CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN id_ticket END) AS nb_tickets_avec_produit,
+            COUNT(CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN 1 END) AS nb_lignes_produits
+         FROM commissions
+         WHERE id_salon = $1
+           AND id_employe = $2
+           AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
+        [id_salon, id_employe]
+    );
+
+    const tRow = ticketsRes.rows[0] || {};
+    const fRow = fidelesRes.rows[0] || {};
+    const cRow = commRes.rows[0] || {};
+
+    const nbTickets = parseInt(tRow.nb_tickets_mois, 10) || 0;
+    const caTtc = parseFloat(tRow.ca_ttc_mois) || 0;
+    const pourboires = parseFloat(tRow.pourboires_mois) || 0;
+    const commPresta = parseFloat(cRow.comm_prestation) || 0;
+    const commProduit = parseFloat(cRow.comm_produit) || 0;
+    const totalComm = Number((commPresta + commProduit).toFixed(2));
+    const nbTicketsProduit = parseInt(cRow.nb_tickets_avec_produit, 10) || 0;
+    const nbProduitsVendus = parseInt(cRow.nb_lignes_produits, 10) || 0;
+    const nbFideles = parseInt(fRow.nb_fideles, 10) || 0;
+
+    const panierMoyen = nbTickets > 0 ? Number((caTtc / nbTickets).toFixed(2)) : 0;
+    const tauxRevente = nbTickets > 0 ? Math.min(100, Math.round((nbTicketsProduit / nbTickets) * 100)) : 0;
+    const tauxFidelisation = nbTickets > 0 ? Math.min(100, Math.round((nbFideles / nbTickets) * 100)) : 0;
+
+    return {
+        nb_clients_mois: nbTickets,
+        ca_ttc_mois: Number(caTtc.toFixed(2)),
+        panier_moyen: panierMoyen,
+        taux_revente: tauxRevente,
+        taux_fidelisation: tauxFidelisation,
+        nb_produits_vendus: nbProduitsVendus,
+        nb_tickets_avec_produit: nbTicketsProduit,
+        comm_prestation: Number(commPresta.toFixed(2)),
+        comm_produit: Number(commProduit.toFixed(2)),
+        commission_totale: totalComm,
+        pourboires_mois: Number(pourboires.toFixed(2)),
+        cagnotte_globale: Number((totalComm + pourboires).toFixed(2))
+    };
+}
+
+function evaluerValeurObjectif(type_indicateur, kpis) {
+    if (type_indicateur === 'CA_TTC') return kpis.ca_ttc_mois || 0;
+    if (type_indicateur === 'TAUX_REVENTE') return kpis.taux_revente || 0;
+    if (type_indicateur === 'PANIER_MOYEN') return kpis.panier_moyen || 0;
+    if (type_indicateur === 'PRODUITS_VENDUS') return kpis.nb_produits_vendus || 0;
+    if (type_indicateur === 'NB_CLIENTS') return kpis.nb_clients_mois || 0;
+    if (type_indicateur === 'CAGNOTTE_PRIMES') return kpis.cagnotte_globale || 0;
+    return 0;
+}
+
 app.get('/api/employes/gamification-kpis', verifierToken, async (req, res) => {
     const id_salon = req.user.id_salon;
     const id_employe = req.user.role === 'employe'
@@ -2894,83 +2991,118 @@ app.get('/api/employes/gamification-kpis', verifierToken, async (req, res) => {
     if (!id_employe) return res.status(400).json({ erreur: "Identifiant employé requis." });
 
     try {
-        // 1. Statistiques Tickets & Pourboires du mois en cours
-        const ticketsRes = await pool.query(
-            `SELECT 
-                COUNT(DISTINCT CASE WHEN COALESCE(type_ticket, 'VENTE') = 'VENTE' AND total_ttc > 0 THEN id_ticket END) AS nb_tickets_mois,
-                COALESCE(SUM(CASE WHEN COALESCE(type_ticket, 'VENTE') != 'ANNULATION' THEN total_ttc ELSE 0 END), 0) AS ca_ttc_mois,
-                COALESCE(SUM(COALESCE(montant_pourboire, 0)), 0) AS pourboires_mois,
-                COUNT(DISTINCT CASE WHEN id_client IS NOT NULL THEN id_client END) AS nb_clients_identifies
-             FROM tickets
-             WHERE id_salon = $1
-               AND id_employe = $2
-               AND statut = 'VALIDE'
-               AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
+        await initialiserTableObjectifs();
+        const kpis = await calculerKpisIndividuelsEmploye(id_salon, id_employe);
+
+        const objRes = await pool.query(
+            `SELECT * FROM objectifs_equipe
+             WHERE id_salon = $1 AND (id_employe IS NULL OR id_employe = $2)
+             ORDER BY date_creation DESC`,
             [id_salon, id_employe]
         );
 
-        // 2. Clients fidèles (ayant déjà visité le salon au moins 2 fois au total)
-        const fidelesRes = await pool.query(
-            `SELECT COUNT(DISTINCT t.id_client) AS nb_fideles
-             FROM tickets t
-             WHERE t.id_salon = $1
-               AND t.id_employe = $2
-               AND t.id_client IS NOT NULL
-               AND DATE_TRUNC('month', t.date_creation) = DATE_TRUNC('month', CURRENT_DATE)
-               AND (SELECT COUNT(*) FROM tickets t2 WHERE t2.id_salon = $1 AND t2.id_client = t.id_client AND COALESCE(t2.type_ticket, 'VENTE') = 'VENTE') >= 2`,
-            [id_salon, id_employe]
-        );
-
-        // 3. Détail des Commissions (Prestations vs Produits) & Taux de Revente
-        const commRes = await pool.query(
-            `SELECT
-                COALESCE(SUM(CASE WHEN type_vente = 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_prestation,
-                COALESCE(SUM(CASE WHEN type_vente != 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_produit,
-                COALESCE(SUM(CASE WHEN type_vente != 'PRESTATION' THEN montant_vente ELSE 0 END), 0) AS ca_produit_ht,
-                COUNT(DISTINCT CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN id_ticket END) AS nb_tickets_avec_produit,
-                COUNT(CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN 1 END) AS nb_lignes_produits
-             FROM commissions
-             WHERE id_salon = $1
-               AND id_employe = $2
-               AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
-            [id_salon, id_employe]
-        );
-
-        const tRow = ticketsRes.rows[0] || {};
-        const fRow = fidelesRes.rows[0] || {};
-        const cRow = commRes.rows[0] || {};
-
-        const nbTickets = parseInt(tRow.nb_tickets_mois, 10) || 0;
-        const caTtc = parseFloat(tRow.ca_ttc_mois) || 0;
-        const pourboires = parseFloat(tRow.pourboires_mois) || 0;
-        const commPresta = parseFloat(cRow.comm_prestation) || 0;
-        const commProduit = parseFloat(cRow.comm_produit) || 0;
-        const totalComm = Number((commPresta + commProduit).toFixed(2));
-        const nbTicketsProduit = parseInt(cRow.nb_tickets_avec_produit, 10) || 0;
-        const nbProduitsVendus = parseInt(cRow.nb_lignes_produits, 10) || 0;
-        const nbFideles = parseInt(fRow.nb_fideles, 10) || 0;
-
-        const panierMoyen = nbTickets > 0 ? Number((caTtc / nbTickets).toFixed(2)) : 0;
-        const tauxRevente = nbTickets > 0 ? Math.min(100, Math.round((nbTicketsProduit / nbTickets) * 100)) : 0;
-        const tauxFidelisation = nbTickets > 0 ? Math.min(100, Math.round((nbFideles / nbTickets) * 100)) : 0;
-
-        res.json({
-            nb_clients_mois: nbTickets,
-            ca_ttc_mois: Number(caTtc.toFixed(2)),
-            panier_moyen: panierMoyen,
-            taux_revente: tauxRevente,
-            taux_fidelisation: tauxFidelisation,
-            nb_produits_vendus: nbProduitsVendus,
-            nb_tickets_avec_produit: nbTicketsProduit,
-            comm_prestation: Number(commPresta.toFixed(2)),
-            comm_produit: Number(commProduit.toFixed(2)),
-            commission_totale: totalComm,
-            pourboires_mois: Number(pourboires.toFixed(2)),
-            cagnotte_globale: Number((totalComm + pourboires).toFixed(2))
+        const objectifs_assignes = objRes.rows.map(o => {
+            const cible = parseFloat(o.valeur_cible) || 1;
+            const actuel = evaluerValeurObjectif(o.type_indicateur, kpis);
+            const progression = Math.min(100, Math.round((actuel / cible) * 100));
+            return {
+                id_objectif: o.id_objectif,
+                titre: o.titre,
+                type_indicateur: o.type_indicateur,
+                valeur_cible: cible,
+                valeur_actuelle: actuel,
+                progression,
+                atteint: actuel >= cible,
+                recompense: o.recompense || ''
+            };
         });
+
+        res.json({ ...kpis, objectifs_assignes });
     } catch (e) {
         console.error("Erreur gamification KPIs :", e);
         res.status(500).json({ erreur: "Erreur calcul KPIs employé." });
+    }
+});
+
+app.get('/api/equipe/objectifs', verifierToken, async (req, res) => {
+    try {
+        await initialiserTableObjectifs();
+        const id_salon = req.user.id_salon;
+
+        const objRes = await pool.query(
+            `SELECT o.*, e.nom AS nom_employe
+             FROM objectifs_equipe o
+             LEFT JOIN employes e ON o.id_employe = e.id_employe AND e.id_salon = o.id_salon
+             WHERE o.id_salon = $1
+             ORDER BY o.date_creation DESC`,
+            [id_salon]
+        );
+
+        const empRes = await pool.query('SELECT id_employe, nom FROM employes WHERE id_salon = $1 ORDER BY nom ASC', [id_salon]);
+        const kpisParEmp = {};
+        for (const emp of empRes.rows) {
+            kpisParEmp[emp.id_employe] = await calculerKpisIndividuelsEmploye(id_salon, emp.id_employe);
+        }
+
+        const objectifsEnrichis = objRes.rows.map(o => {
+            const cible = parseFloat(o.valeur_cible) || 1;
+            let valeurActuelle = 0;
+            if (o.id_employe && kpisParEmp[o.id_employe]) {
+                valeurActuelle = evaluerValeurObjectif(o.type_indicateur, kpisParEmp[o.id_employe]);
+            } else {
+                const listeValeurs = Object.values(kpisParEmp).map(k => evaluerValeurObjectif(o.type_indicateur, k));
+                if (o.type_indicateur === 'TAUX_REVENTE' || o.type_indicateur === 'PANIER_MOYEN') {
+                    valeurActuelle = listeValeurs.length > 0 ? Number((listeValeurs.reduce((a, b) => a + b, 0) / listeValeurs.length).toFixed(1)) : 0;
+                } else {
+                    valeurActuelle = Number(listeValeurs.reduce((a, b) => a + b, 0).toFixed(2));
+                }
+            }
+            const progression = Math.min(100, Math.round((valeurActuelle / cible) * 100));
+            return {
+                ...o,
+                valeur_cible: cible,
+                valeur_actuelle: valeurActuelle,
+                progression,
+                atteint: valeurActuelle >= cible
+            };
+        });
+
+        res.json(objectifsEnrichis);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur récupération des objectifs." });
+    }
+});
+
+app.post('/api/equipe/objectifs', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Action réservée au gérant." });
+    const { titre, type_indicateur, valeur_cible, id_employe, recompense } = req.body;
+    const cibleNum = parseFloat(valeur_cible);
+
+    if (!titre || !type_indicateur || isNaN(cibleNum) || cibleNum <= 0) {
+        return res.status(400).json({ erreur: "Veuillez renseigner un titre, un indicateur et une valeur cible valide." });
+    }
+
+    try {
+        await initialiserTableObjectifs();
+        const empIdFinal = (id_employe && id_employe !== 'TOUS') ? parseInt(id_employe, 10) : null;
+        await pool.query(
+            `INSERT INTO objectifs_equipe (id_salon, id_employe, titre, type_indicateur, valeur_cible, recompense)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [req.user.id_salon, empIdFinal, String(titre).trim(), type_indicateur, cibleNum, recompense ? String(recompense).trim() : null]
+        );
+        res.status(201).json({ message: "Objectif créé avec succès." });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur création de l'objectif." });
+    }
+});
+
+app.delete('/api/equipe/objectifs/:id', verifierToken, async (req, res) => {
+    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Action réservée au gérant." });
+    try {
+        await pool.query('DELETE FROM objectifs_equipe WHERE id_objectif = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
+        res.json({ message: "Objectif supprimé." });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur suppression de l'objectif." });
     }
 });
 // NOUVELLE ROUTE : ENCAISSEMENT D'UN POURBOIRE ISOLÉ (Post-Encaissement)
