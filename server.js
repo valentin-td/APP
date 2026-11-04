@@ -2034,8 +2034,26 @@ app.put('/api/rdv/:id', verifierToken, async (req, res) => {
 // --- MODULE 6 : RÉSERVATION EN LIGNE PUBLIQUE & LEVIER ANTI-PLANITY ---
 // =========================================================================
 
+// Limiteur autonome anti-spam pour les routes publiques de réservation (évite tout crash d'ordre d'initialisation)
+const mapLimiteurReservation = new Map();
+const limiteurReservationPublique = (req, res, next) => {
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'ip';
+    const now = Date.now();
+    const entree = mapLimiteurReservation.get(ip) || { count: 0, resetAt: now + 60000 };
+    if (now > entree.resetAt) {
+        entree.count = 0;
+        entree.resetAt = now + 60000;
+    }
+    entree.count += 1;
+    mapLimiteurReservation.set(ip, entree);
+    if (entree.count > 60) {
+        return res.status(429).json({ erreur: "Trop de requêtes. Veuillez patienter une minute." });
+    }
+    next();
+};
+
 // 1. Informations publiques du salon, catalogue des prestations et équipe
-app.get('/api/public/reservation/:id_salon', limiteurAvisPublic, async (req, res) => {
+app.get('/api/public/reservation/:id_salon', limiteurReservationPublique, async (req, res) => {
     const id_salon = parseInt(req.params.id_salon, 10);
     if (isNaN(id_salon)) return res.status(400).json({ erreur: "Salon invalide." });
 
@@ -2081,7 +2099,7 @@ app.get('/api/public/reservation/:id_salon', limiteurAvisPublic, async (req, res
 });
 
 // 2. Calcul en temps réel des créneaux disponibles (prend en compte RDV + Nettoyage + Absences)
-app.get('/api/public/reservation/:id_salon/creneaux', limiteurAvisPublic, async (req, res) => {
+app.get('/api/public/reservation/:id_salon/creneaux', limiteurReservationPublique, async (req, res) => {
     const id_salon = parseInt(req.params.id_salon, 10);
     const { date, id_employe, duree } = req.query;
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -2137,7 +2155,6 @@ app.get('/api/public/reservation/:id_salon/creneaux', limiteurAvisPublic, async 
 
             if (debutSlot <= maintenant) continue;
 
-            // Vérifie s'il existe au moins un employé disponible sur ce créneau
             const employeLibre = employesDisposJour.find(idEmp => {
                 const conflit = rdvsRes.rows.some(r => {
                     if (Number(r.id_employe) !== Number(idEmp)) return false;
@@ -2163,8 +2180,8 @@ app.get('/api/public/reservation/:id_salon/creneaux', limiteurAvisPublic, async 
     }
 });
 
-// 3. Vérification instantanée des avantages Fidélité / Winback du client (Levier anti-Planity)
-app.get('/api/public/reservation/:id_salon/fidelite', limiteurAvisPublic, async (req, res) => {
+// 3. Vérification instantanée des avantages Fidélité / Winback du client
+app.get('/api/public/reservation/:id_salon/fidelite', limiteurReservationPublique, async (req, res) => {
     const id_salon = parseInt(req.params.id_salon, 10);
     const tel = String(req.query.telephone || '').replace(/\s+/g, '').trim();
     if (!tel || tel.length < 8) return res.json({ client_trouve: false });
@@ -2193,7 +2210,7 @@ app.get('/api/public/reservation/:id_salon/fidelite', limiteurAvisPublic, async 
 });
 
 // 4. Validation de la réservation en ligne (+ Option Acompte Stripe anti-lapin)
-app.post('/api/public/reservation/:id_salon/reserver', limiteurAvisPublic, async (req, res) => {
+app.post('/api/public/reservation/:id_salon/reserver', limiteurReservationPublique, async (req, res) => {
     const id_salon = parseInt(req.params.id_salon, 10);
     const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes, payer_acompte } = req.body;
 
@@ -2208,7 +2225,6 @@ app.post('/api/public/reservation/:id_salon/reserver', limiteurAvisPublic, async
         const tempsNettoyage = parseInt(config.temps_nettoyage_minutes, 10) || 0;
         const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
 
-        // Contrôle anti-doublon de dernière seconde
         if (id_employe) {
             const rdvExistants = await pool.query(
                 `SELECT id_rdv FROM rendez_vous 
@@ -2236,17 +2252,16 @@ app.post('/api/public/reservation/:id_salon/reserver', limiteurAvisPublic, async
 
         if (typeof envoyerNotificationPush === 'function') {
             envoyerNotificationPush(id_salon, 'gerant', {
-                title: "Nouvelle réservation en ligne STACK !",
+                title: "Nouvelle réservation en ligne STACK",
                 body: `${nom_client} a réservé "${prestation}" (${date_heure_debut.replace('T', ' à ')}).`,
                 url: '/?tab=agenda'
             });
         }
 
-        // Si le client souhaite régler son acompte anti-lapin par CB Stripe
         if (payer_acompte && process.env.STRIPE_SECRET_KEY) {
             const prestaRes = await pool.query('SELECT prix FROM catalogue WHERE id_salon = $1 AND nom = $2 LIMIT 1', [id_salon, prestation]);
             const prixPresta = prestaRes.rowCount > 0 ? (parseFloat(prestaRes.rows[0].prix) || 30) : 30;
-            const montantAcompteCents = Math.max(500, Math.round(prixPresta * 0.30 * 100)); // Acompte de 30% (min 5 €)
+            const montantAcompteCents = Math.max(500, Math.round(prixPresta * 0.30 * 100));
 
             const originUrl = req.headers.origin || 'https://app-salon-caiss.onrender.com';
             const session = await stripe.checkout.sessions.create({
@@ -2269,7 +2284,7 @@ app.post('/api/public/reservation/:id_salon/reserver', limiteurAvisPublic, async
             return res.status(201).json({ message: "Redirection vers l'acompte Stripe...", checkout_url: session.url, id_rdv: insertRdv.rows[0].id_rdv });
         }
 
-        res.status(201).json({ message: "Rendez-vous confirmé !", id_rdv: insertRdv.rows[0].id_rdv });
+        res.status(201).json({ message: "Rendez-vous confirmé.", id_rdv: insertRdv.rows[0].id_rdv });
     } catch (e) {
         console.error("Erreur réservation publique :", e);
         res.status(500).json({ erreur: "Erreur lors de la réservation." });
