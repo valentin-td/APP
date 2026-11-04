@@ -4939,6 +4939,29 @@ function App() {
                   .filter(r => Number(r?.id_employe) === Number(monIdEmp) && r?.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', ''))))
                   .sort((a, b) => new Date(a.date_heure_debut.replace('Z', '')) - new Date(b.date_heure_debut.replace('Z', '')));
 
+                const nbClientsMois = empGamificationKpis?.nb_clients_mois ?? employeDashboardData?.nb_clients_mois ?? 0;
+                const commTotale = empGamificationKpis?.commission_totale ?? employeDashboardData?.commission_mois ?? 0;
+                const commPresta = empGamificationKpis?.comm_prestation ?? 0;
+                const commProduit = empGamificationKpis?.comm_produit ?? 0;
+                const pourboiresMois = empGamificationKpis?.pourboires_mois ?? 0;
+                const cagnotteGlobale = empGamificationKpis?.cagnotte_globale ?? commTotale;
+                const nbProduits = empGamificationKpis?.nb_produits_vendus ?? employeDashboardData?.nb_produits_vendus ?? 0;
+                const panierMoyenEmp = empGamificationKpis?.panier_moyen ?? 0;
+                const tauxReventeEmp = empGamificationKpis?.taux_revente ?? 0;
+                const tauxFidelisationEmp = empGamificationKpis?.taux_fidelisation ?? 0;
+
+                // Système de paliers Gamification (Bronze -> Argent -> Or -> Élite)
+                const paliers = [
+                  { nom: 'Bronze', seuil: 100 },
+                  { nom: 'Argent', seuil: 250 },
+                  { nom: 'Or', seuil: 500 },
+                  { nom: 'Élite STACK', seuil: 800 }
+                ];
+                const palierSuivant = paliers.find(p => cagnotteGlobale < p.seuil) || paliers[paliers.length - 1];
+                const palierActuel = cagnotteGlobale >= 800 ? 'Élite STACK' : cagnotteGlobale >= 500 ? 'Or' : cagnotteGlobale >= 250 ? 'Argent' : 'Bronze';
+                const progressionPalier = Math.min(100, Math.round((cagnotteGlobale / palierSuivant.seuil) * 100));
+                const restePourPalier = Math.max(0, (palierSuivant.seuil - cagnotteGlobale)).toFixed(2);
+
                 return (
                   <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"}>
                     <div className={isMobile ? "mobile-fixed-header-top" : ""}>
@@ -4946,7 +4969,12 @@ function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                           {renderAvatar(monProfilEmp?.photo_url, monProfilEmp?.nom || 'Collaborateur', 46)}
                           <div>
-                            <h1 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>Bonjour {(monProfilEmp?.nom || 'Collaborateur').split(' ')[0]}</h1>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <h1 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>Bonjour {(monProfilEmp?.nom || 'Collaborateur').split(' ')[0]}</h1>
+                              <span style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '11px', fontWeight: '800', background: 'var(--text-main)', color: 'var(--bg-card)' }}>
+                                Rang {palierActuel}
+                              </span>
+                            </div>
                             <span className="date-subtitle" style={{ margin: 0 }}></span>
                           </div>
                         </div>
@@ -4960,40 +4988,84 @@ function App() {
                     </div>
 
                     <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
-                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '14px', marginBottom: '20px' }}>
-                        <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
+                      {/* CARTE GAMIFICATION : PROGRESSION DU PALIER DE PRIMES DU MOIS */}
+                      <div className="carte" style={{ padding: isMobile ? '16px 18px' : '18px 22px', marginBottom: '16px', borderRadius: '18px', border: '1.5px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                          <div>
+                            <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              Challenge Primes & Pourboires du mois
+                            </span>
+                            <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-main)', marginTop: '2px' }}>
+                              {cagnotteGlobale >= 800
+                                ? 'Palier maximum Élite atteint ce mois-ci !'
+                                : `Plus que ${restePourPalier} € de primes pour débloquer le rang ${palierSuivant.nom}`}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: '14px', fontWeight: '900', color: 'var(--color-success)' }}>
+                            {cagnotteGlobale.toFixed(2)} € / {palierSuivant.seuil} €
+                          </span>
+                        </div>
+                        <div style={{ height: '8px', width: '100%', background: 'var(--bg-app)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                          <div style={{ height: '100%', width: `${progressionPalier}%`, background: 'var(--color-success)', borderRadius: '999px', transition: 'width 0.4s ease' }} />
+                        </div>
+                      </div>
+
+                      {/* GRILLE DES 4 KPIS PERSONNELS DE PERFORMANCE */}
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                        {/* KPI 1 : Cagnotte Primes + Pourboires */}
+                        <div className="carte" style={{ padding: '16px 18px', marginBottom: 0, borderRadius: '18px' }}>
+                          <span style={{ fontSize: '10.5px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block' }}>Cagnotte du Mois</span>
+                          <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '900', color: 'var(--color-success)', margin: '8px 0 4px 0' }}>
+                            {cagnotteGlobale.toFixed(2)} <span style={{ fontSize: '14px' }}>€</span>
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>
+                            Presta: {commPresta.toFixed(0)}€ • Prod: {commProduit.toFixed(0)}€ {pourboiresMois > 0 ? `• PB: ${pourboiresMois.toFixed(0)}€` : ''}
+                          </span>
+                        </div>
+
+                        {/* KPI 2 : Taux de Revente Produit (Upsell) */}
+                        <div className="carte" style={{ padding: '16px 18px', marginBottom: 0, borderRadius: '18px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Clients Coiffés</span>
+                            <span style={{ fontSize: '10.5px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Taux Revente</span>
+                            <span style={{ padding: '2px 7px', borderRadius: '999px', fontSize: '10px', fontWeight: '800', background: tauxReventeEmp >= 20 ? 'var(--bg-success)' : 'var(--bg-app)', color: tauxReventeEmp >= 20 ? 'var(--color-success)' : 'var(--text-secondary)' }}>
+                              Obj. 20%
+                            </span>
+                          </div>
+                          <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '8px 0 4px 0' }}>
+                            {tauxReventeEmp}%
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>
+                            {nbProduits} produit{nbProduits > 1 ? 's' : ''} vendu{nbProduits > 1 ? 's' : ''} ce mois
+                          </span>
+                        </div>
+
+                        {/* KPI 3 : Panier Moyen TTC */}
+                        <div className="carte" style={{ padding: '16px 18px', marginBottom: 0, borderRadius: '18px' }}>
+                          <span style={{ fontSize: '10.5px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block' }}>Panier Moyen</span>
+                          <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '8px 0 4px 0' }}>
+                            {panierMoyenEmp.toFixed(2)} <span style={{ fontSize: '14px' }}>€</span>
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>
+                            Sur {nbClientsMois} passage{nbClientsMois > 1 ? 's' : ''} client
+                          </span>
+                        </div>
+
+                        {/* KPI 4 : Clients Coiffés & Fidélisation */}
+                        <div className="carte" style={{ padding: '16px 18px', marginBottom: 0, borderRadius: '18px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '10.5px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clients Coiffés</span>
                             {employeDashboardData && (
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '800',
-                                background: evoEmp >= 0 ? 'var(--bg-success)' : 'var(--bg-danger)',
-                                color: evoEmp >= 0 ? 'var(--color-success)' : 'var(--color-danger)'
-                              }}>
+                              <span style={{ padding: '2px 7px', borderRadius: '999px', fontSize: '10.5px', fontWeight: '800', background: evoEmp >= 0 ? 'var(--bg-success)' : 'var(--bg-danger)', color: evoEmp >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                 {evoEmp >= 0 ? '+' : '-'}{Math.abs(evoEmp)}%
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0' }}>
-                            {employeDashboardData?.nb_clients_mois ?? '—'}
+                          <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '900', color: 'var(--text-main)', margin: '8px 0 4px 0' }}>
+                            {nbClientsMois}
                           </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
-                        </div>
-
-                        <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
-                          <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Prime & Commissions</span>
-                          <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--color-success)', margin: '10px 0 4px 0' }}>
-                            {(employeDashboardData?.commission_mois ?? 0).toFixed(2)} <span style={{ fontSize: '18px' }}>€</span>
-                          </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
-                        </div>
-
-                        <div className="carte" style={{ padding: '20px 22px', marginBottom: 0, borderRadius: '18px' }}>
-                          <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Produits Vendus</span>
-                          <div style={{ fontSize: '34px', fontWeight: '900', color: 'var(--text-main)', margin: '10px 0 4px 0' }}>
-                            {employeDashboardData?.nb_produits_vendus ?? 0}
-                          </div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}></span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>
+                            Fidélisation : <strong>{tauxFidelisationEmp}%</strong> de retour
+                          </span>
                         </div>
                       </div>
 
@@ -5017,7 +5089,7 @@ function App() {
                                 <div key={rdv.id_rdv} onClick={() => setActiveTab('agenda')} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', background: 'var(--bg-app)', borderRadius: '10px', border: '1px solid var(--border-color)', cursor: 'pointer' }}>
                                   <div>
                                     <strong style={{ fontSize: '14px', color: 'var(--text-main)', display: 'block' }}>{rdv.nom_client}</strong>
-                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{rdv.prestation} ({rdv.duree_minutes || 30} min)</span>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{rdv.prestation || rdv.type_coupe} ({rdv.duree_minutes || 30} min)</span>
                                   </div>
                                   <span style={{ padding: '5px 10px', borderRadius: '8px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', fontWeight: '800', fontSize: '13px', color: 'var(--text-main)' }}>
                                     {dRdv.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
