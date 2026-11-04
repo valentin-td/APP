@@ -3961,6 +3961,20 @@ function App() {
           setIsSendingCommande(false);
       }
   };
+
+  // --- MODULE 5 : ÉTAT GAMIFICATION & KPIS EMPLOYÉ ---
+  const [empGamificationKpis, setEmpGamificationKpis] = useState(null);
+
+  useEffect(() => {
+      if (role === 'employe' && token && activeTab === 'accueil') {
+          fetch('https://api-salon-backend.onrender.com/api/employes/gamification-kpis', {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
+          })
+              .then(r => r.ok ? r.json() : null)
+              .then(data => { if (data) setEmpGamificationKpis(data); })
+              .catch(() => {});
+      }
+  }, [role, token, activeTab]);
   const supprimerMessage = async (id) => {
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
