@@ -8847,12 +8847,51 @@ function App() {
                               </div>
 
                           <div className="chat-input-area">
-                              <button className="chat-btn chat-file-btn" onClick={() => document.getElementById('chat-file-upload').click()}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                              <button className="chat-btn chat-file-btn" title="Joindre une photo" onClick={() => document.getElementById('chat-file-upload').click()}>
+                                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                              </button>
                               <input type="file" id="chat-file-upload" accept="image/*" style={{display:'none'}} onChange={handleChatFileUpload} />
+
+                              {/* Bouton Mémo Vocal (Mains-libres) */}
+                              <button
+                                  type="button"
+                                  className="chat-btn chat-file-btn"
+                                  title={isRecordingAudio ? "Arrêter l'enregistrement" : "Enregistrer un mémo vocal"}
+                                  onClick={isRecordingAudio ? arreterEnregistrementVocal : demarrerEnregistrementVocal}
+                                  style={isRecordingAudio ? { background: 'var(--color-danger, #ef4444)', color: '#fff', borderColor: 'var(--color-danger, #ef4444)' } : {}}
+                              >
+                                  <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                              </button>
+
                               <div style={{flex: 1, position: 'relative'}}>
+                                  {/* Bandeau Réponse citée */}
+                                  {replyToMsg && (
+                                      <div style={{ position: 'absolute', bottom: '100%', left: '8px', right: '8px', marginBottom: msgFile ? '78px' : '8px', background: 'var(--bg-card)', padding: '6px 12px', borderRadius: '10px', border: '1px solid var(--border-color)', borderLeft: '3px solid var(--text-main)', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '12px', zIndex: 29 }}>
+                                          <div style={{ minWidth: 0 }}>
+                                              <strong style={{ display: 'block', fontSize: '11px', color: 'var(--text-main)' }}>↩ Réponse à {replyToMsg.nom_expediteur}</strong>
+                                              <span style={{ color: 'var(--text-secondary)', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{replyToMsg.extrait}</span>
+                                          </div>
+                                          <button type="button" onClick={() => setReplyToMsg(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: '800', fontSize: '13px', padding: '2px 4px' }}>✕</button>
+                                      </div>
+                                  )}
+
+                                  {/* Bandeau Enregistrement vocal en cours */}
+                                  {isRecordingAudio && (
+                                      <div style={{ position: 'absolute', bottom: '100%', left: '12px', marginBottom: '10px', background: 'var(--color-danger, #ef4444)', color: '#fff', padding: '7px 14px', borderRadius: '999px', fontSize: '12.5px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '10px', boxShadow: '0 6px 18px rgba(239,68,68,0.35)', zIndex: 31 }}>
+                                          <span>● Enregistrement vocal ({recordingSeconds}s)</span>
+                                          <button type="button" onClick={arreterEnregistrementVocal} style={{ background: '#fff', color: '#111827', border: 'none', borderRadius: '999px', padding: '3px 10px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>Terminer</button>
+                                          <button type="button" onClick={annulerEnregistrementVocal} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '12px', fontWeight: '800', padding: 0 }}>✕</button>
+                                      </div>
+                                  )}
+
+                                  {/* Aperçu Miniature Photo OU Lecteur Mémo Vocal prêt à envoyer */}
                                   {msgFile && (
-                                      <div style={{ position: 'absolute', bottom: '100%', left: '12px', marginBottom: '10px', background: 'var(--bg-card)', padding: '5px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 6px 18px rgba(0,0,0,0.2)', display: 'inline-flex', alignItems: 'center', zIndex: 30 }}>
-                                          <img src={msgFile} alt="Aperçu" style={{ width: '58px', height: '58px', objectFit: 'cover', borderRadius: '8px', display: 'block' }} />
+                                      <div style={{ position: 'absolute', bottom: '100%', left: '12px', marginBottom: '10px', background: 'var(--bg-card)', padding: '6px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 6px 18px rgba(0,0,0,0.2)', display: 'inline-flex', alignItems: 'center', gap: '8px', zIndex: 30 }}>
+                                          {/^data:(audio|video)\//i.test(msgFile) ? (
+                                              <audio controls src={msgFile} style={{ height: '32px', width: '200px' }} />
+                                          ) : (
+                                              <img src={msgFile} alt="Aperçu" style={{ width: '58px', height: '58px', objectFit: 'cover', borderRadius: '8px', display: 'block' }} />
+                                          )}
                                           <button
                                               type="button"
                                               onClick={() => setMsgFile(null)}
@@ -8862,6 +8901,7 @@ function App() {
                                           </button>
                                       </div>
                                   )}
+
                                   <textarea className="chat-input" placeholder="Écrire un nouveau message..." value={msgInput} onChange={e => setMsgInput(e.target.value)} onKeyDown={e => {if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }}} />
                               </div>
                               <button className="chat-btn" disabled={!msgInput.trim() && !msgFile} onClick={envoyerMessage}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
