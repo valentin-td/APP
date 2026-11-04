@@ -24,9 +24,10 @@ const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/clien
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 // Initialisation du client Cloudflare R2
+const r2AccountClean = (process.env.R2_ACCOUNT_ID || '').replace(/^https?:\/\//, '').split('.')[0].trim();
 const s3Client = new S3Client({
     region: 'auto',
-    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.net`,
+    endpoint: `https://${r2AccountClean}.r2.cloudflarestorage.com`,
     credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID,
         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
