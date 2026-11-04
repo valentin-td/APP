@@ -5126,7 +5126,7 @@ function App() {
                               </div>
                               <div>
                                 <h3 style={{ margin: 0, fontSize: '17px', color: 'var(--text-main)' }}>Mes Établissements & Franchise</h3>
-                                <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Basculez d'une adresse à l'autre en 1 clic (Comptabilités NF525 isolées)</span>
+                                <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Basculez d'une adresse à l'autre en 1 clic</span>
                               </div>
                             </div>
                             <button className="modal-close-btn" onClick={() => { setShowMultiSalonModal(false); setShowFormNouveauSalon(false); }}>
