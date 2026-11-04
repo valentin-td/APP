@@ -1657,10 +1657,10 @@ function App() {
           }
           chargerTout();
           if (user && user.id_salon && !isOffline && navigator.onLine) {
-              const newSocket = io('https://api-salon-backend.onrender.com', {
-                  transports: ['websocket'],
-                  reconnectionAttempts: Infinity,
-                  timeout: 5000,
+              cconst newSocket = io('https://api-salon-backend.onrender.com', {
+                  transports: ['websocket', 'polling'], // ESSENTIEL : Permet de basculer en HTTP si le WebSocket est bloqué par Render
+                  reconnectionAttempts: 10,
+                  timeout: 10000, // Augmenté pour éviter que Render ne coupe la connexion trop vite
                   withCredentials: true,
                   auth: { token: localStorage.getItem('api_token') }
               });
