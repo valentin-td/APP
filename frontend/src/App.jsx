@@ -8476,7 +8476,6 @@ function App() {
                               </div>
 
                               <div style={{display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'space-between' : 'flex-end'}}>
-                                  {/* Sélecteur segmenté Période d'heures */}
                                   <div style={{display: 'inline-flex', background: 'var(--bg-card)', padding: '3px', borderRadius: '10px', border: '1px solid var(--border-color)'}}>
                                       {[
                                           { id: 'aujourdhui', label: 'Jour' },
@@ -8519,6 +8518,144 @@ function App() {
                               </div>
                           </div>
                       </div>
+
+                      <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
+                          {/* SECTION GESTION DES OBJECTIFS D'ÉQUIPE (GÉRANT) */}
+                          <div className="carte" style={{ padding: isMobile ? '18px' : '22px', marginBottom: '20px', borderRadius: '18px', border: '1px solid var(--border-color)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: objectifsEquipeListe.length > 0 || showAddObjectifModal ? '16px' : 0 }}>
+                                  <div>
+                                      <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>
+                                          Pilotage & Performance
+                                      </span>
+                                      <h3 style={{ margin: '2px 0 0 0', fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>
+                                          Objectifs Mensuels de l'Équipe
+                                      </h3>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={() => setShowAddObjectifModal(!showAddObjectifModal)}
+                                      className="btn-action"
+                                      style={{ padding: '9px 15px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '7px' }}
+                                  >
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                      <span>{showAddObjectifModal ? 'Fermer' : 'Nouvel Objectif'}</span>
+                                  </button>
+                              </div>
+
+                              {showAddObjectifModal && (
+                                  <div style={{ padding: '16px', borderRadius: '14px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', marginBottom: '16px' }}>
+                                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1.4fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                                          <div>
+                                              <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Intitulé de l'objectif</label>
+                                              <input
+                                                  type="text"
+                                                  className="input-fournisseur"
+                                                  placeholder="Ex: Challenge Revente Soins Profonds"
+                                                  value={newObjectifForm.titre}
+                                                  onChange={e => setNewObjectifForm({ ...newObjectifForm, titre: e.target.value })}
+                                                  style={{ marginBottom: 0 }}
+                                              />
+                                          </div>
+                                          <div>
+                                              <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Indicateur mesuré</label>
+                                              <select
+                                                  className="input-fournisseur"
+                                                  value={newObjectifForm.type_indicateur}
+                                                  onChange={e => setNewObjectifForm({ ...newObjectifForm, type_indicateur: e.target.value })}
+                                                  style={{ marginBottom: 0 }}
+                                              >
+                                                  <option value="TAUX_REVENTE">Taux de revente produits (%)</option>
+                                                  <option value="CA_TTC">Chiffre d'affaires TTC (€)</option>
+                                                  <option value="PANIER_MOYEN">Panier moyen TTC (€)</option>
+                                                  <option value="PRODUITS_VENDUS">Nombre de produits vendus</option>
+                                                  <option value="NB_CLIENTS">Nombre de clients coiffés</option>
+                                                  <option value="CAGNOTTE_PRIMES">Palier de commissions (€)</option>
+                                              </select>
+                                          </div>
+                                          <div>
+                                              <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Valeur cible</label>
+                                              <input
+                                                  type="number"
+                                                  className="input-fournisseur"
+                                                  placeholder="Ex: 20"
+                                                  value={newObjectifForm.valeur_cible}
+                                                  onChange={e => setNewObjectifForm({ ...newObjectifForm, valeur_cible: e.target.value })}
+                                                  style={{ marginBottom: 0 }}
+                                              />
+                                          </div>
+                                      </div>
+
+                                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                                          <div>
+                                              <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Collaborateur concerné</label>
+                                              <select
+                                                  className="input-fournisseur"
+                                                  value={newObjectifForm.id_employe}
+                                                  onChange={e => setNewObjectifForm({ ...newObjectifForm, id_employe: e.target.value })}
+                                                  style={{ marginBottom: 0 }}
+                                              >
+                                                  <option value="TOUS">Toute l'équipe (Objectif individuel commun)</option>
+                                                  {(employesListe || []).map(emp => (
+                                                      <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>
+                                                  ))}
+                                              </select>
+                                          </div>
+                                          <div>
+                                              <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Prime ou récompense (optionnelle)</label>
+                                              <input
+                                                  type="text"
+                                                  className="input-fournisseur"
+                                                  placeholder="Ex: Prime de 50 €"
+                                                  value={newObjectifForm.recompense}
+                                                  onChange={e => setNewObjectifForm({ ...newObjectifForm, recompense: e.target.value })}
+                                                  style={{ marginBottom: 0 }}
+                                              />
+                                          </div>
+                                          <button type="button" onClick={creerObjectifEquipe} className="btn-action" style={{ height: '42px', padding: '0 20px', borderRadius: '10px', fontSize: '12.5px', fontWeight: '700' }}>
+                                              Valider
+                                          </button>
+                                      </div>
+                                  </div>
+                              )}
+
+                              {objectifsEquipeListe.length > 0 && (
+                                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: '12px' }}>
+                                      {objectifsEquipeListe.map(obj => {
+                                          const unite = obj.type_indicateur === 'TAUX_REVENTE' ? '%' : (obj.type_indicateur === 'PRODUITS_VENDUS' || obj.type_indicateur === 'NB_CLIENTS') ? '' : ' €';
+                                          return (
+                                              <div key={obj.id_objectif} style={{ padding: '14px 16px', borderRadius: '12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                                                      <div>
+                                                          <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-main)' }}>{obj.titre}</div>
+                                                          <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                                              Cible : <strong>{obj.nom_employe || "Toute l'équipe"}</strong>
+                                                              {obj.recompense ? ` • Prime : ${obj.recompense}` : ''}
+                                                          </div>
+                                                      </div>
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => supprimerObjectifEquipe(obj.id_objectif)}
+                                                          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', lineHeight: 1 }}
+                                                          title="Supprimer cet objectif"
+                                                      >
+                                                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                                      </button>
+                                                  </div>
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: '800' }}>
+                                                      <span style={{ color: 'var(--text-secondary)' }}>Progression (Moyenne Équipe)</span>
+                                                      <span style={{ color: obj.atteint ? 'var(--color-success)' : 'var(--text-main)' }}>
+                                                          {obj.valeur_actuelle}{unite} / {obj.valeur_cible}{unite} ({obj.progression}%)
+                                                      </span>
+                                                  </div>
+                                                  <div style={{ height: '6px', width: '100%', background: 'var(--bg-card)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                                      <div style={{ height: '100%', width: `${obj.progression}%`, background: obj.atteint ? 'var(--color-success)' : 'var(--text-main)', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                                                  </div>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              )}
+                          </div>
 
                       {/* ZONE DÉFILANTE */}
                       <div style={isMobile ? { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '120px' } : {}}>
