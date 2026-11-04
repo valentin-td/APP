@@ -59,9 +59,257 @@ window.fetch = async (...args) => {
 
 import AvisPublic from './AvisPublic.jsx';
 
+function PageReservationPublique({ idSalon }) {
+  const [infos, setInfos] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [prestaChoisie, setPrestaChoisie] = useState(null);
+  const [employeChoisi, setEmployeChoisi] = useState('AUTO');
+  const [dateChoisie, setDateChoisie] = useState(() => new Date().toISOString().slice(0, 10));
+  const [creneaux, setCreneaux] = useState([]);
+  const [loadingCreneaux, setLoadingCreneaux] = useState(false);
+  const [creneauSelectionne, setCreneauSelectionne] = useState(null);
+  const [clientNom, setClientNom] = useState('');
+  const [clientTel, setClientTel] = useState('');
+  const [fideliteClient, setFideliteClient] = useState(null);
+  const [confirmationOk, setConfirmationOk] = useState(() => new URLSearchParams(window.location.search).get('success') === '1');
+  const [erreurMsg, setErreurMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) {
+          setInfos(data);
+          if (data.prestations?.length > 0) setPrestaChoisie(data.prestations[0]);
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [idSalon]);
+
+  useEffect(() => {
+    if (!prestaChoisie || !dateChoisie) return;
+    setLoadingCreneaux(true);
+    setCreneauSelectionne(null);
+    fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}/creneaux?date=${dateChoisie}&id_employe=${employeChoisi}&duree=${prestaChoisie.duree_estimee_minutes || 30}`)
+      .then(r => r.ok ? r.json() : { creneaux: [] })
+      .then(data => {
+        setCreneaux(data.creneaux || []);
+        setLoadingCreneaux(false);
+      })
+      .catch(() => setLoadingCreneaux(false));
+  }, [idSalon, prestaChoisie, employeChoisi, dateChoisie]);
+
+  const verifierFideliteTel = (telVal) => {
+    setClientTel(telVal);
+    if (telVal.replace(/\s+/g, '').length >= 8) {
+      fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}/fidelite?telephone=${encodeURIComponent(telVal)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.client_trouve) {
+            setFideliteClient(data);
+            if (!clientNom && (data.prenom || data.nom)) {
+              setClientNom(`${data.prenom || ''} ${data.nom || ''}`.trim());
+            }
+          } else {
+            setFideliteClient(null);
+          }
+        })
+        .catch(() => {});
+    }
+  };
+
+  const validerReservation = async (avecAcompteStripe = false) => {
+    if (!creneauSelectionne || !clientNom.trim() || !clientTel.trim()) {
+      setErreurMsg("Veuillez choisir un créneau et renseigner votre nom et téléphone.");
+      return;
+    }
+    setErreurMsg('');
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}/reserver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nom_client: clientNom.trim(),
+          telephone_client: clientTel.trim(),
+          id_employe: creneauSelectionne.id_employe_suggere,
+          prestation: prestaChoisie.nom,
+          date_heure_debut: creneauSelectionne.date_heure_debut,
+          duree_minutes: prestaChoisie.duree_estimee_minutes || 30,
+          payer_acompte: avecAcompteStripe
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErreurMsg(data.erreur || "Impossible de valider ce créneau.");
+      } else if (data.checkout_url) {
+        window.location.assign(data.checkout_url);
+      } else {
+        setConfirmationOk(true);
+      }
+    } catch (e) {
+      setErreurMsg("Erreur réseau.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif', background: '#f6f6f7', color: '#111827', fontWeight: '700' }}>Chargement de l'agenda du salon...</div>;
+  }
+  if (!infos?.salon) {
+    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif', background: '#f6f6f7', color: '#dc2626', fontWeight: '700' }}>Salon introuvable.</div>;
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: '#f6f6f7', color: '#111827', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: '24px 16px' }}>
+      <div style={{ maxWidth: '620px', margin: '0 auto' }}>
+        {/* En-tête du Salon */}
+        <div style={{ background: '#111827', color: '#ffffff', borderRadius: '22px', padding: '24px', marginBottom: '18px', boxShadow: '0 12px 30px rgba(0,0,0,0.1)' }}>
+          <span style={{ fontSize: '10.5px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.06em', background: 'rgba(255,255,255,0.14)', padding: '4px 10px', borderRadius: '999px' }}>
+            Réservation Directe • Programme Fidélité Officiel
+          </span>
+          <h1 style={{ margin: '10px 0 4px 0', fontSize: '24px', fontWeight: '800' }}>{infos.salon.nom_salon}</h1>
+          <div style={{ fontSize: '13px', color: '#9ca3af' }}>
+            {infos.salon.adresse} {infos.salon.telephone ? `• ${infos.salon.telephone}` : ''}
+          </div>
+        </div>
+
+        {confirmationOk ? (
+          <div style={{ background: '#ffffff', borderRadius: '22px', padding: '28px', textAlign: 'center', border: '1.5px solid #16a34a' }}>
+            <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: '#dcfce7', color: '#166534', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px auto', fontSize: '24px', fontWeight: '800' }}>✓</div>
+            <h2 style={{ margin: '0 0 8px 0', fontSize: '20px' }}>Votre rendez-vous est confirmé !</h2>
+            <p style={{ color: '#4b5563', fontSize: '13.5px', margin: '0 0 18px 0' }}>
+              Vos avantages fidélité seront automatiquement crédités lors de votre passage au salon.
+            </p>
+            <button type="button" onClick={() => setConfirmationOk(false)} style={{ background: '#111827', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: '12px', fontWeight: '700', cursor: 'pointer' }}>
+              Prendre un autre rendez-vous
+            </button>
+          </div>
+        ) : (
+          <div style={{ background: '#ffffff', borderRadius: '22px', padding: '22px', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            {/* 1. Choix de la Prestation */}
+            <div>
+              <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>1. Choisissez votre prestation</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '210px', overflowY: 'auto' }}>
+                {(infos.prestations || []).map(p => {
+                  const active = prestaChoisie?.id_article === p.id_article;
+                  return (
+                    <div
+                      key={p.id_article}
+                      onClick={() => setPrestaChoisie(p)}
+                      style={{ padding: '12px 14px', borderRadius: '12px', border: active ? '2px solid #111827' : '1px solid #e5e7eb', background: active ? '#f9fafb' : '#ffffff', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    >
+                      <div>
+                        <strong style={{ fontSize: '14px', display: 'block' }}>{p.nom}</strong>
+                        <span style={{ fontSize: '12px', color: '#6b7280' }}>Durée : {p.duree_estimee_minutes} min</span>
+                      </div>
+                      <span style={{ fontSize: '15px', fontWeight: '800' }}>{parseFloat(p.prix).toFixed(2)} €</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Choix du Collaborateur & de la Date */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>2. Collaborateur</label>
+                <select value={employeChoisi} onChange={e => setEmployeChoisi(e.target.value)} style={{ width: '100%', padding: '11px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px', fontWeight: '600' }}>
+                  <option value="AUTO">Premier disponible</option>
+                  {(infos.employes || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>3. Date souhaitée</label>
+                <input type="date" min={new Date().toISOString().slice(0, 10)} value={dateChoisie} onChange={e => setDateChoisie(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px', fontWeight: '600' }} />
+              </div>
+            </div>
+
+            {/* 3. Grille des Créneaux Disponibles */}
+            <div>
+              <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>4. Créneaux disponibles</label>
+              {loadingCreneaux ? (
+                <div style={{ fontSize: '13px', color: '#6b7280', padding: '12px 0' }}>Recherche des disponibilités...</div>
+              ) : creneaux.length === 0 ? (
+                <div style={{ padding: '14px', borderRadius: '12px', background: '#f9fafb', color: '#6b7280', fontSize: '13px', textAlign: 'center' }}>Aucun créneau disponible à cette date. Essayez un autre jour.</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(82px, 1fr))', gap: '8px' }}>
+                  {creneaux.map(c => {
+                    const selected = creneauSelectionne?.heure === c.heure;
+                    return (
+                      <button
+                        key={c.heure}
+                        type="button"
+                        onClick={() => setCreneauSelectionne(c)}
+                        style={{ padding: '10px 6px', borderRadius: '10px', border: selected ? '2px solid #111827' : '1px solid #e5e7eb', background: selected ? '#111827' : '#ffffff', color: selected ? '#ffffff' : '#111827', fontWeight: '800', fontSize: '13px', cursor: 'pointer' }}
+                      >
+                        {c.heure}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* 4. Coordonnées & Reconnaissance Fidélité instantanée */}
+            <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
+              <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>5. Vos coordonnées (Cumul Fidélité)</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                <input type="tel" placeholder="Téléphone mobile (ex: 06...)" value={clientTel} onChange={e => verifierFideliteTel(e.target.value)} style={{ padding: '11px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px' }} />
+                <input type="text" placeholder="Votre Prénom & Nom" value={clientNom} onChange={e => setClientNom(e.target.value)} style={{ padding: '11px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px' }} />
+              </div>
+
+              {fideliteClient && (
+                <div style={{ padding: '10px 14px', borderRadius: '11px', background: '#dcfce7', color: '#166534', fontSize: '12.5px', fontWeight: '700', marginBottom: '10px' }}>
+                  ✨ Bon retour {fideliteClient.prenom} ! Votre compte fidélité ({infos.salon.fidelite_type === 'TAMPONS' ? `${fideliteClient.tampons_fidelite} tampons` : `${fideliteClient.points_fidelite} points`}) est bien rattaché à cette réservation.
+                  {fideliteClient.remise_winback ? ` Offre spéciale active : ${fideliteClient.remise_winback} !` : ''}
+                </div>
+              )}
+
+              {erreurMsg && (
+                <div style={{ padding: '10px 12px', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', fontSize: '12.5px', fontWeight: '700', marginBottom: '10px' }}>
+                  {erreurMsg}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  disabled={isSubmitting || !creneauSelectionne}
+                  onClick={() => validerReservation(false)}
+                  style={{ flex: 1, background: '#111827', color: '#ffffff', border: 'none', padding: '13px 16px', borderRadius: '12px', fontSize: '13.5px', fontWeight: '800', cursor: creneauSelectionne ? 'pointer' : 'not-allowed', opacity: creneauSelectionne ? 1 : 0.5 }}
+                >
+                  {isSubmitting ? 'Validation...' : 'Confirmer mon RDV (Paiement au salon)'}
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmitting || !creneauSelectionne}
+                  onClick={() => validerReservation(true)}
+                  style={{ flex: 1, background: '#f9fafb', color: '#111827', border: '1.5px solid #111827', padding: '13px 16px', borderRadius: '12px', fontSize: '13px', fontWeight: '800', cursor: creneauSelectionne ? 'pointer' : 'not-allowed', opacity: creneauSelectionne ? 1 : 0.5 }}
+                >
+                  Garantir avec Acompte CB (30%)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   if (window.location.pathname.startsWith('/avis/')) {
       return <AvisPublic token={window.location.pathname.split('/avis/')[1]} />;
+  }
+  if (window.location.pathname.startsWith('/reservation/') || new URLSearchParams(window.location.search).get('reservation')) {
+      const idSalonPublic = window.location.pathname.startsWith('/reservation/')
+          ? window.location.pathname.split('/reservation/')[1]?.split('/')[0]
+          : new URLSearchParams(window.location.search).get('reservation');
+      return <PageReservationPublique idSalon={idSalonPublic} />;
   }
 
   const [token, setToken] = useState(localStorage.getItem('ui_token') || null);
