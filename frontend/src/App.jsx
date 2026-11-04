@@ -5,7 +5,8 @@ import './App.css';
 import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
 import PopupLegal from './PopupLegal';   
-import PricingModal from './PricingModal'; 
+import PricingModal from './PricingModal';
+import { API_URL } from './api/config'; 
 
 // Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
 function urlBase64ToUint8Array(base64String) { 
@@ -48,7 +49,7 @@ const isPinWeak = (pin) => {
 const originalFetch = window.fetch;
 window.fetch = async (...args) => {
     let [resource, config] = args;
-    if (typeof resource === 'string' && resource.includes('api-salon-backend.onrender.com')) {
+    if (typeof resource === 'string' && (resource.includes('api-salon-backend.onrender.com') || (API_URL && resource.startsWith(API_URL)))) {
         config = config || {};
         config.credentials = 'include';
         const tokenApi = localStorage.getItem('api_token');
@@ -76,7 +77,7 @@ function PageReservationPublique({ idSalon }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}`)
+    fetch(`${API_URL}/api/public/reservation/${idSalon}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data) {
@@ -92,7 +93,7 @@ function PageReservationPublique({ idSalon }) {
     if (!prestaChoisie || !dateChoisie) return;
     setLoadingCreneaux(true);
     setCreneauSelectionne(null);
-    fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}/creneaux?date=${dateChoisie}&id_employe=${employeChoisi}&duree=${prestaChoisie.duree_estimee_minutes || 30}`)
+    fetch(`${API_URL}/api/public/reservation/${idSalon}/creneaux?date=${dateChoisie}&id_employe=${employeChoisi}&duree=${prestaChoisie.duree_estimee_minutes || 30}`)
       .then(r => r.ok ? r.json() : { creneaux: [] })
       .then(data => {
         setCreneaux(data.creneaux || []);
@@ -104,7 +105,7 @@ function PageReservationPublique({ idSalon }) {
   const verifierFideliteTel = (telVal) => {
     setClientTel(telVal);
     if (telVal.replace(/\s+/g, '').length >= 8) {
-      fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}/fidelite?telephone=${encodeURIComponent(telVal)}`)
+      fetch(`${API_URL}/api/public/reservation/${idSalon}/fidelite?telephone=${encodeURIComponent(telVal)}`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.client_trouve) {
@@ -128,7 +129,7 @@ function PageReservationPublique({ idSalon }) {
     setErreurMsg('');
     setIsSubmitting(true);
     try {
-      const res = await fetch(`https://api-salon-backend.onrender.com/api/public/reservation/${idSalon}/reserver`, {
+      const res = await fetch(`${API_URL}/api/public/reservation/${idSalon}/reserver`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -458,7 +459,7 @@ function App() {
     const verifierStatutLegal = async () => {
         try {
             // On utilise l'intercepteur global pour s'assurer que les identifiants/cookies sont transmis
-            const res = await fetch('https://api-salon-backend.onrender.com/api/legal/statut', { 
+            const res = await fetch(`${API_URL}/api/legal/statut`, { 
                 headers: getAuthHeaders() 
             });
             
@@ -505,12 +506,12 @@ function App() {
   const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
   const [planningData, setPlanningData] = useState([]); 
   const [superAdminData, setSuperAdminData] = useState(null);
-    const [superAdminSalons, setSuperAdminSalons] = useState([]);
+  const [superAdminSalons, setSuperAdminSalons] = useState([]);
 
   // --- SYNCHRONISATION GAMIFICATION & OBJECTIFS D'ÉQUIPE (REMONTÉ POUR ÉVITER REACT #310) ---
   const chargerObjectifsEquipe = async () => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/equipe/objectifs', {
+          const res = await fetch(`${API_URL}/api/equipe/objectifs`, {
               headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
           });
           if (res.ok) {
@@ -523,7 +524,7 @@ function App() {
   useEffect(() => {
       const currentRole = userRole;
       if (currentRole === 'employe' && token && activeTab === 'accueil') {
-          fetch('https://api-salon-backend.onrender.com/api/employes/gamification-kpis', {
+          fetch(`${API_URL}/api/employes/gamification-kpis`, {
               headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
           })
               .then(r => r.ok ? r.json() : null)
@@ -554,7 +555,7 @@ function App() {
   const chargerMesSalons = async () => {
     if (!token || decodeToken(token)?.role !== 'gerant') return;
     try {
-      const res = await fetch(`https://api-salon-backend.onrender.com/api/mes-salons?_=${Date.now()}`, {
+      const res = await fetch(`${API_URL}/api/mes-salons?_=${Date.now()}`, {
         headers: getAuthHeaders(),
         credentials: 'include'
       });
@@ -575,7 +576,7 @@ function App() {
     }
     setIsSwitchingSalon(true);
     try {
-      const res = await fetch(`https://api-salon-backend.onrender.com/api/mes-salons/switch/${idSalonCible}`, {
+      const res = await fetch(`${API_URL}/api/mes-salons/switch/${idSalonCible}`, {
         method: 'POST',
         headers: getAuthHeaders(true),
         credentials: 'include'
@@ -612,7 +613,7 @@ function App() {
     }
     setIsCreatingSalon(true);
     try {
-      const res = await fetch('https://api-salon-backend.onrender.com/api/mes-salons/creer', {
+      const res = await fetch(`${API_URL}/api/mes-salons/creer`, {
         method: 'POST',
         headers: getAuthHeaders(true),
         credentials: 'include',
@@ -681,7 +682,7 @@ function App() {
   // Chargement automatique et systématique du verrou Go-Live dès qu'un token est présent
   useEffect(() => {
     if (!token) return;
-    fetch('https://api-salon-backend.onrender.com/api/onboarding/checklist', {
+    fetch(`${API_URL}/api/onboarding/checklist`, {
       headers: {
         'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`,
         'Content-Type': 'application/json'
@@ -709,7 +710,7 @@ function App() {
     setChecklistOnboarding(nextState);
 
     try {
-      const res = await fetch('https://api-salon-backend.onrender.com/api/onboarding/checklist', {
+      const res = await fetch(`${API_URL}/api/onboarding/checklist`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`,
@@ -729,7 +730,7 @@ function App() {
     
   const envoyerSmsSauvetage = async () => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/sms/winback', { 
+          const res = await fetch(`${API_URL}/api/sms/winback`, { 
               method: 'POST', 
               headers: getAuthHeaders(true), 
               body: JSON.stringify({ 
@@ -777,7 +778,7 @@ function App() {
           const verifierCode = async () => {
               let dataAuth = {};
               try {
-                  const resAuth = await fetch('https://api-salon-backend.onrender.com/api/employes/login-pin', {
+                  const resAuth = await fetch(`${API_URL}/api/employes/login-pin`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
@@ -828,7 +829,7 @@ function App() {
 
   const enregistrerPointage = async (action) => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/pointage', {
+          const res = await fetch(`${API_URL}/api/rh/pointage`, {
               method: 'POST',
               headers: getAuthHeaders(true),
               body: JSON.stringify({ id_employe: pointeuse.employe.id_employe, type_action: action })
@@ -1039,7 +1040,7 @@ function App() {
               return actuels.includes(monProfilId) ? m : { ...m, vu_par: [...actuels, monProfilId] };
           }));
 
-          fetch('https://api-salon-backend.onrender.com/api/messages/vu', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ids: idsAVoir }) })
+          fetch(`${API_URL}/api/messages/vu`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ ids: idsAVoir }) })
               .then(async (res) => { if (!res.ok) { const d = await res.json().catch(() => ({})); console.error('Erreur marquage vu :', res.status, d.erreur); } })
               .catch((e) => console.error('Erreur réseau marquage vu :', e));
       }
@@ -1092,7 +1093,7 @@ function App() {
       const planUrl = params.get('plan');
 
       if (paiementStatus === 'succes' || paiementStatus === 'empreinte_ok') {
-          fetch('https://api-salon-backend.onrender.com/api/stripe/confirmer-session', {
+          fetch(`${API_URL}/api/stripe/confirmer-session`, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json',
@@ -1206,7 +1207,7 @@ function App() {
           const registration = await navigator.serviceWorker.ready;
           
           // 1. On récupère la clé publique du serveur
-          const response = await fetch('https://api-salon-backend.onrender.com/api/push/vapid-key');
+          const response = await fetch(`${API_URL}/api/push/vapid-key`);
           const data = await response.json();
           const convertedVapidKey = urlBase64ToUint8Array(data.publicKey);
 
@@ -1217,7 +1218,7 @@ function App() {
           });
 
           // 3. On l'envoie au serveur
-          const resSub = await fetch('https://api-salon-backend.onrender.com/api/push/subscribe', {
+          const resSub = await fetch(`${API_URL}/api/push/subscribe`, {
               method: 'POST',
               headers: getAuthHeaders(true),
               body: JSON.stringify({ subscription })
@@ -1260,7 +1261,7 @@ function App() {
 
     const chargerMouvementsCaisse = async () => {
         try {
-            const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements/aujourdhui', { headers: getAuthHeaders(true) });
+            const res = await fetch(`${API_URL}/api/caisse/mouvements/aujourdhui`, { headers: getAuthHeaders(true) });
             if (res.ok) setMouvementsCaisse(await res.json());
         } catch (e) {}
     };
@@ -1268,7 +1269,7 @@ function App() {
     const ajouterMouvementCaisse = async () => {
         if (!newMouvement.motif.trim() || !newMouvement.montant) return showToast("Veuillez remplir le montant et le motif.", "error");
         try {
-            const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements', {
+            const res = await fetch(`${API_URL}/api/caisse/mouvements`, {
                 method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newMouvement)
             });
             await handleFetchError(res);
@@ -1512,7 +1513,7 @@ function App() {
               if (ticket._id_salon && idSalonActuel && String(ticket._id_salon) !== String(idSalonActuel)) continue; // ticket d'un autre salon : on n'y touche pas
               let res;
               try {
-                  res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(ticket) });
+                  res = await fetch(`${API_URL}/api/caisse/payer`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(ticket) });
               } catch (e) { arret = "Réseau instable, synchronisation reportée."; break; }
 
               if (res.ok) {
@@ -1567,7 +1568,7 @@ function App() {
 
       try {
           const cacheBuster = url.includes('?') ? `&_=${Date.now()}` : `?_=${Date.now()}`;
-          const res = await fetch(`https://api-salon-backend.onrender.com${url}${cacheBuster}`, { 
+          const res = await fetch(`${API_URL}${url}${cacheBuster}`, { 
               headers: getAuthHeaders(),
               credentials: 'include',
               cache: 'no-store'
@@ -1603,7 +1604,7 @@ function App() {
   const chargerStatutsPointage = async () => {
       if (!token) return;
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/statut-pointages', { headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/rh/statut-pointages`, { headers: getAuthHeaders() });
           if (res.ok) {
               const data = await res.json();
               // Sécurité : On s'assure que le format est toujours un objet complexe pour éviter l'état "Absent"
@@ -1634,7 +1635,7 @@ function App() {
     if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData', 'object');
     if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData', 'object');
 
-    fetch(`https://api-salon-backend.onrender.com/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
+    fetch(`${API_URL}/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
         .then(handleFetchError)
         .then(async (d) => {
             const config = { 
@@ -1685,7 +1686,7 @@ function App() {
           }
           chargerTout();
           if (user && user.id_salon && !isOffline && navigator.onLine) {
-              cconst newSocket = io('https://api-salon-backend.onrender.com', {
+              const newSocket = io(API_URL, {
                   transports: ['websocket', 'polling'], // ESSENTIEL : Permet de basculer en HTTP si le WebSocket est bloqué par Render
                   reconnectionAttempts: 10,
                   timeout: 10000, // Augmenté pour éviter que Render ne coupe la connexion trop vite
@@ -1735,7 +1736,7 @@ function App() {
   const verifierTachesIAEnBase = async () => {
       if (!token || isAbonnementInactif || decodeToken(token)?.role !== 'gerant') return;
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches?_=${Date.now()}`, { 
+          const res = await fetch(`${API_URL}/api/ia/taches?_=${Date.now()}`, { 
               headers: getAuthHeaders(), 
               cache: 'no-store',
               pragma: 'no-cache'
@@ -1758,7 +1759,7 @@ function App() {
       const ouvrirConnexionSSE = () => {
           if (eventSource) eventSource.close();
           const tokenApi = localStorage.getItem('api_token');
-          const url = `https://api-salon-backend.onrender.com/api/events/${user.id_salon}${tokenApi ? `?token=${encodeURIComponent(tokenApi)}` : ''}`;
+          const url = `${API_URL}/api/events/${user.id_salon}${tokenApi ? `?token=${encodeURIComponent(tokenApi)}` : ''}`;
           eventSource = new EventSource(url, { withCredentials: true });
           dernierSignal = Date.now();
           
@@ -2070,7 +2071,7 @@ function App() {
               if (tache.type_tache === 'RDV') {
                   const rawDt = tache.donnees?.date_heure_debut || '';
                   const dtFormatted = rawDt.length === 16 ? `${rawDt}:00` : rawDt;
-                  const resRdv = await fetch('https://api-salon-backend.onrender.com/api/rdv', {
+                  const resRdv = await fetch(`${API_URL}/api/rdv`, {
                       method: 'POST',
                       headers: getAuthHeaders(true),
                       body: JSON.stringify({
@@ -2093,13 +2094,13 @@ function App() {
 
                   if (articleExistant) {
                       const nvStock = (parseInt(articleExistant.stock_actuel, 10) || 0) + qteAjout;
-                      await fetch(`https://api-salon-backend.onrender.com/api/stocks/${articleExistant.id_article}`, {
+                      await fetch(`${API_URL}/api/stocks/${articleExistant.id_article}`, {
                           method: 'PUT',
                           headers: getAuthHeaders(true),
                           body: JSON.stringify({ nouveau_stock: nvStock })
                       });
                   } else {
-                      await fetch('https://api-salon-backend.onrender.com/api/catalogue', {
+                      await fetch(`${API_URL}/api/catalogue`, {
                           method: 'POST',
                           headers: getAuthHeaders(true),
                           body: JSON.stringify({
@@ -2120,7 +2121,7 @@ function App() {
                   ) || (employesListe || [])[0];
 
                   const isMaladie = tache.donnees?.type_demande === 'ARRET_MALADIE';
-                  const resAbs = await fetch('https://api-salon-backend.onrender.com/api/rh/absences', {
+                  const resAbs = await fetch(`${API_URL}/api/rh/absences`, {
                       method: 'POST',
                       headers: getAuthHeaders(true),
                       body: JSON.stringify({
@@ -2145,7 +2146,7 @@ function App() {
                       setCancelMessageTemplate(`Bonjour [Prénom], en raison d'une absence exceptionnelle, votre RDV du [Date] avec ${prenomEmp} ne pourra pas être assuré. Cliquez ici pour reprogrammer : [Lien]. L'équipe du Salon.`);
                   }
               } else if (tache.type_tache === 'FACTURE_ACHAT') {
-                  await fetch('https://api-salon-backend.onrender.com/api/factures/saisie-manuelle', {
+                  await fetch(`${API_URL}/api/factures/saisie-manuelle`, {
                       method: 'POST',
                       headers: getAuthHeaders(true),
                       body: JSON.stringify({
@@ -2164,7 +2165,7 @@ function App() {
                       const matchProd = (stocksData || []).find(s => nettoyerTexteRecherche(s.nom) === nettoyerTexteRecherche(prod.nom));
                       if (matchProd) {
                           const nvStock = (parseInt(matchProd.stock_actuel, 10) || 0) + (parseInt(prod.quantite, 10) || 0);
-                          await fetch(`https://api-salon-backend.onrender.com/api/stocks/${matchProd.id_article}`, {
+                          await fetch(`${API_URL}/api/stocks/${matchProd.id_article}`, {
                               method: 'PUT',
                               headers: getAuthHeaders(true),
                               body: JSON.stringify({ nouveau_stock: nvStock })
@@ -2182,7 +2183,7 @@ function App() {
           }
 
           // --- FLUX NORMAL PRODUCTION ---
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/valider`, {
+          const res = await fetch(`${API_URL}/api/ia/taches/${baseId}/valider`, {
               method: 'POST',
               headers: getAuthHeaders(true),
               body: JSON.stringify(tache.donnees)
@@ -2209,7 +2210,7 @@ function App() {
       try {
           const baseId = String(tache.id_tache).replace(/_\d+$/, '');
           if (!baseId.startsWith('SIM_IA_')) {
-              await fetch(`https://api-salon-backend.onrender.com/api/ia/taches/${baseId}/ignorer`, {
+              await fetch(`${API_URL}/api/ia/taches/${baseId}/ignorer`, {
                   method: 'POST',
                   headers: getAuthHeaders()
               });
@@ -2246,7 +2247,7 @@ function App() {
       const code_partenaire = codePartenaireInput.trim() || urlParams.get('partner') || undefined;
       const siret_url = urlParams.get('siret') || undefined;
 
-      const response = await fetch('https://api-salon-backend.onrender.com/api/register', { 
+      const response = await fetch(`${API_URL}/api/register`, { 
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' }, 
           body: JSON.stringify({ 
@@ -2287,9 +2288,9 @@ function App() {
 
   const seConnecter = async () => {
     try {
-      const endpoint = loginType === 'employe' ? 'https://api-salon-backend.onrender.com/api/employes/login-pin'
-                      : loginType === 'salon' ? 'https://api-salon-backend.onrender.com/api/salon/login-pin'
-                      : 'https://api-salon-backend.onrender.com/api/login';
+      const endpoint = loginType === 'employe' ? `${API_URL}/api/employes/login-pin`
+                      : loginType === 'salon' ? `${API_URL}/api/salon/login-pin`
+                      : `${API_URL}/api/login`;
       const payload = loginType === 'employe' ? { id_salon: idSalonInput, nom_employe: nomEmployeInput, code_pin: pinEmployeInput }
                      : loginType === 'salon' ? { id_salon: idSalonInput, pin: pinSalonInput }
                      : { email: emailInput, mot_de_passe: motDePasseInput };
@@ -2309,7 +2310,7 @@ function App() {
 
   const motDePasseOublie = async () => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput }) });
+          const res = await fetch(`${API_URL}/api/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailInput }) });
           const data = await res.json();
           setMsgSucces(data.message); setErreurLogin(null);
       } catch (e) { 
@@ -2319,7 +2320,7 @@ function App() {
   };
 
   const seDeconnecter = () => {
-      fetch('https://api-salon-backend.onrender.com/api/logout', { method: 'POST' }).catch(e => console.log(e));
+      fetch(`${API_URL}/api/logout`, { method: 'POST' }).catch(e => console.log(e));
       localStorage.removeItem('ui_token');
       localStorage.removeItem('api_token');
       localStorage.removeItem('skip_legal_sandbox');
@@ -2334,7 +2335,7 @@ function App() {
   const lancerPaiementStripe = async (planChoisi = 'PREMIUM') => {
       try {
           const planFinal = typeof planChoisi === 'string' ? planChoisi : planEmpreinteOnboarding;
-          const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', {
+          const res = await fetch(`${API_URL}/api/creer-checkout`, {
               method: 'POST',
               headers: getAuthHeaders(true),
               body: JSON.stringify({ plan: planFinal })
@@ -2355,7 +2356,7 @@ function App() {
       setClientSelectionne(client);
       setChargementFiche(true);
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/clients/${client.id_client}/history`, { headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/clients/${client.id_client}/history`, { headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           setClientHistorique(data);
       } catch (e) { showToast("Erreur lors du chargement de l'historique.", "error"); }
@@ -2365,7 +2366,7 @@ function App() {
   const sauvegarderNotesClient = async () => {
       if(isOffline) return showToast("Impossible d'enregistrer des notes hors-ligne.", "error");
       try {
-          await fetch(`https://api-salon-backend.onrender.com/api/clients/${clientSelectionne.id_client}/notes`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ notes: clientHistorique.notes }) });
+          await fetch(`${API_URL}/api/clients/${clientSelectionne.id_client}/notes`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ notes: clientHistorique.notes }) });
           showToast("Notes sauvegardées avec succès !", "success");
       } catch (e) { showToast("Erreur lors de la sauvegarde des notes.", "error"); }
   };
@@ -2374,7 +2375,7 @@ function App() {
   const annulerTicket = async (id_ticket) => {
       if(isOffline) return showToast("Annulation impossible hors-ligne.", "error");
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/caisse/tickets/${id_ticket}`, { headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/caisse/tickets/${id_ticket}`, { headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           if (data.lignes.length === 0) return showToast("Ce ticket est déjà entièrement remboursé.", "info");
           setAnnulationDialog({ id_ticket, motif: '', lignes: data.lignes, lignes_a_annuler: [] });
@@ -2389,7 +2390,7 @@ function App() {
       if (!motif) return showToast("Le motif d'annulation est obligatoire.", "error");
       try {
           const payload = { motif, lignes_a_annuler: annulationDialog.lignes_a_annuler };
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/caisse/annuler-ticket/${annulationDialog.id_ticket}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
+          const res = await fetch(`${API_URL}/api/caisse/annuler-ticket/${annulationDialog.id_ticket}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
           setAnnulationDialog(null);
@@ -2401,7 +2402,7 @@ function App() {
   const basculerStatutSalon = async (id_salon, statutActuel) => {
       const nouveauStatut = statutActuel === 'actif' ? 'inactif' : 'actif';
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/superadmin/salons/${id_salon}/status`, {
+          const res = await fetch(`${API_URL}/api/superadmin/salons/${id_salon}/status`, {
               method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: nouveauStatut })
           });
           const data = await handleFetchError(res);
@@ -2418,7 +2419,7 @@ function App() {
           action: async () => {
               setConfirmDialog(null);
               try {
-                  const res = await fetch(`https://api-salon-backend.onrender.com/api/superadmin/salons/${id_salon}`, {
+                  const res = await fetch(`${API_URL}/api/superadmin/salons/${id_salon}`, {
                       method: 'DELETE', headers: getAuthHeaders()
                   });
                   const data = await handleFetchError(res);
@@ -2429,11 +2430,11 @@ function App() {
       });
   };
 
-  const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch('https://api-salon-backend.onrender.com/api/clients', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); setShowAddClient(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
-  const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
-  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!newEmploye.prenom.trim() || !newEmploye.nomFamille.trim()) return showToast("Le prénom ET le nom sont obligatoires.", "error"); if(!newEmploye.code_pin) return showToast("Le code PIN est obligatoire.", "error"); if(isPinWeak(newEmploye.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const payload = { ...newEmploye, nom: `${newEmploye.prenom.trim()} ${newEmploye.nomFamille.trim()}` }; const res = await fetch('https://api-salon-backend.onrender.com/api/employes', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) }); await handleFetchError(res); setNewEmploye({ prenom: '', nomFamille: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null, type_contrat: '35H', heures_mensuelles_base: 151.67 }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
-  const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
-  const sauvegarderModifEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!modifEmployeDialog.nom.trim().includes(' ')) return showToast("Le prénom et le nom sont obligatoires.", "error"); if(modifEmployeDialog.code_pin && isPinWeak(modifEmployeDialog.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${modifEmployeDialog.id_employe}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifEmployeDialog.nom, code_pin: modifEmployeDialog.code_pin, taux_commission_prestation: modifEmployeDialog.taux_commission_prestation, taux_commission_produit: modifEmployeDialog.taux_commission_produit }) }); await handleFetchError(res); chargerTout(); showToast("Employé mis à jour.", "success"); setModifEmployeDialog(null); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const ajouterClient = async () => { if(isOffline) return showToast("Désactivé hors-ligne", "error"); try { const res = await fetch(`${API_URL}/api/clients`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newClient) }); await handleFetchError(res); setNewClient({ prenom: '', nom: '', telephone: '', email: '', date_naissance: '' }); chargerTout(); showToast("Client ajouté.", "success"); setShowAddClient(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const supprimerClient = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`${API_URL}/api/clients/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Client supprimé.", "success"); } catch(e) { showToast("Erreur suppression client.", "error"); }};
+  const ajouterEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!newEmploye.prenom.trim() || !newEmploye.nomFamille.trim()) return showToast("Le prénom ET le nom sont obligatoires.", "error"); if(!newEmploye.code_pin) return showToast("Le code PIN est obligatoire.", "error"); if(isPinWeak(newEmploye.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const payload = { ...newEmploye, nom: `${newEmploye.prenom.trim()} ${newEmploye.nomFamille.trim()}` }; const res = await fetch(`${API_URL}/api/employes`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) }); await handleFetchError(res); setNewEmploye({ prenom: '', nomFamille: '', role: 'Employé', taux_commission_prestation: '', taux_commission_produit: '', code_pin: '', photo_url: null, type_contrat: '35H', heures_mensuelles_base: 151.67 }); chargerTout(); showToast("Employé ajouté.", "success"); setShowAddEmploye(false); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
+  const supprimerEmploye = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`${API_URL}/api/employes/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Employé supprimé.", "success"); } catch(e) { showToast("Erreur suppression employé.", "error"); }};
+  const sauvegarderModifEmploye = async () => { if(isOffline) return showToast("Désactivé", "error"); if(!modifEmployeDialog.nom.trim().includes(' ')) return showToast("Le prénom et le nom sont obligatoires.", "error"); if(modifEmployeDialog.code_pin && isPinWeak(modifEmployeDialog.code_pin)) return showToast("Le code PIN est trop simple (évitez 0000, 1234...).", "error"); try { const res = await fetch(`${API_URL}/api/employes/${modifEmployeDialog.id_employe}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifEmployeDialog.nom, code_pin: modifEmployeDialog.code_pin, taux_commission_prestation: modifEmployeDialog.taux_commission_prestation, taux_commission_produit: modifEmployeDialog.taux_commission_produit }) }); await handleFetchError(res); chargerTout(); showToast("Employé mis à jour.", "success"); setModifEmployeDialog(null); } catch(e) { if(e.message !== "Abonnement inactif") showToast(e.message, "error"); }};
   
   const ajouterArticle = async () => { 
       if(isOffline) return showToast("Désactivé hors-ligne", "error"); 
@@ -2444,7 +2445,7 @@ function App() {
           } 
       } 
       try { 
-          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue', { 
+          const res = await fetch(`${API_URL}/api/catalogue`, { 
               method: 'POST', 
               headers: getAuthHeaders(true), 
               body: JSON.stringify({
@@ -2465,13 +2466,13 @@ function App() {
           if(e.message !== "Abonnement inactif") showToast(e.message, "error"); 
       }
   };
-  const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
+  const supprimerArticle = async (id) => { if(isOffline) return showToast("Désactivé", "error"); try { await fetch(`${API_URL}/api/catalogue/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(handleFetchError); chargerTout(); showToast("Article supprimé.", "success"); } catch(e) { showToast("Erreur suppression article.", "error"); }};
 
   const [modifNomDialog, setModifNomDialog] = useState(null);
   const confirmerModifNom = async () => {
       if (!modifNomDialog || !modifNomDialog.nom.trim()) return showToast("Le nom ne peut pas être vide.", "error");
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/catalogue/${modifNomDialog.id_article}/nom`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifNomDialog.nom.trim() }) });
+          const res = await fetch(`${API_URL}/api/catalogue/${modifNomDialog.id_article}/nom`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nom: modifNomDialog.nom.trim() }) });
           await handleFetchError(res);
           setModifNomDialog(null);
           chargerTout();
@@ -2484,7 +2485,7 @@ function App() {
       const nouveauStock = parseInt(modifStockDialog.valeur);
       if (isNaN(nouveauStock) || nouveauStock < 0) return showToast("Quantité invalide.", "error");
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/stocks/${modifStockDialog.id_article}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nouveau_stock: nouveauStock }) });
+          const res = await fetch(`${API_URL}/api/stocks/${modifStockDialog.id_article}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ nouveau_stock: nouveauStock }) });
           await handleFetchError(res);
           setModifStockDialog(null);
           chargerTout();
@@ -2695,8 +2696,8 @@ function App() {
       try {
           const method = nouveauProtocole.id_protocole ? 'PUT' : 'POST';
           const url = nouveauProtocole.id_protocole
-              ? `https://api-salon-backend.onrender.com/api/protocoles/${nouveauProtocole.id_protocole}`
-              : 'https://api-salon-backend.onrender.com/api/protocoles';
+              ? `${API_URL}/api/protocoles/${nouveauProtocole.id_protocole}`
+              : `${API_URL}/api/protocoles`;
 
           // Si l'utilisateur a saisi une étape dans le bloc brouillon sans avoir cliqué sur "+ Ajouter l'étape", on l'inclut automatiquement !
           let etapesFinales = [...(nouveauProtocole.etapes || [])];
@@ -2751,7 +2752,7 @@ function App() {
   const supprimerProtocole = async (id) => {
       if(isOffline) return showToast("Désactivé", "error");
       try { 
-          await fetch(`https://api-salon-backend.onrender.com/api/protocoles/${id}`, { method: 'DELETE', headers: getAuthHeaders() }); 
+          await fetch(`${API_URL}/api/protocoles/${id}`, { method: 'DELETE', headers: getAuthHeaders() }); 
           setModeEditionProtocole(null);
           chargerTout(); 
           showToast("Protocole supprimé.", "success"); 
@@ -2964,7 +2965,7 @@ function App() {
     if (methodePaiement === 'CARTE' && montant > 0) setNotificationCaisse(` Envoi de l'ordre au TPE physique. En attente de la carte...`);
     
     try {
-        const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/payer', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
+        const res = await fetch(`${API_URL}/api/caisse/payer`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payloadTPE) });
         const data = await handleFetchError(res);
         
         setNotificationCaisse(null);
@@ -2991,7 +2992,7 @@ function App() {
   const envoyerTicketEco = async (methode) => {
       if(isOffline || !navigator.onLine) return showToast("Envoi impossible sans réseau.", "error");
       try {
-      const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/envoyer-ticket', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, telephone: telephoneTicketClient, methode }) });
+      const res = await fetch(`${API_URL}/api/caisse/envoyer-ticket`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ id_ticket: ticketGenere.id_ticket, email: emailTicketClient, id_client: ticketGenere.client_id, telephone: telephoneTicketClient, methode }) });
           await handleFetchError(res);
           showToast(`Ticket envoyé par ${methode.toUpperCase()} !`, "success");
           setTicketGenere(null);
@@ -3000,13 +3001,13 @@ function App() {
       } catch (e) { showToast(`Erreur d'envoi : ${e.message}`, "error"); }
   }
 
-  const declencherExport = async () => { if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch('https://api-salon-backend.onrender.com/api/export-pdf', { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
+  const declencherExport = async () => { if(isOffline || !navigator.onLine) return showToast("Export impossible sans réseau.", "error"); showToast("Génération du PDF en cours..."); try { const response = await fetch(`${API_URL}/api/export-pdf`, { headers: getAuthHeaders() }); if (response.status === 402) { setIsAbonnementInactif(true); return; } if (!response.ok) { const errText = await response.text(); throw new Error(`Erreur Serveur: ${errText}`); } const blob = await response.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = "Liasse_Comptable.pdf"; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url); showToast("Liasse PDF générée et envoyée !", "success"); } catch (error) { showToast(error.message, "error"); }};
 
   const lancerAuditNF525 = async () => {
       if(isOffline || !navigator.onLine) return showToast("Audit impossible hors-ligne.", "error");
       showToast("Audit cryptographique en cours...", "info");
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/admin/verifier-nf525', { headers: getAuthHeaders(), credentials: 'include' });
+          const res = await fetch(`${API_URL}/api/admin/verifier-nf525`, { headers: getAuthHeaders(), credentials: 'include' });
           const data = await handleFetchError(res);
           setAuditNf525(data);
       } catch (e) { showToast(e.message || "Erreur lors de l'audit.", "error"); }
@@ -3021,7 +3022,7 @@ function App() {
           const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0); 
           const formatYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; 
           
-          const response = await fetch(`https://api-salon-backend.onrender.com/api/export-fec?date_debut=${formatYMD(firstDay)}&date_fin=${formatYMD(lastDay)}`, { headers: getAuthHeaders() }); 
+          const response = await fetch(`${API_URL}/api/export-fec?date_debut=${formatYMD(firstDay)}&date_fin=${formatYMD(lastDay)}`, { headers: getAuthHeaders() }); 
           if (response.status === 402) { setIsAbonnementInactif(true); return; } 
           if (!response.ok) { const errData = await response.json().catch(() => ({})); throw new Error(errData.erreur || "Erreur Serveur"); } 
           
@@ -3042,7 +3043,7 @@ function App() {
       if(isOffline || !navigator.onLine) return showToast("Téléchargement impossible hors-ligne.", "error");
       showToast("Génération du PDF en cours...");
       try {
-          const response = await fetch(`https://api-salon-backend.onrender.com/api/export-pdf/${date_brute}`, { headers: getAuthHeaders() });
+          const response = await fetch(`${API_URL}/api/export-pdf/${date_brute}`, { headers: getAuthHeaders() });
           if (response.status === 402) { setIsAbonnementInactif(true); return; }
           if (!response.ok) throw new Error("Erreur Serveur");
           const blob = await response.blob();
@@ -3064,7 +3065,7 @@ function App() {
       const reader = new FileReader();
       reader.onloadend = async () => {
           try {
-              const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${decodeToken(token)?.id_employe}/photo`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ photo_url: reader.result }) });
+              const res = await fetch(`${API_URL}/api/employes/${decodeToken(token)?.id_employe}/photo`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ photo_url: reader.result }) });
               await handleFetchError(res);
               chargerTout();
               showToast("Photo mise à jour.", "success");
@@ -3088,7 +3089,7 @@ function App() {
               delete payload.securite_pin_salon_active;
           }
           
-          const response = await fetch('https://api-salon-backend.onrender.com/api/settings', { 
+          const response = await fetch(`${API_URL}/api/settings`, { 
               method: 'POST', 
               headers: getAuthHeaders(true), 
               body: JSON.stringify(payload) 
@@ -3112,7 +3113,7 @@ function App() {
       if(isOffline || !navigator.onLine) return showToast("Impossible de créer un RDV hors-ligne.", "error");
       try {
           const datetime = `${formRdv.date}T${formRdv.heure}:00`;
-          const res = await fetch('https://api-salon-backend.onrender.com/api/rdv', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime, forcer_ajout: forcer}) });
+          const res = await fetch(`${API_URL}/api/rdv`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...formRdv, date_heure_debut: datetime, forcer_ajout: forcer}) });
           if(res.status === 409) {
               const data = await res.json();
               setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer l'ajout", action: () => { setConfirmDialog(null); creerRdvManuel(true); } });
@@ -3134,7 +3135,7 @@ function App() {
       setIsSubmittingAbsence(true);
       try {
           const payload = { ...formAbsence, type_demande: ongletAbsence };
-          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/absences', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
+          const res = await fetch(`${API_URL}/api/rh/absences`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
           const data = await handleFetchError(res);
           showToast(data.message, "success");
           setShowModalAbsence(false);
@@ -3169,7 +3170,7 @@ function App() {
       const moisAnnee = `${year}-${String(prevMonth).padStart(2, '0')}`;
 
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/compta/statut-mois?mois_annee=${moisAnnee}`, { headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/compta/statut-mois?mois_annee=${moisAnnee}`, { headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           setStatutMoisPrecedent({ mois: moisAnnee, libelle: new Date(year, prevMonth - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }), ...data });
       } catch (e) { console.error("Erreur statut mois", e); }
@@ -3186,7 +3187,7 @@ function App() {
       if (isOffline || !navigator.onLine) return showToast("Téléchargement impossible hors-ligne.", "error");
       showToast("Génération du PDF en cours...");
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/export-pdf?mois_annee=${statutMoisPrecedent?.mois}`, { headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/export-pdf?mois_annee=${statutMoisPrecedent?.mois}`, { headers: getAuthHeaders() });
           if (!res.ok) throw new Error("Erreur Serveur");
           const blob = await res.blob();
           const url = window.URL.createObjectURL(blob);
@@ -3203,7 +3204,7 @@ function App() {
 
       setIsValidatingCompta(true);
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/compta/valider-mois', {
+          const res = await fetch(`${API_URL}/api/compta/valider-mois`, {
               method: 'POST', headers: getAuthHeaders(true),
               body: JSON.stringify({
                   mois_annee: statutMoisPrecedent.mois,
@@ -3295,7 +3296,7 @@ function App() {
 
           try {
               const { base64, mime } = await lireFichierOptimiseEnBase64(file);
-              const res = await fetch('https://api-salon-backend.onrender.com/api/ia/upload-facture', {
+              const res = await fetch(`${API_URL}/api/ia/upload-facture`, {
                   method: 'POST',
                   headers: getAuthHeaders(true),
                   body: JSON.stringify({
@@ -3374,7 +3375,7 @@ function App() {
       }
 
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/factures/saisie-manuelle', {
+          const res = await fetch(`${API_URL}/api/factures/saisie-manuelle`, {
               method: 'POST',
               headers: getAuthHeaders(true),
               body: JSON.stringify({
@@ -3426,7 +3427,7 @@ function App() {
       if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
       try {
           const datetime = `${editRdvForm.date}T${editRdvForm.heure}:00`;
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime, forcer_ajout: forcer }) });
+          const res = await fetch(`${API_URL}/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ ...editRdvForm, date_heure_debut: datetime, forcer_ajout: forcer }) });
           if(res.status === 409) {
               const data = await res.json();
               setConfirmDialog({ titre: "Conflit d'horaire", message: data.erreur, btnTexte: "Forcer la modification", action: () => { setConfirmDialog(null); sauvegarderModifRdv(true); } });
@@ -3447,7 +3448,7 @@ function App() {
       if(isOffline || !navigator.onLine) { setConfirmDialog(null); return showToast("Action impossible hors-ligne.", "error"); }
       setConfirmDialog(null);
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'DELETE', headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/rdv/${rdvSelectionne.id_rdv}`, { method: 'DELETE', headers: getAuthHeaders() });
           if(res.ok) { setRdvSelectionne(null); setRefreshTrigger(prev => prev + 1); showToast("Rendez-vous supprimé", "success"); }
       } catch(e) { showToast("Erreur lors de la suppression.", "error"); }
   };
@@ -3526,7 +3527,7 @@ function App() {
 
   const debloquerPinEmploye = async (id_employe) => {
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/${id_employe}/debloquer-pin`, {
+          const res = await fetch(`${API_URL}/api/employes/${id_employe}/debloquer-pin`, {
               method: 'PUT',
               headers: getAuthHeaders(true)
           });
@@ -3592,7 +3593,7 @@ function App() {
               justification_ecart: justificationEcart
           };
           
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
+          const res = await fetch(`${API_URL}/api/caisse/cloture`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload) });
           data = await res.json().catch(() => ({}));
           
           if (!res.ok) {
@@ -3637,7 +3638,7 @@ function App() {
   const verifierRegularisationMatinale = async () => {
       if (!token) return;
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/verification-matinale', { headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/caisse/verification-matinale`, { headers: getAuthHeaders() });
           const data = await res.json();
           if (data.necessite_regularisation) {
               setReguCloture(data.cloture);
@@ -3661,7 +3662,7 @@ function App() {
               id_employe: currentRole === 'employe' ? decodeToken(token).id_employe : (reguEmployeId || null),
               code_pin: currentRole === 'salon' ? reguCodePin : undefined
           };
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/regulariser', {
+          const res = await fetch(`${API_URL}/api/caisse/regulariser`, {
               method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload)
           });
           await handleFetchError(res);
@@ -3686,7 +3687,7 @@ function App() {
   const verifierStatutCloture = async () => {
       if (decodeToken(token)?.role !== 'gerant') return;
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/cloture/statut', { headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/caisse/cloture/statut`, { headers: getAuthHeaders() });
           const data = await handleFetchError(res);
           setClotureFaiteAujourdhui(!!data.cloture_faite);
           if (data.derniere_cloture_auto) setClotureAutoInfo(data.derniere_cloture_auto);
@@ -3713,7 +3714,7 @@ function App() {
   // --- Rappel de vérification manuelle des stocks (tous les 3 mois) ---
   const validerVerifStock = async () => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/stocks/verification/fait', { method: 'POST', headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/stocks/verification/fait`, { method: 'POST', headers: getAuthHeaders() });
           await handleFetchError(res);
           setConfigSalon(prev => ({ ...prev, derniere_verif_stock: new Date().toISOString() }));
       } catch (e) { showToast("Erreur lors de l'enregistrement.", "error"); }
@@ -3756,7 +3757,7 @@ function App() {
             <p style={{fontSize:'13px', color:'var(--text-secondary)'}}>Votre lien est sécurisé et valable 15 minutes.</p>
             <input type="password" placeholder="Votre nouveau mot de passe" className="input-fournisseur" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
             <button className="btn-action" style={{ width: '100%', marginTop: '16px' }} onClick={async () => {
-               const res = await fetch('https://api-salon-backend.onrender.com/api/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword}) });
+               const res = await fetch(`${API_URL}/api/reset-password`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetTokenUrl, nouveau_mot_de_passe: newPassword}) });
                if(res.ok) { showToast("Mot de passe mis à jour !", "success"); setTimeout(() => window.location.href = '/', 2000); } else { showToast("Lien expiré ou invalide.", "error"); }
             }}>Confirmer la modification</button>
           </div>
@@ -3838,7 +3839,7 @@ function App() {
   if (token && userRole === 'gerant' && legalStatut && legalStatut.accepte === false) {
     return (
       <PopupLegal
-        apiBase="https://api-salon-backend.onrender.com"
+        apiBase={API_URL}
         token={localStorage.getItem('api_token')}
         onAccepted={() => setLegalStatut({ ...legalStatut, accepte: true })}
         onRefuse={seDeconnecter}
@@ -4003,7 +4004,7 @@ function App() {
       try {
           const destinataire = chatActif === 'salon' ? 0 : (chatActif === 'gerant' ? null : chatActif);
 
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/messages`, {
+          const res = await fetch(`${API_URL}/api/messages`, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json',
@@ -4181,7 +4182,7 @@ function App() {
       if (lignesReassort.length === 0) return;
       setIsSendingCommande(true);
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue/bon-commande-pdf', {
+          const res = await fetch(`${API_URL}/api/catalogue/bon-commande-pdf`, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json',
@@ -4218,7 +4219,7 @@ function App() {
 
       setIsSendingCommande(true);
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue/envoyer-commande', {
+          const res = await fetch(`${API_URL}/api/catalogue/envoyer-commande`, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json',
@@ -4249,10 +4250,10 @@ function App() {
       }
   };
 
-    // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (FONCTIONS SANS HOOKS CONDITIONNELS) ---
+  // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (FONCTIONS SANS HOOKS CONDITIONNELS) ---
   const chargerKpisEmploye = async () => {
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/employes/gamification-kpis', {
+          const res = await fetch(`${API_URL}/api/employes/gamification-kpis`, {
               headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
           });
           if (res.ok) {
@@ -4267,7 +4268,7 @@ function App() {
           return showToast("Veuillez renseigner un intitulé et une valeur cible.", "error");
       }
       try {
-          const res = await fetch('https://api-salon-backend.onrender.com/api/equipe/objectifs', {
+          const res = await fetch(`${API_URL}/api/equipe/objectifs`, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json',
@@ -4289,9 +4290,9 @@ function App() {
       }
   };
 
-    const supprimerObjectifEquipe = async (idObj) => {
+  const supprimerObjectifEquipe = async (idObj) => {
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/equipe/objectifs/${idObj}`, {
+          const res = await fetch(`${API_URL}/api/equipe/objectifs/${idObj}`, {
               method: 'DELETE',
               headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
           });
@@ -4304,7 +4305,7 @@ function App() {
 
   const supprimerMessage = async (id) => {
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+          const res = await fetch(`${API_URL}/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
           await handleFetchError(res);
           setActiveMenuId(null);
       } catch (e) { showToast(e.message || "Erreur de suppression", "error"); }
@@ -4319,7 +4320,7 @@ function App() {
   const validerEdition = async (id) => {
       if(!editMsgContent.trim()) return setEditingMsgId(null);
       try {
-          const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ contenu: editMsgContent.trim() }) });
+          const res = await fetch(`${API_URL}/api/messages/${id}`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ contenu: editMsgContent.trim() }) });
           await handleFetchError(res);
           setEditingMsgId(null);
       } catch (e) { showToast(e.message || "Erreur de modification", "error"); }
@@ -4343,7 +4344,7 @@ function App() {
       }));
 
       try { 
-          await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); 
+          await fetch(`${API_URL}/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); 
       } catch(e) { 
           showToast("Erreur réseau", "error"); 
           chargerTout(); 
@@ -5667,7 +5668,7 @@ function App() {
                               type="button"
                               onClick={async () => {
                                 try {
-                                  const res = await fetch('https://api-salon-backend.onrender.com/api/mes-salons/synchroniser-catalogue', {
+                                  const res = await fetch(`${API_URL}/api/mes-salons/synchroniser-catalogue`, {
                                     method: 'POST',
                                     headers: getAuthHeaders(true),
                                     credentials: 'include'
@@ -6847,7 +6848,7 @@ function App() {
                       <input type="text" className="input-fournisseur" placeholder="Détails (Optionnel)" style={{marginBottom: '16px'}} value={nouvelleTache.description} onChange={e => setNouvelleTache({...nouvelleTache, description: e.target.value})} />
                       <button className="btn-action" style={{width: '100%'}} disabled={!nouvelleTache.titre} onClick={async () => {
                           const proprietaireActuel = role === 'gerant' ? (nouvelleTache.proprietaire || 'gerant') : (role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : role);
-                          try { await fetch('https://api-salon-backend.onrender.com/api/taches', { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...nouvelleTache, proprietaire: proprietaireActuel}) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:'', proprietaire: 'gerant'}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
+                          try { await fetch(`${API_URL}/api/taches`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({...nouvelleTache, proprietaire: proprietaireActuel}) }); showToast("Action ajoutée", "success"); setNouvelleTache({titre:'', description:'', date_echeance:'', proprietaire: 'gerant'}); chargerTout(); } catch(e) { showToast("Erreur", "error"); }
                       }}>Ajouter une tâche</button>
                   </div>
 
@@ -6873,7 +6874,7 @@ function App() {
                                   <div className="list-group">
                                       {tachesAFaire.map(tache => (
                                           <div key={tache.id_tache} className="list-row" style={{alignItems: 'flex-start'}}>
-                                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} title="Marquer comme terminée" style={{background: 'none', border: `2px solid ${getCouleurTache(tache)}`, width: '20px', height: '20px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px', padding: 0}}></button>
+                                              <button onClick={async () => { await fetch(`${API_URL}/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} title="Marquer comme terminée" style={{background: 'none', border: `2px solid ${getCouleurTache(tache)}`, width: '20px', height: '20px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0, marginTop: '2px', padding: 0}}></button>
                                               <div className="list-row-content">
                                                   <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
                                                       <span className="list-row-label">{tache.titre}</span>
@@ -6890,7 +6891,7 @@ function App() {
                                                   {tache.description && <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>{tache.description}</p>}
                                                   {tache.date_echeance && <span style={{display: 'block', marginTop: '4px', fontSize: '11px', fontWeight: '600', color: getCouleurTache(tache)}}>Échéance : {new Date(tache.date_echeance).toLocaleDateString()}</span>}
                                               </div>
-                                              <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px'}}>
+                                              <button onClick={async () => { await fetch(`${API_URL}/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px'}}>
                                                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                                               </button>
                                           </div>
@@ -6917,8 +6918,8 @@ function App() {
                                                                   </span>
                                                               )}
                                                           </span>
-                                                          <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
-                                                          <button onClick={async () => { await fetch(`https://api-salon-backend.onrender.com/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px', marginLeft: '4px'}}>
+                                                          <button onClick={async () => { await fetch(`${API_URL}/api/taches/${tache.id_tache}/statut`, { method: 'PUT', headers: getAuthHeaders() }); chargerTout(); }} style={{background: 'none', border: 'none', color: 'var(--btn-primary)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', flexShrink: 0}}>Annuler</button>
+                                                          <button onClick={async () => { await fetch(`${API_URL}/api/taches/${tache.id_tache}`, { method: 'DELETE', headers: getAuthHeaders() }); chargerTout(); }} title="Supprimer" style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, padding: '2px', marginLeft: '4px'}}>
                                                               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                                                           </button>
                                                       </div>
@@ -8734,7 +8735,7 @@ function App() {
                                               {abs.fichier_cle_r2 && (
                                                   <button onClick={async () => {
                                                       try {
-                                                          const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/justificatif`, { headers: getAuthHeaders() });
+                                                          const res = await fetch(`${API_URL}/api/rh/absences/${abs.id_absence}/justificatif`, { headers: getAuthHeaders() });
                                                           const data = await handleFetchError(res);
                                                           window.open(data.url, '_blank');
                                                       } catch(e) { showToast("Justificatif indisponible", "error"); }
@@ -8744,7 +8745,7 @@ function App() {
                                                   const motif = prompt("Motif du refus (Optionnel) :");
                                                   if (motif !== null) {
                                                       try {
-                                                          const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) });
+                                                          const res = await fetch(`${API_URL}/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'REFUSE', motif_refus: motif }) });
                                                           await handleFetchError(res);
                                                           showToast("Demande refusée", "success");
                                                           chargerTout(); setRefreshTrigger(prev => prev+1);
@@ -8753,7 +8754,7 @@ function App() {
                                               }} style={{ flex: 1, padding: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>Refuser</button>
                                               <button onClick={async () => {
                                                   try {
-                                                      const res = await fetch(`https://api-salon-backend.onrender.com/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE', motif_refus: null }) });
+                                                      const res = await fetch(`${API_URL}/api/rh/absences/${abs.id_absence}/decision`, { method: 'PUT', headers: getAuthHeaders(true), body: JSON.stringify({ statut: 'VALIDE', motif_refus: null }) });
                                                       const data = await handleFetchError(res);
                                                       showToast("Absence validée", "success");
                                                       if (data.conflits && data.conflits.length > 0) {
@@ -8991,7 +8992,7 @@ function App() {
                                                                       if (!hAjust) return showToast("Saisissez un nombre d'heures.", "error");
                                                                       try {
                                                                           const moisStr = new Date().toISOString().substring(0, 7);
-                                                                          const res = await fetch('https://api-salon-backend.onrender.com/api/rh/ajustements', {
+                                                                          const res = await fetch(`${API_URL}/api/rh/ajustements`, {
                                                                               method: 'POST', headers: getAuthHeaders(true),
                                                                               body: JSON.stringify({ id_employe: employe.id_employe, mois_annee: moisStr, heures_ajoutees: hAjust, motif: 'Ajustement manuel' })
                                                                           });
@@ -9970,7 +9971,7 @@ function App() {
                                   try {
                                       showToast("⏳ Exécution en cours, patientez...", "info");
                                       
-                                      const res = await fetch('https://api-salon-backend.onrender.com/api/admin/forcer-robot');
+                                      const res = await fetch(`${API_URL}/api/admin/forcer-robot`);
                                       const data = await res.json().catch(() => null);
                                       
                                       console.log("📡 Statut HTTP :", res.status);
@@ -10153,7 +10154,7 @@ function App() {
                                   id_employe: currentRole === 'employe' ? decodeToken(token).id_employe : (reguEmployeId || null),
                                   code_pin: currentRole === 'salon' ? reguCodePin : undefined
                               };
-                              const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/regulariser', {
+                              const res = await fetch(`${API_URL}/api/caisse/regulariser`, {
                                   method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload)
                               });
                               const data = await handleFetchError(res);
@@ -10341,7 +10342,7 @@ function App() {
                           onClick={async () => {
                               if (!newMouvement.motif.trim() || !newMouvement.montant) return showToast("Veuillez remplir le montant et le motif.", "error");
                               try {
-                                  const res = await fetch('https://api-salon-backend.onrender.com/api/caisse/mouvements', {
+                                  const res = await fetch(`${API_URL}/api/caisse/mouvements`, {
                                       method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newMouvement)
                                   });
                                   const data = await handleFetchError(res);
@@ -10680,7 +10681,7 @@ function App() {
                                   chargerTout(); setRefreshTrigger(prev => prev + 1);
                                   return;
                               }
-                              const res = await fetch('https://api-salon-backend.onrender.com/api/rdv/mass-cancel', {
+                              const res = await fetch(`${API_URL}/api/rdv/mass-cancel`, {
                                   method: 'POST', headers: getAuthHeaders(true),
                                   body: JSON.stringify({ rdv_ids: selectedCancelRdvs, id_employe: cancellationRobot.id_employe, message_personnalise: cancelMessageTemplate })
                               });
@@ -10783,7 +10784,7 @@ function App() {
               token={token}
               onSubscribe={async (plan, cycle) => {
                   try {
-                      const res = await fetch('https://api-salon-backend.onrender.com/api/creer-checkout', { 
+                      const res = await fetch(`${API_URL}/api/creer-checkout`, { 
                           method: 'POST', 
                           headers: getAuthHeaders(true), 
                           body: JSON.stringify({ plan_choisi: plan, cycle_choisi: cycle }) 
@@ -11114,7 +11115,7 @@ function App() {
                               if (!mergeForm.code_pin || mergeForm.code_pin.length < 4) return showToast("Le code PIN personnel est obligatoire.", "error");
                           }
                           try {
-                              const res = await fetch('https://api-salon-backend.onrender.com/api/stocks/fusionner', {
+                              const res = await fetch(`${API_URL}/api/stocks/fusionner`, {
                                   method: 'POST',
                                   headers: getAuthHeaders(true),
                                   body: JSON.stringify({

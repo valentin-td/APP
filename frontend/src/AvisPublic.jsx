@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from './api/config';
 
 export default function AvisPublic({ token }) {
     const [etat, setEtat] = useState('chargement'); // chargement | notation | commentaire | redirection | termine | erreur
@@ -7,7 +8,7 @@ export default function AvisPublic({ token }) {
     const [commentaire, setCommentaire] = useState('');
 
     useEffect(() => {
-        fetch(`https://api-salon-backend.onrender.com/api/avis/info/${token}`)
+        fetch(`${API_URL}/api/avis/info/${token}`)
             .then(res => res.ok ? res.json() : Promise.reject())
             .then(data => { setInfos(data); setEtat(data.etape); })
             .catch(() => setEtat('erreur'));
@@ -15,7 +16,7 @@ export default function AvisPublic({ token }) {
 
     const envoyerNote = async (note) => {
         try {
-            const res = await fetch(`https://api-salon-backend.onrender.com/api/avis/${token}/note`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) });
+            const res = await fetch(`${API_URL}/api/avis/${token}/note`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) });
             const data = await res.json();
             if (!res.ok) return setEtat('erreur');
             if (data.besoin_commentaire) { setEtat('commentaire'); }
@@ -25,7 +26,7 @@ export default function AvisPublic({ token }) {
 
     const envoyerCommentaire = async () => {
         try {
-            const res = await fetch(`https://api-salon-backend.onrender.com/api/avis/${token}/commentaire`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commentaire }) });
+            const res = await fetch(`${API_URL}/api/avis/${token}/commentaire`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commentaire }) });
             if (!res.ok) return setEtat('erreur');
             setEtat('termine');
         } catch (e) { setEtat('erreur'); }

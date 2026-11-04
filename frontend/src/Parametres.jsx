@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import './Parametres.css';
 import { TEXTE_CONDITIONS_GENERALES, TEXTE_POLITIQUE_CONFIDENTIALITE } from './textesLegaux';
+import { API_URL } from './api/config';
  
 /* ==========================================================================
    ONGLET PARAMÈTRES — liste style iOS (catégories → sous-pages)
@@ -176,9 +177,7 @@ const groupesBas = [
   );
  const telechargerDossierNF525 = async () => {
     try {
-        const apiBase = window.location.hostname === 'localhost'
-            ? 'http://localhost:3000'
-            : 'https://api-salon-backend.onrender.com';
+        const apiBase = API_URL;
         const tokenLocal = localStorage.getItem('token_api') || localStorage.getItem('token');
 
         const response = await fetch(`${apiBase}/api/admin/dossier-technique-nf525/pdf`, {
@@ -216,9 +215,7 @@ const groupesBas = [
   const telechargerExportPortabilite = async (format, nomFichierDefaut) => {
     setExportingFormat(format);
     try {
-      const apiBase = window.location.hostname === 'localhost'
-        ? 'http://localhost:3000'
-        : 'https://api-salon-backend.onrender.com';
+      const apiBase = API_URL;
       const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
 
       const response = await fetch(`${apiBase}/api/export-portabilite?format=${encodeURIComponent(format)}`, {
@@ -258,7 +255,7 @@ const groupesBas = [
   const [etatQuotaSms, setEtatQuotaSms] = useState({ sms_utilises: 0, sms_quota: 100, empreinte_cb_validee: false });
 
   useEffect(() => {
-    const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://api-salon-backend.onrender.com';
+    const apiBase = API_URL;
     const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
     fetch(`${apiBase}/api/abonnement/etat`, {
       credentials: 'include',
@@ -308,9 +305,7 @@ const groupesBas = [
   const confirmerChangementForfait = async (nouveauPlan) => {
     setIsUpdatingSub(true);
     try {
-      const apiBase = window.location.hostname === 'localhost'
-        ? 'http://localhost:3000'
-        : 'https://api-salon-backend.onrender.com';
+      const apiBase = API_URL;
       const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
 
       const res = await fetch(`${apiBase}/api/abonnement/changer-forfait`, {
@@ -343,9 +338,7 @@ const groupesBas = [
     }
     setIsUpdatingSub(true);
     try {
-      const apiBase = window.location.hostname === 'localhost'
-        ? 'http://localhost:3000'
-        : 'https://api-salon-backend.onrender.com';
+      const apiBase = API_URL;
       const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
 
       const res = await fetch(`${apiBase}/api/abonnement/resilier`, {
@@ -378,9 +371,7 @@ const groupesBas = [
   const reactiverMonAbonnement = async () => {
     setIsUpdatingSub(true);
     try {
-      const apiBase = window.location.hostname === 'localhost'
-        ? 'http://localhost:3000'
-        : 'https://api-salon-backend.onrender.com';
+      const apiBase = API_URL;
       const tokenLocal = localStorage.getItem('api_token') || localStorage.getItem('token_api') || localStorage.getItem('ui_token');
 
       const res = await fetch(`${apiBase}/api/abonnement/reactiver`, {
@@ -674,7 +665,7 @@ const groupesBas = [
                         if (!configSalon.nouveau_pin_employe || configSalon.nouveau_pin_employe.length < 4) return alert("Veuillez saisir 4 chiffres.");
                         try {
                             const tokenApi = localStorage.getItem('api_token');
-                            const res = await fetch(`https://api-salon-backend.onrender.com/api/employes/mon-pin`, {
+                            const res = await fetch(`${API_URL}/api/employes/mon-pin`, {
                                 method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenApi}` },
                                 body: JSON.stringify({ nouveau_pin: configSalon.nouveau_pin_employe })
                             });
@@ -1230,7 +1221,7 @@ case 'portabilite': {
               ) : (
                   <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
                       {employesListe.map(emp => {
-                          const icalUrl = `https://api-salon-backend.onrender.com/api/ical/${salonId}/${emp.id_employe}.ics`;
+                          const icalUrl = `${API_URL}/api/ical/${salonId}/${emp.id_employe}.ics`;
                           return (
                               <div key={emp.id_employe} className="employe-link-row">
                                   <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
