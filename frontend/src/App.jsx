@@ -7668,9 +7668,9 @@ function App() {
                 <div className={isMobile ? "admin-container mobile-fixed-header" : "admin-container"} style={isMobile ? { zIndex: 10 } : { display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
                   {/* EN-TÊTE FIXE */}
                   <div className={isMobile ? "mobile-fixed-header-top" : ""}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '10px', flexWrap: 'wrap'}}>
                           <div><h1 style={{margin: 0}}>Inventaire & Produits</h1><span className="date-subtitle" style={{margin: 0}}></span></div>
-                          <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+                          <div style={{display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
                               <ThemeToggle />
                               <button
                                   type="button"
@@ -7681,7 +7681,7 @@ function App() {
                                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 5v14"/><path d="M8 5v14"/><path d="M12 5v14"/><path d="M17 5v14"/><path d="M21 5v14"/></svg>
                                   {!isMobile && <span>Scanner EAN</span>}
                               </button>
-                             <button
+                              <button
                                   type="button"
                                   onClick={ouvrirModaleReassort}
                                   style={{ background: produitsEnAlerteStock.length > 0 ? 'var(--bg-danger)' : 'var(--bg-app)', color: produitsEnAlerteStock.length > 0 ? 'var(--color-danger)' : 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '40px', padding: isMobile ? '0 11px' : '0 14px', borderRadius: '999px', border: '1px solid var(--border-color)', cursor: 'pointer', fontWeight: '800', fontSize: '12.5px' }}
@@ -7718,6 +7718,109 @@ function App() {
                           <button type="button" onClick={() => setDernierProduitScanne(null)} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
                               Fermer ✕
                           </button>
+                      </div>
+                  )}
+
+                  {/* Modale de Réassort & Bon de Commande Fournisseur */}
+                  {showReassortModal && (
+                      <div onClick={() => setShowReassortModal(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(17,24,39,0.72)', backdropFilter: 'blur(4px)', zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px' }}>
+                          <div onClick={e => e.stopPropagation()} className="carte" style={{ width: '100%', maxWidth: '640px', maxHeight: '88vh', overflowY: 'auto', marginBottom: 0, padding: isMobile ? '16px' : '22px', borderRadius: '20px', background: 'var(--bg-card)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                  <div>
+                                      <span style={{ fontSize: '10.5px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Réassort Intelligent</span>
+                                      <h3 style={{ margin: '2px 0 0 0', fontSize: '17px', color: 'var(--text-main)' }}>Préparer ma commande fournisseur</h3>
+                                  </div>
+                                  <button type="button" onClick={() => setShowReassortModal(false)} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', fontWeight: '800' }}>✕</button>
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
+                                  <div>
+                                      <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Fournisseur / Grossiste</label>
+                                      <input
+                                          type="text"
+                                          list="liste-fournisseurs-coiffure"
+                                          className="input-fournisseur"
+                                          value={fournisseurCommande}
+                                          onChange={e => changerFournisseurReassort(e.target.value)}
+                                          placeholder="Ex: L'Oréal, Wella, Bleu Libellule..."
+                                          style={{ marginBottom: 0 }}
+                                      />
+                                      <datalist id="liste-fournisseurs-coiffure">
+                                          <option value="L'Oréal Professionnel" />
+                                          <option value="Wella Professionals" />
+                                          <option value="Schwarzkopf Professional" />
+                                          <option value="Bleu Libellule" />
+                                          <option value="Gouiran Beauté" />
+                                      </datalist>
+                                  </div>
+                                  <div>
+                                      <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>E-mail du commercial (mémorisé auto)</label>
+                                      <input
+                                          type="email"
+                                          className="input-fournisseur"
+                                          value={emailFournisseurCommande}
+                                          onChange={e => setEmailFournisseurCommande(e.target.value)}
+                                          placeholder="commercial@fournisseur.fr (optionnel)"
+                                          style={{ marginBottom: 0 }}
+                                      />
+                                  </div>
+                              </div>
+
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto', marginBottom: '14px', paddingRight: '4px' }}>
+                                  {lignesReassort.map((item, idx) => (
+                                      <div key={item.id_article || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', padding: '10px 12px', borderRadius: '10px', background: 'var(--bg-app)', border: '1px solid var(--border-color)' }}>
+                                          <div style={{ minWidth: 0, flex: 1 }}>
+                                              <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.nom}</div>
+                                              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
+                                                  <span>Réf : <strong>{item.reference || 'N/A'}</strong></span>
+                                                  <span>• Stock : <strong style={{ color: item.stock_actuel <= 2 ? 'var(--color-danger)' : 'var(--text-main)' }}>{item.stock_actuel}</strong></span>
+                                                  {item.reference && (
+                                                      <button type="button" onClick={() => { navigator.clipboard?.writeText(item.reference); showToast(`Réf "${item.reference}" copiée !`, "info"); }} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1px 6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer', color: 'var(--text-main)' }}>
+                                                          Copier réf.
+                                                      </button>
+                                                  )}
+                                              </div>
+                                          </div>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '700' }}>Qté :</span>
+                                              <input
+                                                  type="number"
+                                                  min="1"
+                                                  className="input-fournisseur"
+                                                  value={item.quantite_commande}
+                                                  onChange={e => {
+                                                      const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                                                      setLignesReassort(prev => prev.map((l, i) => i === idx ? { ...l, quantite_commande: val } : l));
+                                                  }}
+                                                  style={{ width: '58px', padding: '6px', marginBottom: 0, textAlign: 'center', fontWeight: '800' }}
+                                              />
+                                              <button type="button" onClick={() => setLignesReassort(prev => prev.filter((_, i) => i !== idx))} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontWeight: '800', padding: '4px' }}>✕</button>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+
+                              <input
+                                  type="text"
+                                  className="input-fournisseur"
+                                  placeholder="Note optionnelle (ex: Livraison souhaitée avant vendredi, franco de port...)"
+                                  value={noteCommande}
+                                  onChange={e => setNoteCommande(e.target.value)}
+                                  style={{ marginBottom: '14px', fontSize: '12.5px' }}
+                              />
+
+                              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '8px' }}>
+                                  <button type="button" onClick={copierListeReassort} style={{ background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '11px 12px', borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+                                      1. Copier la liste (Site / WhatsApp)
+                                  </button>
+                                  <button type="button" disabled={isSendingCommande} onClick={telechargerBonCommandePdf} style={{ background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '11px 12px', borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+                                      2. Télécharger le Bon (.PDF)
+                                  </button>
+                                  <button type="button" disabled={isSendingCommande} onClick={envoyerBonCommandeParMail} className="btn-action" style={{ padding: '11px 12px', borderRadius: '10px', fontSize: '12px' }}>
+                                      3. Envoyer au commercial
+                                  </button>
+                              </div>
+                          </div>
                       </div>
                   )}
 
