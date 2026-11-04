@@ -317,6 +317,30 @@ function App() {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
 
+  // --- ÉTATS GLOBAUX DES MODULES 1, 3, 4 & 5 (PLACÉS EN HAUT POUR ÉVITER L'ERREUR REACT #310) ---
+  const [replyToMsg, setReplyToMsg] = useState(null);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [scannerModalMode, setScannerModalMode] = useState(null);
+  const [codeBarreManuel, setCodeBarreManuel] = useState('');
+  const [dernierProduitScanne, setDernierProduitScanne] = useState(null);
+  const [showReassortModal, setShowReassortModal] = useState(false);
+  const [lignesReassort, setLignesReassort] = useState([]);
+  const [fournisseurCommande, setFournisseurCommande] = useState("L'Oréal Professionnel");
+  const [emailFournisseurCommande, setEmailFournisseurCommande] = useState('');
+  const [noteCommande, setNoteCommande] = useState('');
+  const [isSendingCommande, setIsSendingCommande] = useState(false);
+  const [empGamificationKpis, setEmpGamificationKpis] = useState(null);
+  const [objectifsEquipeListe, setObjectifsEquipeListe] = useState([]);
+  const [showAddObjectifModal, setShowAddObjectifModal] = useState(false);
+  const [newObjectifForm, setNewObjectifForm] = useState({
+      titre: '',
+      type_indicateur: 'TAUX_REVENTE',
+      valeur_cible: '20',
+      id_employe: 'TOUS',
+      recompense: ''
+  });
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sbToken = params.get('sandbox_token');
@@ -3874,10 +3898,6 @@ function App() {
       e.target.value = null;
   };
 
-  const [replyToMsg, setReplyToMsg] = useState(null);
-  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-
   const demarrerEnregistrementVocal = async () => {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           return showToast("Microphone non supporté sur cet appareil.", "error");
@@ -3988,9 +4008,7 @@ function App() {
       }
   };
 // --- MODULE 3 : SCANNER DE CODE-BARRES CAMÉRA (CAISSE & STOCKS) ---
-  const [scannerModalMode, setScannerModalMode] = useState(null); // null | 'STOCKS' | 'CAISSE'
-  const [codeBarreManuel, setCodeBarreManuel] = useState('');
-  const [dernierProduitScanne, setDernierProduitScanne] = useState(null);
+  
 
   const emettreBipScan = () => {
       try {
@@ -4087,13 +4105,6 @@ function App() {
   };
 
   // --- MODULE 4 : BONS DE COMMANDE FOURNISSEURS & RÉASSORT 3 OPTIONS ---
-  const [showReassortModal, setShowReassortModal] = useState(false);
-  const [lignesReassort, setLignesReassort] = useState([]);
-  const [fournisseurCommande, setFournisseurCommande] = useState("L'Oréal Professionnel");
-  const [emailFournisseurCommande, setEmailFournisseurCommande] = useState('');
-  const [noteCommande, setNoteCommande] = useState('');
-  const [isSendingCommande, setIsSendingCommande] = useState(false);
-
   const produitsEnAlerteStock = (catalogueListe || []).filter(
       a => (a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE') && (parseInt(a.stock_actuel, 10) || 0) <= 2
   );
@@ -4210,17 +4221,18 @@ function App() {
       }
   };
 
-  // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (GÉRANT & EMPLOYÉ) ---
-  const [empGamificationKpis, setEmpGamificationKpis] = useState(null);
-  const [objectifsEquipeListe, setObjectifsEquipeListe] = useState([]);
-  const [showAddObjectifModal, setShowAddObjectifModal] = useState(false);
-  const [newObjectifForm, setNewObjectifForm] = useState({
-      titre: '',
-      type_indicateur: 'TAUX_REVENTE',
-      valeur_cible: '20',
-      id_employe: 'TOUS',
-      recompense: ''
-  });
+  // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (FONCTIONS SANS HOOKS CONDITIONNELS) ---
+  const chargerKpisEmploye = async () => {
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/employes/gamification-kpis', {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
+          });
+          if (res.ok) {
+              const data = await res.json();
+              if (data) setEmpGamificationKpis(data);
+          }
+      } catch (e) {}
+  };
 
   const chargerObjectifsEquipe = async () => {
       try {
