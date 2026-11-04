@@ -3629,9 +3629,6 @@ function App() {
   const [replyToMsg, setReplyToMsg] = useState(null);
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const recordingTimerRef = useRef(null);
 
   const demarrerEnregistrementVocal = async () => {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -3639,23 +3636,23 @@ function App() {
       }
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          const mimeType = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
               ? 'audio/webm;codecs=opus'
-              : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+              : ((typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4' : '');
           const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-          audioChunksRef.current = [];
+          window.__stackAudioChunks = [];
 
           recorder.ondataavailable = (ev) => {
-              if (ev.data && ev.data.size > 0) audioChunksRef.current.push(ev.data);
+              if (ev.data && ev.data.size > 0) window.__stackAudioChunks.push(ev.data);
           };
 
           recorder.onstop = () => {
               stream.getTracks().forEach(t => t.stop());
-              clearInterval(recordingTimerRef.current);
+              clearInterval(window.__stackRecTimer);
               setIsRecordingAudio(false);
               setRecordingSeconds(0);
-              if (audioChunksRef.current.length === 0) return;
-              const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+              if (!window.__stackAudioChunks || window.__stackAudioChunks.length === 0) return;
+              const blob = new Blob(window.__stackAudioChunks, { type: recorder.mimeType || 'audio/webm' });
               const reader = new FileReader();
               reader.onloadend = () => {
                   if (typeof reader.result === 'string') setMsgFile(reader.result);
@@ -3663,15 +3660,16 @@ function App() {
               reader.readAsDataURL(blob);
           };
 
-          mediaRecorderRef.current = recorder;
+          window.__stackMediaRecorder = recorder;
           recorder.start();
           setIsRecordingAudio(true);
           setRecordingSeconds(0);
-          recordingTimerRef.current = setInterval(() => {
+          clearInterval(window.__stackRecTimer);
+          window.__stackRecTimer = setInterval(() => {
               setRecordingSeconds(s => {
                   if (s >= 59) {
-                      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                          mediaRecorderRef.current.stop();
+                      if (window.__stackMediaRecorder && window.__stackMediaRecorder.state === 'recording') {
+                          window.__stackMediaRecorder.stop();
                       }
                       return 60;
                   }
@@ -3684,22 +3682,22 @@ function App() {
   };
 
   const arreterEnregistrementVocal = () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-          mediaRecorderRef.current.stop();
+      if (window.__stackMediaRecorder && window.__stackMediaRecorder.state === 'recording') {
+          window.__stackMediaRecorder.stop();
       }
   };
 
   const annulerEnregistrementVocal = () => {
-      audioChunksRef.current = [];
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-          mediaRecorderRef.current.onstop = () => {
-              if (mediaRecorderRef.current.stream) {
-                  mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+      window.__stackAudioChunks = [];
+      if (window.__stackMediaRecorder && window.__stackMediaRecorder.state === 'recording') {
+          window.__stackMediaRecorder.onstop = () => {
+              if (window.__stackMediaRecorder.stream) {
+                  window.__stackMediaRecorder.stream.getTracks().forEach(t => t.stop());
               }
           };
-          mediaRecorderRef.current.stop();
+          window.__stackMediaRecorder.stop();
       }
-      clearInterval(recordingTimerRef.current);
+      clearInterval(window.__stackRecTimer);
       setIsRecordingAudio(false);
       setRecordingSeconds(0);
   };
