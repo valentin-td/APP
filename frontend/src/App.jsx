@@ -3739,7 +3739,104 @@ function App() {
           showToast("Erreur réseau lors de l'envoi du message.", "error");
       }
   };
+// --- MODULE 3 : SCANNER DE CODE-BARRES CAMÉRA (CAISSE & STOCKS) ---
+  const [scannerModalMode, setScannerModalMode] = useState(null); // null | 'STOCKS' | 'CAISSE'
+  const [codeBarreManuel, setCodeBarreManuel] = useState('');
+  const [dernierProduitScanne, setDernierProduitScanne] = useState(null);
 
+  const emettreBipScan = () => {
+      try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) return;
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(1046.5, ctx.currentTime);
+          gain.gain.setValueAtTime(0.12, ctx.currentTime);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.12);
+      } catch (e) {}
+  };
+
+  const fermerScannerCodeBarre = async () => {
+      if (window.__stackHtml5QrCode) {
+          try {
+              if (window.__stackHtml5QrCode.isScanning) {
+                  await window.__stackHtml5QrCode.stop();
+              }
+              window.__stackHtml5QrCode.clear();
+          } catch (e) {}
+          window.__stackHtml5QrCode = null;
+      }
+      setScannerModalMode(null);
+      setCodeBarreManuel('');
+  };
+
+  const traiterCodeBarreDetecte = (codeBrut, modeCible) => {
+      const code = String(codeBrut || '').trim();
+      if (!code) return;
+      emettreBipScan();
+
+      const articleTrouve = (catalogueListe || []).find(
+          a => String(a.reference || '').trim().toLowerCase() === code.toLowerCase()
+      );
+
+      fermerScannerCodeBarre();
+
+      if (modeCible === 'STOCKS') {
+          if (articleTrouve) {
+              setDernierProduitScanne(articleTrouve);
+              showToast(`Produit reconnu : ${articleTrouve.nom} (Stock actuel : ${articleTrouve.stock_actuel ?? 0})`, "success");
+          } else {
+              setShowAddProduit(true);
+              setNewArticle(prev => ({ ...prev, reference: code, type_article: 'PRODUIT_REVENTE' }));
+              showToast(`Code ${code} scanné ! Référence pré-remplie pour ce nouveau produit.`, "info");
+          }
+      } else if (modeCible === 'CAISSE') {
+          if (articleTrouve) {
+              setDernierProduitScanne(articleTrouve);
+              showToast(`Produit scanné : ${articleTrouve.nom} (${articleTrouve.prix} €)`, "success");
+          } else {
+              showToast(`Aucun produit trouvé avec le code-barres "${code}".`, "error");
+          }
+      }
+  };
+
+  const ouvrirScannerCodeBarre = (mode) => {
+      setScannerModalMode(mode);
+      setCodeBarreManuel('');
+      setTimeout(() => {
+          const demarrerLecteur = () => {
+              if (!window.Html5Qrcode) return;
+              const container = document.getElementById('stack-barcode-reader');
+              if (!container) return;
+              try {
+                  const qr = new window.Html5Qrcode('stack-barcode-reader');
+                  window.__stackHtml5QrCode = qr;
+                  qr.start(
+                      { facingMode: 'environment' },
+                      { fps: 10, qrbox: { width: 240, height: 120 } },
+                      (decodedText) => {
+                          traiterCodeBarreDetecte(decodedText, mode);
+                      },
+                      () => {}
+                  ).catch(() => {});
+              } catch (e) {}
+          };
+
+          if (window.Html5Qrcode) {
+              demarrerLecteur();
+          } else {
+              const script = document.createElement('script');
+              script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+              script.onload = demarrerLecteur;
+              document.body.appendChild(script);
+          }
+      }, 150);
+  };
   const supprimerMessage = async (id) => {
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
