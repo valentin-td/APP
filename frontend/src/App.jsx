@@ -4289,7 +4289,7 @@ function App() {
       }
   };
 
-  const supprimerObjectifEquipe = async (idObj) => {
+    const supprimerObjectifEquipe = async (idObj) => {
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/equipe/objectifs/${idObj}`, {
               method: 'DELETE',
@@ -4301,20 +4301,6 @@ function App() {
           }
       } catch (e) {}
   };
-
-  useEffect(() => {
-      if (role === 'employe' && token && activeTab === 'accueil') {
-          fetch('https://api-salon-backend.onrender.com/api/employes/gamification-kpis', {
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
-          })
-              .then(r => r.ok ? r.json() : null)
-              .then(data => { if (data) setEmpGamificationKpis(data); })
-              .catch(() => {});
-      }
-      if (role === 'gerant' && token && activeTab === 'rh') {
-          chargerObjectifsEquipe();
-      }
-  }, [role, token, activeTab]);
 
   const supprimerMessage = async (id) => {
       try {
