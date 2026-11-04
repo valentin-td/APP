@@ -5257,6 +5257,44 @@ function App() {
                           <div style={{ height: '100%', width: `${progressionPalier}%`, background: 'var(--color-success)', borderRadius: '999px', transition: 'width 0.4s ease' }} />
                         </div>
                       </div>
+                      {/* OBJECTIFS FIXÉS PAR LE GÉRANT */}
+                      {(empGamificationKpis?.objectifs_assignes || []).length > 0 && (
+                        <div className="carte" style={{ padding: isMobile ? '16px 18px' : '18px 22px', marginBottom: '16px', borderRadius: '18px', border: '1px solid var(--border-color)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              Objectifs Mensuels du Salon
+                            </span>
+                            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)' }}>
+                              {(empGamificationKpis.objectifs_assignes || []).filter(o => o.atteint).length} / {(empGamificationKpis.objectifs_assignes || []).length} validé(s)
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {empGamificationKpis.objectifs_assignes.map(obj => {
+                              const unite = obj.type_indicateur === 'TAUX_REVENTE' ? '%' : (obj.type_indicateur === 'PRODUITS_VENDUS' || obj.type_indicateur === 'NB_CLIENTS') ? '' : ' €';
+                              return (
+                                <div key={obj.id_objectif} style={{ padding: '12px 14px', borderRadius: '12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <strong style={{ fontSize: '13.5px', color: 'var(--text-main)' }}>{obj.titre}</strong>
+                                      {obj.recompense && (
+                                        <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '999px', fontSize: '10.5px', fontWeight: '800', background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }}>
+                                          Prime : {obj.recompense}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: '12.5px', fontWeight: '800', color: obj.atteint ? 'var(--color-success)' : 'var(--text-main)' }}>
+                                      {obj.valeur_actuelle}{unite} / {obj.valeur_cible}{unite} ({obj.progression}%)
+                                    </span>
+                                  </div>
+                                  <div style={{ height: '6px', width: '100%', background: 'var(--bg-card)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                    <div style={{ height: '100%', width: `${obj.progression}%`, background: obj.atteint ? 'var(--color-success)' : 'var(--text-main)', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       {/* GRILLE DES 4 KPIS PERSONNELS DE PERFORMANCE */}
                       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
