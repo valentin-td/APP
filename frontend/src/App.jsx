@@ -3626,6 +3626,84 @@ function App() {
       e.target.value = null;
   };
 
+  const [replyToMsg, setReplyToMsg] = useState(null);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+
+  const demarrerEnregistrementVocal = async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          return showToast("Microphone non supporté sur cet appareil.", "error");
+      }
+      try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+              ? 'audio/webm;codecs=opus'
+              : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+          audioChunksRef.current = [];
+
+          recorder.ondataavailable = (ev) => {
+              if (ev.data && ev.data.size > 0) audioChunksRef.current.push(ev.data);
+          };
+
+          recorder.onstop = () => {
+              stream.getTracks().forEach(t => t.stop());
+              clearInterval(recordingTimerRef.current);
+              setIsRecordingAudio(false);
+              setRecordingSeconds(0);
+              if (audioChunksRef.current.length === 0) return;
+              const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                  if (typeof reader.result === 'string') setMsgFile(reader.result);
+              };
+              reader.readAsDataURL(blob);
+          };
+
+          mediaRecorderRef.current = recorder;
+          recorder.start();
+          setIsRecordingAudio(true);
+          setRecordingSeconds(0);
+          recordingTimerRef.current = setInterval(() => {
+              setRecordingSeconds(s => {
+                  if (s >= 59) {
+                      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                          mediaRecorderRef.current.stop();
+                      }
+                      return 60;
+                  }
+                  return s + 1;
+              });
+          }, 1000);
+      } catch (err) {
+          showToast("Autorisez l'accès au microphone pour envoyer un mémo vocal.", "error");
+      }
+  };
+
+  const arreterEnregistrementVocal = () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+      }
+  };
+
+  const annulerEnregistrementVocal = () => {
+      audioChunksRef.current = [];
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.onstop = () => {
+              if (mediaRecorderRef.current.stream) {
+                  mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+              }
+          };
+          mediaRecorderRef.current.stop();
+      }
+      clearInterval(recordingTimerRef.current);
+      setIsRecordingAudio(false);
+      setRecordingSeconds(0);
+  };
+
   const envoyerMessage = async () => {
       if (!msgInput.trim() && !msgFile) return;
       try {
@@ -3640,7 +3718,8 @@ function App() {
               body: JSON.stringify({
                   contenu: msgInput.trim(),
                   id_destinataire: destinataire,
-                  fichier_url: msgFile || null
+                  fichier_url: msgFile || null,
+                  reply_to: replyToMsg || null
               })
           });
 
@@ -3653,6 +3732,7 @@ function App() {
               });
               setMsgInput('');
               setMsgFile(null);
+              setReplyToMsg(null);
           } else {
               const errData = await res.json().catch(() => ({}));
               showToast(errData.erreur || "Erreur lors de l'envoi du message.", "error");
@@ -8626,6 +8706,8 @@ function App() {
                                       const safeReactions = typeof msg.reactions === 'string' ? (() => { try { return JSON.parse(msg.reactions); } catch(e) { return {}; } })() : (msg.reactions || {});
                                       const safeVuPar = Array.isArray(msg.vu_par) ? msg.vu_par : [];
                                       const isSafeImage = typeof msg.fichier_url === 'string' && (/^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(msg.fichier_url) || msg.fichier_url.startsWith('https://'));
+                                      const isSafeAudio = typeof msg.fichier_url === 'string' && /^data:(audio|video)\/(webm|mp4|mpeg|ogg|wav|aac|x-m4a);/i.test(msg.fichier_url);
+                                      const parsedReplyTo = typeof msg.reply_to === 'string' ? (() => { try { return JSON.parse(msg.reply_to); } catch (e) { return null; } })() : msg.reply_to;
 
                                       return (
                                           <div key={msg.id_message} style={{display: 'contents'}}>
@@ -8651,8 +8733,19 @@ function App() {
                                                       ) : (
                                                           <div style={{position: 'relative'}}>
                                                               <div className="chat-bubble">
+                                                                  {parsedReplyTo && (
+                                                                      <div style={{ padding: '6px 10px', marginBottom: '6px', borderRadius: '8px', background: 'rgba(0,0,0,0.08)', borderLeft: '3px solid currentColor', fontSize: '11.5px', opacity: 0.9 }}>
+                                                                          <strong style={{ display: 'block', fontSize: '11px' }}>↩ {parsedReplyTo.nom_expediteur}</strong>
+                                                                          <span style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '220px' }}>{parsedReplyTo.extrait}</span>
+                                                                      </div>
+                                                                  )}
                                                                   {msg.contenu}
                                                                   {isSafeImage && <img src={msg.fichier_url} alt="Fichier joint" className="chat-attached-image" />}
+                                                                  {isSafeAudio && (
+                                                                      <div style={{ marginTop: msg.contenu ? '6px' : '0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                          <audio controls src={msg.fichier_url} style={{ height: '34px', maxWidth: '220px' }} />
+                                                                      </div>
+                                                                  )}
                                                               </div>
                                                               {isMine && safeVuPar.length > 0 && (
                                                                   <div className="chat-vu-par" onClick={(e) => { e.stopPropagation(); setVuParOuvertMsgId(vuParOuvertMsgId === msg.id_message ? null : msg.id_message); }}>
@@ -8698,6 +8791,7 @@ function App() {
                                                                   <>
                                                                       <div onClick={() => setActiveMenuId(null)} style={{position: 'fixed', inset: 0, zIndex: 998}}></div>
                                                                       <div className="chat-msg-menu" style={{zIndex: 999}}>
+                                                                          <button onClick={() => { setReplyToMsg({ id_message: msg.id_message, nom_expediteur: msg.nom_expediteur || 'Gérant', extrait: msg.contenu || (isSafeAudio ? '🎤 Mémo vocal' : '📷 Photo') }); setActiveMenuId(null); }}>↩ Répondre</button>
                                                                           {isMine && <button onClick={() => demarrerEdition(msg)}> Modifier</button>}
                                                                           <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}> Supprimer</button>
                                                                       </div>
@@ -8776,6 +8870,8 @@ function App() {
                   </div>
                 </div>
               )}
+            
+          
 
               {/* === GOD MODE (SUPER-ADMIN) === */}
               {role === 'gerant' && activeTab === 'superadmin' && decodeToken(token)?.email === '2@gmail.com' && (
