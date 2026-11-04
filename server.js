@@ -6157,6 +6157,171 @@ app.put('/api/catalogue/:id/nom', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur lors du renommage." }); }
 });
 
+// --- MODULE 4 : GÉNÉRATION DU BON DE COMMANDE FOURNISSEUR (PDF + ENVOI E-MAIL) ---
+app.post('/api/catalogue/bon-commande-pdf', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
+    const { fournisseur, lignes, commentaire } = req.body;
+    if (!Array.isArray(lignes) || lignes.length === 0) {
+        return res.status(400).json({ erreur: "Aucun produit sélectionné dans le bon de commande." });
+    }
+
+    try {
+        const salonRes = await pool.query(
+            'SELECT nom_salon, adresse, telephone, siret, email_contact FROM configuration_salon WHERE id_salon = $1',
+            [req.user.id_salon]
+        );
+        const salon = salonRes.rows[0] || {};
+        const nomSalon = salon.nom_salon || 'Salon de Coiffure';
+        const numCommande = `BC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
+        const dateJour = new Date().toLocaleDateString('fr-FR');
+
+        const PDFDoc = typeof PDFDocument !== 'undefined' ? PDFDocument : require('pdfkit');
+        const doc = new PDFDoc({ margin: 45, size: 'A4' });
+        const buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+        doc.on('end', () => {
+            const pdfBuffer = Buffer.concat(buffers);
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="${numCommande}.pdf"`);
+            res.send(pdfBuffer);
+        });
+
+        // En-tête du Bon de Commande
+        doc.fontSize(20).font('Helvetica-Bold').text('BON DE COMMANDE FOURNISSEUR', { align: 'left' });
+        doc.moveDown(0.3);
+        doc.fontSize(10).font('Helvetica').fillColor('#4b5563')
+           .text(`N° de commande : ${numCommande}   •   Date : ${dateJour}`)
+           .text(`Fournisseur destinataire : ${fournisseur || 'Fournisseur habituel'}`);
+
+        doc.moveDown(1);
+        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(11).text(`Émetteur : ${nomSalon}`);
+        doc.font('Helvetica').fontSize(9.5).fillColor('#374151');
+        if (salon.adresse) doc.text(`Adresse de livraison : ${salon.adresse}`);
+        if (salon.siret) doc.text(`SIRET : ${salon.siret}`);
+        if (salon.telephone) doc.text(`Téléphone : ${salon.telephone}`);
+
+        doc.moveDown(1.2);
+
+        // Tableau des articles à commander
+        const topTable = doc.y;
+        doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#111827');
+        doc.text('RÉFÉRENCE / EAN', 45, topTable, { width: 130 });
+        doc.text('DÉSIGNATION DU PRODUIT', 180, topTable, { width: 250 });
+        doc.text('STOCK ACTUEL', 435, topTable, { width: 65, align: 'center' });
+        doc.text('QTÉ COMMANDÉE', 500, topTable, { width: 60, align: 'right' });
+
+        doc.moveTo(45, topTable + 15).lineTo(555, topTable + 15).strokeColor('#d1d5db').stroke();
+
+        let y = topTable + 24;
+        let totalUnites = 0;
+        doc.font('Helvetica').fontSize(9.5).fillColor('#111827');
+
+        lignes.forEach((item) => {
+            if (y > 740) {
+                doc.addPage();
+                y = 50;
+            }
+            const qte = parseInt(item.quantite_commande, 10) || 1;
+            totalUnites += qte;
+            doc.font('Helvetica-Bold').text(String(item.reference || 'SANS-REF').substring(0, 22), 45, y, { width: 130 });
+            doc.font('Helvetica').text(String(item.nom || 'Produit').substring(0, 52), 180, y, { width: 250 });
+            doc.fillColor('#6b7280').text(String(item.stock_actuel ?? 0), 435, y, { width: 65, align: 'center' });
+            doc.fillColor('#111827').font('Helvetica-Bold').text(`${qte}`, 500, y, { width: 60, align: 'right' });
+            y += 20;
+        });
+
+        doc.moveTo(45, y + 4).lineTo(555, y + 4).strokeColor('#111827').stroke();
+        doc.font('Helvetica-Bold').fontSize(11).text(`Total : ${lignes.length} références (${totalUnites} unités commandées)`, 45, y + 12, { align: 'right', width: 510 });
+
+        if (commentaire && String(commentaire).trim()) {
+            doc.moveDown(2);
+            doc.font('Helvetica-Bold').fontSize(10).text('Note / Instructions de livraison :', 45);
+            doc.font('Helvetica').fontSize(9.5).fillColor('#374151').text(String(commentaire).trim(), 45);
+        }
+
+        doc.end();
+    } catch (e) {
+        console.error("Erreur génération Bon de commande PDF :", e);
+        res.status(500).json({ erreur: "Erreur lors de la création du PDF." });
+    }
+});
+
+app.post('/api/catalogue/envoyer-commande', verifierToken, async (req, res) => {
+    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
+    const { email_fournisseur, fournisseur, lignes, commentaire } = req.body;
+    if (!email_fournisseur || !String(email_fournisseur).includes('@')) {
+        return res.status(400).json({ erreur: "Adresse e-mail du fournisseur invalide." });
+    }
+    if (!Array.isArray(lignes) || lignes.length === 0) {
+        return res.status(400).json({ erreur: "Aucun produit sélectionné." });
+    }
+
+    try {
+        const salonRes = await pool.query(
+            'SELECT nom_salon, adresse, telephone, siret, email_contact FROM configuration_salon WHERE id_salon = $1',
+            [req.user.id_salon]
+        );
+        const salon = salonRes.rows[0] || {};
+        const nomSalon = salon.nom_salon || 'Notre Salon';
+        const dateJour = new Date().toLocaleDateString('fr-FR');
+
+        const lignesHtml = lignes.map(l =>
+            `<tr>
+                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-weight:bold;">${l.reference || '—'}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${l.nom}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold;">${l.quantite_commande}</td>
+            </tr>`
+        ).join('');
+
+        const sujetMail = `Bon de commande — ${nomSalon} (${dateJour})`;
+        const corpsHtml = `
+            <div style="font-family:sans-serif;color:#111827;max-width:620px;">
+                <h2 style="margin-bottom:4px;">Bon de commande — ${nomSalon}</h2>
+                <p style="color:#4b5563;font-size:14px;">Bonjour ${fournisseur || ''},<br/>Voici notre commande de réassort du ${dateJour} :</p>
+                <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px;">
+                    <thead>
+                        <tr style="background:#f3f4f6;text-align:left;">
+                            <th style="padding:8px 10px;">Référence</th>
+                            <th style="padding:8px 10px;">Produit</th>
+                            <th style="padding:8px 10px;text-align:right;">Quantité</th>
+                        </tr>
+                    </thead>
+                    <tbody>${lignesHtml}</tbody>
+                </table>
+                ${commentaire ? `<p style="font-size:13px;background:#f9fafb;padding:10px;border-radius:8px;"><strong>Note :</strong> ${commentaire}</p>` : ''}
+                <p style="font-size:12.5px;color:#6b7280;margin-top:20px;">
+                    <strong>${nomSalon}</strong><br/>
+                    ${salon.adresse || ''} ${salon.telephone ? `• Tél : ${salon.telephone}` : ''} ${salon.siret ? `• SIRET : ${salon.siret}` : ''}
+                </p>
+            </div>
+        `;
+
+        // Utilise automatiquement Resend ou Nodemailer selon ce qui est configuré sur ton serveur
+        if (typeof resend !== 'undefined' && resend?.emails?.send) {
+            await resend.emails.send({
+                from: process.env.EMAIL_FROM || 'STACK <onboarding@resend.dev>',
+                to: [email_fournisseur.trim()],
+                subject: sujetMail,
+                html: corpsHtml
+            });
+            return res.json({ message: `Bon de commande envoyé à ${email_fournisseur} !` });
+        } else if (typeof transporter !== 'undefined' && transporter?.sendMail) {
+            await transporter.sendMail({
+                from: process.env.SMTP_USER || process.env.EMAIL_USER,
+                to: email_fournisseur.trim(),
+                subject: sujetMail,
+                html: corpsHtml
+            });
+            return res.json({ message: `Bon de commande envoyé à ${email_fournisseur} !` });
+        } else {
+            return res.status(200).json({ fallback_mailto: true, sujet: sujetMail, message: "Ouverture de votre messagerie avec la commande pré-remplie." });
+        }
+    } catch (e) {
+        console.error("Erreur envoi commande mail :", e);
+        res.status(500).json({ erreur: "Impossible d'envoyer l'e-mail directement. Utilisez le bouton Copier ou PDF." });
+    }
+});
+
 app.get('/api/stocks', verifierToken, async (req, res) => {
     try {
         const stockResult = await pool.query(`
