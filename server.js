@@ -5572,7 +5572,7 @@ app.get('/api/messages', verifierToken, async (req, res) => {
 });
 
 app.post('/api/messages', verifierToken, async (req, res) => {
-    const { id_destinataire, contenu, fichier_url } = req.body;
+    const { id_destinataire, contenu, fichier_url, reply_to } = req.body;
     const textePropre = typeof contenu === 'string' ? contenu.trim() : '';
 
     if (!textePropre && !fichier_url) {
@@ -5582,18 +5582,25 @@ app.post('/api/messages', verifierToken, async (req, res) => {
         return res.status(400).json({ erreur: "Le message dépasse la limite autorisée (5000 caractères)." });
     }
 
+    // Autorise les images ET les mémos vocaux (webm, mp4, ogg, wav, mp3)
     if (fichier_url) {
-        if (typeof fichier_url !== 'string' || fichier_url.length > 6500000) {
-            return res.status(400).json({ erreur: "Fichier trop volumineux (max 4 Mo)." });
+        if (typeof fichier_url !== 'string' || fichier_url.length > 7500000) {
+            return res.status(400).json({ erreur: "Fichier trop volumineux (max 5 Mo)." });
         }
-        const mimeValide = /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(fichier_url) || fichier_url.startsWith('https://');
+        const mimeValide =
+            /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(fichier_url) ||
+            /^data:(audio|video)\/(webm|mp4|mpeg|ogg|wav|aac|x-m4a);/i.test(fichier_url) ||
+            fichier_url.startsWith('https://');
         if (!mimeValide) {
-            return res.status(400).json({ erreur: "Format d'image non autorisé (seuls JPG, PNG, WEBP et GIF sont acceptés)." });
+            return res.status(400).json({ erreur: "Format de fichier non autorisé (Image ou Mémo vocal uniquement)." });
         }
     }
 
     const id_expediteur = req.user.role === 'employe' ? parseInt(req.user.id_employe, 10) : (req.user.role === 'salon' ? -1 : null);
     try {
+        // Ajoute automatiquement la colonne reply_to si elle n'existe pas encore
+        await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to JSONB DEFAULT NULL`).catch(() => {});
+
         let nom_expediteur = 'Gérant';
         let photo_expediteur = null;
         if (req.user.role === 'employe') {
@@ -5605,7 +5612,6 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             nom_expediteur = 'Salon';
         }
 
-        // 0 = Groupe Salon | null = Gérant | >0 = Employé précis
         let dest = null;
         if (id_destinataire === 'salon' || id_destinataire === 0 || id_destinataire === '0') {
             dest = 0;
@@ -5619,10 +5625,19 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             dest = parsedDest;
         }
 
+        const replyToPropre = (reply_to && typeof reply_to === 'object' && reply_to.id_message) ? {
+            id_message: Number(reply_to.id_message),
+            nom_expediteur: String(reply_to.nom_expediteur || 'Message').substring(0, 60),
+            extrait: String(reply_to.extrait || '').substring(0, 140)
+        } : null;
+
         const result = await pool.query(
-            `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url) VALUES ($1, $2, $3, $4, $5) RETURNING id_message, date_creation`,
-            [req.user.id_salon, id_expediteur, dest, textePropre, fichier_url || null]
+            `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url, reply_to)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id_message, date_creation`,
+            [req.user.id_salon, id_expediteur, dest, textePropre, fichier_url || null, replyToPropre ? JSON.stringify(replyToPropre) : null]
         );
+
         const newMessage = {
             id_message: result.rows[0].id_message,
             id_salon: req.user.id_salon,
@@ -5630,6 +5645,7 @@ app.post('/api/messages', verifierToken, async (req, res) => {
             id_destinataire: dest,
             contenu: textePropre,
             fichier_url: fichier_url || null,
+            reply_to: replyToPropre,
             date_creation: result.rows[0].date_creation,
             nom_expediteur,
             photo_expediteur,
@@ -5639,10 +5655,7 @@ app.post('/api/messages', verifierToken, async (req, res) => {
 
         const salonRoom = req.user.id_salon.toString();
         if (dest === 0) {
-            io.to(salonRoom)
-              .to(`${salonRoom}_gerant`)
-              .to(`${salonRoom}_salon`)
-              .emit('nouveauMessage', newMessage);
+            io.to(salonRoom).to(`${salonRoom}_gerant`).to(`${salonRoom}_salon`).emit('nouveauMessage', newMessage);
         } else {
             let emitter = io.to(salonRoom).to(`${salonRoom}_gerant`).to(`${salonRoom}_salon`);
             if (id_expediteur && id_expediteur > 0) emitter = emitter.to(`${salonRoom}_emp_${id_expediteur}`);
@@ -5651,14 +5664,15 @@ app.post('/api/messages', verifierToken, async (req, res) => {
         }
 
         let cibleNotif;
-        if (dest === 0) {
-            cibleNotif = 'salon';
-        } else if (dest === null) {
-            cibleNotif = 'gerant';
-        } else {
-            cibleNotif = { type: 'employe', id_employe: dest };
-        }
-        const apercuNotif = textePropre ? (textePropre.length > 40 ? textePropre.substring(0, 40) + '...' : textePropre) : '📷 Photo envoyée';
+        if (dest === 0) cibleNotif = 'salon';
+        else if (dest === null) cibleNotif = 'gerant';
+        else cibleNotif = { type: 'employe', id_employe: dest };
+
+        const estAudio = typeof fichier_url === 'string' && /^data:(audio|video)\//i.test(fichier_url);
+        const apercuNotif = textePropre
+            ? (textePropre.length > 40 ? textePropre.substring(0, 40) + '...' : textePropre)
+            : (estAudio ? 'Vocal' : 'Photo envoyée');
+
         envoyerNotificationPush(req.user.id_salon, cibleNotif, {
             title: `Nouveau message de ${newMessage.nom_expediteur}`,
             body: apercuNotif,
