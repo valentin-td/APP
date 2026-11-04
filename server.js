@@ -6966,23 +6966,26 @@ app.post('/api/factures/saisie-manuelle', verifierToken, verifierPlan(['PRO', 'P
     }
 });
 
-// --- UPLOAD MANUEL DE FACTURE (PDF OU IMAGE) VERS L'IA (RÉSERVÉ PREMIUM) ---
+// --- UPLOAD MANUEL DE FACTURE (PDF OU IMAGE) VERS L'IA (OPTIMISÉ R2 + PROMPT DÉDIÉ) ---
 app.post('/api/ia/upload-facture', verifierToken, verifierPlan(['PREMIUM']), async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès réservé au gérant." });
+    if (req.user.role !== 'gerant' && req.user.role !== 'salon') {
+        return res.status(403).json({ erreur: "Accès réservé au gérant ou au poste de caisse." });
+    }
     try {
         const { fichier_base64, mime_type } = req.body;
         if (!fichier_base64) return res.status(400).json({ erreur: "Fichier manquant." });
 
-        const buffer = Buffer.from(fichier_base64, 'base64');
+        const base64Propre = String(fichier_base64).replace(/^data:[^;]+;base64,/, '');
+        const buffer = Buffer.from(base64Propre, 'base64');
         const id_salon = req.user.id_salon;
-        
-        // Détection du format (Image ou PDF)
+
         const isImage = mime_type && mime_type.startsWith('image/');
         const extension = isImage ? (mime_type.includes('png') ? 'png' : 'jpg') : 'pdf';
 
-        // 1. Sauvegarde sur Cloudflare R2 (avec conservation de la clé permanente R2 pour la liasse comptable)
+        // 1. Sauvegarde sur Cloudflare R2 en flux direct
         let urlCloudflare = null;
         let cleR2Facture = null;
+        let r2Reussi = false;
         try {
             const nomFichierUnique = `factures/${id_salon}/${Date.now()}_upload_manuel.${extension}`;
             await s3Client.send(new PutObjectCommand({
@@ -6994,85 +6997,121 @@ app.post('/api/ia/upload-facture', verifierToken, verifierPlan(['PREMIUM']), asy
             cleR2Facture = nomFichierUnique;
             const commandGet = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: nomFichierUnique });
             urlCloudflare = await getSignedUrl(s3Client, commandGet, { expiresIn: 604800 });
+            r2Reussi = !!(urlCloudflare && urlCloudflare.startsWith('https://'));
         } catch (erreurR2) {
-            console.error("⚠️ Erreur Cloudflare R2 (L'IA prend le relais localement) :", erreurR2.message);
-            // Filet de sécurité : Si R2 échoue, on injecte directement le fichier en Base64 au frontend !
-            urlCloudflare = `data:${mime_type || 'application/pdf'};base64,${fichier_base64}`;
+            console.error("⚠️ Erreur Cloudflare R2 (Repli local) :", erreurR2.message);
+            urlCloudflare = `data:${mime_type || 'application/pdf'};base64,${base64Propre}`;
         }
 
-        let analyse;
         const anneeEnCours = new Date().getFullYear();
-        const dateDuJour = new Date().toLocaleDateString('fr-FR');
-        const promptContext = `${PROMPT_SYSTEME_IA}\nINFO : La date du jour est le ${dateDuJour}. Si l'année n'est pas précisée, utilise obligatoirement ${anneeEnCours}. Retourne uniquement un JSON strict.`;
+        const dateDuJour = new Date().toISOString().slice(0, 10);
 
-        // 2. Extraction & Appel IA selon le format du document
+        // Prompt 100 % dédié aux factures/tickets (élimine le bug où l'IA classait une facture en "ACTION")
+        const promptFactureDedie = `Tu es l'expert-comptable d'un salon de coiffure. Analyse cette facture ou ce ticket de dépense et retourne UNIQUEMENT un JSON strict au format suivant :
+{
+  "est_facture_valide": true,
+  "fournisseur": "Nom du fournisseur ou enseigne",
+  "numero_facture": "Numéro de facture ou ticket (sinon null)",
+  "date_facture": "YYYY-MM-DD (utilise ${anneeEnCours} si l'année est absente, ou ${dateDuJour} par défaut)",
+  "montant_ht": 100.00,
+  "montant_tva": 20.00,
+  "montant_ttc": 120.00,
+  "mode_paiement": "CARTE, ESPECES, PRELEVEMENT, VIREMENT, CHEQUE ou NON_SPECIFIE",
+  "compte_comptable": "607 (Revente), 6028 (Consommables pro), 6061 (Énergie/Eau), 613 (Loyer), 604 (Services) ou 6064 (Fournitures)",
+  "produits": [
+    {"nom": "Nom article", "quantite": 1, "prix_unitaire_ht": 10.00, "reference": "REF", "type_destine": "REVENTE ou CONSOMMABLE"}
+  ]
+}
+Si le document n'a aucun rapport avec une facture, un reçu ou une dépense, renvoie {"est_facture_valide": false}.`;
+
+        let completion;
         if (!isImage) {
-            // Traitement PDF classique
             const dataPdf = await pdfParse(buffer);
             const textePdf = (dataPdf.text || '').substring(0, 15000);
-            
-            const completion = await groq.chat.completions.create({
+            completion = await groq.chat.completions.create({
                 model: 'qwen/qwen3.8-27b',
-                max_tokens: 800,
+                max_tokens: 900,
                 temperature: 0,
                 response_format: { type: 'json_object' },
                 messages: [
-                    { role: 'system', content: promptContext },
-                    { role: 'user', content: `Sujet : Upload Manuel\n\nContenu :\n${textePdf}` }
+                    { role: 'system', content: promptFactureDedie },
+                    { role: 'user', content: `Contenu de la facture :\n${textePdf}` }
                 ]
             });
-            analyse = JSON.parse(completion.choices[0].message.content.replace(/```json/gi, '').replace(/```/g, '').trim());
         } else {
-            // Traitement Image avec le modèle Vision Haute Performance
-            const completion = await groq.chat.completions.create({
-            model: 'qwen/qwen3.8-27b',
-                max_tokens: 800,
+            // Si R2 a réussi, on envoie l'URL HTTPS signée à Groq (0 surcharge RAM Base64 !)
+            const imageSourceUrl = r2Reussi ? urlCloudflare : `data:${mime_type || 'image/jpeg'};base64,${base64Propre}`;
+            completion = await groq.chat.completions.create({
+                model: 'qwen/qwen3.8-27b',
+                max_tokens: 900,
                 temperature: 0,
                 response_format: { type: 'json_object' },
                 messages: [
-                    { role: 'system', content: promptContext },
-                    { role: 'user', content: [
-                        { type: "text", text: "Extrais les données comptables et l'inventaire de cette facture/ticket de caisse." },
-                        { type: "image_url", image_url: { url: `data:${mime_type};base64,${fichier_base64}` } }
-                    ]}
+                    { role: 'system', content: promptFactureDedie },
+                    {
+                        role: 'user',
+                        content: [
+                            { type: "text", text: "Extrais toutes les données comptables et les lignes de produits de cette facture." },
+                            { type: "image_url", image_url: { url: imageSourceUrl } }
+                        ]
+                    }
                 ]
             });
-            analyse = JSON.parse(completion.choices[0].message.content.replace(/```json/gi, '').replace(/```/g, '').trim());
         }
 
-        // 3. Enregistrement en base avec statut ATTENTE pour garantir la validation humaine unique
-        if (analyse.type === 'FACTURE_ACHAT' && analyse.donnees) {
-            const donneesPropres = {
-                fournisseur: String(analyse.donnees.fournisseur || 'Fournisseur Inconnu').trim(),
-                numero_facture: analyse.donnees.numero_facture ? String(analyse.donnees.numero_facture).trim() : null,
-                date_facture: analyse.donnees.date_facture || dateDuJour,
-                montant_ht: parseFloat(analyse.donnees.montant_ht) || 0,
-                montant_tva: parseFloat(analyse.donnees.montant_tva) || 0,
-                montant_ttc: parseFloat(analyse.donnees.montant_ttc) || 0,
-                mode_paiement: analyse.donnees.mode_paiement || 'NON_SPECIFIE',
-                compte_comptable: analyse.donnees.compte_comptable || null,
-                produits: Array.isArray(analyse.donnees.produits) ? analyse.donnees.produits : [],
-                pdf_url: urlCloudflare,
-                fichier_cle_r2: cleR2Facture,
-                mime_type: mime_type || 'application/pdf'
-            };
+        const brut = (completion.choices?.[0]?.message?.content || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+        const analyse = JSON.parse(brut);
+        const d = analyse.donnees || analyse;
 
-            const insertRes = await pool.query(
-                `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees, statut) VALUES ($1, 'FACTURE_ACHAT', $2, 'ATTENTE') RETURNING id_tache`,
-                [id_salon, donneesPropres]
-            );
+        const montantTtcNum = parseFloat(d.montant_ttc) || 0;
+        const montantHtNum = parseFloat(d.montant_ht) || (montantTtcNum > 0 ? Number((montantTtcNum / 1.2).toFixed(2)) : 0);
+        const montantTvaNum = parseFloat(d.montant_tva) || Number(Math.max(0, montantTtcNum - montantHtNum).toFixed(2));
 
-            const tachePreRemplie = {
-                id_tache: insertRes.rows[0].id_tache,
-                type_tache: 'FACTURE_ACHAT',
-                donnees: donneesPropres
-            };
-            
-            return res.json({ message: "Analyse IA terminée avec succès.", tache: tachePreRemplie });
-        } else {
+        if (analyse.est_facture_valide === false || (!d.fournisseur && montantTtcNum === 0 && montantHtNum === 0)) {
             return res.status(400).json({ erreur: "L'IA n'a pas reconnu de facture valide dans ce document." });
         }
 
+        const donneesPropres = {
+            fournisseur: String(d.fournisseur || 'Fournisseur').trim(),
+            numero_facture: d.numero_facture ? String(d.numero_facture).trim() : null,
+            date_facture: d.date_facture || dateDuJour,
+            montant_ht: montantHtNum,
+            montant_tva: montantTvaNum,
+            montant_ttc: montantTtcNum || Number((montantHtNum + montantTvaNum).toFixed(2)),
+            mode_paiement: d.mode_paiement || 'NON_SPECIFIE',
+            compte_comptable: d.compte_comptable || '6028',
+            produits: Array.isArray(d.produits) ? d.produits : [],
+            pdf_url: urlCloudflare,
+            fichier_cle_r2: cleR2Facture,
+            mime_type: mime_type || 'application/pdf'
+        };
+
+        // Purge automatiquement tout ancien doublon en attente de la même facture pour éviter l'effet de boucle
+        await pool.query(
+            `DELETE FROM ia_taches_attente
+             WHERE id_salon = $1
+               AND type_tache = 'FACTURE_ACHAT'
+               AND statut = 'ATTENTE'
+               AND COALESCE(donnees->>'fournisseur', '') = $2
+               AND COALESCE(donnees->>'montant_ttc', '') = $3`,
+            [id_salon, donneesPropres.fournisseur, String(donneesPropres.montant_ttc)]
+        ).catch(() => {});
+
+        const insertRes = await pool.query(
+            `INSERT INTO ia_taches_attente (id_salon, type_tache, donnees, statut)
+             VALUES ($1, 'FACTURE_ACHAT', $2, 'ATTENTE')
+             RETURNING id_tache`,
+            [id_salon, donneesPropres]
+        );
+
+        return res.json({
+            message: "Analyse IA terminée avec succès.",
+            tache: {
+                id_tache: insertRes.rows[0].id_tache,
+                type_tache: 'FACTURE_ACHAT',
+                donnees: donneesPropres
+            }
+        });
     } catch (e) {
         console.error("Erreur Upload Manuel :", e);
         res.status(500).json({ erreur: "Erreur lors de l'analyse du document par l'IA." });
