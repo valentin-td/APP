@@ -4210,8 +4210,69 @@ function App() {
       }
   };
 
-  // --- MODULE 5 : ÉTAT GAMIFICATION & KPIS EMPLOYÉ ---
+  // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (GÉRANT & EMPLOYÉ) ---
   const [empGamificationKpis, setEmpGamificationKpis] = useState(null);
+  const [objectifsEquipeListe, setObjectifsEquipeListe] = useState([]);
+  const [showAddObjectifModal, setShowAddObjectifModal] = useState(false);
+  const [newObjectifForm, setNewObjectifForm] = useState({
+      titre: '',
+      type_indicateur: 'TAUX_REVENTE',
+      valeur_cible: '20',
+      id_employe: 'TOUS',
+      recompense: ''
+  });
+
+  const chargerObjectifsEquipe = async () => {
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/equipe/objectifs', {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
+          });
+          if (res.ok) {
+              const data = await res.json();
+              setObjectifsEquipeListe(Array.isArray(data) ? data : []);
+          }
+      } catch (e) {}
+  };
+
+  const creerObjectifEquipe = async () => {
+      if (!newObjectifForm.titre.trim() || !newObjectifForm.valeur_cible) {
+          return showToast("Veuillez renseigner un intitulé et une valeur cible.", "error");
+      }
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/equipe/objectifs', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
+              },
+              body: JSON.stringify(newObjectifForm)
+          });
+          if (res.ok) {
+              showToast("Objectif enregistré pour l'équipe.", "success");
+              setShowAddObjectifModal(false);
+              setNewObjectifForm({ titre: '', type_indicateur: 'TAUX_REVENTE', valeur_cible: '20', id_employe: 'TOUS', recompense: '' });
+              chargerObjectifsEquipe();
+          } else {
+              const err = await res.json().catch(() => ({}));
+              showToast(err.erreur || "Erreur lors de la création.", "error");
+          }
+      } catch (e) {
+          showToast("Erreur réseau.", "error");
+      }
+  };
+
+  const supprimerObjectifEquipe = async (idObj) => {
+      try {
+          const res = await fetch(`https://api-salon-backend.onrender.com/api/equipe/objectifs/${idObj}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
+          });
+          if (res.ok) {
+              showToast("Objectif retiré.", "info");
+              chargerObjectifsEquipe();
+          }
+      } catch (e) {}
+  };
 
   useEffect(() => {
       if (role === 'employe' && token && activeTab === 'accueil') {
@@ -4222,7 +4283,11 @@ function App() {
               .then(data => { if (data) setEmpGamificationKpis(data); })
               .catch(() => {});
       }
+      if (role === 'gerant' && token && activeTab === 'rh') {
+          chargerObjectifsEquipe();
+      }
   }, [role, token, activeTab]);
+
   const supprimerMessage = async (id) => {
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
@@ -4247,9 +4312,8 @@ function App() {
   };
 
   const toggleReaction = async (id, emoji) => {
-      setActiveReactionId(null); // On ferme le menu des emojis tout de suite
+      setActiveReactionId(null);
       
-      // 1. MISE À JOUR OPTIMISTE : On met à jour l'écran instantanément (sans attendre le serveur)
       const monProfilId = role === 'employe' ? `emp_${decodeToken(token)?.id_employe}` : (role === 'salon' ? 'salon' : 'gerant');
       setMessagesListe(prev => (prev || []).map(m => {
           if (m.id_message !== id) return m;
@@ -4264,12 +4328,11 @@ function App() {
           return { ...m, reactions: rec };
       }));
 
-      // 2. ENVOI SILENCIEUX : Le serveur enregistre la réaction en arrière-plan
       try { 
           await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}/react`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify({ emoji }) }); 
       } catch(e) { 
           showToast("Erreur réseau", "error"); 
-          chargerTout(); // Si ça échoue vraiment, on recharge pour effacer la fausse réaction
+          chargerTout(); 
       }
   };
 
