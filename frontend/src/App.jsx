@@ -8271,6 +8271,42 @@ function App() {
                       </div>
                   )}
 
+                  {/* MODALE DU SCANNER CAMÉRA DANS L'ONGLET STOCKS */}
+                  {scannerModalMode && (
+                      <div onClick={fermerScannerCodeBarre} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(17,24,39,0.75)', backdropFilter: 'blur(4px)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+                          <div onClick={e => e.stopPropagation()} className="carte" style={{ width: '100%', maxWidth: '420px', marginBottom: 0, padding: '20px', borderRadius: '20px', background: 'var(--bg-card)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                  <div>
+                                      <span style={{ fontSize: '10.5px', fontWeight: '800', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                                          Inventaire & Réception
+                                      </span>
+                                      <h3 style={{ margin: '2px 0 0 0', fontSize: '16.5px', color: 'var(--text-main)' }}>Scanner un Code-Barres</h3>
+                                  </div>
+                                  <button type="button" onClick={fermerScannerCodeBarre} style={{ background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', fontWeight: '800' }}>✕</button>
+                              </div>
+
+                              <div id="stack-barcode-reader" style={{ width: '100%', minHeight: '220px', borderRadius: '14px', overflow: 'hidden', background: '#111827', marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: '12.5px' }}>
+                                  Ouverture de la caméra...
+                              </div>
+
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                  <input
+                                      type="text"
+                                      className="input-fournisseur"
+                                      placeholder="Ou saisir / biper la référence EAN..."
+                                      value={codeBarreManuel}
+                                      onChange={e => setCodeBarreManuel(e.target.value)}
+                                      onKeyDown={e => { if (e.key === 'Enter') traiterCodeBarreDetecte(codeBarreManuel, scannerModalMode); }}
+                                      style={{ marginBottom: 0, flex: 1 }}
+                                  />
+                                  <button type="button" onClick={() => traiterCodeBarreDetecte(codeBarreManuel, scannerModalMode)} className="btn-action" style={{ padding: '0 16px', borderRadius: '10px', fontSize: '12.5px' }}>
+                                      Valider
+                                  </button>
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
                   {isStockMergeMode && (
                       <div className="carte" style={{ background: 'var(--bg-info)', border: '1px solid #bfdbfe', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
                           <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--color-info)' }}>
