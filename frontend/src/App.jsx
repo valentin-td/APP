@@ -3837,6 +3837,130 @@ function App() {
           }
       }, 150);
   };
+
+  // --- MODULE 4 : BONS DE COMMANDE FOURNISSEURS & RÉASSORT 3 OPTIONS ---
+  const [showReassortModal, setShowReassortModal] = useState(false);
+  const [lignesReassort, setLignesReassort] = useState([]);
+  const [fournisseurCommande, setFournisseurCommande] = useState("L'Oréal Professionnel");
+  const [emailFournisseurCommande, setEmailFournisseurCommande] = useState('');
+  const [noteCommande, setNoteCommande] = useState('');
+  const [isSendingCommande, setIsSendingCommande] = useState(false);
+
+  const produitsEnAlerteStock = (catalogueListe || []).filter(
+      a => (a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE') && (parseInt(a.stock_actuel, 10) || 0) <= 2
+  );
+
+  const ouvrirModaleReassort = () => {
+      const sauvegardesMails = JSON.parse(localStorage.getItem('stack_fournisseurs_emails_v1') || '{}');
+      const initFourn = fournisseurCommande || "L'Oréal Professionnel";
+      setEmailFournisseurCommande(sauvegardesMails[initFourn] || '');
+
+      const baseArticles = produitsEnAlerteStock.length > 0
+          ? produitsEnAlerteStock
+          : (catalogueListe || []).filter(a => a.type_article === 'PRODUIT_REVENTE' || a.type_article === 'CONSOMMABLE').slice(0, 8);
+
+      setLignesReassort(
+          baseArticles.map(a => ({
+              id_article: a.id_article,
+              nom: a.nom,
+              reference: a.reference || '',
+              stock_actuel: parseInt(a.stock_actuel, 10) || 0,
+              quantite_commande: Math.max(6 - (parseInt(a.stock_actuel, 10) || 0), 3)
+          }))
+      );
+      setShowReassortModal(true);
+  };
+
+  const changerFournisseurReassort = (nomFourn) => {
+      setFournisseurCommande(nomFourn);
+      const sauvegardesMails = JSON.parse(localStorage.getItem('stack_fournisseurs_emails_v1') || '{}');
+      if (sauvegardesMails[nomFourn]) {
+          setEmailFournisseurCommande(sauvegardesMails[nomFourn]);
+      }
+  };
+
+  const copierListeReassort = () => {
+      if (lignesReassort.length === 0) return;
+      const texte = [
+          `COMMANDE ${configSalon.nom_salon || 'SALON'} (${new Date().toLocaleDateString('fr-FR')}) - ${fournisseurCommande}`,
+          ...lignesReassort.map(l => `• ${l.reference ? `[${l.reference}] ` : ''}${l.nom} : x${l.quantite_commande}`),
+          noteCommande ? `\nNote : ${noteCommande}` : ''
+      ].filter(Boolean).join('\n');
+      navigator.clipboard?.writeText(texte);
+      showToast("Liste de commande copiée ! Vous pouvez la coller sur le site fournisseur ou WhatsApp.", "success");
+  };
+
+  const telechargerBonCommandePdf = async () => {
+      if (lignesReassort.length === 0) return;
+      setIsSendingCommande(true);
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue/bon-commande-pdf', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
+              },
+              body: JSON.stringify({
+                  fournisseur: fournisseurCommande,
+                  lignes: lignesReassort,
+                  commentaire: noteCommande
+              })
+          });
+          if (!res.ok) throw new Error("Erreur PDF");
+          const blob = await res.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Bon_Commande_${fournisseurCommande.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+          a.click();
+          showToast("Bon de commande PDF téléchargé !", "success");
+      } catch (e) {
+          showToast("Erreur lors du téléchargement du PDF.", "error");
+      } finally {
+          setIsSendingCommande(false);
+      }
+  };
+
+  const envoyerBonCommandeParMail = async () => {
+      if (!emailFournisseurCommande || !emailFournisseurCommande.includes('@')) {
+          return showToast("Saisissez l'e-mail du commercial (il sera mémorisé pour la prochaine fois).", "error");
+      }
+      const sauvegardesMails = JSON.parse(localStorage.getItem('stack_fournisseurs_emails_v1') || '{}');
+      sauvegardesMails[fournisseurCommande] = emailFournisseurCommande.trim();
+      localStorage.setItem('stack_fournisseurs_emails_v1', JSON.stringify(sauvegardesMails));
+
+      setIsSendingCommande(true);
+      try {
+          const res = await fetch('https://api-salon-backend.onrender.com/api/catalogue/envoyer-commande', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
+              },
+              body: JSON.stringify({
+                  email_fournisseur: emailFournisseurCommande.trim(),
+                  fournisseur: fournisseurCommande,
+                  lignes: lignesReassort,
+                  commentaire: noteCommande
+              })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.fallback_mailto) {
+              const corpsTexte = lignesReassort.map(l => `- ${l.reference ? `[${l.reference}] ` : ''}${l.nom} : x${l.quantite_commande}`).join('%0D%0A');
+              window.location.href = `mailto:${emailFournisseurCommande.trim()}?subject=${encodeURIComponent(data.sujet || 'Bon de commande')}&body=${corpsTexte}`;
+              showToast("Messagerie ouverte avec votre commande pré-remplie !", "info");
+          } else if (res.ok) {
+              showToast(data.message || "Commande envoyée au commercial !", "success");
+              setShowReassortModal(false);
+          } else {
+              showToast(data.erreur || "Erreur lors de l'envoi.", "error");
+          }
+      } catch (e) {
+          showToast("Erreur réseau.", "error");
+      } finally {
+          setIsSendingCommande(false);
+      }
+  };
   const supprimerMessage = async (id) => {
       try {
           const res = await fetch(`https://api-salon-backend.onrender.com/api/messages/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
@@ -7556,6 +7680,14 @@ function App() {
                               >
                                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 5v14"/><path d="M8 5v14"/><path d="M12 5v14"/><path d="M17 5v14"/><path d="M21 5v14"/></svg>
                                   {!isMobile && <span>Scanner EAN</span>}
+                              </button>
+                             <button
+                                  type="button"
+                                  onClick={ouvrirModaleReassort}
+                                  style={{ background: produitsEnAlerteStock.length > 0 ? 'var(--bg-danger)' : 'var(--bg-app)', color: produitsEnAlerteStock.length > 0 ? 'var(--color-danger)' : 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '40px', padding: isMobile ? '0 11px' : '0 14px', borderRadius: '999px', border: '1px solid var(--border-color)', cursor: 'pointer', fontWeight: '800', fontSize: '12.5px' }}
+                                  title="Préparer un bon de commande fournisseur"
+                              >
+                                  <span>Réassort ({produitsEnAlerteStock.length})</span>
                               </button>
                               <button 
                                   onClick={() => {
