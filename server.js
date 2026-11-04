@@ -8856,7 +8856,7 @@ if (process.env.SENTRY_DSN) {
 // =========================================================================
 initCronJobs({
     pool,
-    cron, 
+    cron,
     crypto,
     dechiffrer,
     ImapFlow,
