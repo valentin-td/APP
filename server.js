@@ -2623,6 +2623,95 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
         } finally { clientDB.release(); }
 });
 
+// --- MODULE 5 : GAMIFICATION RH & KPIS INDIVIDUELS EMPLOYÉ ---
+app.get('/api/employes/gamification-kpis', verifierToken, async (req, res) => {
+    const id_salon = req.user.id_salon;
+    const id_employe = req.user.role === 'employe'
+        ? parseInt(req.user.id_employe, 10)
+        : parseInt(req.query.id_employe, 10);
+
+    if (!id_employe) return res.status(400).json({ erreur: "Identifiant employé requis." });
+
+    try {
+        // 1. Statistiques Tickets & Pourboires du mois en cours
+        const ticketsRes = await pool.query(
+            `SELECT 
+                COUNT(DISTINCT CASE WHEN COALESCE(type_ticket, 'VENTE') = 'VENTE' AND total_ttc > 0 THEN id_ticket END) AS nb_tickets_mois,
+                COALESCE(SUM(CASE WHEN COALESCE(type_ticket, 'VENTE') != 'ANNULATION' THEN total_ttc ELSE 0 END), 0) AS ca_ttc_mois,
+                COALESCE(SUM(COALESCE(montant_pourboire, 0)), 0) AS pourboires_mois,
+                COUNT(DISTINCT CASE WHEN id_client IS NOT NULL THEN id_client END) AS nb_clients_identifies
+             FROM tickets
+             WHERE id_salon = $1
+               AND id_employe = $2
+               AND statut = 'VALIDE'
+               AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
+            [id_salon, id_employe]
+        );
+
+        // 2. Clients fidèles (ayant déjà visité le salon au moins 2 fois au total)
+        const fidelesRes = await pool.query(
+            `SELECT COUNT(DISTINCT t.id_client) AS nb_fideles
+             FROM tickets t
+             WHERE t.id_salon = $1
+               AND t.id_employe = $2
+               AND t.id_client IS NOT NULL
+               AND DATE_TRUNC('month', t.date_creation) = DATE_TRUNC('month', CURRENT_DATE)
+               AND (SELECT COUNT(*) FROM tickets t2 WHERE t2.id_salon = $1 AND t2.id_client = t.id_client AND COALESCE(t2.type_ticket, 'VENTE') = 'VENTE') >= 2`,
+            [id_salon, id_employe]
+        );
+
+        // 3. Détail des Commissions (Prestations vs Produits) & Taux de Revente
+        const commRes = await pool.query(
+            `SELECT
+                COALESCE(SUM(CASE WHEN type_vente = 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_prestation,
+                COALESCE(SUM(CASE WHEN type_vente != 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_produit,
+                COALESCE(SUM(CASE WHEN type_vente != 'PRESTATION' THEN montant_vente ELSE 0 END), 0) AS ca_produit_ht,
+                COUNT(DISTINCT CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN id_ticket END) AS nb_tickets_avec_produit,
+                COUNT(CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN 1 END) AS nb_lignes_produits
+             FROM commissions
+             WHERE id_salon = $1
+               AND id_employe = $2
+               AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
+            [id_salon, id_employe]
+        );
+
+        const tRow = ticketsRes.rows[0] || {};
+        const fRow = fidelesRes.rows[0] || {};
+        const cRow = commRes.rows[0] || {};
+
+        const nbTickets = parseInt(tRow.nb_tickets_mois, 10) || 0;
+        const caTtc = parseFloat(tRow.ca_ttc_mois) || 0;
+        const pourboires = parseFloat(tRow.pourboires_mois) || 0;
+        const commPresta = parseFloat(cRow.comm_prestation) || 0;
+        const commProduit = parseFloat(cRow.comm_produit) || 0;
+        const totalComm = Number((commPresta + commProduit).toFixed(2));
+        const nbTicketsProduit = parseInt(cRow.nb_tickets_avec_produit, 10) || 0;
+        const nbProduitsVendus = parseInt(cRow.nb_lignes_produits, 10) || 0;
+        const nbFideles = parseInt(fRow.nb_fideles, 10) || 0;
+
+        const panierMoyen = nbTickets > 0 ? Number((caTtc / nbTickets).toFixed(2)) : 0;
+        const tauxRevente = nbTickets > 0 ? Math.min(100, Math.round((nbTicketsProduit / nbTickets) * 100)) : 0;
+        const tauxFidelisation = nbTickets > 0 ? Math.min(100, Math.round((nbFideles / nbTickets) * 100)) : 0;
+
+        res.json({
+            nb_clients_mois: nbTickets,
+            ca_ttc_mois: Number(caTtc.toFixed(2)),
+            panier_moyen: panierMoyen,
+            taux_revente: tauxRevente,
+            taux_fidelisation: tauxFidelisation,
+            nb_produits_vendus: nbProduitsVendus,
+            nb_tickets_avec_produit: nbTicketsProduit,
+            comm_prestation: Number(commPresta.toFixed(2)),
+            comm_produit: Number(commProduit.toFixed(2)),
+            commission_totale: totalComm,
+            pourboires_mois: Number(pourboires.toFixed(2)),
+            cagnotte_globale: Number((totalComm + pourboires).toFixed(2))
+        });
+    } catch (e) {
+        console.error("Erreur gamification KPIs :", e);
+        res.status(500).json({ erreur: "Erreur calcul KPIs employé." });
+    }
+});
 // NOUVELLE ROUTE : ENCAISSEMENT D'UN POURBOIRE ISOLÉ (Post-Encaissement)
 app.post('/api/caisse/pourboire-isole', verifierToken, verifierClotureZ, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé à la caisse." });
