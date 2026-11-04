@@ -2030,6 +2030,252 @@ app.put('/api/rdv/:id', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur modification RDV." }); }
 });
 
+// =========================================================================
+// --- MODULE 6 : RÉSERVATION EN LIGNE PUBLIQUE & LEVIER ANTI-PLANITY ---
+// =========================================================================
+
+// 1. Informations publiques du salon, catalogue des prestations et équipe
+app.get('/api/public/reservation/:id_salon', limiteurAvisPublic, async (req, res) => {
+    const id_salon = parseInt(req.params.id_salon, 10);
+    if (isNaN(id_salon)) return res.status(400).json({ erreur: "Salon invalide." });
+
+    try {
+        const salonRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        if (salonRes.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
+        const s = salonRes.rows[0];
+
+        const prestaRes = await pool.query(
+            `SELECT id_article, nom, prix, COALESCE(duree_estimee_minutes, 30) AS duree_estimee_minutes
+             FROM catalogue
+             WHERE id_salon = $1 AND type_article = 'PRESTATION'
+             ORDER BY nom ASC`,
+            [id_salon]
+        );
+
+        const empRes = await pool.query(
+            `SELECT id_employe, nom, photo_url, role
+             FROM employes
+             WHERE id_salon = $1
+             ORDER BY nom ASC`,
+            [id_salon]
+        );
+
+        res.json({
+            salon: {
+                id_salon: s.id_salon,
+                nom_salon: s.nom_salon || 'Salon de Coiffure',
+                adresse: s.adresse || s.adresse_salon || '',
+                telephone: s.telephone || s.telephone_salon || '',
+                heure_ouverture: s.heure_ouverture || '09:00',
+                heure_fermeture: s.heure_fermeture || '19:00',
+                fidelite_type: s.fidelite_type || 'POINTS',
+                fidelite_points_seuil: s.fidelite_points_seuil || 100,
+                fidelite_tampons_seuil: s.fidelite_tampons_seuil || 10
+            },
+            prestations: prestaRes.rows,
+            employes: empRes.rows
+        });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur chargement page de réservation." });
+    }
+});
+
+// 2. Calcul en temps réel des créneaux disponibles (prend en compte RDV + Nettoyage + Absences)
+app.get('/api/public/reservation/:id_salon/creneaux', limiteurAvisPublic, async (req, res) => {
+    const id_salon = parseInt(req.params.id_salon, 10);
+    const { date, id_employe, duree } = req.query;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ erreur: "Date invalide." });
+    }
+
+    try {
+        const configRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = configRes.rows[0] || {};
+        const tempsNettoyage = parseInt(config.temps_nettoyage_minutes, 10) || 0;
+        const dureePresta = (parseInt(duree, 10) || 30) + tempsNettoyage;
+
+        const ouvParts = String(config.heure_ouverture || '09:00').split(':');
+        const fermParts = String(config.heure_fermeture || '19:00').split(':');
+        const minDebutJour = (parseInt(ouvParts[0], 10) || 9) * 60 + (parseInt(ouvParts[1], 10) || 0);
+        const minFinJour = (parseInt(fermParts[0], 10) || 19) * 60 + (parseInt(fermParts[1], 10) || 0);
+
+        let employesCibles = [];
+        if (id_employe && id_employe !== 'AUTO') {
+            employesCibles = [parseInt(id_employe, 10)];
+        } else {
+            const empAll = await pool.query('SELECT id_employe FROM employes WHERE id_salon = $1', [id_salon]);
+            employesCibles = empAll.rows.map(r => r.id_employe);
+        }
+
+        const absRes = await pool.query(
+            `SELECT id_employe FROM absences_employes
+             WHERE id_salon = $1 AND statut = 'VALIDE' AND $2::date BETWEEN date_debut AND date_fin`,
+            [id_salon, date]
+        );
+        const idsAbsents = new Set(absRes.rows.map(r => Number(r.id_employe)));
+        const employesDisposJour = employesCibles.filter(id => !idsAbsents.has(Number(id)));
+
+        if (employesDisposJour.length === 0) {
+            return res.json({ creneaux: [] });
+        }
+
+        const rdvsRes = await pool.query(
+            `SELECT id_employe, date_heure_debut, COALESCE(duree_minutes, 30) AS duree_minutes
+             FROM rendez_vous
+             WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date`,
+            [id_salon, date]
+        );
+
+        const creneauxDispos = [];
+        const maintenant = new Date();
+
+        for (let m = minDebutJour; m + dureePresta <= minFinJour; m += 30) {
+            const hh = String(Math.floor(m / 60)).padStart(2, '0');
+            const mm = String(m % 60).padStart(2, '0');
+            const debutSlot = new Date(`${date}T${hh}:${mm}:00`);
+            const finSlot = new Date(debutSlot.getTime() + dureePresta * 60000);
+
+            if (debutSlot <= maintenant) continue;
+
+            // Vérifie s'il existe au moins un employé disponible sur ce créneau
+            const employeLibre = employesDisposJour.find(idEmp => {
+                const conflit = rdvsRes.rows.some(r => {
+                    if (Number(r.id_employe) !== Number(idEmp)) return false;
+                    const dExistant = new Date(String(r.date_heure_debut).replace('Z', ''));
+                    const fExistant = new Date(dExistant.getTime() + ((parseInt(r.duree_minutes, 10) || 30) + tempsNettoyage) * 60000);
+                    return dExistant < finSlot && fExistant > debutSlot;
+                });
+                return !conflit;
+            });
+
+            if (employeLibre) {
+                creneauxDispos.push({
+                    heure: `${hh}:${mm}`,
+                    date_heure_debut: `${date}T${hh}:${mm}`,
+                    id_employe_suggere: employeLibre
+                });
+            }
+        }
+
+        res.json({ creneaux: creneauxDispos });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur calcul des créneaux." });
+    }
+});
+
+// 3. Vérification instantanée des avantages Fidélité / Winback du client (Levier anti-Planity)
+app.get('/api/public/reservation/:id_salon/fidelite', limiteurAvisPublic, async (req, res) => {
+    const id_salon = parseInt(req.params.id_salon, 10);
+    const tel = String(req.query.telephone || '').replace(/\s+/g, '').trim();
+    if (!tel || tel.length < 8) return res.json({ client_trouve: false });
+
+    try {
+        const cliRes = await pool.query(
+            `SELECT prenom, nom, points_fidelite, tampons_fidelite, remise_winback
+             FROM clients
+             WHERE id_salon = $1 AND REPLACE(telephone, ' ', '') LIKE $2
+             LIMIT 1`,
+            [id_salon, `%${tel.slice(-8)}%`]
+        );
+        if (cliRes.rowCount === 0) return res.json({ client_trouve: false });
+        const c = cliRes.rows[0];
+        res.json({
+            client_trouve: true,
+            prenom: c.prenom || '',
+            nom: c.nom || '',
+            points_fidelite: c.points_fidelite || 0,
+            tampons_fidelite: c.tampons_fidelite || 0,
+            remise_winback: c.remise_winback || null
+        });
+    } catch (e) {
+        res.json({ client_trouve: false });
+    }
+});
+
+// 4. Validation de la réservation en ligne (+ Option Acompte Stripe anti-lapin)
+app.post('/api/public/reservation/:id_salon/reserver', limiteurAvisPublic, async (req, res) => {
+    const id_salon = parseInt(req.params.id_salon, 10);
+    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes, payer_acompte } = req.body;
+
+    if (!nom_client || !telephone_client || !prestation || !date_heure_debut) {
+        return res.status(400).json({ erreur: "Veuillez remplir tous les champs obligatoires." });
+    }
+
+    try {
+        const dureeReelle = parseInt(duree_minutes, 10) || 30;
+        const configRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        const config = configRes.rows[0] || {};
+        const tempsNettoyage = parseInt(config.temps_nettoyage_minutes, 10) || 0;
+        const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
+
+        // Contrôle anti-doublon de dernière seconde
+        if (id_employe) {
+            const rdvExistants = await pool.query(
+                `SELECT id_rdv FROM rendez_vous 
+                 WHERE id_salon = $1 AND id_employe = $2 
+                 AND (
+                    (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
+                    AND 
+                    (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
+                 )`,
+                [id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage]
+            );
+            if (rdvExistants.rowCount > 0) {
+                return res.status(409).json({ erreur: "Ce créneau vient tout juste d'être réservé. Veuillez choisir un autre horaire." });
+            }
+        }
+
+        const insertRdv = await pool.query(
+            `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id_rdv`,
+            [id_salon, id_employe || null, nom_client.trim(), telephone_client.trim(), prestation, date_heure_debut, dureeReelle]
+        );
+
+        io.to(id_salon.toString()).emit('nouveauRDV');
+
+        if (typeof envoyerNotificationPush === 'function') {
+            envoyerNotificationPush(id_salon, 'gerant', {
+                title: "Nouvelle réservation en ligne STACK !",
+                body: `${nom_client} a réservé "${prestation}" (${date_heure_debut.replace('T', ' à ')}).`,
+                url: '/?tab=agenda'
+            });
+        }
+
+        // Si le client souhaite régler son acompte anti-lapin par CB Stripe
+        if (payer_acompte && process.env.STRIPE_SECRET_KEY) {
+            const prestaRes = await pool.query('SELECT prix FROM catalogue WHERE id_salon = $1 AND nom = $2 LIMIT 1', [id_salon, prestation]);
+            const prixPresta = prestaRes.rowCount > 0 ? (parseFloat(prestaRes.rows[0].prix) || 30) : 30;
+            const montantAcompteCents = Math.max(500, Math.round(prixPresta * 0.30 * 100)); // Acompte de 30% (min 5 €)
+
+            const originUrl = req.headers.origin || 'https://app-salon-caiss.onrender.com';
+            const session = await stripe.checkout.sessions.create({
+                payment_method_types: ['card'],
+                mode: 'payment',
+                line_items: [{
+                    price_data: {
+                        currency: 'eur',
+                        product_data: {
+                            name: `Acompte Réservation — ${prestation} (${config.nom_salon || 'Salon'})`,
+                            description: `RDV du ${date_heure_debut.replace('T', ' à ')} pour ${nom_client}`
+                        },
+                        unit_amount: montantAcompteCents
+                    },
+                    quantity: 1
+                }],
+                success_url: `${originUrl}/?reservation=${id_salon}&success=1`,
+                cancel_url: `${originUrl}/?reservation=${id_salon}`
+            });
+            return res.status(201).json({ message: "Redirection vers l'acompte Stripe...", checkout_url: session.url, id_rdv: insertRdv.rows[0].id_rdv });
+        }
+
+        res.status(201).json({ message: "Rendez-vous confirmé !", id_rdv: insertRdv.rows[0].id_rdv });
+    } catch (e) {
+        console.error("Erreur réservation publique :", e);
+        res.status(500).json({ erreur: "Erreur lors de la réservation." });
+    }
+});
+
 app.delete('/api/rdv/:id', verifierToken, async (req, res) => {
     try {
         await pool.query('DELETE FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
