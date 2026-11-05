@@ -991,6 +991,33 @@ const authLimiter = rateLimit({
     message: { erreur: "Trop de tentatives pour ce compte. Veuillez patienter 15 minutes avant de réessayer." }
 });
 
+const limiteurAvisPublic = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false, default: false },
+    message: { erreur: "Trop de tentatives, réessayez plus tard." }
+});
+
+// Limiteur autonome anti-spam pour les routes publiques de réservation (évite tout crash d'ordre d'initialisation)
+const mapLimiteurReservation = new Map();
+const limiteurReservationPublique = (req, res, next) => {
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'ip';
+    const now = Date.now();
+    const entree = mapLimiteurReservation.get(ip) || { count: 0, resetAt: now + 60000 };
+    if (now > entree.resetAt) {
+        entree.count = 0;
+        entree.resetAt = now + 60000;
+    }
+    entree.count++;
+    mapLimiteurReservation.set(ip, entree);
+    if (entree.count > 60) {
+        return res.status(429).json({ erreur: "Trop de requêtes, veuillez réessayer dans un instant." });
+    }
+    next();
+};
+
 app.post('/api/register', authLimiter, async (req, res) => {
     const { email, mot_de_passe, nom_salon, nom_gerant, code_partenaire, siret } = req.body;
     if (!email || !mot_de_passe) return res.status(400).json({ erreur: "Email et mot de passe requis." });
@@ -1943,7 +1970,7 @@ app.get('/api/ical/:id_salon/:id_employe.ics', limiteurAvisPublic, async (req, r
     try {
         const icsContent = await genererFluxIcal({ pool }, { id_salon: req.params.id_salon, id_employe: req.params.id_employe });
         res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-        res.setHeader('Content-Disposition', );
+        res.setHeader('Content-Disposition', `inline; filename="agenda-${req.params.id_employe}.ics"`);
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.send(icsContent);
     } catch (e) {

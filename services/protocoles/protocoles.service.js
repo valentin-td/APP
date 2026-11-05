@@ -111,21 +111,30 @@ async function migrerBase64ExistantsVersR2({ pool, s3Client }) {
             );
         }
 
-        await pool.query(`ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS signature_base64 TEXT`).catch(() => {});
-        const sigsRes = await pool.query(`
-            SELECT id_validation, id_salon, signature_base64
-            FROM liasses_mensuelles_validees
-            WHERE signature_base64 LIKE 'data:image/%'
-        `);
+        try {
+            await pool.query(`ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS signature_base64 TEXT`).catch(() => {});
+            const sigsRes = await pool.query(`
+                SELECT id_validation, id_salon, signature_base64
+                FROM liasses_mensuelles_validees
+                WHERE signature_base64 LIKE 'data:image/%'
+            `).catch(() => ({ rows: [] }));
 
-        for (const s of sigsRes.rows) {
-            const cleSigR2 = await stockerImageSurR2(s.signature_base64, s.id_salon, 'signatures', { s3Client });
-            if (cleSigR2 && cleSigR2.startsWith('r2://')) {
-                await pool.query(
-                    `UPDATE liasses_mensuelles_validees SET signature_base64 = $1 WHERE id_validation = $2`,
-                    [cleSigR2, s.id_validation]
-                );
+            for (const s of sigsRes.rows) {
+                const cleSigR2 = await stockerImageSurR2(s.signature_base64, s.id_salon, 'signatures', { s3Client });
+                if (cleSigR2 && cleSigR2.startsWith('r2://')) {
+                    await pool.query(
+                        `UPDATE liasses_mensuelles_validees SET signature_base64 = $1 WHERE id_validation = $2`,
+                        [cleSigR2, s.id_validation]
+                    ).catch(err => {
+                        // Conformité NF525 : les archives scellées refusent tout UPDATE en base de données
+                        if (!err.message?.includes('NF525')) {
+                            console.warn("⚠️ [Migration R2 Signature] Erreur mise à jour :", err.message);
+                        }
+                    });
+                }
             }
+        } catch (errSig) {
+            // Table scellée ou non modifiable en conformité NF525
         }
 
         if (protosRes.rowCount > 0 || sigsRes.rowCount > 0) {
