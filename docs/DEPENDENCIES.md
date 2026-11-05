@@ -266,7 +266,20 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
   - Une fuite mémoire sur les listeners WebSocket impacterait tous les utilisateurs connectés.
 
 ### 4.3. Le Frontend Modulaire & Composants Métier (`frontend/src/`)
-- **Orchestrateur racine** : `frontend/src/App.jsx` (réduit de 11 553 lignes à **4 807 lignes** [-58.4%] après extraction des onglets de domaine, des modales globales et des composants de navigation).
+- **Orchestrateur racine** : `frontend/src/App.jsx` (réduit de 11 553 lignes à **2 467 lignes** [-78.6%] après extraction de tous les onglets de domaine, modales globales, composants de navigation et 12 custom hooks de logique métier).
+- **Hooks Métier Découplés (`frontend/src/hooks/`)** :
+  - `useAuthSession.js` : Authentification multi-rôles (gérant, salon, employé avec PIN), tokens JWT, conformité légale NF525 (CGV/Politique), reset mot de passe et Reverse Trial Stripe.
+  - `useCaissePOS.js` : Smart POS NF525, panier interactif, pourboires, remises, encaissement espèces/CB Stripe Terminal, éco-tickets et queue hors-ligne `localforage`.
+  - `useClotureZ.js` : Clôture journalière Z certifiée NF525, calculatrice Blind Close, régularisation matinale obligatoire, justification des écarts et alertes de fermeture.
+  - `useAgendaPlanning.js` : Planning hebdomadaire des collaborateurs, collisions de rendez-vous, CRUD RDV, absences/congés et upload justificatifs Cloudflare R2.
+  - `useStocksReassort.js` : Scanner de code-barres caméra HTML5 / manuel, détection de rupture d'inventaire, panier réassort fournisseur, bon de commande PDF et expédition email.
+  - `usePointeuseRH.js` : Pointeuse tactile 4 étapes, saisie PIN sécurisée avec lockout exponentiel NF525 (3, 5, 7, 9 tentatives), chronomètres en direct et déblocage gérant.
+  - `useComptaValidation.js` : Validation mensuelle des écritures comptables, signature tactile sur canvas, 3 points de contrôle de conformité et scellement d'archive fiscale.
+  - `useInternalChat.js` : Messagerie d'équipe temps réel (Socket.io), mémos vocaux (MediaRecorder), pastilles non-lus `localforage`, accusés de lecture "Vu par" et réactions emojis.
+  - `useMultiSalons.js` : Multi-établissements et franchise, création de succursales et bascule instantanée avec purge du cache local.
+  - `useFacturesOCR.js` : Moteur OCR de détection et d'extraction de factures par IA, événements SSE temps réel, file d'attente de documents, simulateur salon démo et saisie manuelle.
+  - `useProtocolesCoiffure.js` : Académie technique, fiches recettes de coiffure, étapes avec proportions de produits, photos/médias et calcul de rentabilité.
+  - `useEntitiesCRUD.jsx` : Gestion CRUD centralisée des clients (historique et notes), des collaborateurs (PIN, commissions), du catalogue de prestations et de l'inventaire des stocks, ainsi que des exports comptables (FEC, liasse PDF) et de l'audit cryptographique NF525.
 - **Structure modulaire en place** :
   - `frontend/src/components/navigation/` :
     - `NavbarSidebar.jsx` : barre latérale de navigation desktop et intégration `LiquidTabBar`.

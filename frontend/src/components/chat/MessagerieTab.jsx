@@ -41,6 +41,7 @@ export const MessagerieTab = ({
   msgInput,
   setMsgInput,
   envoyerMessage,
+  toggleReaction,
 }) => {
   return (
                 <div className={isMobile ? "admin-container mobile-chat-container" : "admin-container"} style={!isMobile ? { display: 'flex', flexDirection: 'column', minHeight: '100%' } : {}}>

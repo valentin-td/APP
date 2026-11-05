@@ -184,8 +184,8 @@ flowchart TD
 
 ---
 
-#### 13. Si tu touches au Frontend (`frontend/src/App.jsx`, `components/`, `context/`, `utils/`, `constants/`, `pages/`)
-- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente (`dashboard/`, `caisse/`, `actions/`, `agenda/`, `protocoles/`, `stock/`, `rh/`, `admin/`, `chat/`, `superadmin/`, `Parametres.jsx`), les modales globales extraites (`frontend/src/components/modals/`), la navigation (`frontend/src/components/navigation/`), les composants mutualisés (`frontend/src/components/common/`), l'authentification (`components/auth/LoginView.jsx`, `utils/auth.js`, `utils/pin.js`), le temps réel et la réservation publique.
+#### 13. Si tu touches au Frontend (`frontend/src/App.jsx`, `hooks/`, `components/`, `context/`, `utils/`, `constants/`, `pages/`)
+- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente (`dashboard/`, `caisse/`, `actions/`, `agenda/`, `protocoles/`, `stock/`, `rh/`, `admin/`, `chat/`, `superadmin/`, `Parametres.jsx`), les 12 custom hooks de logique métier extraits (`frontend/src/hooks/`), les modales globales extraites (`frontend/src/components/modals/`), la navigation (`frontend/src/components/navigation/`), les composants mutualisés (`frontend/src/components/common/`), l'authentification (`components/auth/LoginView.jsx`, `hooks/useAuthSession.js`, `utils/auth.js`, `utils/pin.js`), le temps réel et la réservation publique.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion si des hooks sont appelés sous conditions.
   - Régression visuelle ou perte de synchronisation des thèmes/styles CSS.
@@ -194,7 +194,7 @@ flowchart TD
 - **Checklist de vérification** :
   1. [ ] Lancer la compilation de contrôle : `cd frontend && npm run build` (doit compiler avec 0 erreur).
   2. [ ] Vérifier la présence des utilitaires d'authentification et de sécurité PIN dans `frontend/src/utils/auth.js` et `frontend/src/utils/pin.js`.
-  3. [ ] En cas de modification d'un onglet ou d'une modal, vérifier que ses props d'état et ses handlers sont synchronisés avec `App.jsx`.
+  3. [ ] En cas de modification d'un hook ou d'un composant, vérifier que les arguments et retours sont synchronisés avec `App.jsx`.
   4. [ ] Tester impérativement le cycle complet : Déconnecté -> Connexion Gérant -> Navigation entre les 11 onglets -> Déconnexion -> Connexion Employé PIN.
   5. [ ] Tester l'accès à la borne publique de réservation sur `/reservation/:id_salon`.
 

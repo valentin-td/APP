@@ -130,7 +130,20 @@ flowchart TB
 ### 3.1. Couche Frontend (SPA Progressive Web App & Architecture Modulaire)
 - **Framework** : React 19.2.8 avec Vite 8.3.0.
 - **PWA & Offline** : `vite-plugin-pwa`, `sw.js` pour les notifications push web, et `localforage` (IndexedDB) pour le cache hors-ligne du catalogue et du panier caisse (`offline_tickets`).
-- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal allégé (réduit de 11 553 à **4 807 lignes** [-58.4%], dont le JSX est entièrement découpé en composants autonomes), structuré en modules, onglets découpés, modales spécialisées, barres de navigation et utilitaires :
+- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal allégé (réduit de 11 553 à **2 467 lignes** [-78.6%], dont le JSX est entièrement découpé en composants autonomes et la logique métier extraite dans 12 custom hooks dédiés dans `frontend/src/hooks/`) :
+  - `frontend/src/hooks/` :
+    - `useAuthSession.js` : Authentification multi-rôles (gérant, salon, employé avec code PIN), gestion des tokens JWT, conformité légale NF525 (CGV/Politique), mot de passe oublié et Reverse Trial Stripe.
+    - `useCaissePOS.js` : Terminal Smart POS NF525, panier réactif, pourboires, remises, encaissement espèces/CB Stripe Terminal, génération de tickets et queue hors-ligne `localforage`.
+    - `useClotureZ.js` : Clôture journalière Z certifiée NF525, calculatrice de caisse Blind Close, régularisation matinale obligatoire, contrôle d'écarts avec justification et alertes de fermeture.
+    - `useAgendaPlanning.js` : Planning hebdomadaire des collaborateurs, détection de collisions, CRUD de rendez-vous, absences/congés et upload justificatifs Cloudflare R2.
+    - `useStocksReassort.js` : Scanner code-barres caméra HTML5 / manuel avec bip audio, seuils d'alerte rupture, panier de réassort fournisseur, génération PDF et email.
+    - `usePointeuseRH.js` : Pointeuse tactile 4 étapes, saisie PIN avec lockout exponentiel NF525 (3, 5, 7, 9 tentatives), chronomètres live et déblocage gérant.
+    - `useComptaValidation.js` : Validation mensuelle des écritures comptables, canvas de signature manuscrite tactile, 3 points de contrôle et scellement d'archive fiscale.
+    - `useInternalChat.js` : Messagerie d'équipe temps réel (Socket.io), mémos vocaux (MediaRecorder), pastilles non-lus `localforage`, accusés de lecture "Vu par" et réactions emojis.
+    - `useMultiSalons.js` : Multi-établissements et franchise, création de succursales et bascule instantanée avec purge du cache local.
+    - `useFacturesOCR.js` : Moteur OCR de détection et d'extraction de factures par IA, connexion SSE temps réel, file d'attente de documents, simulateur salon démo et saisie manuelle.
+    - `useProtocolesCoiffure.js` : Académie technique, fiches recettes de coiffure, étapes avec proportions de produits, photos/médias et calcul de rentabilité.
+    - `useEntitiesCRUD.jsx` : Gestion CRUD centralisée des clients, employés, prestations du catalogue et stocks, exports comptables (FEC, liasse PDF) et audit cryptographique NF525.
   - `frontend/src/utils/auth.js` : décodage JWT/UI-token sécurisé, transformation VAPID Uint8Array et vérification des règles de complexité PIN.
   - `frontend/src/utils/pin.js` : helpers de sécurité NF525 pour la gestion des tentatives et blocages PIN temporaires/définitifs (`getStatutBlocagePin`, `appliquerRetourPinLocal`).
   - `frontend/src/utils/fetchClient.js` : client HTTP intercepteur injectant automatiquement les cookies de session et le jeton Bearer sur toutes les requêtes API.
