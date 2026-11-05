@@ -75,7 +75,19 @@ flowchart TD
 
 ---
 
-#### 4. Si tu touches à `frontend/src/App.jsx`
+#### 4. Si tu touches à `services/protocoles/protocoles.service.js` (Académie & Tâches)
+- **Fonctionnalités impactées** : Fiches protocoles coiffure, dosages de recettes produits, téléversement de médias Cloudflare R2, to-do list salon.
+- **Risques majeurs** :
+  - Échec de signature d'URL R2 ou upload d'images corrompues.
+  - Décalage de dosage d'ingrédients techniques dans les fiches recettes.
+- **Checklist de vérification** :
+  1. [ ] Vérifier la normalisation des étapes et ingrédients.
+  2. [ ] Tester la création/modification d'une fiche protocole avec photos.
+  3. [ ] Vérifier le bon passage du statut d'une tâche action (`A_FAIRE` <-> `FAIT`).
+
+---
+
+#### 5. Si tu touches à `frontend/src/App.jsx`
 - **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.

@@ -69,6 +69,19 @@ const {
     genererLienJustificatifAbsence,
     recupererAbsences
 } = require('./services/rh/rh.service');
+const {
+    stockerImageSurR2,
+    resoudreUrlImageDepuisR2,
+    migrerBase64ExistantsVersR2,
+    recupererProtocoles,
+    creerProtocole,
+    modifierProtocole,
+    supprimerProtocole,
+    recupererTaches,
+    creerTache,
+    basculerStatutTache,
+    supprimerTache
+} = require('./services/protocoles/protocoles.service');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -6804,485 +6817,69 @@ app.get('/api/export-pdf', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/taches', verifierToken, async (req, res) => {
     try {
-        const result = await pool.query(`SELECT * FROM taches_actions WHERE id_salon = $1 ORDER BY statut ASC, date_echeance ASC NULLS LAST`, [req.user.id_salon]);
-        res.json(result.rows);
+        const result = await recupererTaches({ pool }, req.user.id_salon);
+        res.json(result);
     } catch (e) { res.status(500).json({ erreur: "Erreur lecture tâches." }); }
 });
 
 app.post('/api/taches', verifierToken, async (req, res) => {
-    const { titre, description, date_echeance } = req.body;
     try {
-        await pool.query(
-            "INSERT INTO taches_actions (id_salon, titre, description, date_echeance, source) VALUES ($1, $2, $3, $4, 'MANUEL')", 
-            [req.user.id_salon, titre, description, date_echeance || null]
-        );
-        res.status(201).json({ message: "Action ajoutée !" });
+        const result = await creerTache({ pool }, { id_salon: req.user.id_salon, body: req.body });
+        res.status(result.status || 201).json({ message: result.message });
     } catch (e) { res.status(500).json({ erreur: "Erreur ajout tâche." }); }
 });
 
 app.put('/api/taches/:id/statut', verifierToken, async (req, res) => {
     try {
-        await pool.query("UPDATE taches_actions SET statut = CASE WHEN statut = 'A_FAIRE' THEN 'FAIT' ELSE 'A_FAIRE' END WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
-        res.json({ message: "Statut mis à jour." });
+        const result = await basculerStatutTache({ pool }, { id_salon: req.user.id_salon, id_tache: req.params.id });
+        res.json(result);
     } catch (e) { res.status(500).json({ erreur: "Erreur modification." }); }
 });
 
 app.delete('/api/taches/:id', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut supprimer une tâche." });
     try {
-        await pool.query("DELETE FROM taches_actions WHERE id_tache = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
-        res.json({ message: "Tâche supprimée." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur suppression." }); }
+        const result = await supprimerTache({ pool }, { id_salon: req.user.id_salon, role: req.user.role, id_tache: req.params.id });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur suppression." }); }
 });
 
-
-
-// =========================================================================
-// --- MOTEUR CLOUDFLARE R2 POUR MÉDIAS ACADÉMIE & SIGNATURES LIASSE ---
-// =========================================================================
-const { PutObjectCommand: R2PutObjectCommand, GetObjectCommand: R2GetObjectCommand } = require('@aws-sdk/client-s3');
-
-// Convertit une image Base64 en fichier binaire sur Cloudflare R2 et renvoie "r2://..."
-// Si l'image est déjà une URL signée R2 existante, extrait et conserve sa clé "r2://..."
-async function stockerImageSurR2(valeurImage, id_salon, sousDossier = 'academie') {
-    if (!valeurImage || typeof valeurImage !== 'string') return null;
-    const str = valeurImage.trim();
-    if (!str) return null;
-
-    // 1. Déjà au format clé R2 interne
-    if (str.startsWith('r2://')) return str;
-
-    // 2. Si le frontend renvoie une URL signée R2 d'une image déjà stockée (lors d'une édition)
-    const matchCleExistante = str.match(/salons\/\d+\/(?:academie|signatures)\/[a-zA-Z0-9_.-]+/);
-    if (matchCleExistante) {
-        return `r2://${matchCleExistante[0]}`;
-    }
-
-    // 3. Si c'est une nouvelle image en Base64 ("data:image/...;base64,...")
-    if (str.startsWith('data:image/') && process.env.R2_BUCKET_NAME && typeof s3Client !== 'undefined') {
-        try {
-            const matchB64 = str.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-            if (matchB64) {
-                const mimeType = matchB64[1];
-                const base64Data = matchB64[2];
-                const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg';
-                const buffer = Buffer.from(base64Data, 'base64');
-                const cleR2 = `salons/${id_salon}/${sousDossier}/${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
-
-                await s3Client.send(new R2PutObjectCommand({
-                    Bucket: process.env.R2_BUCKET_NAME,
-                    Key: cleR2,
-                    Body: buffer,
-                    ContentType: mimeType
-                }));
-                return `r2://${cleR2}`;
-            }
-        } catch (errR2) {
-            console.error("⚠️ [R2 Upload] Bascule en stockage local suite à une erreur R2 :", errR2.message);
-        }
-    }
-
-    // Fallback si R2 non configuré en local ou URL externe classique
-    return str;
-}
-
-// Transforme une clé "r2://..." en URL temporaire signée (valable 7 jours) pour l'affichage dans React
-async function resoudreUrlImageDepuisR2(valeurStockee) {
-    if (!valeurStockee || typeof valeurStockee !== 'string') return null;
-    if (valeurStockee.startsWith('r2://') && process.env.R2_BUCKET_NAME && typeof s3Client !== 'undefined') {
-        try {
-            const cleR2 = valeurStockee.replace('r2://', '');
-            const cmd = new R2GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: cleR2 });
-            return await getSignedUrl(s3Client, cmd, { expiresIn: 604800 });
-        } catch (errSign) {
-            console.error("⚠️ [R2 Sign URL] Impossible de signer l'URL :", errSign.message);
-            return null;
-        }
-    }
-    return valeurStockee;
-}
-
-// (recupererBufferDepuisR2OuBase64 est désormais importé depuis ./services/pdf/liassePdf.service)
-
-// Migration automatique en arrière-plan des anciennes images/signatures Base64 déjà en base PostgreSQL vers R2
-async function migrerBase64ExistantsVersR2() {
-    if (!process.env.R2_BUCKET_NAME || typeof s3Client === 'undefined') return;
-    try {
-        // 1. Migration des protocoles de l'Académie contenant encore du Base64
-        const protosRes = await pool.query(`
-            SELECT id_protocole, id_salon, medias, etapes
-            FROM protocoles
-            WHERE medias::text LIKE '%data:image/%' OR etapes::text LIKE '%data:image/%'
-        `);
-
-        for (const p of protosRes.rows) {
-            let mediasObj = p.medias && typeof p.medias === 'object' ? { ...p.medias } : {};
-            for (const k of ['avant', 'pendant', 'apres']) {
-                if (mediasObj[k] && String(mediasObj[k]).startsWith('data:image/')) {
-                    mediasObj[k] = await stockerImageSurR2(mediasObj[k], p.id_salon, 'academie');
-                }
-            }
-
-            let etapesArr = Array.isArray(p.etapes) ? [...p.etapes] : [];
-            for (let i = 0; i < etapesArr.length; i++) {
-                if (etapesArr[i] && typeof etapesArr[i] === 'object' && etapesArr[i].photo_url && String(etapesArr[i].photo_url).startsWith('data:image/')) {
-                    etapesArr[i] = {
-                        ...etapesArr[i],
-                        photo_url: await stockerImageSurR2(etapesArr[i].photo_url, p.id_salon, 'academie')
-                    };
-                }
-            }
-
-            await pool.query(
-                `UPDATE protocoles SET medias = $1, etapes = $2 WHERE id_protocole = $3`,
-                [JSON.stringify(mediasObj), JSON.stringify(etapesArr), p.id_protocole]
-            );
-        }
-
-        // 2. Migration des signatures de liasses mensuelles contenant encore du Base64
-        await pool.query(`ALTER TABLE liasses_mensuelles_validees ADD COLUMN IF NOT EXISTS signature_base64 TEXT`).catch(() => {});
-        const sigsRes = await pool.query(`
-            SELECT id_validation, id_salon, signature_base64
-            FROM liasses_mensuelles_validees
-            WHERE signature_base64 LIKE 'data:image/%'
-        `);
-
-        for (const s of sigsRes.rows) {
-            const cleSigR2 = await stockerImageSurR2(s.signature_base64, s.id_salon, 'signatures');
-            if (cleSigR2 && cleSigR2.startsWith('r2://')) {
-                await pool.query(
-                    `UPDATE liasses_mensuelles_validees SET signature_base64 = $1 WHERE id_validation = $2`,
-                    [cleSigR2, s.id_validation]
-                );
-            }
-        }
-
-        if (protosRes.rowCount > 0 || sigsRes.rowCount > 0) {
-            console.log(`✅ [Optimisation PostgreSQL -> R2] ${protosRes.rowCount} protocole(s) et ${sigsRes.rowCount} signature(s) migrés hors de PostgreSQL.`);
-        }
-    } catch (errMig) {
-        console.error("⚠️ [Migration R2] Erreur non bloquante :", errMig.message);
-    }
-}
-setTimeout(migrerBase64ExistantsVersR2, 8000);
+// Lancement de la migration asynchrone des médias R2 existants
+setTimeout(() => migrerBase64ExistantsVersR2({ pool, s3Client }), 8000);
 
 // =========================================================================
-// --- PROTOCOLES & RECETTES (TUTORIELS ÉTAPE PAR ÉTAPE : MÉDIAS R2 & DOSAGES) ---
+// --- MODULE PROTOCOLES & ACADÉMIE ---
 // =========================================================================
-async function normaliserEtapesEtExtraireIngredients(etapesBrutes = [], ingredientsGlobaux = [], id_salon = 0) {
-    const etapesNormalisees = [];
-    const lignesRecetteSQL = [];
-
-    if (Array.isArray(etapesBrutes)) {
-        for (let index = 0; index < etapesBrutes.length; index++) {
-            const etape = etapesBrutes[index];
-            if (typeof etape === 'string') {
-                etapesNormalisees.push({
-                    numero: index + 1,
-                    titre: `Étape ${index + 1}`,
-                    description: etape,
-                    duree_minutes: 0,
-                    photo_url: null,
-                    video_url: null,
-                    ingredients: []
-                });
-            } else if (etape && typeof etape === 'object') {
-                const ingsEtape = Array.isArray(etape.ingredients)
-                    ? etape.ingredients
-                        .filter(ing => ing && ing.id_article)
-                        .map(ing => ({
-                            id_article: parseInt(ing.id_article, 10),
-                            nom: ing.nom || null,
-                            quantite_necessaire: parseFloat(String(ing.quantite_necessaire || 1).replace(',', '.')) || 1,
-                            proportion: ing.proportion ? String(ing.proportion).trim().substring(0, 120) : ''
-                        }))
-                    : [];
-
-                ingsEtape.forEach(ing => {
-                    lignesRecetteSQL.push({
-                        id_article: ing.id_article,
-                        quantite_necessaire: ing.quantite_necessaire,
-                        numero_etape: index + 1,
-                        proportion: ing.proportion || null
-                    });
-                });
-
-                // Upload automatique sur Cloudflare R2 si photo_url est en Base64 (ou conservation de la clé R2)
-                const photoStockeeR2 = etape.photo_url
-                    ? await stockerImageSurR2(etape.photo_url, id_salon, 'academie')
-                    : null;
-
-                etapesNormalisees.push({
-                    numero: index + 1,
-                    titre: etape.titre ? String(etape.titre).trim() : `Étape ${index + 1}`,
-                    description: etape.description ? String(etape.description).trim() : (etape.texte ? String(etape.texte).trim() : ''),
-                    duree_minutes: parseInt(etape.duree_minutes ?? etape.timer_min, 10) || 0,
-                    photo_url: photoStockeeR2,
-                    video_url: etape.video_url || null,
-                    ingredients: ingsEtape
-                });
-            }
-        }
-    }
-
-    if (lignesRecetteSQL.length === 0 && Array.isArray(ingredientsGlobaux)) {
-        ingredientsGlobaux.forEach(ing => {
-            if (!ing || !ing.id_article) return;
-            lignesRecetteSQL.push({
-                id_article: parseInt(ing.id_article, 10),
-                quantite_necessaire: parseFloat(String(ing.quantite_necessaire || 1).replace(',', '.')) || 1,
-                numero_etape: parseInt(ing.numero_etape, 10) || 0,
-                proportion: ing.proportion ? String(ing.proportion).trim().substring(0, 120) : null
-            });
-        });
-    }
-
-    return { etapesNormalisees, lignesRecetteSQL };
-}
-
-async function normaliserGalerieMediasVersR2(mediasBruts = {}, id_salon = 0) {
-    if (!mediasBruts || typeof mediasBruts !== 'object') return { avant: null, pendant: null, apres: null };
-    return {
-        avant: mediasBruts.avant ? await stockerImageSurR2(mediasBruts.avant, id_salon, 'academie') : null,
-        pendant: mediasBruts.pendant ? await stockerImageSurR2(mediasBruts.pendant, id_salon, 'academie') : null,
-        apres: mediasBruts.apres ? await stockerImageSurR2(mediasBruts.apres, id_salon, 'academie') : null
-    };
-}
-
 app.get('/api/protocoles', verifierToken, async (req, res) => {
     try {
-        const result = await pool.query(`
-            SELECT p.*, 
-                   COALESCE(
-                       json_agg(
-                           json_build_object(
-                               'id_recette', r.id_recette,
-                               'id_article', r.id_article,
-                               'quantite_necessaire', r.quantite_necessaire,
-                               'numero_etape', COALESCE(r.numero_etape, 0),
-                               'proportion', r.proportion,
-                               'nom', c.nom,
-                               'stock_actuel', c.stock_actuel
-                           ) ORDER BY COALESCE(r.numero_etape, 0) ASC, r.id_recette ASC
-                       ) FILTER (WHERE r.id_article IS NOT NULL),
-                       '[]'
-                   ) as ingredients
-            FROM protocoles p
-            LEFT JOIN recettes_articles r ON p.id_protocole = r.id_protocole
-            LEFT JOIN catalogue c ON r.id_article = c.id_article
-            WHERE p.id_salon = $1
-            GROUP BY p.id_protocole
-            ORDER BY p.nom_prestation ASC
-        `, [req.user.id_salon]);
-
-        const rowsEnrichies = await Promise.all(result.rows.map(async (proto) => {
-            const ingsList = Array.isArray(proto.ingredients) ? proto.ingredients : [];
-            const rawEtapes = Array.isArray(proto.etapes) ? proto.etapes : [];
-
-            // Résolution des URLs signées R2 pour la galerie Avant / Pendant / Après
-            const mediasResolus = {
-                avant: proto.medias?.avant ? await resoudreUrlImageDepuisR2(proto.medias.avant) : null,
-                pendant: proto.medias?.pendant ? await resoudreUrlImageDepuisR2(proto.medias.pendant) : null,
-                apres: proto.medias?.apres ? await resoudreUrlImageDepuisR2(proto.medias.apres) : null
-            };
-
-            const etapesStructurees = await Promise.all(rawEtapes.map(async (et, idx) => {
-                const numEtape = idx + 1;
-                const ingsDeCetteEtape = ingsList.filter(i => Number(i.numero_etape) === numEtape);
-
-                if (typeof et === 'string') {
-                    return {
-                        numero: numEtape,
-                        titre: `Étape ${numEtape}`,
-                        description: et,
-                        duree_minutes: 0,
-                        photo_url: null,
-                        video_url: null,
-                        ingredients: ingsDeCetteEtape
-                    };
-                }
-
-                const ingsDansJson = Array.isArray(et.ingredients) ? et.ingredients : [];
-                const ingsFusionnes = ingsDeCetteEtape.length > 0
-                    ? ingsDeCetteEtape
-                    : ingsDansJson.map(ij => {
-                        const matchCat = ingsList.find(x => Number(x.id_article) === Number(ij.id_article));
-                        return {
-                            ...ij,
-                            nom: matchCat?.nom || ij.nom || 'Produit technique'
-                        };
-                    });
-
-                const photoUrlSignee = et.photo_url ? await resoudreUrlImageDepuisR2(et.photo_url) : null;
-
-                return {
-                    numero: numEtape,
-                    titre: et.titre || `Étape ${numEtape}`,
-                    description: et.description || et.texte || '',
-                    duree_minutes: parseInt(et.duree_minutes ?? et.timer_min, 10) || 0,
-                    photo_url: photoUrlSignee,
-                    video_url: et.video_url || null,
-                    ingredients: ingsFusionnes
-                };
-            }));
-
-            return {
-                ...proto,
-                medias: mediasResolus,
-                etapes: etapesStructurees
-            };
-        }));
-
-        res.json(rowsEnrichies);
+        const result = await recupererProtocoles({ pool, s3Client }, req.user.id_salon);
+        res.json(result);
     } catch (e) { res.status(500).json({ erreur: "Erreur lecture protocoles." }); }
 });
 
 app.post('/api/protocoles', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
-    const { nom_prestation, description, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
-    const clientDB = await pool.connect();
     try {
-        await clientDB.query('BEGIN');
-        const { etapesNormalisees, lignesRecetteSQL } = await normaliserEtapesEtExtraireIngredients(etapes, ingredients, req.user.id_salon);
-        const mediasNormalisesR2 = await normaliserGalerieMediasVersR2(medias, req.user.id_salon);
-
-        const protoRes = await clientDB.query(
-            `INSERT INTO protocoles (id_salon, nom_prestation, description, etapes, medias, tags, delai_livraison_jours, temps_nettoyage_minutes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_protocole`,
-            [
-                req.user.id_salon,
-                nom_prestation,
-                description || null,
-                JSON.stringify(etapesNormalisees),
-                JSON.stringify(mediasNormalisesR2),
-                JSON.stringify(tags || []),
-                delai_livraison_jours || 3,
-                temps_nettoyage_minutes || 0
-            ]
-        );
-        const idProto = protoRes.rows[0].id_protocole;
-
-        for (const ing of lignesRecetteSQL) {
-            await clientDB.query(
-                `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire, numero_etape, proportion)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [idProto, ing.id_article, ing.quantite_necessaire, ing.numero_etape || 0, ing.proportion || null]
-            );
-        }
-
-        await clientDB.query('COMMIT');
-        res.status(201).json({ message: "Protocole et étapes enregistrés avec succès !" });
+        const result = await creerProtocole({ pool, s3Client }, { id_salon: req.user.id_salon, body: req.body });
+        res.status(result.status || 201).json({ message: result.message });
     } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: "Erreur création protocole." });
-    } finally { clientDB.release(); }
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur création protocole." });
+    }
 });
 
 app.put('/api/protocoles/:id', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
-    const { nom_prestation, description, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
-    const clientDB = await pool.connect();
     try {
-        await clientDB.query('BEGIN');
-        const { etapesNormalisees, lignesRecetteSQL } = await normaliserEtapesEtExtraireIngredients(etapes, ingredients, req.user.id_salon);
-        const mediasNormalisesR2 = await normaliserGalerieMediasVersR2(medias, req.user.id_salon);
-
-        const updateRes = await clientDB.query(
-            `UPDATE protocoles
-             SET nom_prestation = $1, description = COALESCE($9, description), etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8
-             WHERE id_protocole = $6 AND id_salon = $7
-             RETURNING id_protocole`,
-            [
-                nom_prestation,
-                JSON.stringify(etapesNormalisees),
-                JSON.stringify(mediasNormalisesR2),
-                JSON.stringify(tags || []),
-                delai_livraison_jours || 3,
-                req.params.id,
-                req.user.id_salon,
-                temps_nettoyage_minutes || 0,
-                description !== undefined ? description : null
-            ]
-        );
-
-        if (updateRes.rowCount === 0) {
-            await clientDB.query('ROLLBACK');
-            return res.status(404).json({ erreur: "Protocole introuvable ou accès refusé." });
-        }
-
-        await clientDB.query(`DELETE FROM recettes_articles WHERE id_protocole = $1`, [req.params.id]);
-        for (const ing of lignesRecetteSQL) {
-            await clientDB.query(
-                `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire, numero_etape, proportion)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [req.params.id, ing.id_article, ing.quantite_necessaire, ing.numero_etape || 0, ing.proportion || null]
-            );
-        }
-
-        await clientDB.query('COMMIT');
-        res.json({ message: "Protocole modifié avec succès !" });
+        const result = await modifierProtocole({ pool, s3Client }, { id_salon: req.user.id_salon, id_protocole: req.params.id, body: req.body });
+        res.json(result);
     } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: "Erreur modification protocole." });
-    } finally { clientDB.release(); }
-});
-
-app.put('/api/protocoles/:id', verifierToken, verifierPlan(['PRO', 'PREMIUM']), async (req, res) => {
-    const { nom_prestation, description, etapes, medias, tags, delai_livraison_jours, ingredients, temps_nettoyage_minutes } = req.body;
-    const clientDB = await pool.connect();
-    try {
-        await clientDB.query('BEGIN');
-        const { etapesNormalisees, lignesRecetteSQL } = normaliserEtapesEtExtraireIngredients(etapes, ingredients);
-
-        // 1. Mise à jour de la fiche (AVEC VÉRIFICATION DES DROITS)
-        const updateRes = await clientDB.query(
-            `UPDATE protocoles
-             SET nom_prestation = $1, description = COALESCE($9, description), etapes = $2, medias = $3, tags = $4, delai_livraison_jours = $5, temps_nettoyage_minutes = $8
-             WHERE id_protocole = $6 AND id_salon = $7
-             RETURNING id_protocole`,
-            [
-                nom_prestation,
-                JSON.stringify(etapesNormalisees),
-                JSON.stringify(medias || {}),
-                JSON.stringify(tags || []),
-                delai_livraison_jours || 3,
-                req.params.id,
-                req.user.id_salon,
-                temps_nettoyage_minutes || 0,
-                description !== undefined ? description : null
-            ]
-        );
-
-        // 🚨 SÉCURITÉ (IDOR) : Si l'update ne touche aucune ligne, le protocole n'existe pas ou appartient à un autre salon.
-        if (updateRes.rowCount === 0) {
-            await clientDB.query('ROLLBACK');
-            return res.status(404).json({ erreur: "Protocole introuvable ou accès refusé." });
-        }
-
-        // 2. Remplacement des ingrédients étape par étape de la recette
-        await clientDB.query(`DELETE FROM recettes_articles WHERE id_protocole = $1`, [req.params.id]);
-        for (const ing of lignesRecetteSQL) {
-            await clientDB.query(
-                `INSERT INTO recettes_articles (id_protocole, id_article, quantite_necessaire, numero_etape, proportion)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [req.params.id, ing.id_article, ing.quantite_necessaire, ing.numero_etape || 0, ing.proportion || null]
-            );
-        }
-
-        await clientDB.query('COMMIT');
-        res.json({ message: "Protocole modifié avec succès !" });
-    } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: "Erreur modification protocole." });
-    } finally { clientDB.release(); }
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur modification protocole." });
+    }
 });
 
 app.delete('/api/protocoles/:id', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Suppression de protocole réservée au gérant et au poste Salon." });
     try {
-        await pool.query("DELETE FROM protocoles WHERE id_protocole = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
-        res.json({ message: "Protocole supprimé." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur suppression protocole." }); }
+        const result = await supprimerProtocole({ pool }, { id_salon: req.user.id_salon, role: req.user.role, id_protocole: req.params.id });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur suppression protocole." }); }
 });
-
 
 // (Robots Avis & Marketing extraits dans jobs/cronJobs.js)
 // --- MODULE COMPTABILITÉ & CLÔTURE MENSUELLE (Délégué à services/compta/clotureMensuelle.service) ---

@@ -369,13 +369,13 @@
 
 - **Objectif** : Digitaliser le savoir-faire du salon : fiches protocoles par technique (Balayage, Ombré, Lissage brésilien) avec étapes chronométrées, photos et décompte automatique des doses de produits (recettes).
 - **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Protocoles).
-- **Fichiers Backend** : `server.js` (lignes ~7050-7280).
+- **Fichiers Backend** : `server.js`, `services/protocoles/protocoles.service.js`.
 - **Routes API** :
   - `GET /api/protocoles`
   - `POST /api/protocoles`
   - `PUT /api/protocoles/:id`
   - `DELETE /api/protocoles/:id`
-- **Services / Modules** : Cloudflare R2 (photos des réalisations).
+- **Services / Modules** : `services/protocoles/protocoles.service.js`, Cloudflare R2 (photos des réalisations).
 - **Tables BDD** : `protocoles`, `recettes_articles`, `catalogue`.
 - **Dépendances Amont** : `catalogue` (pour la liaison des ingrédients de recette).
 - **Dépendances Aval** : Caisse & Stocks (consommation technique décomptée lors de l'encaissement).
@@ -388,13 +388,13 @@
 
 - **Objectif** : Organiser les tâches opérationnelles du salon (ménage, réassort, relances clients, déclarations) créées manuellement ou injectées par l'IA.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Actions).
-- **Fichiers Backend** : `server.js` (lignes ~6800-6840).
+- **Fichiers Backend** : `server.js`, `services/protocoles/protocoles.service.js`.
 - **Routes API** :
   - `GET /api/taches`
   - `POST /api/taches`
   - `PUT /api/taches/:id/statut`
   - `DELETE /api/taches/:id`
-- **Services / Modules** : `pool`.
+- **Services / Modules** : `services/protocoles/protocoles.service.js`, `pool`.
 - **Tables BDD** : `taches_actions`.
 - **Dépendances Amont** : Alimenté manuellement ou par `cronJobs.js` / arrêts maladie.
 - **Dépendances Aval** : Organisation interne de l'équipe.
