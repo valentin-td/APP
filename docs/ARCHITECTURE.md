@@ -127,10 +127,16 @@ flowchart TB
 
 ## 3. Description des Couches Techniques
 
-### 3.1. Couche Frontend (SPA Progressive Web App)
+### 3.1. Couche Frontend (SPA Progressive Web App & Architecture Modulaire)
 - **Framework** : React 19.2.8 avec Vite 8.3.0.
-- **PWA & Offline** : `vite-plugin-pwa`, `sw.js` pour les notifications push web, et `localforage` (IndexedDB) pour le cache hors-ligne du catalogue et du panier caisse.
-- **Gestion des états** : Composant racine `App.jsx` agissant comme orchestrateur principal (~11 500 lignes, ~230 hooks d'état), dialoguant avec des composants satellites :
+- **PWA & Offline** : `vite-plugin-pwa`, `sw.js` pour les notifications push web, et `localforage` (IndexedDB) pour le cache hors-ligne du catalogue et du panier caisse (`offline_tickets`).
+- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal, structuré en modules et contextes :
+  - `frontend/src/utils/auth.js` : décodage JWT/UI-token sécurisé, transformation VAPID Uint8Array et vérification des règles de complexité PIN.
+  - `frontend/src/utils/fetchClient.js` : client HTTP intercepteur injectant automatiquement les cookies de session et le jeton Bearer sur toutes les requêtes API.
+  - `frontend/src/pages/ReservationPublique.jsx` : borne autonome de réservation en ligne publique anti-Planity avec calcul des créneaux et fidélité instantanée.
+  - `frontend/src/components/auth/LoginView.jsx` : écran de connexion unifié (Gérant email/mdp, Employé PIN, Salon PIN, Récupération de mot de passe).
+  - `frontend/src/components/common/ThemeToggle.jsx` : composant de bascule de thème sombre / clair réutilisable.
+  - `frontend/src/context/` : contextes d'état partagé (`AuthContext.jsx`, `SocketContext.jsx`).
   - `Parametres.jsx` : panneau de configuration salon (TPE, SMS, alertes, forfaits, exports comptables).
   - `LiquidTabBar.jsx` : barre de navigation flottante avec retours haptiques.
   - `PopupLegal.jsx` : modal bloquante de signature contractuelle électronique lors de la première connexion.

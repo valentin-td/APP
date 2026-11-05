@@ -41,7 +41,7 @@
 ## 1. Authentification, Sessions & Sécurité
 
 - **Objectif** : Authentifier les gérants (email/mot de passe), les employés (code PIN à la caisse ou sur mobile), gérer les sessions JWT sécurisées (cookies HTTP-Only) et protéger les routes contre les attaques par force brute.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (écrans de login gérant, login PIN collaborateur, reset password).
+- **Fichiers Frontend** : `frontend/src/components/auth/LoginView.jsx`, `frontend/src/utils/auth.js`, `frontend/src/context/AuthContext.jsx`, `frontend/src/App.jsx`.
 - **Fichiers Backend** : `services/auth/auth.service.js` (chiffrement AES, PIN, JWT, rate-limiters), `config/db.js` (pool et initialisation triggers), `services/rh/employes.service.js` (règles PIN), `server.js` (orchestration et montage des routes).
 - **Routes API** :
   - `POST /api/register`
@@ -173,7 +173,7 @@
 ## 6. Borne de Réservation Publique en Ligne
 
 - **Objectif** : Permettre aux clients finaux de prendre rendez-vous en ligne 24/7 sur smartphone/PC sans création préalable de compte, avec calcul en temps réel des créneaux libres.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (vue conditionnelle `PageReservationPublique` sur `/reservation/:id_salon`).
+- **Fichiers Frontend** : `frontend/src/pages/ReservationPublique.jsx`, `frontend/src/App.jsx`.
 - **Fichiers Backend** : `services/agenda/agenda.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/public/reservation/:id_salon`

@@ -184,15 +184,17 @@ flowchart TD
 
 ---
 
-#### 13. Si tu touches à `frontend/src/App.jsx`
-- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
+#### 13. Si tu touches au Frontend (`frontend/src/App.jsx`, `components/`, `context/`, `utils/`, `pages/`)
+- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente, authentification, temps réel et réservation publique.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.
-  - Ralentissement drastique (lag de saisie) dû aux 230 hooks d'état.
+  - Régression visuelle ou perte de synchronisation des thèmes/styles.
+  - Perte de transmission du token API dans le client HTTP intercepteur.
 - **Checklist de vérification** :
-  1. [ ] **Ne JAMAIS ajouter de hook (`useState`, `useEffect`, `useMemo`, `useRef`) sous une condition ou après la ligne 3720** (zone des `if (!token) return`).
-  2. [ ] Tester impérativement le cycle complet : Déconnecté -> Connexion Gérant -> Navigation entre tous les onglets -> Déconnexion -> Connexion Employé PIN.
-  3. [ ] Vérifier la console navigateur (0 warning de hooks).
+  1. [ ] Lancer la compilation de contrôle : `cd frontend && npm run build` (doit compiler avec 0 erreur).
+  2. [ ] Vérifier la présence des utilitaires d'authentification dans `frontend/src/utils/auth.js` et de l'intercepteur `frontend/src/utils/fetchClient.js`.
+  3. [ ] Tester impérativement le cycle complet : Déconnecté -> Connexion Gérant -> Navigation entre les onglets -> Déconnexion -> Connexion Employé PIN.
+  4. [ ] Tester l'accès à la borne publique de réservation sur `/reservation/:id_salon`.
 
 ---
 

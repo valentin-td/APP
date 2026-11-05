@@ -8,299 +8,12 @@ import PopupLegal from './PopupLegal';
 import PricingModal from './PricingModal';
 import { API_URL } from './api/config'; 
 
-// Fonction utilitaire obligatoire pour transformer la clé de sécurité pour le navigateur
-function urlBase64ToUint8Array(base64String) { 
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
-
-// Fonction sortie du composant pour être accessible partout sans erreur d'initialisation
-const decodeToken = (t) => { 
-    if (!t || !t.includes('.')) return null;
-    try { 
-        let base64Url = t.split('.')[1];
-        let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        // Remplissage automatique pour éviter le crash atob
-        const padding = '='.repeat((4 - base64.length % 4) % 4);
-        // Décodage compatible avec les accents (UTF-8)
-        const jsonPayload = decodeURIComponent(atob(base64 + padding).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-        return JSON.parse(jsonPayload); 
-    } catch(e) { 
-        return null; 
-    } 
-};
-
-const isPinWeak = (pin) => {
-    if (!pin) return false;
-    const strPin = String(pin);
-    const repeating = /^(\d)\1+$/.test(strPin);
-    const sequentialUp = '0123456789'.includes(strPin);
-    const sequentialDown = '9876543210'.includes(strPin);
-    return repeating || sequentialUp || sequentialDown;
-};
-
-// Intercepteur global pour inclure automatiquement le Cookie httpOnly sur toutes les requêtes
-const originalFetch = window.fetch;
-window.fetch = async (...args) => {
-    let [resource, config] = args;
-    if (typeof resource === 'string' && (resource.includes('api-salon-backend.onrender.com') || (API_URL && resource.startsWith(API_URL)))) {
-        config = config || {};
-        config.credentials = 'include';
-        const tokenApi = localStorage.getItem('api_token');
-        if (tokenApi) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${tokenApi}` };
-    }
-    return originalFetch(resource, config);
-};
-
+import './utils/fetchClient';
+import { urlBase64ToUint8Array, decodeToken, isPinWeak } from './utils/auth';
 import AvisPublic from './AvisPublic.jsx';
-
-function PageReservationPublique({ idSalon }) {
-  const [infos, setInfos] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [prestaChoisie, setPrestaChoisie] = useState(null);
-  const [employeChoisi, setEmployeChoisi] = useState('AUTO');
-  const [dateChoisie, setDateChoisie] = useState(() => new Date().toISOString().slice(0, 10));
-  const [creneaux, setCreneaux] = useState([]);
-  const [loadingCreneaux, setLoadingCreneaux] = useState(false);
-  const [creneauSelectionne, setCreneauSelectionne] = useState(null);
-  const [clientNom, setClientNom] = useState('');
-  const [clientTel, setClientTel] = useState('');
-  const [fideliteClient, setFideliteClient] = useState(null);
-  const [confirmationOk, setConfirmationOk] = useState(() => new URLSearchParams(window.location.search).get('success') === '1');
-  const [erreurMsg, setErreurMsg] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    fetch(`${API_URL}/api/public/reservation/${idSalon}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data) {
-          setInfos(data);
-          if (data.prestations?.length > 0) setPrestaChoisie(data.prestations[0]);
-        }
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [idSalon]);
-
-  useEffect(() => {
-    if (!prestaChoisie || !dateChoisie) return;
-    setLoadingCreneaux(true);
-    setCreneauSelectionne(null);
-    fetch(`${API_URL}/api/public/reservation/${idSalon}/creneaux?date=${dateChoisie}&id_employe=${employeChoisi}&duree=${prestaChoisie.duree_estimee_minutes || 30}`)
-      .then(r => r.ok ? r.json() : { creneaux: [] })
-      .then(data => {
-        setCreneaux(data.creneaux || []);
-        setLoadingCreneaux(false);
-      })
-      .catch(() => setLoadingCreneaux(false));
-  }, [idSalon, prestaChoisie, employeChoisi, dateChoisie]);
-
-  const verifierFideliteTel = (telVal) => {
-    setClientTel(telVal);
-    if (telVal.replace(/\s+/g, '').length >= 8) {
-      fetch(`${API_URL}/api/public/reservation/${idSalon}/fidelite?telephone=${encodeURIComponent(telVal)}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(data => {
-          if (data?.client_trouve) {
-            setFideliteClient(data);
-            if (!clientNom && (data.prenom || data.nom)) {
-              setClientNom(`${data.prenom || ''} ${data.nom || ''}`.trim());
-            }
-          } else {
-            setFideliteClient(null);
-          }
-        })
-        .catch(() => {});
-    }
-  };
-
-  const validerReservation = async (avecAcompteStripe = false) => {
-    if (!creneauSelectionne || !clientNom.trim() || !clientTel.trim()) {
-      setErreurMsg("Veuillez choisir un créneau et renseigner votre nom et téléphone.");
-      return;
-    }
-    setErreurMsg('');
-    setIsSubmitting(true);
-    try {
-      const res = await fetch(`${API_URL}/api/public/reservation/${idSalon}/reserver`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nom_client: clientNom.trim(),
-          telephone_client: clientTel.trim(),
-          id_employe: creneauSelectionne.id_employe_suggere,
-          prestation: prestaChoisie.nom,
-          date_heure_debut: creneauSelectionne.date_heure_debut,
-          duree_minutes: prestaChoisie.duree_estimee_minutes || 30,
-          payer_acompte: avecAcompteStripe
-        })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setErreurMsg(data.erreur || "Impossible de valider ce créneau.");
-      } else if (data.checkout_url) {
-        window.location.assign(data.checkout_url);
-      } else {
-        setConfirmationOk(true);
-      }
-    } catch (e) {
-      setErreurMsg("Erreur réseau.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  if (loading) {
-    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif', background: '#f6f6f7', color: '#111827', fontWeight: '700' }}>Chargement de l'agenda du salon...</div>;
-  }
-  if (!infos?.salon) {
-    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif', background: '#f6f6f7', color: '#dc2626', fontWeight: '700' }}>Salon introuvable.</div>;
-  }
-
-  return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f6f6f7', color: '#111827', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', padding: '24px 16px' }}>
-      <div style={{ maxWidth: '620px', margin: '0 auto' }}>
-        {/* En-tête du Salon */}
-        <div style={{ background: '#111827', color: '#ffffff', borderRadius: '22px', padding: '24px', marginBottom: '18px', boxShadow: '0 12px 30px rgba(0,0,0,0.1)' }}>
-          <span style={{ fontSize: '10.5px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.06em', background: 'rgba(255,255,255,0.14)', padding: '4px 10px', borderRadius: '999px' }}>
-            Réservation Directe • Programme Fidélité Officiel
-          </span>
-          <h1 style={{ margin: '10px 0 4px 0', fontSize: '24px', fontWeight: '800' }}>{infos.salon.nom_salon}</h1>
-          <div style={{ fontSize: '13px', color: '#9ca3af' }}>
-            {infos.salon.adresse} {infos.salon.telephone ? `• ${infos.salon.telephone}` : ''}
-          </div>
-        </div>
-
-        {confirmationOk ? (
-          <div style={{ background: '#ffffff', borderRadius: '22px', padding: '28px', textAlign: 'center', border: '1.5px solid #16a34a' }}>
-            <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: '#dcfce7', color: '#166534', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px auto', fontSize: '24px', fontWeight: '800' }}>✓</div>
-            <h2 style={{ margin: '0 0 8px 0', fontSize: '20px' }}>Votre rendez-vous est confirmé !</h2>
-            <p style={{ color: '#4b5563', fontSize: '13.5px', margin: '0 0 18px 0' }}>
-              Vos avantages fidélité seront automatiquement crédités lors de votre passage au salon.
-            </p>
-            <button type="button" onClick={() => setConfirmationOk(false)} style={{ background: '#111827', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: '12px', fontWeight: '700', cursor: 'pointer' }}>
-              Prendre un autre rendez-vous
-            </button>
-          </div>
-        ) : (
-          <div style={{ background: '#ffffff', borderRadius: '22px', padding: '22px', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            {/* 1. Choix de la Prestation */}
-            <div>
-              <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>1. Choisissez votre prestation</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '210px', overflowY: 'auto' }}>
-                {(infos.prestations || []).map(p => {
-                  const active = prestaChoisie?.id_article === p.id_article;
-                  return (
-                    <div
-                      key={p.id_article}
-                      onClick={() => setPrestaChoisie(p)}
-                      style={{ padding: '12px 14px', borderRadius: '12px', border: active ? '2px solid #111827' : '1px solid #e5e7eb', background: active ? '#f9fafb' : '#ffffff', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                    >
-                      <div>
-                        <strong style={{ fontSize: '14px', display: 'block' }}>{p.nom}</strong>
-                        <span style={{ fontSize: '12px', color: '#6b7280' }}>Durée : {p.duree_estimee_minutes} min</span>
-                      </div>
-                      <span style={{ fontSize: '15px', fontWeight: '800' }}>{parseFloat(p.prix).toFixed(2)} €</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 2. Choix du Collaborateur & de la Date */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>2. Collaborateur</label>
-                <select value={employeChoisi} onChange={e => setEmployeChoisi(e.target.value)} style={{ width: '100%', padding: '11px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px', fontWeight: '600' }}>
-                  <option value="AUTO">Premier disponible</option>
-                  {(infos.employes || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>3. Date souhaitée</label>
-                <input type="date" min={new Date().toISOString().slice(0, 10)} value={dateChoisie} onChange={e => setDateChoisie(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px', fontWeight: '600' }} />
-              </div>
-            </div>
-
-            {/* 3. Grille des Créneaux Disponibles */}
-            <div>
-              <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>4. Créneaux disponibles</label>
-              {loadingCreneaux ? (
-                <div style={{ fontSize: '13px', color: '#6b7280', padding: '12px 0' }}>Recherche des disponibilités...</div>
-              ) : creneaux.length === 0 ? (
-                <div style={{ padding: '14px', borderRadius: '12px', background: '#f9fafb', color: '#6b7280', fontSize: '13px', textAlign: 'center' }}>Aucun créneau disponible à cette date. Essayez un autre jour.</div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(82px, 1fr))', gap: '8px' }}>
-                  {creneaux.map(c => {
-                    const selected = creneauSelectionne?.heure === c.heure;
-                    return (
-                      <button
-                        key={c.heure}
-                        type="button"
-                        onClick={() => setCreneauSelectionne(c)}
-                        style={{ padding: '10px 6px', borderRadius: '10px', border: selected ? '2px solid #111827' : '1px solid #e5e7eb', background: selected ? '#111827' : '#ffffff', color: selected ? '#ffffff' : '#111827', fontWeight: '800', fontSize: '13px', cursor: 'pointer' }}
-                      >
-                        {c.heure}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* 4. Coordonnées & Reconnaissance Fidélité instantanée */}
-            <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
-              <label style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>5. Vos coordonnées (Cumul Fidélité)</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-                <input type="tel" placeholder="Téléphone mobile (ex: 06...)" value={clientTel} onChange={e => verifierFideliteTel(e.target.value)} style={{ padding: '11px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px' }} />
-                <input type="text" placeholder="Votre Prénom & Nom" value={clientNom} onChange={e => setClientNom(e.target.value)} style={{ padding: '11px 12px', borderRadius: '11px', border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: '13.5px' }} />
-              </div>
-
-              {fideliteClient && (
-                <div style={{ padding: '10px 14px', borderRadius: '11px', background: '#dcfce7', color: '#166534', fontSize: '12.5px', fontWeight: '700', marginBottom: '10px' }}>
-                  ✨ Bon retour {fideliteClient.prenom} ! Votre compte fidélité ({infos.salon.fidelite_type === 'TAMPONS' ? `${fideliteClient.tampons_fidelite} tampons` : `${fideliteClient.points_fidelite} points`}) est bien rattaché à cette réservation.
-                  {fideliteClient.remise_winback ? ` Offre spéciale active : ${fideliteClient.remise_winback} !` : ''}
-                </div>
-              )}
-
-              {erreurMsg && (
-                <div style={{ padding: '10px 12px', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', fontSize: '12.5px', fontWeight: '700', marginBottom: '10px' }}>
-                  {erreurMsg}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  disabled={isSubmitting || !creneauSelectionne}
-                  onClick={() => validerReservation(false)}
-                  style={{ flex: 1, background: '#111827', color: '#ffffff', border: 'none', padding: '13px 16px', borderRadius: '12px', fontSize: '13.5px', fontWeight: '800', cursor: creneauSelectionne ? 'pointer' : 'not-allowed', opacity: creneauSelectionne ? 1 : 0.5 }}
-                >
-                  {isSubmitting ? 'Validation...' : 'Confirmer mon RDV (Paiement au salon)'}
-                </button>
-                <button
-                  type="button"
-                  disabled={isSubmitting || !creneauSelectionne}
-                  onClick={() => validerReservation(true)}
-                  style={{ flex: 1, background: '#f9fafb', color: '#111827', border: '1.5px solid #111827', padding: '13px 16px', borderRadius: '12px', fontSize: '13px', fontWeight: '800', cursor: creneauSelectionne ? 'pointer' : 'not-allowed', opacity: creneauSelectionne ? 1 : 0.5 }}
-                >
-                  Garantir avec Acompte CB (30%)
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+import PageReservationPublique from './pages/ReservationPublique.jsx';
+import ThemeToggleComponent from './components/common/ThemeToggle.jsx';
+import LoginView from './components/auth/LoginView.jsx';
 
 function App() {
   if (window.location.pathname.startsWith('/avis/')) {
@@ -409,20 +122,9 @@ function App() {
       }
   }, [isDarkMode]);
 
-  const ThemeToggle = ({ isFixed }) => {
-      // On rétablit le style positionné, mais adapté pour s'intégrer parfaitement en haut à droite de la carte
-      const fixedStyle = isFixed ? { position: 'absolute', top: '16px', right: '16px', zIndex: 1000 } : {};
-      
-      return (
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="theme-toggle-btn" style={fixedStyle} title="Basculer le thème">
-              {isDarkMode ? (
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-              ) : (
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-              )}
-          </button>
-      );
-  };
+  const ThemeToggle = ({ isFixed }) => (
+    <ThemeToggleComponent isFixed={isFixed} isDarkMode={isDarkMode} onToggle={() => setIsDarkMode(!isDarkMode)} />
+  );
 
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [loginType, setLoginType] = useState('gerant'); 
@@ -3767,71 +3469,40 @@ function App() {
 
   if (!token) {
     return (
-      <div className="dashboard-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '90vh', position: 'relative' }}>
-        
-        {/* On ajoute position: 'relative' à la carte pour que le bouton reste à l'intérieur */}
-        <div className="carte" style={{ width: '100%', maxWidth: '380px', textAlign: 'center', padding: '32px', position: 'relative' }}>
-          
-          {/* Un seul bouton ThemeToggle, placé en haut à droite */}
-          <ThemeToggle isFixed={true} />
-
-          <div className="logo-container" style={{marginBottom: '24px'}}>
-              <img src={isDarkMode ? "/IMG_6805.png" : "/IMG_6804.png"} alt="STACK Logo" className="app-logo" />
-          </div>
-
-          <div style={{display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '24px'}}>
-             <button onClick={() => {setLoginType('gerant'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'gerant' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'gerant' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Gérant</button>
-             <button onClick={() => {setLoginType('employe'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'employe' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'employe' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Employé</button>
-             <button onClick={() => {setLoginType('salon'); setErreurLogin(null); setIsForgotPassword(false);}} style={{flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', fontWeight: 'bold', background: loginType === 'salon' ? 'var(--text-main)' : 'var(--bg-app)', color: loginType === 'salon' ? 'var(--bg-card)' : 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '13px'}}>Salon</button>
-          </div>
-          
-          {isForgotPassword ? (
-              <>
-                 <h2 style={{color: 'var(--text-main)'}}>Mot de passe oublié</h2>
-                 <p style={{fontSize:'13px', color:'var(--text-secondary)', marginBottom: '24px'}}>Saisissez votre email pour réinitialiser l'accès.</p>
-                 {msgSucces && <div style={{backgroundColor: 'var(--bg-success)', color: 'var(--color-success)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500'}}>{msgSucces}</div>}
-                 <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
-                 <button className="btn-action" onClick={motDePasseOublie} style={{ width: '100%', marginTop: '8px' }}>Recevoir le lien</button>
-                 <p style={{fontSize: '13px', color: 'var(--text-main)', marginTop: '24px', cursor: 'pointer', fontWeight: '500'}} onClick={() => setIsForgotPassword(false)}>Retour à la connexion</p>
-              </>
-          ) : (
-             <>
-                {erreurLogin && (<div style={{ backgroundColor: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: 'var(--radius-input)', fontSize: '13px', marginBottom: '16px', fontWeight: '500' }}>{erreurLogin}</div>)}
-                {loginType === 'gerant' ? (
-                   <>
-                      {!isLoginMode && (
-                          <div style={{display: 'flex', gap: '12px', marginBottom: '12px'}}>
-                              <input type="text" className="input-fournisseur" placeholder="Prénom (Gérant)" style={{flex: 1}} value={prenomGerantInput} onChange={(e) => setPrenomGerantInput(e.target.value)} />
-                              <input type="text" className="input-fournisseur" placeholder="Nom de famille" style={{flex: 1}} value={nomFamilleGerantInput} onChange={(e) => setNomFamilleGerantInput(e.target.value)} />
-                          </div>
-                      )}
-                      {!isLoginMode && (<input type="text" className="input-fournisseur" placeholder="Nom de votre salon" style={{marginBottom: '12px'}} value={nomSalonInput} onChange={(e) => setNomSalonInput(e.target.value)} />)}
-                      <input type="email" className="input-fournisseur" placeholder="Adresse e-mail" style={{marginBottom: '12px'}} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} />
-                      <input type="password" className="input-fournisseur" placeholder="Mot de passe" value={motDePasseInput} onChange={(e) => setMotDePasseInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (isLoginMode ? seConnecter() : sInscrire())} />
-                      <button className="btn-action" onClick={isLoginMode ? seConnecter : sInscrire} style={{ width: '100%', marginTop: '16px' }}>{isLoginMode ? 'Se connecter' : "S'inscrire"}</button>
-                      <div style={{display:'flex', justifyContent:'space-between', marginTop: '24px'}}>
-                         <p style={{fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer', margin:0, fontWeight: '600'}} onClick={() => { setIsLoginMode(!isLoginMode); setErreurLogin(null); }}>{isLoginMode ? "Créer un compte" : "Se connecter"}</p>
-                         {isLoginMode && <p style={{fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', margin:0}} onClick={() => setIsForgotPassword(true)}>Oublié ?</p>}
-                      </div>
-                   </>
-                ) : loginType === 'employe' ? (
-                   <>
-                      <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
-                      <input type="text" className="input-fournisseur" placeholder="Votre prénom" style={{marginBottom: '12px'}} value={nomEmployeInput} onChange={(e) => setNomEmployeInput(e.target.value)} />
-                      <input type="password" maxLength="4" className="input-fournisseur" placeholder="Code PIN à 4 chiffres" value={pinEmployeInput} onChange={(e) => setPinEmployeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
-                      <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '16px' }}>Accéder au Planning</button>
-                   </>
-                ) : (
-                   <>
-                      <input type="text" className="input-fournisseur" placeholder="ID du Salon (ex: 1)" style={{marginBottom: '12px'}} value={idSalonInput} onChange={(e) => setIdSalonInput(e.target.value)} />
-                      <input type="password" maxLength="10" inputMode="numeric" className="input-fournisseur" placeholder="Code PIN du salon" value={pinSalonInput} onChange={(e) => setPinSalonInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && seConnecter()} />
-                      <button className="btn-action" onClick={seConnecter} style={{ width: '100%', marginTop: '16px' }}>Accéder au Salon</button>
-                   </>
-                )}
-             </>
-          )}
-        </div>
-      </div>
+      <LoginView
+        isDarkMode={isDarkMode}
+        onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+        loginType={loginType}
+        setLoginType={setLoginType}
+        isForgotPassword={isForgotPassword}
+        setIsForgotPassword={setIsForgotPassword}
+        isLoginMode={isLoginMode}
+        setIsLoginMode={setIsLoginMode}
+        emailInput={emailInput}
+        setEmailInput={setEmailInput}
+        motDePasseInput={motDePasseInput}
+        setMotDePasseInput={setMotDePasseInput}
+        prenomGerantInput={prenomGerantInput}
+        setPrenomGerantInput={setPrenomGerantInput}
+        nomFamilleGerantInput={nomFamilleGerantInput}
+        setNomFamilleGerantInput={setNomFamilleGerantInput}
+        nomSalonInput={nomSalonInput}
+        setNomSalonInput={setNomSalonInput}
+        idSalonInput={idSalonInput}
+        setIdSalonInput={setIdSalonInput}
+        nomEmployeInput={nomEmployeInput}
+        setNomEmployeInput={setNomEmployeInput}
+        pinEmployeInput={pinEmployeInput}
+        setPinEmployeInput={setPinEmployeInput}
+        pinSalonInput={pinSalonInput}
+        setPinSalonInput={setPinSalonInput}
+        erreurLogin={erreurLogin}
+        setErreurLogin={setErreurLogin}
+        msgSucces={msgSucces}
+        onLogin={seConnecter}
+        onRegister={sInscrire}
+        onForgotPassword={motDePasseOublie}
+      />
     );
   }
 
