@@ -52,11 +52,11 @@ flowchart TB
             SRV_Proto["services/protocoles/<br/>(protocoles.service.js)"]
             SRV_Chat["services/chat/<br/>(chat.service.js)"]
             SRV_Mktg["services/marketing/<br/>(marketing.service.js)"]
+            SRV_Agenda["services/agenda/<br/>(agenda.service.js)"]
         end
 
         subgraph CoreMonolith["🏛️ Domaines en cours d'extraction (server.js)"]
             DomainCaisse["Caisse NF525 & Clôtures Z"]
-            DomainAgenda["Agenda & Planning"]
             DomainSalons["Multi-Salons & Abonnements Stripe"]
         end
 
@@ -155,6 +155,7 @@ Les fonctionnalités clés sont organisées en modules autonomes injectant leurs
 - `services/protocoles/` : fiches techniques de coiffure (Académie), gestion des recettes produits, décompte de stock technique, upload des médias sur Cloudflare R2 et centre d'action (tâches manuelles).
 - `services/chat/` : messagerie instantanée d'équipe temps réel (Socket.io), partage de notes vocales et photos, réactions emojis et accusés de lecture.
 - `services/marketing/` : collecte d'avis de satisfaction clients, e-réputation Google, STOP SMS légal et campagnes de relance (winback) via Brevo.
+- `services/agenda/` : planning métier collaborateurs, gestion des rendez-vous (création, modification, suppression, annulation en masse), moteur de réservation en ligne publique (créneaux disponibles, fidélité) et export de calendrier iCal sync.
 
 ### 3.4. Couche Données (PostgreSQL & Stockage Objets)
 - **Base relationnelle** : PostgreSQL (hébergée sur Render, client `pg.Pool`).

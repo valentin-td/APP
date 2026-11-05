@@ -111,7 +111,20 @@ flowchart TD
 
 ---
 
-#### 7. Si tu touches à `frontend/src/App.jsx`
+#### 7. Si tu touches à `services/agenda/agenda.service.js` (Agenda & Réservations Publiques)
+- **Fonctionnalités impactées** : Planning des collaborateurs, prise de rendez-vous en salon, borne de réservation publique en ligne, calcul des créneaux, synchronisation iCal.
+- **Risques majeurs** :
+  - Collision de rendez-vous sur le même créneau (double réservation).
+  - Mauvais calcul des créneaux disponibles selon les horaires d'ouverture et pauses/absences.
+  - Défaillance de la notification push ou broadcast WebSocket lors des annulations en masse.
+- **Checklist de vérification** :
+  1. [ ] Tester la création, modification d'horaire et suppression d'un rendez-vous interne.
+  2. [ ] Tester l'API publique `/api/public/reservation/:id_salon/creneaux` pour vérifier que les créneaux déjà occupés ne sont pas proposés.
+  3. [ ] Vérifier la route `/api/ical/:id_salon/:id_employe.ics` pour confirmer la génération d'un calendrier iCalendar valide (RFC 5545).
+
+---
+
+#### 8. Si tu touches à `frontend/src/App.jsx`
 - **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.
@@ -123,7 +136,7 @@ flowchart TD
 
 ---
 
-#### 5. Si tu touches à `jobs/cronJobs.js`
+#### 9. Si tu touches à `jobs/cronJobs.js`
 - **Fonctionnalités impactées** : Clôture fantôme de sécurité, relances SMS clients, robot comptable IA, rapport hebdomadaire.
 - **Risques majeurs** :
   - Boucle infinie ou surcharge CPU sur le serveur Render.

@@ -148,7 +148,7 @@
 
 - **Objectif** : Gérer les rendez-vous du salon en interne : vue par collaborateur, glisser-déposer, gestion des durées, notifications de modification, synchro iCal avec Apple Calendar / Google Calendar.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Agenda, modale de prise de RDV).
-- **Fichiers Backend** : `server.js` (lignes ~1970-2530).
+- **Fichiers Backend** : `services/agenda/agenda.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/planning`
   - `POST /api/rdv`
@@ -156,7 +156,7 @@
   - `DELETE /api/rdv/:id`
   - `POST /api/rdv/mass-cancel`
   - `GET /api/ical/:id_salon/:id_employe.ics`
-- **Services / Modules** : `socket.io`, `web-push`.
+- **Services / Modules** : `services/agenda/agenda.service.js`, `socket.io`, `web-push`.
 - **Tables BDD** : `rendez_vous`, `employes`, `clients`, `absences_employes`, `configuration_salon`.
 - **Dépendances Amont** : `employes`, `clients`, `catalogue`, `absences_employes` (les indisponibilités et congés doivent masquer les créneaux).
 - **Dépendances Aval** : Rappels SMS automatisés, Envoi de demandes d'avis post-RDV, Caisse (un clic transforme un RDV en ticket).
@@ -173,13 +173,13 @@
 
 - **Objectif** : Permettre aux clients finaux de prendre rendez-vous en ligne 24/7 sur smartphone/PC sans création préalable de compte, avec calcul en temps réel des créneaux libres.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (vue conditionnelle `PageReservationPublique` sur `/reservation/:id_salon`).
-- **Fichiers Backend** : `server.js` (lignes ~2070-2315).
+- **Fichiers Backend** : `services/agenda/agenda.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/public/reservation/:id_salon`
   - `GET /api/public/reservation/:id_salon/creneaux`
   - `GET /api/public/reservation/:id_salon/fidelite`
   - `POST /api/public/reservation/:id_salon/reserver`
-- **Services / Modules** : `limiteurReservationPublique`, `socket.io`.
+- **Services / Modules** : `services/agenda/agenda.service.js`, `limiteurReservationPublique`, `socket.io`.
 - **Tables BDD** : `configuration_salon`, `catalogue`, `employes`, `rendez_vous`, `absences_employes`, `clients`.
 - **Dépendances Amont** : Horaires du salon (`configuration_salon`), catalogue prestations, absences collaborateurs.
 - **Dépendances Aval** : Agenda interne (insertion instantanée), SMS de confirmation.
