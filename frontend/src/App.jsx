@@ -467,9 +467,9 @@ function App() {
     getAuthHeaders,
     handleFetchError,
     showToast,
-    setDashboardData,
-    setPosEmploye,
-    setPanierCaisse
+    setDashboardData: (d) => { if (typeof setDashboardData === 'function') setDashboardData(d); },
+    setPosEmploye: (e) => { if (typeof setPosEmploye === 'function') setPosEmploye(e); },
+    setPanierCaisse: (p) => { if (typeof setPanierCaisse === 'function') setPanierCaisse(p); }
   });
 
   // --- ÉTATS & LOGIQUE : GAMIFICATION & OBJECTIFS D'ÉQUIPE (useGamificationEquipe) ---
@@ -715,7 +715,7 @@ function App() {
     configSalon,
     clientsListe,
     employesListe,
-    planningData,
+    getPlanningData: () => (typeof planningData !== 'undefined' ? planningData : []),
     getAuthHeaders,
     handleFetchError,
     showToast,

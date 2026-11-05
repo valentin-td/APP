@@ -15,6 +15,7 @@ export function useCaissePOS({
   clientsListe = [],
   employesListe = [],
   planningData = [],
+  getPlanningData,
   getAuthHeaders,
   handleFetchError,
   showToast,
@@ -52,7 +53,8 @@ export function useCaissePOS({
     const now = new Date();
     let matches = [];
 
-    const listeRdvs = Array.isArray(planningData) ? planningData : planningData.rendez_vous || [];
+    const effectivePlanning = typeof getPlanningData === 'function' ? getPlanningData() : planningData;
+    const listeRdvs = Array.isArray(effectivePlanning) ? effectivePlanning : (effectivePlanning?.rendez_vous || []);
     const rdvsToday = listeRdvs.filter(
       (r) => r.id_employe === id_employe && r.date_heure_debut && isToday(new Date(r.date_heure_debut.replace('Z', '')))
     );
