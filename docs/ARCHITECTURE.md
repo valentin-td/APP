@@ -53,11 +53,12 @@ flowchart TB
             SRV_Chat["services/chat/<br/>(chat.service.js)"]
             SRV_Mktg["services/marketing/<br/>(marketing.service.js)"]
             SRV_Agenda["services/agenda/<br/>(agenda.service.js)"]
+            SRV_Salons["services/salons/<br/>(salons.service.js)"]
+            SRV_Stripe["services/stripe/<br/>(stripe.service.js)"]
         end
 
         subgraph CoreMonolith["🏛️ Domaines en cours d'extraction (server.js)"]
             DomainCaisse["Caisse NF525 & Clôtures Z"]
-            DomainSalons["Multi-Salons & Abonnements Stripe"]
         end
 
         subgraph BackgroundJobs["⏱️ Tâches de Fond & Robots (jobs/cronJobs.js)"]
@@ -156,6 +157,8 @@ Les fonctionnalités clés sont organisées en modules autonomes injectant leurs
 - `services/chat/` : messagerie instantanée d'équipe temps réel (Socket.io), partage de notes vocales et photos, réactions emojis et accusés de lecture.
 - `services/marketing/` : collecte d'avis de satisfaction clients, e-réputation Google, STOP SMS légal et campagnes de relance (winback) via Brevo.
 - `services/agenda/` : planning métier collaborateurs, gestion des rendez-vous (création, modification, suppression, annulation en masse), moteur de réservation en ligne publique (créneaux disponibles, fidélité) et export de calendrier iCal sync.
+- `services/salons/` : multi-salons et franchise (création de succursales, duplication du catalogue et tutoriels, switch rapide de salon sans reconnexion) et moteur d'export et portabilité intégrale RGPD / NF525 (JSON & CSV scellés SHA-256).
+- `services/stripe/` : monétisation SaaS Stripe, empreinte bancaire 0€ pendant 30j, gestion des formules (Essential, Pro, Premium), résiliation, webhooks Stripe et gardien central des quotas SMS mensuels.
 
 ### 3.4. Couche Données (PostgreSQL & Stockage Objets)
 - **Base relationnelle** : PostgreSQL (hébergée sur Render, client `pg.Pool`).

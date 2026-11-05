@@ -124,7 +124,32 @@ flowchart TD
 
 ---
 
-#### 8. Si tu touches à `frontend/src/App.jsx`
+#### 8. Si tu touches à `services/salons/salons.service.js` (Multi-Salons & Portabilité RGPD)
+- **Fonctionnalités impactées** : Gestion multi-établissements, création de salon, switch instantané JWT, synchronisation catalogue/Académie, export portabilité RGPD (CSV et JSON scellé NF525).
+- **Risques majeurs** :
+  - Fuite de données / violation d'isolation entre salons (IDOR sur switch).
+  - Échec de duplication du catalogue ou corruption des clés étrangères de recettes d'Académie.
+  - Incohérence du scellement SHA-256 de l'archive de portabilité.
+- **Checklist de vérification** :
+  1. [ ] Tester `POST /api/mes-salons/switch/:id` et vérifier que le nouveau JWT est bien restreint au salon cible.
+  2. [ ] Tester l'export portabilité format CSV et JSON complet et vérifier l'intégrité de l'empreinte `scellement_cryptographique_nf525`.
+
+---
+
+#### 9. Si tu touches à `services/stripe/stripe.service.js` (Abonnements & Stripe)
+- **Fonctionnalités impactées** : Souscription Stripe Checkout, empreinte bancaire à 0€ pendant l'essai, évolution de forfait, résiliation, gardien des quotas SMS mensuels, webhook Stripe.
+- **Risques majeurs** :
+  - Blocage injustifié des SMS du salon par dépassement de quota erroné.
+  - Non-prise en compte du webhook Stripe laissant le salon bloqué après paiement.
+  - Mauvaise gestion des tarifs manquants en environnement de production.
+- **Checklist de vérification** :
+  1. [ ] Tester `verifierEtIncrementerQuotaSMS` au franchissement de limite (100, 250, 500 SMS).
+  2. [ ] Tester la création d'une session Stripe Checkout avec les fallbacks `price_data`.
+  3. [ ] Vérifier la signature Webhook Stripe (`stripe.webhooks.constructEvent`).
+
+---
+
+#### 10. Si tu touches à `frontend/src/App.jsx`
 - **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.
@@ -136,7 +161,7 @@ flowchart TD
 
 ---
 
-#### 9. Si tu touches à `jobs/cronJobs.js`
+#### 11. Si tu touches à `jobs/cronJobs.js`
 - **Fonctionnalités impactées** : Clôture fantôme de sécurité, relances SMS clients, robot comptable IA, rapport hebdomadaire.
 - **Risques majeurs** :
   - Boucle infinie ou surcharge CPU sur le serveur Render.

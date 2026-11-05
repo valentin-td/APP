@@ -532,17 +532,18 @@
 
 ---
 
-## 23. Multi-Établissements & Bascule de Salons
+## 23. Multi-Établissements & Portabilité RGPD
 
-- **Objectif** : Permettre à un propriétaire de plusieurs salons de basculer instantanément de l'un à l'autre sans se reconnecter, et synchroniser le catalogue de prestations/produits sur tous ses établissements en 1 clic.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (sélecteur de salon dans l'en-tête, modale de gestion du groupe).
-- **Fichiers Backend** : `server.js` (lignes ~4340-4750).
+- **Objectif** : Permettre à un propriétaire de plusieurs salons de basculer instantanément de l'un à l'autre sans se reconnecter, créer de nouvelles succursales avec clonage du catalogue et de l'Académie, synchroniser ses prestations en 1 clic, et exporter l'intégralité des données salon au format standardisé (RGPD Art. 20 et NF525 en CSV et JSON scellé SHA-256).
+- **Fichiers Frontend** : `frontend/src/App.jsx` (sélecteur de salon dans l'en-tête, modale de gestion du groupe, export RGPD dans Paramètres).
+- **Fichiers Backend** : `services/salons/salons.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/mes-salons`
   - `POST /api/mes-salons/creer`
   - `POST /api/mes-salons/switch/:id_salon_cible`
   - `POST /api/mes-salons/synchroniser-catalogue`
-- **Services / Modules** : JWT re-signing, `enregistrerJET`.
+  - `GET /api/export-portabilite`
+- **Services / Modules** : `services/salons/salons.service.js`, JWT re-signing, `enregistrerJET`, `crypto` (SHA-256).
 - **Tables BDD** : `gerants_multi_salons`, `configuration_salon`, `utilisateurs`, `catalogue`.
 - **Dépendances Amont** : Authentification gérant.
 - **Dépendances Aval** : Tout l'état global du frontend (l'ID salon actif change).
@@ -555,9 +556,9 @@
 
 ## 24. Abonnement SaaS & Facturation Stripe
 
-- **Objectif** : Gérer les forfaits mensuels de l'application (Essentiel, Pro, Premium), la période d'essai, le paiement via Stripe Checkout, le prélèvement automatique, les changements de forfait et le traitement des webhooks Stripe.
+- **Objectif** : Gérer les forfaits mensuels de l'application (Essentiel, Pro, Premium), la période d'essai 30j avec empreinte bancaire à 0€, le paiement via Stripe Checkout, le prélèvement automatique, les changements de forfait, la résiliation guidée, le quota mensuel de SMS et le traitement des webhooks Stripe.
 - **Fichiers Frontend** : `frontend/src/PricingModal.jsx`, `frontend/src/Parametres.jsx`.
-- **Fichiers Backend** : `server.js` (lignes ~4890-5160), webhook Stripe ligne ~1677.
+- **Fichiers Backend** : `services/stripe/stripe.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/abonnement/etat`
   - `POST /api/creer-checkout`
@@ -566,7 +567,7 @@
   - `POST /api/abonnement/resilier`
   - `POST /api/abonnement/reactiver`
   - `POST /api/webhooks/`
-- **Services / Modules** : `stripe` (Subscriptions, Customers, Webhooks).
+- **Services / Modules** : `services/stripe/stripe.service.js`, `stripe` (Subscriptions, Customers, Webhooks).
 - **Tables BDD** : `configuration_salon`.
 - **Dépendances Amont** : Clés API Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`).
 - **Dépendances Aval** : Accès aux fonctionnalités payantes (`verifierPlan`).
