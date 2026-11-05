@@ -302,17 +302,20 @@
 
 ---
 
-## 12. Gamification & Objectifs d'Équipe
+## 12. Gamification, Dashboards d'Activité & Objectifs d'Équipe
 
-- **Objectif** : Motiver les équipes via des challenges mensuels (CA généré, taux de revente de produits, panier moyen, nombre de nouveaux clients, cagnotte globale de primes).
-- **Fichiers Frontend** : `frontend/src/App.jsx` (barres de progression, récompenses promises).
-- **Fichiers Backend** : `server.js`, `services/rh/rh.service.js`.
+- **Objectif** : Motiver les équipes via des challenges mensuels (CA généré, taux de revente de produits, panier moyen, nombre de nouveaux clients, cagnotte globale de primes) et afficher les tableaux de bord analytiques salon, collaborateur et gérant.
+- **Fichiers Frontend** : `frontend/src/App.jsx` (barres de progression, récompenses promises, onglet Dashboard).
+- **Fichiers Backend** : `services/dashboard/dashboard.service.js`, `services/rh/rh.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
+  - `GET /api/dashboard/salon`
+  - `GET /api/dashboard/employe`
+  - `GET /api/dashboard`
   - `GET /api/employes/gamification-kpis`
   - `GET /api/equipe/objectifs`
   - `POST /api/equipe/objectifs`
   - `DELETE /api/equipe/objectifs/:id`
-- **Services / Modules** : Fonctions d'évaluation d'objectifs (`evaluerValeurObjectif`).
+- **Services / Modules** : `services/dashboard/dashboard.service.js`, `evaluerValeurObjectif`, Google My Business API, NPS verbatims.
 - **Tables BDD** : `objectifs_equipe`, `tickets`, `commissions`, `clients`.
 - **Dépendances Amont** : `tickets`, `employes`.
 - **Dépendances Aval** : Tableau de bord collaborateur sur mobile.
@@ -610,11 +613,11 @@
 
 ---
 
-## 27. Super-Administration Système
+## 27. Super-Administration Système & Maintenance
 
-- **Objectif** : Tableau de bord de pilotage technique pour l'éditeur du logiciel : surveillance de la santé des salons, statistiques globales, déclenchement manuel des robots d'arrière-plan, simulation d'avance temporelle (time-travel) pour tester les clôtures et déblocage d'anomalies.
+- **Objectif** : Tableau de bord de pilotage technique pour l'éditeur du logiciel : surveillance de la santé des salons, statistiques globales, déclenchement manuel des robots d'arrière-plan, simulation d'avance temporelle (time-travel) pour tester les clôtures, purge conforme RGPD avec conservation stricte NF525 et déblocage d'anomalies.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (onglet SuperAdmin).
-- **Fichiers Backend** : `server.js` (lignes ~7310-7430).
+- **Fichiers Backend** : `services/admin/superadmin.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/superadmin/stats`
   - `GET /api/superadmin/salons`
@@ -622,7 +625,8 @@
   - `DELETE /api/superadmin/salons/:id`
   - `GET /api/admin/forcer-robot`
   - `GET /api/admin/time-travel/:id_salon`
-- **Services / Modules** : `verifierSuperAdmin`.
+  - `GET /api/admin/fix-siret-38`
+- **Services / Modules** : `services/admin/superadmin.service.js`, `verifierSuperAdminMiddleware`.
 - **Tables BDD** : Accès global multi-salons.
 - **Points Sensibles / Risques** :
   - Droits ultra-élevés : accès strictement restreint par mot de passe et email super-admin.

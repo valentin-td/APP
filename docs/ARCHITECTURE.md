@@ -56,6 +56,8 @@ flowchart TB
             SRV_Salons["services/salons/<br/>(salons.service.js)"]
             SRV_Stripe["services/stripe/<br/>(stripe.service.js)"]
             SRV_IA["services/ia/<br/>(ia.service.js)"]
+            SRV_Dashboard["services/dashboard/<br/>(dashboard.service.js)"]
+            SRV_Admin["services/admin/<br/>(superadmin.service.js)"]
         end
 
         subgraph CoreMonolith["🏛️ Domaines en cours d'extraction (server.js)"]
@@ -161,6 +163,8 @@ Les fonctionnalités clés sont organisées en modules autonomes injectant leurs
 - `services/salons/` : multi-salons et franchise (création de succursales, duplication du catalogue et tutoriels, switch rapide de salon sans reconnexion) et moteur d'export et portabilité intégrale RGPD / NF525 (JSON & CSV scellés SHA-256).
 - `services/stripe/` : monétisation SaaS Stripe, empreinte bancaire 0€ pendant 30j, gestion des formules (Essential, Pro, Premium), résiliation, webhooks Stripe et gardien central des quotas SMS mensuels.
 - `services/ia/` : robot d'analyse IA et traitement OCR des factures fournisseurs (PDF et images via Groq Qwen Vision), saisie manuelle sécurisée PIN, double écriture compta/stock, synchronisation de rendez-vous et détection d'arrêts maladie.
+- `services/dashboard/` : tableaux de bord d'activité salon, métriques de performance et commissions individuelles collaborateurs, KPI financiers gérant (CA, panier moyen, top prestations, intégration Google My Business et NPS).
+- `services/admin/` : espace super-administrateur (statistiques globales MRR, gestion des accès et suspensions salons, déclenchement forcé des robots, simulateur temporel et purge sécurisée conforme RGPD/NF525).
 
 ### 3.4. Couche Données (PostgreSQL & Stockage Objets)
 - **Base relationnelle** : PostgreSQL (hébergée sur Render, client `pg.Pool`).

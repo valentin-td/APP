@@ -142,6 +142,21 @@ const {
     validerTacheIA,
     ignorerTacheIA
 } = require('./services/ia/ia.service');
+const {
+    recupererDashboardSalon,
+    recupererDashboardEmploye,
+    recupererDashboardGlobal
+} = require('./services/dashboard/dashboard.service');
+const {
+    verifierSuperAdminMiddleware,
+    forcerExecutionRobots,
+    timeTravelSalon,
+    fixSiret38,
+    recupererStatsSuperAdmin,
+    listerSalonsSuperAdmin,
+    mettreAJourStatutSalonSuperAdmin,
+    purgerSalonSuperAdmin
+} = require('./services/admin/superadmin.service');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -4206,112 +4221,32 @@ app.get('/api/rh/absences', verifierToken, async (req, res) => {
 });
 
 app.get('/api/dashboard/salon', verifierToken, async (req, res) => {
-    const id_salon = req.user.id_salon;
     try {
-        const r = await pool.query(`
-            SELECT
-                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_actuel,
-                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_precedent
-            FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE
-        `, [id_salon]);
-        const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
-        const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
-        const evolution = nbPrecedent > 0 ? Math.round(((nbActuel - nbPrecedent) / nbPrecedent) * 100) : (nbActuel > 0 ? 100 : 0);
-        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution });
-    } catch (e) { res.status(500).json({ erreur: "Erreur dashboard salon." }); }
+        const data = await recupererDashboardSalon({ pool }, { id_salon: req.user.id_salon });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur dashboard salon." });
+    }
 });
 
 app.get('/api/dashboard/employe', verifierToken, async (req, res) => {
     if (req.user.role !== 'employe') return res.status(403).json({ erreur: "Réservé aux employés." });
-    const id_salon = req.user.id_salon;
-    const id_employe = req.user.id_employe;
     try {
-        const r = await pool.query(`
-            SELECT
-                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_actuel,
-                COUNT(CASE WHEN date_creation >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND date_creation < date_trunc('month', CURRENT_DATE) THEN 1 END) as nb_precedent
-            FROM tickets WHERE id_salon = $1 AND id_employe = $2 AND statut != 'ANNULE' AND type_ticket != 'ANNULATION' AND est_compense = FALSE
-        `, [id_salon, id_employe]);
-        const nbActuel = parseInt(r.rows[0].nb_actuel) || 0;
-        const nbPrecedent = parseInt(r.rows[0].nb_precedent) || 0;
-        const evolution = nbPrecedent > 0 ? Math.round(((nbActuel - nbPrecedent) / nbPrecedent) * 100) : (nbActuel > 0 ? 100 : 0);
-        const cResult = await pool.query(`SELECT COALESCE(SUM(montant_commission), 0) as total FROM commissions WHERE id_employe = $1 AND id_salon = $2 AND date_creation >= date_trunc('month', CURRENT_DATE)`, [id_employe, id_salon]);
-        const pResult = await pool.query(`SELECT COUNT(CASE WHEN type_vente != 'PRESTATION' THEN 1 END) as total FROM commissions WHERE id_employe = $1 AND id_salon = $2 AND date_creation >= date_trunc('month', CURRENT_DATE)`, [id_employe, id_salon]);
-        res.json({ nb_clients_mois: nbActuel, evolution_pourcentage: evolution, commission_mois: parseFloat(cResult.rows[0].total), nb_produits_vendus: parseInt(pResult.rows[0].total) || 0 });
-    } catch (e) { res.status(500).json({ erreur: "Erreur dashboard employé." }); }
+        const data = await recupererDashboardEmploye({ pool }, { id_salon: req.user.id_salon, id_employe: req.user.id_employe });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur dashboard employé." });
+    }
 });
 
 app.get('/api/dashboard', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Le tableau de bord financier global est réservé au gérant." });
-    const id_salon = req.user.id_salon;
-    try { 
-        const statsResult = await pool.query(`SELECT COUNT(id_ticket) as nb_ventes, COALESCE(SUM(total_ttc), 0) as chiffre_affaires FROM tickets WHERE id_salon = $1 AND statut != 'ANNULE'`, [id_salon]); 
-        const nbVentes = parseInt(statsResult.rows[0].nb_ventes); 
-        const caTotal = parseFloat(statsResult.rows[0].chiffre_affaires); 
-        
-        // LA CORRECTION EST ICI : on s'assure que c.nom est présent dans le GROUP BY si on l'utilise.
-        const topPrestationsResult = await pool.query(`
-            SELECT c.nom, SUM(lt.total_ligne_ttc) as total_genere 
-            FROM lignes_ticket lt 
-            JOIN tickets t ON lt.id_ticket = t.id_ticket 
-            JOIN catalogue c ON lt.id_article = c.id_article 
-            WHERE t.id_salon = $1 AND c.type_article = 'PRESTATION' AND t.statut != 'ANNULE' 
-            GROUP BY c.nom 
-            ORDER BY total_genere DESC 
-            LIMIT 3
-        `, [id_salon]); 
-        
-        const commissionsResult = await pool.query(`SELECT COALESCE(SUM(montant_commission), 0) as total_commissions FROM commissions WHERE id_salon = $1`, [id_salon]); 
-        let googleMarketing = { note_actuelle: 0, total_avis: 0, tendance_6_mois: [0, 0, 0, 0, 0, 0] }; 
-        try { 
-            const configResult = await pool.query('SELECT google_api_key, google_account_id, google_location_id FROM configuration_salon WHERE id_salon = $1', [id_salon]); 
-            if (configResult.rowCount > 0) { 
-                const salonConfig = configResult.rows[0]; 
-                if (salonConfig.google_api_key && salonConfig.google_account_id && salonConfig.google_location_id) { 
-                    const url = `https://mybusiness.googleapis.com/v4/accounts/${salonConfig.google_account_id}/locations/${salonConfig.google_location_id}/reviews?key=${salonConfig.google_api_key}`; 
-                    const gRes = await fetch(url); 
-                    if (gRes.ok) { 
-                        const gData = await gRes.json(); 
-                        if (gData.reviews && gData.reviews.length > 0) { 
-                            googleMarketing.total_avis = gData.reviews.length; 
-                            let totalStars = 0; const ratingMap = { 'ONE': 1, 'TWO': 2, 'THREE': 3, 'FOUR': 4, 'FIVE': 5 }; 
-                            gData.reviews.forEach(review => { totalStars += ratingMap[review.starRating] || 5; }); 
-                            googleMarketing.note_actuelle = parseFloat((totalStars / googleMarketing.total_avis).toFixed(1)); 
-                            googleMarketing.tendance_6_mois = [ googleMarketing.note_actuelle - 0.4, googleMarketing.note_actuelle - 0.3, googleMarketing.note_actuelle - 0.1, googleMarketing.note_actuelle + 0.1, googleMarketing.note_actuelle, googleMarketing.note_actuelle ]; 
-                        } 
-                    } 
-                } 
-            } 
-        } catch (e) { console.error("Avertissement Google API :", e); } 
-        
-        // RECUPERATION DES VERBATIMS
-        const avisResult = await pool.query(`
-            SELECT a.id_demande, a.prenom, a.note, a.commentaire, a.telephone, a.date_creation, e.nom as nom_employe 
-            FROM avis_demandes a LEFT JOIN employes e ON a.id_employe = e.id_employe
-            WHERE a.id_salon = $1 AND a.statut = 'REPONDU' AND a.note IS NOT NULL
-            ORDER BY a.date_creation DESC LIMIT 50
-        `, [id_salon]);
-
-        let nps_score = null;
-        let nb_promoteurs = 0, nb_detracteurs = 0;
-        if (avisResult.rowCount > 0) {
-            avisResult.rows.forEach(a => { if (a.note === 5) nb_promoteurs++; else if (a.note <= 3) nb_detracteurs++; });
-            nps_score = Math.round(((nb_promoteurs / avisResult.rowCount) * 100) - ((nb_detracteurs / avisResult.rowCount) * 100));
-        }
-
-        res.json({ 
-            statut: "Succès", 
-            finances: { 
-                chiffre_affaires_total: caTotal, 
-                panier_moyen: nbVentes > 0 ? (caTotal / nbVentes).toFixed(2) : 0, 
-                commissions_a_payer: parseFloat(commissionsResult.rows[0].total_commissions) 
-            }, 
-            top_3_prestations: topPrestationsResult.rows || [], 
-            marketing: { ...googleMarketing, verbatims: avisResult.rows, nps: nps_score } 
-        }); 
-    } catch (erreur) { 
+    try {
+        const data = await recupererDashboardGlobal({ pool }, { id_salon: req.user.id_salon });
+        res.json(data);
+    } catch (erreur) {
         console.error("Erreur Dashboard:", erreur);
-        res.status(500).json({ erreur: "Erreur calcul dashboard." }); 
+        res.status(500).json({ erreur: "Erreur calcul dashboard." });
     }
 });
 
@@ -4607,23 +4542,24 @@ app.get('/api/compta/statut-mois', verifierToken, async (req, res) => {
     }
 });
 
+// =========================================================================
+// --- GOD MODE (SUPER-ADMIN) & MAINTENANCE SYSTÈME ---
+// =========================================================================
+async function verifierSuperAdmin(req, res, next) {
+    return verifierSuperAdminMiddleware({ pool }, req, res, next);
+}
+
 // (Robots Comptabilité, Clôture Fantôme et Rapport Hebdo extraits dans jobs/cronJobs.js)
 app.get('/api/admin/forcer-robot', verifierToken, verifierSuperAdmin, async (req, res) => {
     try {
-        console.log("=========================================");
-        console.log("=== DÉCLENCHEMENT MANUEL DES ROBOTS ===");
-        console.log("=========================================");
-        
-        // 1. On AWAIT spécifiquement le rapport hebdo pour que la requête attende sa fin
-        await executerRapportHebdoGerant();
-        
-        // 2. Les autres tournent en arrière-plan sans bloquer
-        executerRobotComptable(); 
-        executerClotureFantome();
-        executerRobotMarketingEtPredictif();
-        executerEnvoiComptable();
-        
-        res.json({ message: "Le cycle du robot hebdomadaire est terminé ! Les autres robots tournent en fond." }); 
+        const result = await forcerExecutionRobots({
+            executerRapportHebdoGerant,
+            executerRobotComptable,
+            executerClotureFantome,
+            executerRobotMarketingEtPredictif,
+            executerEnvoiComptable
+        });
+        res.json(result);
     } catch (e) {
         console.error("❌ ERREUR CRITIQUE DANS LA ROUTE FORCER-ROBOT :", e);
         res.status(500).json({ erreur: "Erreur interne lors de l'exécution du robot." });
@@ -4632,125 +4568,57 @@ app.get('/api/admin/forcer-robot', verifierToken, verifierSuperAdmin, async (req
 
 // --- CHEAT CODE : VOYAGE DANS LE TEMPS (DÉVELOPPEMENT UNIQUEMENT) ---
 app.get('/api/admin/time-travel/:id_salon', verifierToken, verifierSuperAdmin, async (req, res) => {
-    if (process.env.NODE_ENV === 'production') return res.status(403).json({ erreur: "Désactivé en production." });
     try {
-        await pool.query(
-            "UPDATE configuration_salon SET date_fin_essai = NOW() - INTERVAL '5 days' WHERE id_salon = $1", 
-            [req.params.id_salon]
-        );
-        res.json({ message: `⏳ Voyage dans le temps réussi ! L'essai du salon #${req.params.id_salon} est maintenant expiré.` });
-    } catch (e) { 
-        res.status(500).json({ erreur: e.message }); 
+        const result = await timeTravelSalon({ pool }, { id_salon: req.params.id_salon });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message });
     }
 });
 
 // --- CHEAT CODE : INJECTION SIRET POUR TEST PDF (DÉVELOPPEMENT UNIQUEMENT) ---
 app.get('/api/admin/fix-siret-38', verifierToken, verifierSuperAdmin, async (req, res) => {
-    if (process.env.NODE_ENV === 'production') return res.status(403).json({ erreur: "Désactivé en production." });
     try {
-        await pool.query(
-            "UPDATE configuration_salon SET siret = '12345678901234', adresse_salon = '123 Rue de Test, 75000 Paris' WHERE id_salon = 38"
-        );
-        res.json({ message: "✅ SIRET et Adresse injectés avec succès !" });
-    } catch (e) { 
-        res.status(500).json({ erreur: e.message }); 
+        const result = await fixSiret38({ pool });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message });
     }
 });
 
-// =========================================================================
-// --- GOD MODE (SUPER-ADMIN) ---
-// =========================================================================
-async function verifierSuperAdmin(req, res, next) {
-    try {
-        const superAdminEmail = process.env.SUPERADMIN_EMAIL || '2@gmail.com';
-        const userRes = await pool.query("SELECT email FROM utilisateurs WHERE id_salon = $1 AND role = 'gerant' LIMIT 1", [req.user.id_salon]);
-        if (userRes.rowCount === 0 || userRes.rows[0].email !== superAdminEmail) {
-            return res.status(403).json({ erreur: "Accès refusé. God mode uniquement." });
-        }
-        next();
-    } catch (e) {
-        return res.status(500).json({ erreur: "Erreur de vérification des droits admin." });
-    }
-}
-
 app.get('/api/superadmin/stats', verifierToken, verifierSuperAdmin, async (req, res) => {
     try {
-        const totalSalons = await pool.query("SELECT COUNT(*) as count FROM configuration_salon");
-        const activeSalons = await pool.query("SELECT COUNT(*) as count FROM utilisateurs WHERE statut_abonnement = 'actif' AND role = 'gerant'");
-        const mrr = parseInt(activeSalons.rows[0].count) * 49;
-        
-        res.json({ 
-            total_salons: totalSalons.rows[0].count, 
-            salons_actifs: activeSalons.rows[0].count, 
-            mrr_estime: mrr 
-        });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lecture stats admin." }); }
+        const data = await recupererStatsSuperAdmin({ pool });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lecture stats admin." });
+    }
 });
 
 app.get('/api/superadmin/salons', verifierToken, verifierSuperAdmin, async (req, res) => {
     try {
-        const query = `
-            SELECT c.id_salon, c.nom_salon, u.email, u.statut_abonnement 
-            FROM configuration_salon c
-            JOIN utilisateurs u ON c.id_salon = u.id_salon
-            WHERE u.role = 'gerant'
-            ORDER BY c.id_salon DESC
-        `;
-        const result = await pool.query(query);
-        res.json(result.rows);
-    } catch (e) { res.status(500).json({ erreur: "Erreur lecture liste salons." }); }
+        const data = await listerSalonsSuperAdmin({ pool });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lecture liste salons." });
+    }
 });
 
 app.put('/api/superadmin/salons/:id/status', verifierToken, verifierSuperAdmin, async (req, res) => {
     try {
-        const { statut } = req.body;
-        await pool.query("UPDATE utilisateurs SET statut_abonnement = $1 WHERE id_salon = $2 AND role = 'gerant'", [statut, req.params.id]);
-        res.json({ message: `Le salon #${req.params.id} est maintenant ${statut}.` });
-    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour statut." }); }
+        const result = await mettreAJourStatutSalonSuperAdmin({ pool }, { id_salon: req.params.id, statut: req.body?.statut });
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur mise à jour statut." });
+    }
 });
 
 app.delete('/api/superadmin/salons/:id', verifierToken, verifierSuperAdmin, async (req, res) => {
-    const id = req.params.id;
-    if (parseInt(id) === req.user.id_salon) return res.status(403).json({ erreur: "Impossible de supprimer votre propre salon fondateur." });
-    
-    const clientDB = await pool.connect();
     try {
-        await clientDB.query('BEGIN');
-        
-        // 🚨 CONFORMITÉ NF525 : On NE supprime PLUS JAMAIS les données fiscales (6 ans de conservation).
-        // On conserve indéfiniment en lecture seule : jet_logs, tickets, lignes_ticket, commissions, clotures_caisse.
-        // Seules les données opérationnelles et personnelles (pour la conformité RGPD) du salon sont purgées.
-
-        // Ordre de suppression calculé pour purger le SaaS tout en gardant l'archive fiscale intacte
-        await clientDB.query('DELETE FROM rendez_vous WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM absences_employes WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM recettes_articles WHERE id_protocole IN (SELECT id_protocole FROM protocoles WHERE id_salon = $1)', [id]);
-        await clientDB.query('DELETE FROM protocoles WHERE id_salon = $1', [id]);
-        // Anonymisation RGPD des fiches liées à des pièces fiscales (tickets/commissions) et suppression des fiches non liées
-        await clientDB.query('DELETE FROM catalogue WHERE id_salon = $1 AND id_article NOT IN (SELECT DISTINCT id_article FROM lignes_ticket WHERE id_salon = $1 AND id_article IS NOT NULL)', [id]);
-        await clientDB.query("UPDATE employes SET nom = 'Collaborateur Anonymisé #' || id_employe, code_pin = NULL, photo_url = NULL WHERE id_salon = $1 AND id_employe IN (SELECT DISTINCT id_employe FROM tickets WHERE id_salon = $1 AND id_employe IS NOT NULL UNION SELECT DISTINCT id_employe FROM commissions WHERE id_salon = $1 AND id_employe IS NOT NULL)", [id]);
-        await clientDB.query('DELETE FROM employes WHERE id_salon = $1 AND id_employe NOT IN (SELECT DISTINCT id_employe FROM tickets WHERE id_salon = $1 AND id_employe IS NOT NULL UNION SELECT DISTINCT id_employe FROM commissions WHERE id_salon = $1 AND id_employe IS NOT NULL)', [id]);
-        await clientDB.query("UPDATE clients SET nom = 'Client Anonymisé #' || id_client, prenom = '', telephone = NULL, email = NULL, notes = NULL, date_naissance = NULL WHERE id_salon = $1 AND id_client IN (SELECT DISTINCT id_client FROM tickets WHERE id_salon = $1 AND id_client IS NOT NULL)", [id]);
-        await clientDB.query('DELETE FROM clients WHERE id_salon = $1 AND id_client NOT IN (SELECT DISTINCT id_client FROM tickets WHERE id_salon = $1 AND id_client IS NOT NULL)', [id]);
-        await clientDB.query('DELETE FROM avis_demandes WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM taches_actions WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM ia_taches_attente WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM push_subscriptions WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM sms_opt_out WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM messages WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM pointages WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM utilisateurs WHERE id_salon = $1', [id]);
-        await clientDB.query('DELETE FROM configuration_salon WHERE id_salon = $1', [id]);
-
-        await enregistrerJET(id, 'PURGE_RGPD_SALON', { purge_par: 'SUPERADMIN', archives_fiscales_conservees: true }, clientDB);
-
-        await clientDB.query('COMMIT');
-        res.json({ message: `Le salon #${id} a été purgé (archives fiscales et comptables NF525 conservées).` });
+        const result = await purgerSalonSuperAdmin({ pool, enregistrerJET }, { id_salon: req.params.id, id_user_salon: req.user.id_salon });
+        res.json(result);
     } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: "Erreur lors de la destruction du salon : " + e.message });
-    } finally {
-        clientDB.release();
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la destruction du salon." });
     }
 });
 

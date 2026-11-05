@@ -161,7 +161,29 @@ flowchart TD
 
 ---
 
-#### 11. Si tu touches à `frontend/src/App.jsx`
+#### 11. Si tu touches à `services/dashboard/dashboard.service.js` (Dashboards & KPIs)
+- **Fonctionnalités impactées** : Tableau de bord gérant (CA, panier moyen, top 3 prestations, NPS, avis Google), métriques salon et commissions collaborateurs.
+- **Risques majeurs** :
+  - Erreur SQL GROUP BY sur les jointures de lignes tickets et prestations.
+  - Timeout ou crash sur l'API externe Google My Business (doit toujours être protégée par un `try/catch` non bloquant).
+- **Checklist de vérification** :
+  1. [ ] Tester `GET /api/dashboard` et vérifier que le calcul du panier moyen et le top 3 prestations sont cohérents.
+  2. [ ] Tester `GET /api/dashboard/employe` avec un token collaborateur et vérifier l'isolation des données.
+
+---
+
+#### 12. Si tu touches à `services/admin/superadmin.service.js` (Super-Administration)
+- **Fonctionnalités impactées** : Statistiques globales MRR, changement de statut salon, purge complète de salon, déclenchement forcé des robots, simulateur temporel.
+- **Risques majeurs** :
+  - Violation d'accès God mode si le middleware `verifierSuperAdmin` est altéré.
+  - Destruction accidentelle d'archives fiscales NF525 lors de la purge d'un salon (les tables de tickets et JET doivent TOUJOURS être conservées).
+- **Checklist de vérification** :
+  1. [ ] Tester l'accès avec un compte non superadmin : HTTP 403 obligatoire.
+  2. [ ] Vérifier que la purge salon (`DELETE /api/superadmin/salons/:id`) préserve expressément `tickets`, `clotures_caisse` et `jet_logs`.
+
+---
+
+#### 13. Si tu touches à `frontend/src/App.jsx`
 - **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.
@@ -173,7 +195,7 @@ flowchart TD
 
 ---
 
-#### 12. Si tu touches à `jobs/cronJobs.js`
+#### 14. Si tu touches à `jobs/cronJobs.js`
 - **Fonctionnalités impactées** : Clôture fantôme de sécurité, relances SMS clients, robot comptable IA, rapport hebdomadaire.
 - **Risques majeurs** :
   - Boucle infinie ou surcharge CPU sur le serveur Render.
