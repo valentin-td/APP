@@ -50,12 +50,12 @@ flowchart TB
             SRV_Stock["services/stock/<br/>(stock.service.js)"]
             SRV_RH["services/rh/<br/>(rh.service.js, employes.service.js)"]
             SRV_Proto["services/protocoles/<br/>(protocoles.service.js)"]
+            SRV_Chat["services/chat/<br/>(chat.service.js)"]
         end
 
         subgraph CoreMonolith["🏛️ Domaines en cours d'extraction (server.js)"]
             DomainCaisse["Caisse NF525 & Clôtures Z"]
             DomainAgenda["Agenda & Planning"]
-            DomainChat["Messagerie Interne"]
             DomainSalons["Multi-Salons & Abonnements Stripe"]
         end
 
@@ -152,6 +152,7 @@ Les fonctionnalités clés sont organisées en modules autonomes injectant leurs
 - `services/stock/` : algorithme prédictif de rupture selon l'historique des ventes, gestion des alertes d'inventaire, fusion d'articles et réassort.
 - `services/rh/` : calcul analytique des heures travaillées, gestion du pointage direct, détection des conflits d'agenda lors des arrêts, et anonymisation conforme NF525/RGPD.
 - `services/protocoles/` : fiches techniques de coiffure (Académie), gestion des recettes produits, décompte de stock technique, upload des médias sur Cloudflare R2 et centre d'action (tâches manuelles).
+- `services/chat/` : messagerie instantanée d'équipe temps réel (Socket.io), partage de notes vocales et photos, réactions emojis et accusés de lecture.
 
 ### 3.4. Couche Données (PostgreSQL & Stockage Objets)
 - **Base relationnelle** : PostgreSQL (hébergée sur Render, client `pg.Pool`).

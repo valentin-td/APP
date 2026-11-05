@@ -87,7 +87,19 @@ flowchart TD
 
 ---
 
-#### 5. Si tu touches à `frontend/src/App.jsx`
+#### 5. Si tu touches à `services/chat/chat.service.js` (Messagerie Interne)
+- **Fonctionnalités impactées** : Envoi de messages texte/audio/photos, notifications push mobiles, événements WebSockets multi-écrans.
+- **Risques majeurs** :
+  - Fuite de messages privés entre employés (isolation stricte par `id_destinataire`).
+  - Surcharge Socket.io due à des payloads de médias non compressés.
+- **Checklist de vérification** :
+  1. [ ] Tester l'envoi d'un message général (salon) et d'un message privé.
+  2. [ ] Vérifier la diffusion WebSocket de l'événement `nouveauMessage`.
+  3. [ ] Vérifier l'ajout et le retrait d'une réaction emoji (`messageReaction`).
+
+---
+
+#### 6. Si tu touches à `frontend/src/App.jsx`
 - **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.

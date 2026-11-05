@@ -82,6 +82,14 @@ const {
     basculerStatutTache,
     supprimerTache
 } = require('./services/protocoles/protocoles.service');
+const {
+    recupererMessages,
+    envoyerMessage,
+    modifierMessage,
+    supprimerMessage,
+    marquerMessagesLus,
+    reagirMessage
+} = require('./services/chat/chat.service');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -5468,237 +5476,77 @@ app.get('/api/export-fec', verifierToken, async (req, res) => {
 // =========================================================================
 // --- MESSAGERIE INTERNE ---
 // =========================================================================
+// =========================================================================
+// --- MODULE MESSAGERIE INTERNE & CHAT D'ÉQUIPE ---
+// =========================================================================
 app.get('/api/messages', verifierToken, async (req, res) => {
     try {
-        let query = `
-            SELECT m.*, COALESCE(e.nom, CASE WHEN m.id_expediteur = -1 THEN 'Salon' ELSE 'Gérant' END) as nom_expediteur, e.photo_url as photo_expediteur 
-            FROM messages m 
-            LEFT JOIN employes e ON m.id_expediteur = e.id_employe AND e.id_salon = m.id_salon
-            WHERE m.id_salon = $1
-        `;
-        const params = [req.user.id_salon];
-
-        // 🔒 SÉCURITÉ : Un employé récupère les messages du groupe (0) et ceux où il est expéditeur ou destinataire
-        if (req.user.role === 'employe') {
-            query += ` AND (m.id_destinataire = 0 OR m.id_expediteur = $2 OR m.id_destinataire = $2)`;
-            params.push(parseInt(req.user.id_employe, 10));
-        }
-
-        query += ` ORDER BY m.date_creation ASC`;
-        const result = await pool.query(query, params);
-        res.json(result.rows);
-    } catch (e) {
-        res.status(500).json({ erreur: "Erreur messages." });
-    }
+        const rows = await recupererMessages({ pool }, { id_salon: req.user.id_salon, role: req.user.role, id_employe: req.user.id_employe });
+        res.json(rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur messages." }); }
 });
 
 app.post('/api/messages', verifierToken, async (req, res) => {
-    const { id_destinataire, contenu, fichier_url, reply_to } = req.body;
-    const textePropre = typeof contenu === 'string' ? contenu.trim() : '';
-
-    if (!textePropre && !fichier_url) {
-        return res.status(400).json({ erreur: "Le message ne peut pas être vide." });
-    }
-    if (textePropre.length > 5000) {
-        return res.status(400).json({ erreur: "Le message dépasse la limite autorisée (5000 caractères)." });
-    }
-
-    // Autorise les images ET les mémos vocaux (webm, mp4, ogg, wav, mp3)
-    if (fichier_url) {
-        if (typeof fichier_url !== 'string' || fichier_url.length > 7500000) {
-            return res.status(400).json({ erreur: "Fichier trop volumineux (max 5 Mo)." });
-        }
-        const mimeValide =
-            /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(fichier_url) ||
-            /^data:(audio|video)\/(webm|mp4|mpeg|ogg|wav|aac|x-m4a);/i.test(fichier_url) ||
-            fichier_url.startsWith('https://');
-        if (!mimeValide) {
-            return res.status(400).json({ erreur: "Format de fichier non autorisé (Image ou Mémo vocal uniquement)." });
-        }
-    }
-
-    const id_expediteur = req.user.role === 'employe' ? parseInt(req.user.id_employe, 10) : (req.user.role === 'salon' ? -1 : null);
     try {
-        // Ajoute automatiquement la colonne reply_to si elle n'existe pas encore
-        await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to JSONB DEFAULT NULL`).catch(() => {});
-
-        let nom_expediteur = 'Gérant';
-        let photo_expediteur = null;
-        if (req.user.role === 'employe') {
-            const empRes = await pool.query('SELECT nom, photo_url FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_expediteur, req.user.id_salon]);
-            if (empRes.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable." });
-            nom_expediteur = empRes.rows[0].nom;
-            photo_expediteur = empRes.rows[0].photo_url;
-        } else if (req.user.role === 'salon') {
-            nom_expediteur = 'Salon';
-        }
-
-        let dest = null;
-        if (id_destinataire === 'salon' || id_destinataire === 0 || id_destinataire === '0') {
-            dest = 0;
-        } else if (id_destinataire === 'gerant' || id_destinataire === null || id_destinataire === undefined || id_destinataire === '' || id_destinataire === -1) {
-            dest = null;
-        } else {
-            const parsedDest = parseInt(id_destinataire, 10);
-            if (isNaN(parsedDest)) return res.status(400).json({ erreur: "Destinataire invalide." });
-            const checkDest = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [parsedDest, req.user.id_salon]);
-            if (checkDest.rowCount === 0) return res.status(404).json({ erreur: "Destinataire introuvable dans ce salon." });
-            dest = parsedDest;
-        }
-
-        const replyToPropre = (reply_to && typeof reply_to === 'object' && reply_to.id_message) ? {
-            id_message: Number(reply_to.id_message),
-            nom_expediteur: String(reply_to.nom_expediteur || 'Message').substring(0, 60),
-            extrait: String(reply_to.extrait || '').substring(0, 140)
-        } : null;
-
-        const result = await pool.query(
-            `INSERT INTO messages (id_salon, id_expediteur, id_destinataire, contenu, fichier_url, reply_to)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING id_message, date_creation`,
-            [req.user.id_salon, id_expediteur, dest, textePropre, fichier_url || null, replyToPropre ? JSON.stringify(replyToPropre) : null]
+        const newMessage = await envoyerMessage(
+            { pool, io, envoyerNotificationPush },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, body: req.body }
         );
-
-        const newMessage = {
-            id_message: result.rows[0].id_message,
-            id_salon: req.user.id_salon,
-            id_expediteur,
-            id_destinataire: dest,
-            contenu: textePropre,
-            fichier_url: fichier_url || null,
-            reply_to: replyToPropre,
-            date_creation: result.rows[0].date_creation,
-            nom_expediteur,
-            photo_expediteur,
-            reactions: {},
-            vu_par: []
-        };
-
-        const salonRoom = req.user.id_salon.toString();
-        if (dest === 0) {
-            io.to(salonRoom).to(`${salonRoom}_gerant`).to(`${salonRoom}_salon`).emit('nouveauMessage', newMessage);
-        } else {
-            let emitter = io.to(salonRoom).to(`${salonRoom}_gerant`).to(`${salonRoom}_salon`);
-            if (id_expediteur && id_expediteur > 0) emitter = emitter.to(`${salonRoom}_emp_${id_expediteur}`);
-            if (dest && dest > 0) emitter = emitter.to(`${salonRoom}_emp_${dest}`);
-            emitter.emit('nouveauMessage', newMessage);
-        }
-
-        let cibleNotif;
-        if (dest === 0) cibleNotif = 'salon';
-        else if (dest === null) cibleNotif = 'gerant';
-        else cibleNotif = { type: 'employe', id_employe: dest };
-
-        const estAudio = typeof fichier_url === 'string' && /^data:(audio|video)\//i.test(fichier_url);
-        const apercuNotif = textePropre
-            ? (textePropre.length > 40 ? textePropre.substring(0, 40) + '...' : textePropre)
-            : (estAudio ? 'Vocal' : 'Photo envoyée');
-
-        envoyerNotificationPush(req.user.id_salon, cibleNotif, {
-            title: `Nouveau message de ${newMessage.nom_expediteur}`,
-            body: apercuNotif,
-            url: '/?tab=messagerie'
-        });
-
         res.status(201).json(newMessage);
     } catch (e) {
         console.error("Erreur envoi message :", e);
-        res.status(500).json({ erreur: "Erreur envoi message." });
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de l'envoi du message." });
     }
 });
 
 app.put('/api/messages/:id', verifierToken, async (req, res) => {
-    const textePropre = typeof req.body.contenu === 'string' ? req.body.contenu.trim() : '';
-    if (!textePropre || textePropre.length > 5000) return res.status(400).json({ erreur: "Contenu invalide." });
-
-    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
     try {
-        const updateRes = await pool.query(
-            'UPDATE messages SET contenu = $1 WHERE id_message = $2 AND id_salon = $3 AND id_expediteur IS NOT DISTINCT FROM $4 RETURNING id_message',
-            [textePropre, req.params.id, req.user.id_salon, id_expediteur]
+        const result = await modifierMessage(
+            { pool, io },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, id_message: req.params.id, body: req.body }
         );
-        if (updateRes.rowCount === 0) {
-            return res.status(403).json({ erreur: "Action non autorisée ou message introuvable." });
-        }
-        io.to(req.user.id_salon.toString()).emit('messageModifie', { id_message: parseInt(req.params.id, 10), contenu: textePropre });
-        res.json({ message: "Message modifié" });
-    } catch(e) { res.status(500).json({erreur: "Erreur lors de la modification"}); }
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur modification" });
+    }
 });
 
 app.delete('/api/messages/:id', verifierToken, async (req, res) => {
-    const id_expediteur = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
     try {
-        let deleteRes;
-        if (req.user.role === 'gerant') {
-            deleteRes = await pool.query('DELETE FROM messages WHERE id_message = $1 AND id_salon = $2 RETURNING id_message', [req.params.id, req.user.id_salon]);
-        } else {
-            deleteRes = await pool.query('DELETE FROM messages WHERE id_message = $1 AND id_salon = $2 AND id_expediteur IS NOT DISTINCT FROM $3 RETURNING id_message', [req.params.id, req.user.id_salon, id_expediteur]);
-        }
-        if (deleteRes.rowCount === 0) {
-            return res.status(403).json({ erreur: "Action non autorisée ou message introuvable." });
-        }
-        io.to(req.user.id_salon.toString()).emit('messageSupprime', { id_message: parseInt(req.params.id, 10) });
-        res.json({ message: "Message supprimé" });
-    } catch(e) { res.status(500).json({erreur: "Erreur lors de la suppression"}); }
+        const result = await supprimerMessage(
+            { pool, io },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, id_message: req.params.id }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la suppression" });
+    }
 });
 
 app.post('/api/messages/vu', verifierToken, async (req, res) => {
-    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(id => parseInt(id, 10)).filter(n => !isNaN(n)) : [];
-    if (ids.length === 0) return res.json({ message: "Rien à marquer." });
-    const monId = req.user.role === 'employe' ? req.user.id_employe : (req.user.role === 'salon' ? -1 : null);
-    const monProfilId = req.user.role === 'employe' ? `emp_${req.user.id_employe}` : (req.user.role === 'salon' ? 'salon' : 'gerant');
     try {
-        const result = await pool.query(
-            `UPDATE messages SET vu_par = CASE WHEN COALESCE(vu_par, '[]'::jsonb) @> to_jsonb($1::text) THEN COALESCE(vu_par, '[]'::jsonb) ELSE COALESCE(vu_par, '[]'::jsonb) || to_jsonb($1::text) END
-             WHERE id_message = ANY($2::int[]) AND id_salon = $3 AND id_expediteur IS DISTINCT FROM $4
-             RETURNING id_message, vu_par`,
-            [monProfilId, ids, req.user.id_salon, monId]
+        const result = await marquerMessagesLus(
+            { pool, io },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, ids: req.body.ids }
         );
-        result.rows.forEach(row => {
-            io.to(req.user.id_salon.toString()).emit('messageVu', { id_message: row.id_message, vu_par: row.vu_par });
-        });
-        res.json({ message: "Marqué comme vu." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur marquage vu." }); }
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur marquage vu." });
+    }
 });
 
 app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
-    const { emoji } = req.body;
-    const allowedEmojis = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
-    if (!emoji || !allowedEmojis.includes(emoji)) return res.status(400).json({ erreur: "Émoji non valide." });
-
-    const monProfilId = req.user.role === 'employe' ? `emp_${req.user.id_employe}` : (req.user.role === 'salon' ? 'salon' : 'gerant');
-    const clientDB = await pool.connect();
     try {
-        await clientDB.query('BEGIN');
-        const msgRes = await clientDB.query('SELECT reactions FROM messages WHERE id_message = $1 AND id_salon = $2 FOR UPDATE', [req.params.id, req.user.id_salon]);
-        if (msgRes.rowCount === 0) {
-            await clientDB.query('ROLLBACK');
-            return res.status(404).json({ erreur: "Message introuvable" });
-        }
-        
-        let reactions = msgRes.rows[0].reactions || {};
-        if (typeof reactions === 'string') reactions = JSON.parse(reactions); 
-        
-        if (!Array.isArray(reactions[emoji])) reactions[emoji] = [];
-        
-        if (reactions[emoji].includes(monProfilId)) {
-            reactions[emoji] = reactions[emoji].filter(id => id !== monProfilId);
-            if (reactions[emoji].length === 0) delete reactions[emoji];
-        } else {
-            reactions[emoji].push(monProfilId);
-        }
-        
-        await clientDB.query('UPDATE messages SET reactions = $1 WHERE id_message = $2 AND id_salon = $3', [JSON.stringify(reactions), req.params.id, req.user.id_salon]);
-        await clientDB.query('COMMIT');
-        io.to(req.user.id_salon.toString()).emit('messageReaction', { id_message: parseInt(req.params.id, 10), reactions });
-        res.json({ message: "Réaction mise à jour" });
-    } catch(e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({erreur: "Erreur de réaction"});
-    } finally {
-        clientDB.release();
+        const result = await reagirMessage(
+            { pool, io },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, id_message: req.params.id, emoji: req.body.emoji }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur de réaction" });
     }
 });
+
 // =========================================================================
 // --- ROUTES CRUD & STATS ---
 // =========================================================================

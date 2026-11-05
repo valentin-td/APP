@@ -407,7 +407,7 @@
 
 - **Objectif** : Chat d'équipe privé et temps réel entre collaborateurs et gérant : messages texte, notes vocales audio (Base64), photos d'inspiration, réactions emojis et statuts de lecture ("Vu").
 - **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Messagerie, composant d'enregistrement audio).
-- **Fichiers Backend** : `server.js` (lignes ~5450-5690).
+- **Fichiers Backend** : `server.js`, `services/chat/chat.service.js`.
 - **Routes API** :
   - `GET /api/messages`
   - `POST /api/messages`
@@ -415,7 +415,7 @@
   - `DELETE /api/messages/:id`
   - `POST /api/messages/vu`
   - `POST /api/messages/:id/react`
-- **Services / Modules** : `socket.io` (`nouveauMessage`, `reactionMessageUpdate`), WebPush.
+- **Services / Modules** : `services/chat/chat.service.js`, `socket.io` (`nouveauMessage`, `reactionMessageUpdate`), WebPush.
 - **Tables BDD** : `messages`, `employes`, `configuration_salon`.
 - **Dépendances Amont** : `employes`.
 - **Dépendances Aval** : Notifications push sur mobiles.
