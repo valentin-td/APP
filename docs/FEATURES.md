@@ -69,7 +69,7 @@
 ## 2. Caisse Enregistreuse & Encaissement NF525
 
 - **Objectif** : Encaisser les prestations et produits vendus, gérer les paiements mixtes (CB, espèces, chèque), piloter le TPE physique Stripe Terminal, calculer la ventilation de TVA, et sceller chaque ticket avec une signature cryptographique chaînée SHA-256.
-- **Fichiers Frontend** : `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/App.jsx` (Smart POS NF525, panier interactif, modal code-barres caméra, pourboires, sélection client/collaborateur, checklist go-live).
+- **Fichiers Frontend** : `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/components/modals/AnnulationTicketModal.jsx`, `frontend/src/components/modals/MouvementCaisseModal.jsx`, `frontend/src/components/navigation/AppHeaderBanners.jsx`, `frontend/src/App.jsx` (Smart POS NF525, panier interactif, modal code-barres caméra, pourboires, sélection client/collaborateur, checklist go-live).
 - **Fichiers Backend** : `services/caisse/caisse.service.js` (`encaisserTicket`, `encaisserPourboireIsole`, `annulerTicketCaisse`, `envoyerTicketCaisse`, `recupererLignesTicket`), `services/pdf/ticketPdf.service.js`, `server.js` (délégation).
 - **Routes API** :
   - `POST /api/caisse/payer`
@@ -99,7 +99,7 @@
 ## 3. Clôture de Caisse Journalière (Z de Caisse) & Clôture Fantôme
 
 - **Objectif** : Clôturer la journée de caisse, calculer les cumuls perpétuels (Grand Total brut, net, TVA par taux), sceller le rapport Z journalier avec hachage SHA-256 et verrouiller la caisse jusqu'au lendemain.
-- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/App.jsx` (modal de clôture Z, comptage du tiroir-caisse, régularisation matinale et écarts espèces).
+- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/components/modals/ClotureZDialog.jsx`, `frontend/src/components/modals/RegularisationZModal.jsx`, `frontend/src/App.jsx` (dialogue officiel clôture Z certifié NF525, comptage tiroir, régularisation matinale obligatoire et écarts espèces).
 - **Fichiers Backend** : `services/caisse/caisse.service.js` (`cloturerCaisseZ`, `recupererStatutCloture`, `recupererVerificationMatinale`, `regulariserCaisse`, `recupererMouvementsJour`, `creerMouvementCaisse`), `jobs/cronJobs.js` (`executerClotureFantome`), `server.js` (délégation).
 - **Routes API** :
   - `POST /api/caisse/cloture`
@@ -128,7 +128,7 @@
 ## 4. Journal des Événements Techniques (JET) & Audit NF525
 
 - **Objectif** : Enregistrer de façon immuable tous les événements système sensibles (connexions échouées, ouvertures de tiroir, modifications de prix, annulations de tickets, clôtures Z, déblocages PIN) et générer l'attestation légale de conformité fiscale.
-- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/components/superadmin/SuperAdminTab.jsx`, `frontend/src/App.jsx` (écran de conformité administrative / Super Admin).
+- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/components/superadmin/SuperAdminTab.jsx`, `frontend/src/components/modals/ActionDialogs.jsx` (`AuditNf525Dialog`), `frontend/src/App.jsx` (écran de conformité administrative / Super Admin).
 - **Fichiers Backend** : `services/caisse/caisse.service.js` (`enregistrerJET`, `verifierConformiteNF525`), `services/caisse/dossierNf525Pdf.service.js` (`genererDossierTechniqueNF525PDF`), `legal.js`, `server.js` (délégation).
 - **Routes API** :
   - `GET /api/admin/verifier-nf525`
@@ -219,7 +219,7 @@
 ## 8. Gestion des Collaborateurs & Sécurité PIN
 
 - **Objectif** : Gérer l'équipe du salon, attribuer les taux de commission (prestations et revente produits), sécuriser l'accès par code PIN haché, et garantir l'anonymisation RGPD sans détruire les tickets NF525.
-- **Fichiers Frontend** : `frontend/src/components/rh/RHTab.jsx`, `frontend/src/constants/theme.js`, `frontend/src/components/common/Avatar.jsx`, `frontend/src/App.jsx` (tableau de bord RH, modal ajout/modification collaborateur, attribution de couleurs).
+- **Fichiers Frontend** : `frontend/src/components/rh/RHTab.jsx`, `frontend/src/utils/pin.js`, `frontend/src/constants/theme.js`, `frontend/src/components/common/Avatar.jsx`, `frontend/src/App.jsx` (tableau de bord RH, modal ajout/modification collaborateur, statut/lockout PIN NF525, attribution de couleurs).
 - **Fichiers Backend** : `server.js`, `services/rh/employes.service.js`.
 - **Routes API** :
   - `GET /api/employes`
@@ -245,7 +245,7 @@
 ## 9. Pointeuse Digitale & Décompte des Heures
 
 - **Objectif** : Permettre aux salariés de pointer leur arrivée, pauses et départ en salon via code PIN, calculer les heures effectives en direct et gérer les ajustements manuels d'heures du gérant.
-- **Fichiers Frontend** : `frontend/src/components/rh/RHTab.jsx`, `frontend/src/components/dashboard/DashboardTab.jsx`, `frontend/src/App.jsx` (modal pointeuse, badge live clocking, chronomètre en direct sur l'accueil).
+- **Fichiers Frontend** : `frontend/src/components/modals/PointeuseModal.jsx`, `frontend/src/components/rh/RHTab.jsx`, `frontend/src/components/dashboard/DashboardTab.jsx`, `frontend/src/App.jsx` (modal pointeuse 4 étapes, badge live clocking, chronomètre en direct sur l'accueil).
 - **Fichiers Backend** : `server.js`, `services/rh/rh.service.js`.
 - **Routes API** :
   - `GET /api/rh/statut-pointages`
@@ -328,7 +328,7 @@
 ## 13. Catalogue Prestations & Gestion Prédictive des Stocks
 
 - **Objectif** : Répertoire complet des prestations et des produits de revente/techniques, calcul prédictif de vélocité des ventes, détection des ruptures de stock imminentes, correction d'inventaire et fusion de doublons.
-- **Fichiers Frontend** : `frontend/src/components/stock/StocksTab.jsx`, `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/App.jsx` (onglets Stocks & Caisse, inventaire produits labo/revente, détection ruptures, modal de fusion des doublons).
+- **Fichiers Frontend** : `frontend/src/components/stock/StocksTab.jsx`, `frontend/src/components/modals/FusionStocksModal.jsx`, `frontend/src/components/modals/ActionDialogs.jsx` (`ModifStockDialog`, `ModifNomDialog`), `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/App.jsx` (onglets Stocks & Caisse, inventaire produits labo/revente, détection ruptures, modal de fusion des doublons).
 - **Fichiers Backend** : `server.js`, `services/stock/stock.service.js`.
 - **Routes API** :
   - `GET /api/catalogue`
@@ -391,7 +391,7 @@
 ## 16. Tâches d'Action & To-Do List Salon
 
 - **Objectif** : Organiser les tâches opérationnelles du salon (ménage, réassort, relances clients, déclarations) créées manuellement ou injectées par l'IA.
-- **Fichiers Frontend** : `frontend/src/components/actions/ActionsTab.jsx`, `frontend/src/App.jsx` (centre d'action opérationnel, tri d'urgence, gestion to-do list salon).
+- **Fichiers Frontend** : `frontend/src/components/actions/ActionsTab.jsx`, `frontend/src/components/modals/ActionDialogs.jsx` (`ConfirmDialog`, `CancellationRobotDialog`, `SauvetageClientDialog`), `frontend/src/App.jsx` (centre d'action opérationnel, tri d'urgence, gestion to-do list salon).
 - **Fichiers Backend** : `server.js`, `services/protocoles/protocoles.service.js`.
 - **Routes API** :
   - `GET /api/taches`
@@ -492,7 +492,7 @@
 ## 21. Robot Comptable Autonome (IA IMAP & Factures OCR)
 
 - **Objectif** : Scruter la boîte mail professionnelle du salon toutes les 10 minutes, télécharger les factures fournisseurs en pièce jointe, extraire les montants HT/TVA/TTC et lignes produits via Groq LLM (modèle vision/texte rapide), et créer une tâche de validation pré-remplie.
-- **Fichiers Frontend** : `frontend/src/components/actions/ActionsTab.jsx`, `frontend/src/App.jsx` (centre d'action, upload facture PDF, OCR IA, validation/rejet et saisie manuelle).
+- **Fichiers Frontend** : `frontend/src/components/actions/ActionsTab.jsx`, `frontend/src/components/modals/ModalIA.jsx`, `frontend/src/components/modals/SaisieFactureManuelleModal.jsx`, `frontend/src/App.jsx` (centre d'action, upload facture PDF, modal arbitrage OCR IA, validation/rejet et saisie manuelle).
 - **Fichiers Backend** : `services/ia/ia.service.js`, `server.js` (délégation des routes), `jobs/cronJobs.js` (`executerRobotComptable`).
 - **Routes API** :
   - `GET /api/ia/taches`
@@ -516,7 +516,7 @@
 ## 22. Comptabilité, Liasse Mensuelle & Export FEC
 
 - **Objectif** : Clôturer chaque mois comptable, générer la liasse PDF certifiée (Z de caisse agrégés, ventilation TVA, factures achats), générer le fichier FEC officiel (format DGI 18 colonnes) et l'archive fiscale annuelle scellée.
-- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/Parametres.jsx`, `frontend/src/App.jsx` (onglets Admin & Paramètres : clôtures Z, ventilation TVA, téléchargement FEC, liasse PDF, validation fin de mois).
+- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/components/modals/ValidationComptaModal.jsx`, `frontend/src/Parametres.jsx`, `frontend/src/App.jsx` (onglets Admin & Paramètres : clôtures Z, ventilation TVA, téléchargement FEC, liasse PDF, modal de validation fin de mois avec signature manuscrite).
 - **Fichiers Backend** : `server.js`, `services/compta/fec.service.js`, `services/compta/archiveFiscale.service.js`, `services/compta/clotureMensuelle.service.js`, `services/pdf/liassePdf.service.js`.
 - **Routes API** :
   - `GET /api/export-fec`

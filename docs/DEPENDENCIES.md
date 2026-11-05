@@ -266,8 +266,23 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
   - Une fuite mémoire sur les listeners WebSocket impacterait tous les utilisateurs connectés.
 
 ### 4.3. Le Frontend Modulaire & Composants Métier (`frontend/src/`)
-- **Orchestrateur racine** : `frontend/src/App.jsx` (réduit de 11 553 lignes à ~6 760 lignes après modularisation des 10 onglets).
+- **Orchestrateur racine** : `frontend/src/App.jsx` (réduit de 11 553 lignes à **4 807 lignes** [-58.4%] après extraction des onglets de domaine, des modales globales et des composants de navigation).
 - **Structure modulaire en place** :
+  - `frontend/src/components/navigation/` :
+    - `NavbarSidebar.jsx` : barre latérale de navigation desktop et intégration `LiquidTabBar`.
+    - `BottomMenuOutils.jsx` : menu tiroir mobile "Outils & Gestion".
+    - `AppHeaderBanners.jsx` : bannières supérieures (rappel Z, essais Stripe, alertes stocks, statut hors-ligne).
+  - `frontend/src/components/modals/` :
+    - `RegularisationZModal.jsx` : régularisation ouverture caisse & clôture fantôme.
+    - `MouvementCaisseModal.jsx` : entrées/sorties de petite caisse avec calculatrice espèces.
+    - `ClotureZDialog.jsx` : clôture quotidienne Z conforme NF525 et scellement d'archive.
+    - `AnnulationTicketModal.jsx` : compensation et annulation de ticket fiscal.
+    - `ActionDialogs.jsx` : dialogues système (`ConfirmDialog`, `ModifStockDialog`, `ModifNomDialog`, `CancellationRobotDialog`, `AuditNf525Dialog`, `SauvetageClientDialog`).
+    - `PointeuseModal.jsx` : pointeuse tactile d'horaires en 4 étapes.
+    - `FusionStocksModal.jsx` : réconciliation et fusion des stocks doublons.
+    - `SaisieFactureManuelleModal.jsx` : saisie manuelle de dépenses/factures avec TVA.
+    - `ModalIA.jsx` : arbitrage OCR factures IA, congés et rendez-vous.
+    - `ValidationComptaModal.jsx` : certification mensuelle avec signature tactile canvas.
   - `frontend/src/components/dashboard/DashboardTab.jsx` : Dashboard Salon, Salarié & Gérant.
   - `frontend/src/components/caisse/CaisseTab.jsx` : Smart POS NF525, panier réactif, scanner code-barres.
   - `frontend/src/components/actions/ActionsTab.jsx` : Centre de tâches d'action, IA OCR factures, sauvetage clients.
@@ -278,10 +293,10 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
   - `frontend/src/components/admin/AdminTab.jsx` : Clôture Z NF525, mouvements d'espèces, historiques CA & liasse.
   - `frontend/src/components/chat/MessagerieTab.jsx` : Chat interne temps réel d'équipe (Teams-style), mémos vocaux.
   - `frontend/src/components/superadmin/SuperAdminTab.jsx` : God Mode fondateur, parc de salons, MRR et robots CRON.
-  - `frontend/src/components/common/` : `Avatar.jsx`, `SvgEmptyState.jsx`, `ThemeToggle.jsx`.
-  - `frontend/src/constants/theme.js` & `frontend/src/utils/` : `text.js`, `protocoles.js`, `auth.js`, `fetchClient.js`.
+  - `frontend/src/components/common/` : `Avatar.jsx`, `SvgEmptyState.jsx`, `ThemeToggle.jsx`, `ToastNotification.jsx`, `SimulateurIAButton.jsx`.
+  - `frontend/src/constants/theme.js` & `frontend/src/utils/` : `pin.js`, `text.js`, `protocoles.js`, `auth.js`, `fetchClient.js`.
 - **Risques maîtrisés** :
-  - Isolation du rendu JSX par onglet métier.
+  - Isolation du rendu JSX par onglet et par modalité opérationnelle.
   - Prévention de l'erreur React `#310` en garantissant la constance de l'ordre d'appel des hooks au sein de chaque composant.
 
 ---

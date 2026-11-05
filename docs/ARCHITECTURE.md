@@ -130,15 +130,31 @@ flowchart TB
 ### 3.1. Couche Frontend (SPA Progressive Web App & Architecture Modulaire)
 - **Framework** : React 19.2.8 avec Vite 8.3.0.
 - **PWA & Offline** : `vite-plugin-pwa`, `sw.js` pour les notifications push web, et `localforage` (IndexedDB) pour le cache hors-ligne du catalogue et du panier caisse (`offline_tickets`).
-- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal allégé (réduit de 11 553 à ~6 700 lignes), structuré en modules, onglets découpés, utilitaires et contextes :
+- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal allégé (réduit de 11 553 à **4 807 lignes** [-58.4%], dont le JSX est entièrement découpé en composants autonomes), structuré en modules, onglets découpés, modales spécialisées, barres de navigation et utilitaires :
   - `frontend/src/utils/auth.js` : décodage JWT/UI-token sécurisé, transformation VAPID Uint8Array et vérification des règles de complexité PIN.
+  - `frontend/src/utils/pin.js` : helpers de sécurité NF525 pour la gestion des tentatives et blocages PIN temporaires/définitifs (`getStatutBlocagePin`, `appliquerRetourPinLocal`).
   - `frontend/src/utils/fetchClient.js` : client HTTP intercepteur injectant automatiquement les cookies de session et le jeton Bearer sur toutes les requêtes API.
   - `frontend/src/utils/text.js` : normalisation de recherche, formatage de noms, dates et portions de produits techniques.
   - `frontend/src/utils/protocoles.js` : normalisation et validation des étapes de tutoriels/recettes techniques.
   - `frontend/src/constants/theme.js` : constantes visuelles partagées (`COULEURS_EMPLOYES`).
   - `frontend/src/pages/ReservationPublique.jsx` : borne autonome de réservation en ligne publique anti-Planity avec calcul des créneaux et fidélité instantanée.
   - `frontend/src/components/auth/LoginView.jsx` : écran de connexion unifié (Gérant email/mdp, Employé PIN, Salon PIN, Récupération de mot de passe).
-  - `frontend/src/components/common/` : composants graphiques mutualisés (`ThemeToggle.jsx`, `Avatar.jsx`, `SvgEmptyState.jsx`).
+  - `frontend/src/components/common/` : composants graphiques mutualisés (`ThemeToggle.jsx`, `Avatar.jsx`, `SvgEmptyState.jsx`, `ToastNotification.jsx`, `SimulateurIAButton.jsx`).
+  - `frontend/src/components/navigation/` :
+    - `NavbarSidebar.jsx` : barre de navigation latérale desktop et intégration mobile `LiquidTabBar`.
+    - `BottomMenuOutils.jsx` : menu tiroir mobile "Outils & Gestion" (Académie, Stocks, Équipe, Compta, God Mode, Chat, Déconnexion).
+    - `AppHeaderBanners.jsx` : bannières d'alertes supérieures (expiration essai Stripe, rappel Z obligatoire, contrôle stock, notification clôture fantôme, statut hors-ligne et compteur de tickets locaux en attente).
+  - `frontend/src/components/modals/` :
+    - `RegularisationZModal.jsx` : modal de régularisation obligatoire d'ouverture de caisse et clôtures fantômes avec saisie du fond de caisse initial et sécurité PIN.
+    - `MouvementCaisseModal.jsx` : modal de gestion de la petite caisse (entrées/sorties d'espèces), calculatrice billets/pièces, motifs types et validation PIN employé.
+    - `ClotureZDialog.jsx` : dialogue officiel de clôture journalière Z certifiée NF525 avec comptage physique de caisse, calcul d'écarts avec justification obligatoire, et scellement cryptographique.
+    - `AnnulationTicketModal.jsx` : modal d'annulation de vente et génération de ticket de compensation négatif conforme NF525 avec sélection des lignes d'articles remboursées.
+    - `ActionDialogs.jsx` : suite de dialogues opérationnels (`ConfirmDialog`, `ModifStockDialog`, `ModifNomDialog`, `CancellationRobotDialog`, `AuditNf525Dialog`, `SauvetageClientDialog`).
+    - `PointeuseModal.jsx` : pointeuse digitale tactile 4 étapes avec sélection collaborateur, saisie code PIN sécurisée avec gestion de lockout, sélection d'action (arrivée, pause, départ) et validation visuelle animée.
+    - `FusionStocksModal.jsx` : modal de dédoublonnage et d'unification des stocks avec prévisualisation des doublons détectés.
+    - `SaisieFactureManuelleModal.jsx` : modal de saisie manuelle de dépenses/factures avec calcul automatique/manuel de TVA, imputation de compte comptable et contrôle PIN gérant.
+    - `ModalIA.jsx` : interface d'arbitrage IA d'extraction de factures (aperçu PDF iframe, contrôle HT/TVA/TTC, génération automatique de fiches de stock), analyse de rendez-vous et congés.
+    - `ValidationComptaModal.jsx` : modal de certification mensuelle gérant avec 3 points de contrôle obligatoires, signature manuscrite tactile sur canvas et scellement d'archive NF525.
   - `frontend/src/components/dashboard/DashboardTab.jsx` : tableaux de bord multi-rôles (Poste Salon, Salarié/Coiffeur, et Gérant avec KPIs exécutifs).
   - `frontend/src/components/caisse/CaisseTab.jsx` : terminal de caisse Smart POS NF525, catalogue interactif, scanner code-barres caméra, pourboires, fidélité et checklist go-live.
   - `frontend/src/components/actions/ActionsTab.jsx` : centre d'action opérationnel, gestion des tâches, sauvetage client winback et OCR factures IA.

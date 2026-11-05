@@ -24,6 +24,23 @@ import AdminTab from './components/admin/AdminTab.jsx';
 import MessagerieTab from './components/chat/MessagerieTab.jsx';
 import SuperAdminTab from './components/superadmin/SuperAdminTab.jsx';
 import DashboardTab from './components/dashboard/DashboardTab.jsx';
+import { getStatutBlocagePin as getStatutBlocagePinUtil, appliquerRetourPinLocal as appliquerRetourPinLocalUtil } from './utils/pin.js';
+import AppHeaderBanners from './components/navigation/AppHeaderBanners.jsx';
+import NavbarSidebar from './components/navigation/NavbarSidebar.jsx';
+import BottomMenuOutils from './components/navigation/BottomMenuOutils.jsx';
+import RegularisationZModal from './components/modals/RegularisationZModal.jsx';
+import MouvementCaisseModal from './components/modals/MouvementCaisseModal.jsx';
+import ClotureZDialog from './components/modals/ClotureZDialog.jsx';
+import AnnulationTicketModal from './components/modals/AnnulationTicketModal.jsx';
+import { ConfirmDialog, ModifStockDialog, ModifNomDialog, CancellationRobotDialog, AuditNf525Dialog, SauvetageClientDialog } from './components/modals/ActionDialogs.jsx';
+import PointeuseModal from './components/modals/PointeuseModal.jsx';
+import FusionStocksModal from './components/modals/FusionStocksModal.jsx';
+import SaisieFactureManuelleModal from './components/modals/SaisieFactureManuelleModal.jsx';
+import ModalIA from './components/modals/ModalIA.jsx';
+import ValidationComptaModal from './components/modals/ValidationComptaModal.jsx';
+import SimulateurIAButton from './components/common/SimulateurIAButton.jsx';
+import ToastNotification from './components/common/ToastNotification.jsx';
+
 
 function App() {
   if (window.location.pathname.startsWith('/avis/')) {
@@ -3187,55 +3204,8 @@ function App() {
 
   const [erreurPinAction, setErreurPinAction] = useState(null);
 
-  const appliquerRetourPinLocal = (empIdentifier, dataErr) => {
-      if (!empIdentifier || !dataErr) return;
-      setEmployesListe(prev => (prev || []).map(emp => {
-          const match = String(emp.id_employe) === String(empIdentifier)
-              || (emp.nom && emp.nom.toLowerCase() === String(empIdentifier).toLowerCase())
-              || (String(empIdentifier).toLowerCase() === 'gerant' && emp.est_gerant);
-          if (!match) return emp;
-          return {
-              ...emp,
-              pin_tentatives_echouees: dataErr.tentatives !== undefined ? dataErr.tentatives : emp.pin_tentatives_echouees,
-              pin_bloque_jusqua: dataErr.locked_until !== undefined ? dataErr.locked_until : emp.pin_bloque_jusqua,
-              pin_bloque_definitif: dataErr.locked_permanent !== undefined ? dataErr.locked_permanent : emp.pin_bloque_definitif
-          };
-      }));
-  };
-
-  const getStatutBlocagePin = (empIdentifier) => {
-      if (!empIdentifier) return { bloque: false, definitif: false, message: null, tentatives: 0, essaisRestants: 3 };
-      const emp = (employesListe || []).find(
-          e => String(e.id_employe) === String(empIdentifier)
-            || (e.nom && e.nom.toLowerCase() === String(empIdentifier).toLowerCase())
-            || (String(empIdentifier).toLowerCase() === 'gerant' && e.est_gerant)
-      );
-      if (!emp) return { bloque: false, definitif: false, message: null, tentatives: 0, essaisRestants: 3 };
-      const tentatives = parseInt(emp.pin_tentatives_echouees, 10) || 0;
-      const prochainSeuil = tentatives < 3 ? 3 : (tentatives < 5 ? 5 : (tentatives < 7 ? 7 : 9));
-      const essaisRestants = Math.max(0, prochainSeuil - tentatives);
-
-      if (emp.pin_bloque_definitif) {
-          return {
-              bloque: true,
-              definitif: true,
-              tentatives: tentatives || 9,
-              essaisRestants: 0,
-              message: "Accès PIN bloqué définitivement (9 échecs)."
-          };
-      }
-      if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
-          const min = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
-          return {
-              bloque: true,
-              definitif: false,
-              tentatives: tentatives || 3,
-              essaisRestants,
-              message: `PIN suspendu temporairement (${min} min restante${min > 1 ? 's' : ''}).`
-          };
-      }
-      return { bloque: false, definitif: false, message: null, tentatives, essaisRestants };
-  };
+  const appliquerRetourPinLocal = (empIdentifier, dataErr) => appliquerRetourPinLocalUtil(setEmployesListe, empIdentifier, dataErr);
+  const getStatutBlocagePin = (empIdentifier) => getStatutBlocagePinUtil(employesListe, empIdentifier);
 
   const debloquerPinEmploye = async (id_employe) => {
       try {
@@ -4073,581 +4043,50 @@ function App() {
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
 
-      {(() => {
-          const jourKey = new Date().toLocaleDateString('fr-FR');
-          const showTrial = isTrialing && joursRestantsEssai <= 5 && joursRestantsEssai > 0 && !alertesFermees[`trial_${jourKey}`];
-          const showCloture = afficherRappelCloture && !alertesFermees[`cloture_${jourKey}`];
-          const showStock = afficherRappelStock && !alertesFermees[`stock_${jourKey}`];
-          const showAuto = clotureAutoInfo && !alertesFermees[`cloture_auto_${clotureAutoInfo}`];
+      <AppHeaderBanners
+        isTrialing={isTrialing}
+        joursRestantsEssai={joursRestantsEssai}
+        alertesFermees={alertesFermees}
+        fermerAlerte={fermerAlerte}
+        setShowPricingModal={setShowPricingModal}
+        afficherRappelCloture={afficherRappelCloture}
+        setActiveTab={setActiveTab}
+        afficherRappelStock={afficherRappelStock}
+        validerVerifStock={validerVerifStock}
+        clotureAutoInfo={clotureAutoInfo}
+        isOffline={isOffline}
+        pendingOfflineCount={pendingOfflineCount}
+      />
 
-          if (!showTrial && !showCloture && !showStock && !showAuto) return null;
-
-          return (
-              <div className="rappels-fixes-container">
-                  {showTrial && (
-                      <div className="rappel-stock-banner" style={{borderColor: '#f59e0b', borderLeftColor: '#f59e0b', position: 'relative', paddingRight: '40px'}}>
-                          <span>⚠️ Votre mois d'essai gratuit se termine dans {joursRestantsEssai} jour(s). Pensez à choisir votre forfait.</span>
-                          <button onClick={() => setShowPricingModal(true)} style={{background: '#f59e0b'}}>Choisir</button>
-                          <button onClick={() => fermerAlerte(`trial_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-                  {showCloture && (
-                      <div className="rappel-cloture-banner" style={{position: 'relative', paddingRight: '40px'}}>
-                          <span>N'oublie pas d'effectuer la Clôture Journalière</span>
-                          <button onClick={() => setActiveTab('admin')}>Faire la clôture</button>
-                          <button onClick={() => fermerAlerte(`cloture_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-                  {showStock && (
-                      <div className="rappel-stock-banner" style={{position: 'relative', paddingRight: '40px'}}>
-                          <span>Nous vous conseillons de vérifier les stocks manuellement</span>
-                          <button onClick={validerVerifStock}>Fait</button>
-                          <button onClick={() => fermerAlerte(`stock_${jourKey}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-                  {showAuto && (
-                      <div className="rappel-stock-banner" style={{borderColor: 'var(--color-info)', borderLeftColor: 'var(--color-info)', position: 'relative', paddingRight: '40px'}}>
-                          <span>La caisse du {new Date(clotureAutoInfo).toLocaleDateString('fr-FR')} a été clôturée automatiquement.</span>
-                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{background: 'var(--color-info)'}}>OK</button>
-                          <button onClick={() => fermerAlerte(`cloture_auto_${clotureAutoInfo}`)} style={{position: 'absolute', top: '50%', right: '10px', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', padding: '4px'}}>✕</button>
-                      </div>
-                  )}
-              </div>
-          );
-      })()}
-
-      <style>{`
-          .rdv-card-accordeon {
-              transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-          }
-          .rdv-card-accordeon:hover {
-              z-index: 100 !important;
-              transform: scale(1.02);
-              box-shadow: 0 8px 16px rgba(0,0,0,0.25) !important;
-          }
-      `}</style>
-
-      <div style={{ position: 'sticky', top: 0, zIndex: 100000, width: '100%' }}>
-          {isOffline && (
-            <div style={{ background: '#dc2626', color: 'white', textAlign: 'center', padding: '8px 16px', fontSize: '12px', fontWeight: 'bold', width: '100%', boxSizing: 'border-box' }}>
-                ⚠️ Connexion perdue. Mode hors-ligne activé.
-            </div>
-          )}
-
-          {pendingOfflineCount > 0 && (
-            <div style={{ background: '#991b1b', color: 'white', textAlign: 'center', padding: '12px 16px', fontSize: '13px', fontWeight: 'bold', width: '100%', boxSizing: 'border-box', boxShadow: '0 4px 12px rgba(153, 27, 27, 0.4)' }}>
-                ⚠️ {pendingOfflineCount} ticket(s) en attente de réseau. Ne fermez pas cette page et ne videz pas l'historique.
-            </div>
-          )}
-      </div>
-
-      {modalIA && (() => {
-          const isFactureIA = modalIA.type_tache === 'FACTURE_ACHAT';
-          const nbTotalAttente = Math.max((tachesIA || []).length, (fileAttenteIA || []).length);
-
-          const labelStyleIA = {
-              fontSize: '11px',
-              fontWeight: '700',
-              color: 'var(--text-secondary)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em',
-              display: 'block',
-              marginBottom: '6px'
-          };
-
-          const inputBoxStyleIA = {
-              marginBottom: 0,
-              width: '100%',
-              boxSizing: 'border-box',
-              background: 'var(--bg-card)',
-              fontWeight: '600',
-              fontSize: '13.5px',
-              height: '42px',
-              borderRadius: '10px'
-          };
-
-          return (
-              <div className="modal-overlay" style={{ backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', zIndex: 100000 }}>
-                  <div
-                      className="modal-content"
-                      style={{
-                          maxWidth: isFactureIA ? '1020px' : '540px',
-                          width: isFactureIA ? '95vw' : '92vw',
-                          padding: isMobile ? '20px' : '28px',
-                          borderRadius: '22px',
-                          border: '1px solid var(--border-color)',
-                          boxShadow: '0 24px 48px rgba(0, 0, 0, 0.18)',
-                          transition: 'all 0.25s ease'
-                      }}
-                  >
-                      {/* EN-TÊTE EXECUTIVE DE LA POPUP IA */}
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', marginBottom: '22px', paddingBottom: '16px', borderBottom: '1px solid var(--border-color)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
-                              <div style={{
-                                  width: '46px', height: '46px', borderRadius: '14px',
-                                  background: 'var(--text-main)', color: 'var(--bg-card)',
-                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                  flexShrink: 0, boxShadow: 'var(--shadow-sm)'
-                              }}>
-                                  {isFactureIA ? (
-                                      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                                  ) : modalIA.type_tache === 'STOCK' ? (
-                                      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                                  ) : modalIA.type_tache === 'RDV' ? (
-                                      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                                  ) : modalIA.type_tache === 'ABSENCE' ? (
-                                      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 2v4M8 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9 14l2 2 4-4"/></svg>
-                                  ) : (
-                                      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                                  )}
-                              </div>
-
-                              <div style={{ minWidth: 0 }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                                      <span style={{
-                                          display: 'inline-flex', alignItems: 'center', gap: '6px',
-                                          padding: '3px 9px', borderRadius: '999px', fontSize: '10.5px', fontWeight: '800',
-                                          background: 'var(--bg-app)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)',
-                                          textTransform: 'uppercase', letterSpacing: '0.04em'
-                                      }}>
-                                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-success)' }} />
-                                          Détection Automatique IA
-                                      </span>
-                                      {nbTotalAttente > 1 && (
-                                          <span style={{ padding: '3px 8px', borderRadius: '999px', fontSize: '10.5px', fontWeight: '700', background: 'var(--bg-info)', color: 'var(--color-info)' }}>
-                                              {nbTotalAttente} en attente
-                                          </span>
-                                      )}
-                                  </div>
-
-                                  <h2 style={{ margin: '0 0 2px 0', color: 'var(--text-main)', fontSize: isMobile ? '17px' : '19px', fontWeight: '800', letterSpacing: '-0.01em' }}>
-                                      {isFactureIA ? "Facture fournisseur analysée" : modalIA.type_tache === 'STOCK' ? "Réassort de stock détecté" : modalIA.type_tache === 'RDV' ? "Nouveau rendez-vous détecté" : modalIA.type_tache === 'ABSENCE' ? "Absence collaborateur détectée" : "Nouvelle tâche administrative"}
-                                  </h2>
-                                  <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: 0 }}>
-                                      {isFactureIA ? "Vérifiez la ventilation comptable et l'inventaire avant validation" : modalIA.type_tache === 'STOCK' ? "Données extraites automatiquement d'un bon de livraison ou e-mail" : modalIA.type_tache === 'RDV' ? "Vérifiez le créneau et le collaborateur avant ajout à l'agenda" : modalIA.type_tache === 'ABSENCE' ? "Contrôlez les dates avant blocage du planning" : "Action extraite automatiquement de votre boîte mail"}
-                                  </p>
-                              </div>
-                          </div>
-
-                          <button
-                              type="button"
-                              onClick={() => setModalIA(null)}
-                              title="Fermer temporairement"
-                              style={{
-                                  width: '34px', height: '34px', borderRadius: '10px', border: '1px solid var(--border-color)',
-                                  background: 'var(--bg-app)', color: 'var(--text-secondary)', display: 'flex',
-                                  alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0
-                              }}
-                          >
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                          </button>
-                      </div>
-
-                      {isFactureIA ? (
-                          (() => {
-                              const ht = parseFloat(modalIA.donnees?.montant_ht) || 0;
-                              const tva = parseFloat(modalIA.donnees?.montant_tva) || 0;
-                              const ttc = parseFloat(modalIA.donnees?.montant_ttc) || 0;
-                              const ecart = Math.abs((ht + tva) - ttc);
-                              const hasEcart = ecart > 0.05;
-
-                              return (
-                                  <div style={{ display: 'flex', gap: '20px', flexDirection: isMobile ? 'column' : 'row', marginBottom: '22px' }}>
-                                      <div style={{ flex: 1, minWidth: '42%', background: 'var(--bg-app)', borderRadius: '14px', overflow: 'hidden', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column' }}>
-                                          <div style={{ padding: '12px 16px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                              <span style={{ fontSize: '12.5px', fontWeight: '700', color: 'var(--text-main)' }}>Pièce justificative originale</span>
-                                              {modalIA.donnees?.pdf_url && (
-                                                  <a href={modalIA.donnees.pdf_url} target="_blank" rel="noreferrer" style={{ fontSize: '11.5px', fontWeight: '700', color: 'var(--text-main)', textDecoration: 'underline' }}>Ouvrir plein écran</a>
-                                              )}
-                                          </div>
-                                          {modalIA.donnees?.pdf_url ? (
-                                              modalIA.donnees?.mime_type && modalIA.donnees.mime_type.startsWith('image/') ? (
-                                                  <div style={{ width: '100%', height: isMobile ? '320px' : '480px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111827' }}>
-                                                      <img src={modalIA.donnees.pdf_url} alt="Facture scannée" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                                                  </div>
-                                              ) : (
-                                                  <iframe src={modalIA.donnees.pdf_url} style={{ width: '100%', height: isMobile ? '320px' : '480px', border: 'none' }} title="Facture Document" />
-                                              )
-                                          ) : (
-                                              <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', margin: 'auto' }}>
-                                                  Aperçu visuel non disponible.
-                                              </div>
-                                          )}
-                                      </div>
-
-                                      <div style={{ flex: 1.15, display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: isMobile ? 'none' : '520px', overflowY: 'auto', paddingRight: '4px' }}>
-                                          <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '14px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.6fr 1fr', gap: '12px' }}>
-                                                  <div>
-                                                      <label style={labelStyleIA}>Nom du Fournisseur</label>
-                                                      <input className="input-fournisseur" value={modalIA.donnees?.fournisseur || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, fournisseur: e.target.value } })} style={inputBoxStyleIA} />
-                                                  </div>
-                                                  <div>
-                                                      <label style={labelStyleIA}>N° de Pièce / Facture</label>
-                                                      <input type="text" className="input-fournisseur" placeholder="Ex: FAC-2026-01" value={modalIA.donnees?.numero_facture || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, numero_facture: e.target.value } })} style={inputBoxStyleIA} />
-                                                  </div>
-                                              </div>
-
-                                              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '10px' }}>
-                                                  <div>
-                                                      <label style={labelStyleIA}>Date Facture</label>
-                                                      <input type="date" className="input-fournisseur" value={modalIA.donnees?.date_facture || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, date_facture: e.target.value } })} style={inputBoxStyleIA} />
-                                                  </div>
-                                                  <div>
-                                                      <label style={labelStyleIA}>Règlement</label>
-                                                      <select className="input-fournisseur" value={modalIA.donnees?.mode_paiement || 'NON_SPECIFIE'} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, mode_paiement: e.target.value } })} style={inputBoxStyleIA}>
-                                                          <option value="NON_SPECIFIE">À définir</option>
-                                                          <option value="PRELEVEMENT">Prélèvement</option>
-                                                          <option value="VIREMENT">Virement</option>
-                                                          <option value="CARTE">Carte / CB</option>
-                                                          <option value="ESPECES">Espèces (Caisse)</option>
-                                                          <option value="CHEQUE">Chèque</option>
-                                                      </select>
-                                                  </div>
-                                                  <div>
-                                                      <label style={labelStyleIA}>Compte PCG</label>
-                                                      <select className="input-fournisseur" value={modalIA.donnees?.compte_comptable || '607'} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, compte_comptable: e.target.value } })} style={inputBoxStyleIA}>
-                                                          <option value="607">607 - Revente</option>
-                                                          <option value="6028">6028 - Conso/Bac</option>
-                                                          <option value="604">604 - Services</option>
-                                                          <option value="613">613 - Loyer</option>
-                                                          <option value="6061">6061 - Énergie</option>
-                                                      </select>
-                                                  </div>
-                                              </div>
-                                          </div>
-
-                                          <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '14px', border: hasEcart ? '1.5px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
-                                              <span style={labelStyleIA}>Montants Comptables (Liasse & FEC)</span>
-                                              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
-                                                  <div>
-                                                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Base HT (€)</span>
-                                                      <input type="number" step="0.01" className="input-fournisseur" value={modalIA.donnees?.montant_ht || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, montant_ht: e.target.value } })} style={inputBoxStyleIA} />
-                                                  </div>
-                                                  <span style={{ paddingTop: '18px', fontWeight: '700', color: 'var(--text-muted)' }}>+</span>
-                                                  <div>
-                                                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>TVA (€)</span>
-                                                      <input type="number" step="0.01" className="input-fournisseur" value={modalIA.donnees?.montant_tva || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, montant_tva: e.target.value } })} style={inputBoxStyleIA} />
-                                                  </div>
-                                                  <span style={{ paddingTop: '18px', fontWeight: '700', color: 'var(--text-muted)' }}>=</span>
-                                                  <div>
-                                                      <span style={{ fontSize: '11px', color: 'var(--text-main)', fontWeight: '700', display: 'block', marginBottom: '4px' }}>Total TTC (€)</span>
-                                                      <input type="number" step="0.01" className="input-fournisseur" value={modalIA.donnees?.montant_ttc || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, montant_ttc: e.target.value } })} style={{ ...inputBoxStyleIA, fontWeight: '800' }} />
-                                                  </div>
-                                              </div>
-                                          </div>
-
-                                          <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
-                                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                                                  <span style={{ ...labelStyleIA, marginBottom: 0 }}>Articles à entrer en stock</span>
-                                                  <span style={{ fontSize: '11px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '999px', fontWeight: '700' }}>
-                                                      {(modalIA.donnees?.produits || []).length} ligne(s)
-                                                  </span>
-                                              </div>
-                                              {(!modalIA.donnees?.produits || modalIA.donnees.produits.length === 0) ? (
-                                                  <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: 0 }}>Aucun produit d'inventaire sur cette facture.</p>
-                                              ) : (
-                                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                      {modalIA.donnees.produits.map((prod, idx) => (
-                                                          <div key={idx} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '10px' }}>
-                                                              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                                                                  <input className="input-fournisseur" value={prod.nom} onChange={e => {
-                                                                      const newProds = [...modalIA.donnees.produits];
-                                                                      newProds[idx].nom = e.target.value;
-                                                                      setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, produits: newProds } });
-                                                                  }} style={{ marginBottom: 0, flex: 1, padding: '6px 10px', fontSize: '12.5px', height: '34px' }} />
-                                                                  <button type="button" onClick={() => {
-                                                                      const newProds = modalIA.donnees.produits.filter((_, i) => i !== idx);
-                                                                      setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, produits: newProds } });
-                                                                  }} style={{ background: 'var(--bg-danger)', border: 'none', color: 'var(--color-danger)', borderRadius: '8px', width: '34px', height: '34px', cursor: 'pointer' }}>✕</button>
-                                                              </div>
-                                                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', padding: '4px 10px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                                                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '700' }}>Qté</span>
-                                                                      <input type="number" value={prod.quantite} onChange={e => {
-                                                                          const newProds = [...modalIA.donnees.produits];
-                                                                          newProds[idx].quantite = parseInt(e.target.value, 10) || 0;
-                                                                          setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, produits: newProds } });
-                                                                      }} style={{ width: '48px', border: 'none', background: 'transparent', fontWeight: '800', textAlign: 'center', color: 'var(--text-main)' }} />
-                                                                  </div>
-                                                                  <div style={{ flex: 1, display: 'flex', background: 'var(--bg-app)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                                                      <button type="button" onClick={() => {
-                                                                          const newProds = [...modalIA.donnees.produits];
-                                                                          newProds[idx].type_destine = 'REVENTE';
-                                                                          setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, produits: newProds } });
-                                                                      }} style={{ flex: 1, padding: '5px', fontSize: '11px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', background: prod.type_destine === 'REVENTE' ? 'var(--text-main)' : 'transparent', color: prod.type_destine === 'REVENTE' ? 'var(--bg-card)' : 'var(--text-secondary)' }}>Revente</button>
-                                                                      <button type="button" onClick={() => {
-                                                                          const newProds = [...modalIA.donnees.produits];
-                                                                          newProds[idx].type_destine = 'CONSOMMABLE';
-                                                                          setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, produits: newProds } });
-                                                                      }} style={{ flex: 1, padding: '5px', fontSize: '11px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', background: prod.type_destine === 'CONSOMMABLE' ? 'var(--text-main)' : 'transparent', color: prod.type_destine === 'CONSOMMABLE' ? 'var(--bg-card)' : 'var(--text-secondary)' }}>Consommable</button>
-                                                                  </div>
-                                                              </div>
-                                                          </div>
-                                                      ))}
-                                                  </div>
-                                              )}
-                                          </div>
-                                      </div>
-                                  </div>
-                              );
-                          })()
-                      ) : (
-                          <div style={{
-                              textAlign: 'left',
-                              background: 'var(--bg-app)',
-                              padding: isMobile ? '16px' : '20px',
-                              borderRadius: '16px',
-                              border: '1px solid var(--border-color)',
-                              marginBottom: '22px',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '16px'
-                          }}>
-                              {modalIA.type_tache === 'STOCK' && (
-                                  <>
-                                      <div>
-                                          <label style={labelStyleIA}>Désignation du produit (Catalogue / Stock)</label>
-                                          <input className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.nom_produit || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, nom_produit: e.target.value } })} />
-                                      </div>
-                                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1.3fr', gap: '12px' }}>
-                                          <div>
-                                              <label style={labelStyleIA}>Quantité à ajouter (+)</label>
-                                              <input type="number" min="1" className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.quantite || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, quantite: parseInt(e.target.value, 10) || 0 } })} />
-                                          </div>
-                                          <div>
-                                              <label style={labelStyleIA}>Référence / Code article</label>
-                                              <input className="input-fournisseur" placeholder="Optionnel (ex: KER-250)" style={inputBoxStyleIA} value={modalIA.donnees?.reference || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, reference: e.target.value } })} />
-                                          </div>
-                                      </div>
-                                  </>
-                              )}
-
-                              {modalIA.type_tache === 'RDV' && (
-                                  <>
-                                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.2fr 1fr', gap: '12px' }}>
-                                          <div>
-                                              <label style={labelStyleIA}>Client(e)</label>
-                                              <input className="input-fournisseur" placeholder="Prénom et Nom" style={inputBoxStyleIA} value={modalIA.donnees?.nom_client || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, nom_client: e.target.value } })} />
-                                          </div>
-                                          <div>
-                                              <label style={labelStyleIA}>Téléphone mobile</label>
-                                              <input className="input-fournisseur" placeholder="06..." style={inputBoxStyleIA} value={modalIA.donnees?.telephone || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, telephone: e.target.value } })} />
-                                          </div>
-                                      </div>
-
-                                      <div>
-                                          <label style={labelStyleIA}>Prestation demandée</label>
-                                          <input className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.prestation || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, prestation: e.target.value } })} />
-                                      </div>
-
-                                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.5fr 1fr', gap: '12px' }}>
-                                          <div>
-                                              <label style={labelStyleIA}>Date et Heure du RDV</label>
-                                              <input type="datetime-local" className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.date_heure_debut || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, date_heure_debut: e.target.value } })} />
-                                          </div>
-                                          <div>
-                                              <label style={labelStyleIA}>Durée prévue</label>
-                                              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                                                  <input type="number" min="5" step="5" className="input-fournisseur" style={{ ...inputBoxStyleIA, paddingRight: '46px' }} value={modalIA.donnees?.duree_minutes ?? ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, duree_minutes: parseInt(e.target.value, 10) || '' } })} />
-                                                  <span style={{ position: 'absolute', right: '14px', fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', pointerEvents: 'none' }}>min</span>
-                                              </div>
-                                          </div>
-                                      </div>
-
-                                      <div>
-                                          <label style={labelStyleIA}>Collaborateur assigné au planning</label>
-                                          <select className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.id_employe || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, id_employe: e.target.value } })}>
-                                              <option value="">-- Sélectionner un collaborateur de l'équipe --</option>
-                                              {(employesListe || []).map(emp => (
-                                                  <option key={emp.id_employe} value={emp.id_employe}>{emp.nom} {emp.role ? `(${emp.role})` : ''}</option>
-                                              ))}
-                                          </select>
-                                      </div>
-                                  </>
-                              )}
-
-                              {modalIA.type_tache === 'ABSENCE' && (
-                                  <>
-                                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.2fr 1fr', gap: '12px' }}>
-                                          <div>
-                                              <label style={labelStyleIA}>Collaborateur concerné</label>
-                                              <input className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.nom_employe || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, nom_employe: e.target.value } })} />
-                                          </div>
-                                          <div>
-                                              <label style={labelStyleIA}>Nature de l'absence</label>
-                                              <select className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.type_demande || 'CONGES'} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, type_demande: e.target.value } })}>
-                                                  <option value="CONGES">Demande de Congés</option>
-                                                  <option value="ARRET_MALADIE">Arrêt Maladie (Blocage immédiat)</option>
-                                              </select>
-                                          </div>
-                                      </div>
-
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                                          <div>
-                                              <label style={labelStyleIA}>Date de début</label>
-                                              <input type="date" className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.date_debut || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, date_debut: e.target.value } })} />
-                                          </div>
-                                          <div>
-                                              <label style={labelStyleIA}>Date de fin (incluse)</label>
-                                              <input type="date" className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.date_fin || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, date_fin: e.target.value } })} />
-                                          </div>
-                                      </div>
-
-                                      <div>
-                                          <label style={labelStyleIA}>Motif / Commentaire extrait</label>
-                                          <textarea className="input-fournisseur" rows="2" style={{ ...inputBoxStyleIA, height: 'auto', padding: '10px 12px', resize: 'vertical' }} value={modalIA.donnees?.commentaire || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, commentaire: e.target.value } })} />
-                                      </div>
-                                  </>
-                              )}
-
-                              {modalIA.type_tache === 'ACTION' && (
-                                  <>
-                                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.5fr 1fr', gap: '12px' }}>
-                                          <div>
-                                              <label style={labelStyleIA}>Intitulé de l'action administrative</label>
-                                              <input className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.titre || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, titre: e.target.value } })} />
-                                          </div>
-                                          <div>
-                                              <label style={labelStyleIA}>Date d'échéance</label>
-                                              <input type="date" className="input-fournisseur" style={inputBoxStyleIA} value={modalIA.donnees?.date_echeance || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, date_echeance: e.target.value } })} />
-                                          </div>
-                                      </div>
-
-                                      <div>
-                                          <label style={labelStyleIA}>Détails extraits de l'e-mail</label>
-                                          <textarea className="input-fournisseur" rows="3" style={{ ...inputBoxStyleIA, height: 'auto', padding: '10px 12px', resize: 'vertical' }} value={modalIA.donnees?.description || ''} onChange={e => setModalIA({ ...modalIA, donnees: { ...modalIA.donnees, description: e.target.value } })} />
-                                      </div>
-                                  </>
-                              )}
-                          </div>
-                      )}
-
-                      {/* BOUTONS D'ACTION EXECUTIVE */}
-                      <div style={{ display: 'flex', gap: '12px', flexDirection: isMobile ? 'column-reverse' : 'row' }}>
-                          <button
-                              type="button"
-                              onClick={() => ignorerTacheIA(modalIA)}
-                              style={{
-                                  flex: 1,
-                                  background: 'var(--bg-app)',
-                                  color: 'var(--text-secondary)',
-                                  border: '1px solid var(--border-color)',
-                                  padding: '13px 16px',
-                                  borderRadius: '12px',
-                                  fontWeight: '700',
-                                  fontSize: '13.5px',
-                                  cursor: 'pointer',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '8px'
-                              }}
-                          >
-                              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                              <span>Ignorer</span>
-                          </button>
-
-                          <button
-                              type="button"
-                              onClick={() => validerTacheIA(modalIA)}
-                              className="btn-action"
-                              style={{
-                                  flex: 2,
-                                  padding: '13px 20px',
-                                  borderRadius: '12px',
-                                  fontSize: '14px',
-                                  fontWeight: '800',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '8px'
-                              }}
-                          >
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                              <span>
-                                  {isFactureIA ? "Valider Facture & Stocks" : modalIA.type_tache === 'STOCK' ? "Ajouter au Stock" : modalIA.type_tache === 'RDV' ? "Confirmer et Ajouter à l'Agenda" : modalIA.type_tache === 'ABSENCE' ? "Enregistrer l'Absence" : "Ajouter au Centre d'Action"}
-                              </span>
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          );
-      })()}
+      <ModalIA
+        modalIA={modalIA}
+        setModalIA={setModalIA}
+        isMobile={isMobile}
+        tachesIA={tachesIA}
+        fileAttenteIA={fileAttenteIA}
+        ignorerTacheIA={ignorerTacheIA}
+        validerTacheIA={validerTacheIA}
+        employesListe={employesListe}
+      />
 
       {/* --- BARRE DE NAVIGATION (DESKTOP & MOBILE) --- */}
-      <div className="navbar-sidebar">
-          {/* VUE DESKTOP */}
-          {!isMobile && (
-              <>
-                 <div className={`nav-item ${activeTab === 'accueil' ? 'active' : ''}`} onClick={() => setActiveTab('accueil')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span>Bord</span></div>
-                 {role === 'salon' && (
-                     <div className={`nav-item ${activeTab === 'caisse' ? 'active' : ''}`} onClick={() => setActiveTab('caisse')}><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span><span>Caisse</span></div>
-                 )}
-                 {(role === 'gerant' || role === 'salon' || role === 'employe') && (
-                     <div className={`nav-item ${activeTab === 'actions' ? 'active' : ''}`} onClick={() => setActiveTab('actions')} style={{ position: 'relative' }}>
-                         {nbTachesUrgentes > 0 && <span style={{position:'absolute', top:'6px', right:'14px', width:'10px', height:'10px', background:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--bg-card)'}}></span>}
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span>Actions</span>
-                     </div>
-                 )}
-                 <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')} style={{ position: 'relative' }}>
-                     {(tachesIA || []).some(t => t.type_tache === 'CLIENT') && <span className="badge-ia-rouge"></span>}
-                     <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span>Agenda</span>
-                 </div>
-                 {(role === 'gerant' || role === 'salon') && (
-                     <>
-                        <div className={`nav-item ${activeTab === 'protocoles' ? 'active' : ''}`} onClick={() => handleTabClick('protocoles')} style={{ position: 'relative' }}>
-                            {!aLeNiveau('PRO') && <span style={{position:'absolute', top:'8px', right:'8px', color:'var(--text-muted)'}}><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}
-                            <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span>L'Académie</span>
-                        </div>
-                        <div className={`nav-item ${activeTab === 'produits' ? 'active' : ''}`} onClick={() => setActiveTab('produits')} style={{ position: 'relative' }}>
-                            {(tachesIA || []).some(t => t.type_tache === 'STOCK') && <span className="badge-ia-rouge"></span>}
-                            <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span><span>Stocks</span>
-                        </div>
-                     </>
-                 )}
-                 {role === 'gerant' && (
-                     <div className={`nav-item ${activeTab === 'rh' ? 'active' : ''}`} onClick={() => handleTabClick('rh')} style={{ position: 'relative' }}>
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Équipe</span>
-                     </div>
-                 )}
-                 {(role === 'gerant' || role === 'salon' || role === 'employe') && (
-                     <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => handleTabClick('admin')} style={{ position: 'relative' }}>
-                         {!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'8px', right:'8px', color:'var(--text-muted)'}}><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Compta</span>
-                     </div>
-                 )}
-                 {role === 'gerant' && decodeToken(token)?.email === '2@gmail.com' && (
-                     <div className={`nav-item ${activeTab === 'superadmin' ? 'active' : ''}`} onClick={() => setActiveTab('superadmin')}>
-                         <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#aa3bff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span style={{color: '#aa3bff', fontWeight: 'bold'}}>God Mode</span>
-                     </div>
-                 )}
-                 <div className={`nav-item ${activeTab === 'messagerie' ? 'active' : ''}`} onClick={() => setActiveTab('messagerie')} style={{ position: 'relative' }}>
-                     {aDesMessagesNonLus && <span className="badge-ia-rouge"></span>}
-                     <span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span><span>Chat</span>
-                 </div>
-                 <div className="navbar-spacer"></div>
-                 <div className="nav-item" onClick={seDeconnecter} style={{ color: 'var(--color-danger)' }} title="Se déconnecter"><span className="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span style={{fontWeight: 500}}>Quitter</span></div>
-              </>
-          )}
-
-          {/* VUE MOBILE : BARRE "LIQUID GLASS" */}
-          {isMobile && (
-              <LiquidTabBar
-                  activeIndex={(() => {
-                      const items = onglMobilesParRole(role);
-                      const idxOutils = items.length - 1;
-                      if (isOutilsMenuOpen || ['protocoles', 'produits', 'rh', 'superadmin'].includes(activeTab)) return idxOutils;
-                      const idx = items.findIndex(it => it.key === activeTab || (it.key === 'admin' && activeTab === 'admin'));
-                      return idx >= 0 ? idx : 0;
-                  })()}
-                  items={onglMobilesParRole(role).map(it => {
-                      if (it.key === 'outils') return { ...it, badge: aDesMessagesNonLus && !isOutilsMenuOpen, onSelect: () => setIsOutilsMenuOpen(true) };
-                      return { ...it, onSelect: () => { handleTabClick(it.key); setIsOutilsMenuOpen(false); } };
-                  })}
-              />
-          )}
-      </div>
+      <NavbarSidebar
+        isMobile={isMobile}
+        role={role}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        nbTachesUrgentes={nbTachesUrgentes}
+        tachesIA={tachesIA}
+        aLeNiveau={aLeNiveau}
+        handleTabClick={handleTabClick}
+        decodeToken={decodeToken}
+        token={token}
+        aDesMessagesNonLus={aDesMessagesNonLus}
+        seDeconnecter={seDeconnecter}
+        isOutilsMenuOpen={isOutilsMenuOpen}
+        setIsOutilsMenuOpen={setIsOutilsMenuOpen}
+        onglMobilesParRole={onglMobilesParRole}
+      />
 
       <div className="main-content">
         <div className={`dashboard-container ${['caisse', 'agenda', 'messagerie'].includes(activeTab) ? 'wide' : ''}`}>
@@ -4655,134 +4094,24 @@ function App() {
               {/* La carte de validation de la liasse mensuelle est désormais intégrée directement dans la vue Compta ci-dessous */}
 
               {/* MODALE DE VALIDATION ET SIGNATURE COMPTABLE (AVEC PAVÉ MANUSCRIT + PIN NF525) */}
-              {showModalValidationCompta && statutMoisPrecedent && (
-                  <div className="modal-overlay" style={{ zIndex: 100000 }}>
-                      <div className="modal-content" style={{ maxWidth: '520px', maxHeight: '92vh', overflowY: 'auto' }}>
-                          <div className="modal-header">
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  <div className="icon" style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--text-main)', color: 'var(--bg-card)' }}>
-                                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-                                  </div>
-                                  <div>
-                                      <h3 style={{ margin: 0, fontSize: '17px', color: 'var(--text-main)' }}>Certification — {statutMoisPrecedent.libelle}</h3>
-                                      <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Validation légale NF525 & Signature dirigeant</span>
-                                  </div>
-                              </div>
-                              <button className="modal-close-btn" onClick={() => { setShowModalValidationCompta(false); setHasSignedCompta(false); }}>
-                                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                              </button>
-                          </div>
-
-                          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
-                              Vérifiez les 3 points de contrôle ci-dessous, apposez votre signature manuscrite (qui figurera sur la liasse PDF finale) et confirmez avec votre code PIN gérant.
-                          </p>
-
-                          <div className="checklist-container" style={{ marginBottom: '16px' }}>
-                              <div className={`checklist-item ${checklistCompta.caisse ? 'checked' : ''}`} onClick={() => setChecklistCompta({ ...checklistCompta, caisse: !checklistCompta.caisse })}>
-                                  <div className="checklist-checkbox">
-                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                                  </div>
-                                  <div className="checklist-content">
-                                      <span className="checklist-title">Caisse et clôtures Z vérifiées</span>
-                                      <span className="checklist-desc">Le rapprochement entre les encaissements, les espèces physiques et les remises en banque est exact.</span>
-                                  </div>
-                              </div>
-
-                              <div className={`checklist-item ${checklistCompta.paie ? 'checked' : ''}`} onClick={() => setChecklistCompta({ ...checklistCompta, paie: !checklistCompta.paie })}>
-                                  <div className="checklist-checkbox">
-                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                                  </div>
-                                  <div className="checklist-content">
-                                      <span className="checklist-title">Variables de paie et absences vérifiées</span>
-                                      <span className="checklist-desc">Les commissions, heures supplémentaires/complémentaires et congés de l'équipe sont complets.</span>
-                                  </div>
-                              </div>
-
-                              <div className={`checklist-item ${checklistCompta.depenses ? 'checked' : ''}`} onClick={() => setChecklistCompta({ ...checklistCompta, depenses: !checklistCompta.depenses })}>
-                                  <div className="checklist-checkbox">
-                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                                  </div>
-                                  <div className="checklist-content">
-                                      <span className="checklist-title">Dépenses et achats justifiés</span>
-                                      <span className="checklist-desc">Les factures fournisseurs du mois sont validées et les justificatifs sont tenus à disposition.</span>
-                                  </div>
-                              </div>
-                          </div>
-
-                          {/* PAVÉ DE SIGNATURE MANUSCRITE (TACTILE & SOURIS) */}
-                          <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border-color)', marginBottom: '14px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                  <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                                      <span>1. Signature manuscrite du gérant (Apposée sur le PDF)</span>
-                                  </label>
-                                  {hasSignedCompta && (
-                                      <button
-                                          type="button"
-                                          onClick={effacerSignatureCompta}
-                                          style={{ background: 'none', border: 'none', color: 'var(--color-danger)', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer', padding: '2px 6px' }}
-                                      >
-                                          Recommencer
-                                      </button>
-                                  )}
-                              </div>
-
-                              <div style={{ position: 'relative', background: '#ffffff', borderRadius: '10px', border: `1.5px dashed ${hasSignedCompta ? '#16a34a' : '#cbd5e1'}`, overflow: 'hidden', height: '130px', touchAction: 'none' }}>
-                                  {!hasSignedCompta && (
-                                      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: '#94a3b8', fontSize: '12px', fontWeight: '600' }}>
-                                          <span>Signez ici avec votre souris ou votre doigt</span>
-                                          <span style={{ fontSize: '10.5px', fontWeight: '500', marginTop: '2px' }}>« Certifié sincère et véritable »</span>
-                                      </div>
-                                  )}
-                                  <canvas
-                                      ref={signatureCanvasRef}
-                                      width={460}
-                                      height={130}
-                                      onMouseDown={demarrerTraceSignature}
-                                      onMouseMove={dessinerTraceSignature}
-                                      onMouseUp={arreterTraceSignature}
-                                      onMouseLeave={arreterTraceSignature}
-                                      onTouchStart={demarrerTraceSignature}
-                                      onTouchMove={dessinerTraceSignature}
-                                      onTouchEnd={arreterTraceSignature}
-                                      style={{ width: '100%', height: '130px', display: 'block', cursor: 'crosshair', touchAction: 'none' }}
-                                  />
-                              </div>
-                          </div>
-
-                          {/* CODE PIN DE SCELLEMENT CRYPTOGRAPHIQUE NF525 */}
-                          <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border-color)', marginBottom: '18px' }}>
-                              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                  <span>2. Code PIN gérant (Scellement cryptographique SHA-256)</span>
-                              </label>
-                              <input 
-                                  type="password" 
-                                  maxLength="10" 
-                                  inputMode="numeric"
-                                  className="input-fournisseur" 
-                                  placeholder="Saisissez votre code PIN" 
-                                  value={pinValidationCompta}
-                                  onChange={e => setPinValidationCompta(e.target.value)}
-                                  style={{ marginBottom: '6px', letterSpacing: '0.2em', fontWeight: '700', background: 'var(--bg-card)', textAlign: 'center' }}
-                              />
-                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>
-                                  Scelle l'empreinte SHA-256 de votre signature et de la liasse aux normes NF525 (Art. 1367 C. civ.).
-                              </span>
-                          </div>
-
-                          <button 
-                              onClick={validerEtEnvoyerMois} 
-                              className="btn-action" 
-                              disabled={isValidatingCompta || !checklistCompta.caisse || !checklistCompta.paie || !checklistCompta.depenses || !hasSignedCompta || pinValidationCompta.length < 4}
-                              style={{ width: '100%', gap: '8px', padding: '14px' }}
-                          >
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                              <span>{isValidatingCompta ? "Scellement et envoi en cours..." : "Certifier, Signer et Transmettre la Liasse"}</span>
-                          </button>
-                      </div>
-                  </div>
-              )}
+              <ValidationComptaModal
+                showModalValidationCompta={showModalValidationCompta}
+                setShowModalValidationCompta={setShowModalValidationCompta}
+                statutMoisPrecedent={statutMoisPrecedent}
+                setHasSignedCompta={setHasSignedCompta}
+                hasSignedCompta={hasSignedCompta}
+                checklistCompta={checklistCompta}
+                setChecklistCompta={setChecklistCompta}
+                effacerSignatureCompta={effacerSignatureCompta}
+                signatureCanvasRef={signatureCanvasRef}
+                demarrerTraceSignature={demarrerTraceSignature}
+                dessinerTraceSignature={dessinerTraceSignature}
+                arreterTraceSignature={arreterTraceSignature}
+                pinValidationCompta={pinValidationCompta}
+                setPinValidationCompta={setPinValidationCompta}
+                validerEtEnvoyerMois={validerEtEnvoyerMois}
+                isValidatingCompta={isValidatingCompta}
+              />
 
               {/* VUE : TABLEAU DE BORD (ACCUEIL) — REFONTE EXECUTIVE PREMIUM & RESPONSIVE */}
               {/* VUE : TABLEAU DE BORD (ACCUEIL) */}
@@ -5233,1529 +4562,243 @@ function App() {
               )}
             </div>
       </div>
-      {/* --- MENU OUTILS (BOTTOM SHEET MOBILE) DÉPLACÉ ICI POUR RÉSOUDRE LE FLOU SAFARI --- */}
-      {isMobile && (
-          <>
-              <div className={`outils-bottom-sheet-overlay ${isOutilsMenuOpen ? 'open' : ''}`} onClick={() => setIsOutilsMenuOpen(false)}></div>
-              <div className={`outils-bottom-sheet ${isOutilsMenuOpen ? 'open' : ''}`}>
-                  <h3 style={{margin: '0 0 16px 0', fontSize: '18px', textAlign: 'center'}}>Outils & Gestion</h3>
-                  <div className="outils-grid">
-                      {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('protocoles'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PRO') && <span style={{position:'absolute', top:'-6px', right:'-6px', color:'var(--text-muted)', background:'var(--bg-app)', borderRadius:'50%', padding:'2px', display:'flex'}}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><span className="outil-btn-label">Académie</span>
-                          </button>
-                      )}
-                      {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => {setActiveTab('produits'); setIsOutilsMenuOpen(false);}}>
-                              <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div><span className="outil-btn-label">Stocks</span>
-                          </button>
-                      )}
-                      {role === 'gerant' && (
-                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('rh'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><span className="outil-btn-label">Équipe</span>
-                          </button>
-                      )}
-                      {(role === 'gerant' || role === 'salon') && (
-                          <button className="outil-btn" onClick={() => { setIsOutilsMenuOpen(false); handleTabClick('admin'); }}>
-                              <div className="outil-btn-icon" style={{position:'relative'}}>{!aLeNiveau('PREMIUM') && <span style={{position:'absolute', top:'-6px', right:'-6px', color:'var(--text-muted)', background:'var(--bg-app)', borderRadius:'50%', padding:'2px', display:'flex'}}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>}<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><span className="outil-btn-label">Compta</span>
-                          </button>
-                      )}
-                      {decodeToken(token)?.email === '2@gmail.com' && role === 'gerant' && (
-                          <button className="outil-btn" onClick={() => {setActiveTab('superadmin'); setIsOutilsMenuOpen(false);}}>
-                              <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><span className="outil-btn-label">God Mode</span>
-                          </button>
-                      )}
-                      <button className="outil-btn" onClick={() => {setActiveTab('messagerie'); setIsOutilsMenuOpen(false);}} style={{position: 'relative'}}>
-                          {aDesMessagesNonLus && <span className="badge-ia-rouge" style={{top: '-2px', right: '-2px'}}></span>}
-                          <div className="outil-btn-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div><span className="outil-btn-label">Chat</span>
-                      </button>
-                      <button className="outil-btn" onClick={() => {seDeconnecter(); setIsOutilsMenuOpen(false);}}>
-                          <div className="outil-btn-icon" style={{color:'var(--color-danger)'}}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></div><span className="outil-btn-label" style={{color:'var(--color-danger)'}}>Quitter</span>
-                      </button>
-                  </div>
-              </div>
-          </>
-      )}
-      
+      {/* --- MENU OUTILS (BOTTOM SHEET MOBILE) --- */}
+      <BottomMenuOutils
+        isMobile={isMobile}
+        isOutilsMenuOpen={isOutilsMenuOpen}
+        setIsOutilsMenuOpen={setIsOutilsMenuOpen}
+        role={role}
+        aLeNiveau={aLeNiveau}
+        handleTabClick={handleTabClick}
+        setActiveTab={setActiveTab}
+        token={token}
+        decodeToken={decodeToken}
+        aDesMessagesNonLus={aDesMessagesNonLus}
+        seDeconnecter={seDeconnecter}
+      />
+
       {/* --- MODALES GLOBALES --- */}
-      
-      {/* MODALE GARDE-FOU (RÉGULARISATION MATINALE OBLIGATOIRE) */}
-      {reguCloture && (
-          <div className="modal-overlay" style={{ zIndex: 999999, background: 'var(--bg-app)' }}>
-              <div className="modal-content" style={{ maxWidth: '420px', textAlign: 'center', padding: '32px' }}>
-                  <div style={{ color: 'var(--color-info)', display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  </div>
-                  <h2 style={{ margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px' }}>Ouverture de Caisse</h2>
-                  <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: '1.5' }}>
-                      La caisse a été fermée automatiquement hier soir par le système avec un solde théorique estimé à <strong>{parseFloat(reguCloture.total_especes_theorique).toFixed(2)} €</strong>.<br/><br/>
-                      Quel est votre <strong>Fond de Caisse Réel</strong> (espèces physiquement présentes) ce matin ?
-                  </p>
-                  
-                  <div style={{ position: 'relative', marginBottom: '16px' }}>
-                      <input 
-                          type="number" 
-                          placeholder="Ex: 150.00" 
-                          value={reguMontant} 
-                          onChange={(e) => setReguMontant(e.target.value)} 
-                          style={{ width: '100%', padding: '16px 16px 16px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '2px solid var(--btn-primary)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }} 
-                          autoFocus
-                      />
-                      <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-main)', fontSize: '20px', fontWeight: 'bold' }}>€</span>
-                  </div>
+      <RegularisationZModal
+        reguCloture={reguCloture}
+        setReguCloture={setReguCloture}
+        reguMontant={reguMontant}
+        setReguMontant={setReguMontant}
+        role={role}
+        configSalon={configSalon}
+        getStatutBlocagePin={getStatutBlocagePin}
+        reguEmployeId={reguEmployeId}
+        setReguEmployeId={setReguEmployeId}
+        reguCodePin={reguCodePin}
+        setReguCodePin={setReguCodePin}
+        erreurPinAction={erreurPinAction}
+        setErreurPinAction={setErreurPinAction}
+        employesListe={employesListe}
+        showToast={showToast}
+        decodeToken={decodeToken}
+        token={token}
+        API_URL={API_URL}
+        getAuthHeaders={getAuthHeaders}
+        handleFetchError={handleFetchError}
+        chargerMouvementsCaisse={chargerMouvementsCaisse}
+        appliquerRetourPinLocal={appliquerRetourPinLocal}
+      />
 
-                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
-                      const statutPin = getStatutBlocagePin(reguEmployeId);
-                      return (
-                          <div style={{ textAlign: 'left', background: 'var(--bg-app)', padding: '14px', borderRadius: '12px', border: `1px solid ${statutPin.bloque ? 'var(--color-danger)' : 'var(--border-color)'}`, marginBottom: '20px' }}>
-                              <label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Collaborateur à l'ouverture</label>
-                              <select
-                                  className="input-fournisseur"
-                                  value={reguEmployeId}
-                                  onChange={e => { setReguEmployeId(e.target.value); setReguCodePin(''); setErreurPinAction(null); }}
-                                  style={{ marginBottom: '12px', width: '100%', boxSizing: 'border-box' }}
-                              >
-                                  <option value="">-- Sélectionnez votre nom --</option>
-                                  <option value="gerant">Gérant (Moi-même)</option>
-                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                              </select>
-                              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                      Code PIN personnel
-                                  </span>
-                                  {statutPin.tentatives > 0 && !statutPin.bloque && (
-                                      <span style={{ fontSize: '10px', color: '#d97706', textTransform: 'none' }}>{statutPin.tentatives} échec(s) enregistré(s)</span>
-                                  )}
-                              </label>
-                              <input
-                                  type="password"
-                                  inputMode="numeric"
-                                  autoComplete="off"
-                                  maxLength="10"
-                                  disabled={statutPin.bloque}
-                                  className="input-fournisseur"
-                                  placeholder={statutPin.bloque ? "Accès verrouillé" : "Saisissez votre code PIN"}
-                                  value={reguCodePin}
-                                  onChange={e => { setReguCodePin(e.target.value.replace(/\D/g, '')); setErreurPinAction(null); }}
-                                  style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px', fontSize: 'clamp(14px, 2.5vw, 16px)', letterSpacing: reguCodePin ? '0.2em' : 'normal', textAlign: 'center', fontWeight: '600', opacity: statutPin.bloque ? 0.5 : 1, border: (statutPin.bloque || erreurPinAction) ? '1px solid var(--color-danger)' : undefined }}
-                              />
-                              {(statutPin.bloque || erreurPinAction) && (
-                                  <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
-                                      <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                      <span>{statutPin.bloque ? statutPin.message : erreurPinAction}</span>
-                                  </div>
-                              )}
-                          </div>
-                      );
-                  })()}
+      <MouvementCaisseModal
+        showMouvementModal={showMouvementModal}
+        setShowMouvementModal={setShowMouvementModal}
+        newMouvement={newMouvement}
+        setNewMouvement={setNewMouvement}
+        modeCalculatrice={modeCalculatrice}
+        setModeCalculatrice={setModeCalculatrice}
+        ongletCalculatrice={ongletCalculatrice}
+        setOngletCalculatrice={setOngletCalculatrice}
+        detailsMonnaie={detailsMonnaie}
+        setDetailsMonnaie={setDetailsMonnaie}
+        role={role}
+        configSalon={configSalon}
+        employesListe={employesListe}
+        getStatutBlocagePin={getStatutBlocagePin}
+        erreurPinAction={erreurPinAction}
+        setErreurPinAction={setErreurPinAction}
+        showToast={showToast}
+        API_URL={API_URL}
+        getAuthHeaders={getAuthHeaders}
+        handleFetchError={handleFetchError}
+        chargerMouvementsCaisse={chargerMouvementsCaisse}
+        appliquerRetourPinLocal={appliquerRetourPinLocal}
+      />
 
-                  <button 
-                      onClick={async () => {
-                          if (!reguMontant || isNaN(reguMontant)) return showToast("Veuillez saisir le montant réel.", "error");
-                          const currentRole = decodeToken(token)?.role;
-                          if (currentRole === 'salon' && configSalon.securite_pin_salon_active !== false) {
-                              if (!reguEmployeId) return showToast("Veuillez sélectionner le collaborateur qui ouvre la caisse.", "error");
-                              if (!reguCodePin || reguCodePin.trim().length < 4) return showToast("Veuillez saisir votre code PIN personnel.", "error");
-                          }
-                          try {
-                              const payload = { 
-                                  id_cloture: reguCloture.id_cloture, 
-                                  montant_reel: parseFloat(reguMontant), 
-                                  id_employe: currentRole === 'employe' ? decodeToken(token).id_employe : (reguEmployeId || null),
-                                  code_pin: currentRole === 'salon' ? reguCodePin : undefined
-                              };
-                              const res = await fetch(`${API_URL}/api/caisse/regulariser`, {
-                                  method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(payload)
-                              });
-                              const data = await handleFetchError(res);
-                              showToast("Caisse ouverte et régularisée !", "success");
-                              setReguCloture(null);
-                              setReguMontant('');
-                              setReguEmployeId('');
-                              setReguCodePin('');
-                              setErreurPinAction(null);
-                              if (typeof chargerMouvementsCaisse === 'function') chargerMouvementsCaisse();
-                          } catch (e) { 
-                              if (e.data) appliquerRetourPinLocal(reguEmployeId, e.data);
-                              setReguCodePin('');
-                              showToast(e.message, "error"); 
-                          }
-                      }}
-                      disabled={!reguMontant || (role === 'salon' && configSalon.securite_pin_salon_active !== false && (!reguEmployeId || reguCodePin.length < 4))}
-                      className="btn-action" 
-                      style={{ width: '100%', padding: '16px', fontSize: '16px' }}
-                  >
-                      Valider et Ouvrir la caisse
-                  </button>
-              </div>
-          </div>
-      )}
+      <ClotureZDialog
+        zDialogOuvert={zDialogOuvert}
+        setZDialogOuvert={setZDialogOuvert}
+        isMobile={isMobile}
+        role={role}
+        zEmployeSelect={zEmployeSelect}
+        setZEmployeSelect={setZEmployeSelect}
+        zCodePin={zCodePin}
+        setZCodePin={setZCodePin}
+        erreurPinAction={erreurPinAction}
+        setErreurPinAction={setErreurPinAction}
+        employesListe={employesListe}
+        configSalon={configSalon}
+        getStatutBlocagePin={getStatutBlocagePin}
+        fondCaisseMatin={fondCaisseMatin}
+        setFondCaisseMatin={setFondCaisseMatin}
+        compteCaisse={compteCaisse}
+        setCompteCaisse={setCompteCaisse}
+        calculerTotalCaisseReel={calculerTotalCaisseReel}
+        ecartDetecte={ecartDetecte}
+        justificationEcart={justificationEcart}
+        setJustificationEcart={setJustificationEcart}
+        executerZDeCaisse={executerZDeCaisse}
+      />
 
-      {/* MODALE PETITE CAISSE (ENTRÉE/SORTIE) */}
-      {showMouvementModal && (
-          <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{ maxWidth: '400px', padding: 0, overflow: 'hidden' }}>
-                  <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-app)' }}>
-                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Mouvement de Caisse</h3>
-                      <button onClick={() => { setShowMouvementModal(false); setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: '', code_pin: ''}); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                  </div>
-                  <div style={{ padding: '24px' }}>
-                      
-                      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-                          <button onClick={() => setNewMouvement({...newMouvement, type_mouvement: 'SORTIE'})} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${newMouvement.type_mouvement === 'SORTIE' ? 'var(--color-danger)' : 'var(--border-color)'}`, background: newMouvement.type_mouvement === 'SORTIE' ? 'var(--bg-danger)' : 'var(--bg-app)', color: newMouvement.type_mouvement === 'SORTIE' ? 'var(--color-danger)' : 'var(--text-secondary)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px' }}>
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                              Sortie d'espèces
-                          </button>
-                          <button onClick={() => setNewMouvement({...newMouvement, type_mouvement: 'ENTREE'})} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${newMouvement.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--border-color)'}`, background: newMouvement.type_mouvement === 'ENTREE' ? 'var(--bg-success)' : 'var(--bg-app)', color: newMouvement.type_mouvement === 'ENTREE' ? 'var(--color-success)' : 'var(--text-secondary)', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '14px' }}>
-                              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                              Entrée d'espèces
-                          </button>
-                      </div>
+      <ConfirmDialog
+        confirmDialog={confirmDialog}
+        setConfirmDialog={setConfirmDialog}
+      />
 
-                      {!modeCalculatrice ? (
-                          <div style={{ marginBottom: '16px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '8px' }}>
-                                  <label style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Montant (€)</label>
-                                  <button onClick={() => setModeCalculatrice(true)} style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.8 }}>
-                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" ry="2"/><circle cx="12" cy="12" r="2"/></svg>
-                                      Mode billets
-                                  </button>
-                              </div>
-                              <div style={{ position: 'relative' }}>
-                                  <input type="number" placeholder="0.00" value={newMouvement.montant} onChange={(e) => setNewMouvement({...newMouvement, montant: e.target.value})} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '18px', fontWeight: 'bold' }} />
-                                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '18px', fontWeight: 'bold' }}>€</span>
-                              </div>
-                          </div>
-                      ) : (
-                          <div style={{ marginBottom: '16px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                  <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-card)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                      <button onClick={() => setOngletCalculatrice('MONNAIES')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: ongletCalculatrice === 'MONNAIES' ? 'var(--text-main)' : 'transparent', color: ongletCalculatrice === 'MONNAIES' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}>Monnaies</button>
-                                      <button onClick={() => setOngletCalculatrice('BILLETS')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: ongletCalculatrice === 'BILLETS' ? 'var(--text-main)' : 'transparent', color: ongletCalculatrice === 'BILLETS' ? 'var(--bg-card)' : 'var(--text-secondary)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}>Billets</button>
-                                  </div>
-                                  <button onClick={() => { setModeCalculatrice(false); setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' }); setNewMouvement({...newMouvement, montant: ''}); }} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Annuler</button>
-                              </div>
+      <ModifStockDialog
+        modifStockDialog={modifStockDialog}
+        setModifStockDialog={setModifStockDialog}
+        confirmerModifStock={confirmerModifStock}
+      />
 
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
-                                  {ongletCalculatrice === 'MONNAIES' ? (
-                                      [ { key: 'p2', label: '2 €' }, { key: 'p1', label: '1 €' }, { key: 'p050', label: '0.50 €' }, { key: 'p020', label: '0.20 €' }, { key: 'p010', label: '0.10 €' }, { key: 'p005', label: '0.05 €' }, { key: 'p002', label: '0.02 €' }, { key: 'p001', label: '0.01 €' } ].map(item => (
-                                          <div key={item.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px 10px' }}>
-                                              <span style={{ width: '45px', fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{item.label}</span>
-                                              <span style={{ color: 'var(--border-color)', margin: '0 6px' }}>×</span>
-                                              <input type="number" min="0" value={detailsMonnaie[item.key]} onChange={e => setDetailsMonnaie({...detailsMonnaie, [item.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '14px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                                          </div>
-                                      ))
-                                  ) : (
-                                      [ { key: 'b500', label: '500 €' }, { key: 'b200', label: '200 €' }, { key: 'b100', label: '100 €' }, { key: 'b50', label: '50 €' }, { key: 'b20', label: '20 €' }, { key: 'b10', label: '10 €' }, { key: 'b5', label: '5 €' } ].map(item => (
-                                          <div key={item.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px 10px' }}>
-                                              <span style={{ width: '45px', fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{item.label}</span>
-                                              <span style={{ color: 'var(--border-color)', margin: '0 6px' }}>×</span>
-                                              <input type="number" min="0" value={detailsMonnaie[item.key]} onChange={e => setDetailsMonnaie({...detailsMonnaie, [item.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '14px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                                          </div>
-                                      ))
-                                  )}
-                              </div>
-                              <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>Total calculé :</span>
-                                  <span style={{ fontSize: '18px', fontWeight: '900', color: 'var(--text-main)' }}>{newMouvement.montant || '0.00'} €</span>
-                              </div>
-                          </div>
-                      )}
+      <ModifNomDialog
+        modifNomDialog={modifNomDialog}
+        setModifNomDialog={setModifNomDialog}
+        confirmerModifNom={confirmerModifNom}
+      />
 
-                      <div style={{ marginBottom: '16px' }}>
-                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Motif obligatoire</label>
-                          <input type="text" placeholder="Ex: Achat café, rendu monnaie..." value={newMouvement.motif} onChange={(e) => setNewMouvement({...newMouvement, motif: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px', marginBottom: '8px' }} />
-                          
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              <span
-                                  onClick={() => setNewMouvement({ ...newMouvement, motif: "Remise en banque (Dépôt)" })}
-                                  style={{
-                                      fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
-                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
-                                  }}
-                              >
-                                  Dépôt Banque
-                              </span>
-                              <span
-                                  onClick={() => setNewMouvement({ ...newMouvement, motif: "Apport de monnaie (Retrait banque)" })}
-                                  style={{
-                                      fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
-                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500'
-                                  }}
-                              >
-                                  Retrait Monnaie
-                              </span>
-                              <span
-                                  onClick={() => setNewMouvement({ ...newMouvement, motif: "Achat fournitures (Café, etc.)" })}
-                                  style={{
-                                      fontSize: '12px', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
-                                      borderRadius: '16px', cursor: 'pointer', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '5px'
-                                  }}
-                              >
-                                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
-                                  Achats / Frais
-                              </span>
-                          </div>
-                      </div>
+      <AnnulationTicketModal
+        annulationDialog={annulationDialog}
+        setAnnulationDialog={setAnnulationDialog}
+        confirmerAnnulationTicket={confirmerAnnulationTicket}
+      />
 
-                      {role === 'salon' && configSalon.securite_pin_salon_active !== false && (
-                          <div style={{ marginBottom: '14px' }}>
-                              <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>Collaborateur responsable</label>
-                              <select value={newMouvement.id_employe} onChange={(e) => { setNewMouvement({...newMouvement, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}>
-                                  <option value="">-- Sélectionnez votre nom --</option>
-                                  <option value="gerant">Gérant (Moi-même)</option>
-                                  {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                              </select>
-                          </div>
-                      )}
+      <CancellationRobotDialog
+        cancellationRobot={cancellationRobot}
+        setCancellationRobot={setCancellationRobot}
+        cancelMessageTemplate={cancelMessageTemplate}
+        setCancelMessageTemplate={setCancelMessageTemplate}
+        selectedCancelRdvs={selectedCancelRdvs}
+        setSelectedCancelRdvs={setSelectedCancelRdvs}
+        showToast={showToast}
+        chargerTout={chargerTout}
+        setRefreshTrigger={setRefreshTrigger}
+        API_URL={API_URL}
+        getAuthHeaders={getAuthHeaders}
+        handleFetchError={handleFetchError}
+      />
 
-                      {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
-                          const statutPinMvt = getStatutBlocagePin(newMouvement.id_employe);
-                          return (
-                              <div style={{ marginBottom: '24px' }}>
-                                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-main)' }}>
-                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                          Code PIN personnel
-                                      </span>
-                                      {statutPinMvt.tentatives > 0 && !statutPinMvt.bloque && (
-                                          <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706' }}>
-                                              {statutPinMvt.essaisRestants} essai{statutPinMvt.essaisRestants > 1 ? 's' : ''} restant{statutPinMvt.essaisRestants > 1 ? 's' : ''}
-                                          </span>
-                                      )}
-                                  </label>
-                                  <input
-                                      type="password"
-                                      inputMode="numeric"
-                                      autoComplete="off"
-                                      maxLength="10"
-                                      disabled={statutPinMvt.bloque}
-                                      placeholder={statutPinMvt.bloque ? "Accès verrouillé" : "Saisissez votre code PIN"}
-                                      value={newMouvement.code_pin || ''}
-                                      onChange={(e) => { setNewMouvement({ ...newMouvement, code_pin: e.target.value.replace(/\D/g, '') }); setErreurPinAction(null); }}
-                                      style={{ width: '100%', boxSizing: 'border-box', minHeight: '44px', padding: '12px', borderRadius: '12px', border: `1px solid ${(statutPinMvt.bloque || erreurPinAction) ? 'var(--color-danger)' : 'var(--border-color)'}`, background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: 'clamp(14px, 2.5vw, 16px)', fontWeight: '600', letterSpacing: newMouvement.code_pin ? '0.2em' : 'normal', textAlign: 'center', opacity: statutPinMvt.bloque ? 0.5 : 1 }}
-                                  />
-                                  {(statutPinMvt.bloque || erreurPinAction) && (
-                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
-                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                          <span>{statutPinMvt.bloque ? statutPinMvt.message : erreurPinAction}</span>
-                                      </div>
-                                  )}
-                              </div>
-                          );
-                      })()}
+      <AuditNf525Dialog
+        auditNf525={auditNf525}
+        setAuditNf525={setAuditNf525}
+      />
 
-                      <button 
-                          disabled={role === 'salon' && configSalon.securite_pin_salon_active !== false && getStatutBlocagePin(newMouvement.id_employe).bloque}
-                          onClick={async () => {
-                              if (!newMouvement.motif.trim() || !newMouvement.montant) return showToast("Veuillez remplir le montant et le motif.", "error");
-                              try {
-                                  const res = await fetch(`${API_URL}/api/caisse/mouvements`, {
-                                      method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newMouvement)
-                                  });
-                                  const data = await handleFetchError(res);
-                                  showToast("Mouvement enregistré.", "success");
-                                  setShowMouvementModal(false);
-                                  setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '', code_pin: '' });
-                                  setModeCalculatrice(false);
-                                  setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
-                                  chargerMouvementsCaisse();
-                              } catch (e) { 
-                                  if (e.data) appliquerRetourPinLocal(newMouvement.id_employe, e.data);
-                                  setNewMouvement({ ...newMouvement, code_pin: '' });
-                                  showToast(e.message, "error"); 
-                              }
-                          }} 
-                          className="btn-action" style={{ width: '100%', padding: '14px', borderRadius: '12px', fontSize: '16px' }}
-                      >
-                          Valider l'opération
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {zDialogOuvert && (
-          <div className="modal-overlay" style={{ zIndex: 100000, padding: isMobile ? '0' : '16px' }}>
-              <div className="modal-content" style={{ maxWidth: '600px', width: '100%', padding: '0', overflow: 'hidden', height: isMobile ? '100%' : 'auto', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-app)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <div style={{ color: 'var(--btn-primary)' }}><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
-                          <div>
-                              <h2 style={{ margin: 0, color: 'var(--text-main)', fontSize: '18px' }}>Clôture de Caisse (Z)</h2>
-                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Comptage physique obligatoire (Loi NF525)</span>
-                          </div>
-                      </div>
-                      <button onClick={() => { setZDialogOuvert(false); setZEmployeSelect(''); setZCodePin(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                  </div>
-                  
-                  <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
-                      {role === 'salon' && (() => {
-                          const statutPinZ = getStatutBlocagePin(zEmployeSelect);
-                          return (
-                              <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: `1px solid ${(statutPinZ.bloque || erreurPinAction) ? 'var(--color-danger)' : 'var(--border-color)'}`, marginBottom: '20px' }}>
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                                      <div style={{ flex: '1 1 210px', minWidth: 0 }}>
-                                          <label style={{ display: 'block', marginBottom: '8px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Responsable de la fermeture</label>
-                                          <select className="input-fournisseur" value={zEmployeSelect} onChange={e => { setZEmployeSelect(e.target.value); setZCodePin(''); setErreurPinAction(null); }} style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px' }}>
-                                              <option value="">-- Sélectionnez votre nom --</option>
-                                              {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.nom}>{emp.nom}</option>)}
-                                          </select>
-                                      </div>
-                                      {configSalon.securite_pin_salon_active !== false && (
-                                          <div style={{ flex: '1 1 210px', minWidth: 0 }}>
-                                              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                                                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                                      Code PIN personnel
-                                                  </span>
-                                                  {statutPinZ.tentatives > 0 && !statutPinZ.bloque && (
-                                                      <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', textTransform: 'none' }}>
-                                                          {statutPinZ.essaisRestants} essai{statutPinZ.essaisRestants > 1 ? 's' : ''} restant{statutPinZ.essaisRestants > 1 ? 's' : ''}
-                                                      </span>
-                                                  )}
-                                              </label>
-                                              <input
-                                                  type="password"
-                                                  inputMode="numeric"
-                                                  autoComplete="off"
-                                                  maxLength="10"
-                                                  disabled={statutPinZ.bloque}
-                                                  className="input-fournisseur"
-                                                  placeholder={statutPinZ.bloque ? "Accès verrouillé" : "Votre code PIN"}
-                                                  value={zCodePin}
-                                                  onChange={e => { setZCodePin(e.target.value.replace(/\D/g, '')); setErreurPinAction(null); }}
-                                                  style={{ margin: 0, width: '100%', boxSizing: 'border-box', minHeight: '44px', fontSize: 'clamp(14px, 2.5vw, 16px)', letterSpacing: zCodePin ? '0.2em' : 'normal', textAlign: 'center', fontWeight: '600', opacity: statutPinZ.bloque ? 0.5 : 1 }}
-                                              />
-                                          </div>
-                                      )}
-                                  </div>
-                                  {(statutPinZ.bloque || erreurPinAction) && (
-                                      <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
-                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                          <span>{statutPinZ.bloque ? statutPinZ.message : erreurPinAction}</span>
-                                      </div>
-                                  )}
-                              </div>
-                          );
-                      })()}
-
-                      <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '12px', border: '1px dashed var(--border-color)', marginBottom: '24px' }}>
-                          <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', fontWeight: 'bold', color: 'var(--text-main)', marginBottom: '8px' }}>
-                              <span>Fond de caisse du matin (Ouverture)</span>
-                          </label>
-                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>Montant en espèces (fonds de roulement) présent à l'ouverture.</p>
-                          <div style={{ position: 'relative' }}>
-                              <input type="number" placeholder="Ex: 150.00" value={fondCaisseMatin} onChange={(e) => setFondCaisseMatin(e.target.value)} style={{ width: '100%', padding: '12px 12px 12px 40px', boxSizing: 'border-box', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold' }} />
-                              <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '16px', fontWeight: 'bold' }}>€</span>
-                          </div>
-                      </div>
-
-                      <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" ry="2"/><circle cx="12" cy="12" r="2"/></svg>
-                          Billets comptés
-                      </h3>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
-                          {[
-                              { key: 'b500', label: '500 €' }, { key: 'b200', label: '200 €' }, { key: 'b100', label: '100 €' }, 
-                              { key: 'b50', label: '50 €' }, { key: 'b20', label: '20 €' }, { key: 'b10', label: '10 €' }, { key: 'b5', label: '5 €' }
-                          ].map(b => (
-                              <div key={b.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 8px' }}>
-                                  <span style={{ width: '45px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{b.label}</span>
-                                  <span style={{ color: 'var(--border-color)', margin: '0 8px' }}>×</span>
-                                  <input type="number" min="0" value={compteCaisse[b.key]} onChange={e => setCompteCaisse({...compteCaisse, [b.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                              </div>
-                          ))}
-                      </div>
-
-                      <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
-                          Pièces comptées
-                      </h3>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                          {[
-                              { key: 'p2', label: '2 €' }, { key: 'p1', label: '1 €' }, { key: 'p050', label: '0.50 €' }, { key: 'p020', label: '0.20 €' }, 
-                              { key: 'p010', label: '0.10 €' }, { key: 'p005', label: '0.05 €' }, { key: 'p002', label: '0.02 €' }, { key: 'p001', label: '0.01 €' }
-                          ].map(p => (
-                              <div key={p.key} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 8px' }}>
-                                  <span style={{ width: '45px', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{p.label}</span>
-                                  <span style={{ color: 'var(--border-color)', margin: '0 8px' }}>×</span>
-                                  <input type="number" min="0" value={compteCaisse[p.key]} onChange={e => setCompteCaisse({...compteCaisse, [p.key]: e.target.value})} style={{ flex: 1, width: '100%', border: 'none', background: 'transparent', color: 'var(--text-main)', fontSize: '16px', fontWeight: 'bold', textAlign: 'center', outline: 'none' }} placeholder="0" />
-                              </div>
-                          ))}
-                      </div>
-                  </div>
-
-                  <div style={{ padding: '20px', borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                          <span style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--text-main)' }}>Total Compté (Réel) :</span>
-                          <span style={{ fontSize: '24px', fontWeight: '900', color: 'var(--btn-primary)' }}>{calculerTotalCaisseReel().toFixed(2)} €</span>
-                      </div>
-                      
-                      {ecartDetecte !== null && (
-                          <div style={{ background: 'var(--bg-danger)', padding: '16px', borderRadius: '12px', border: '1px solid var(--color-danger)', marginBottom: '16px', textAlign: 'left', animation: 'fadeIn 0.3s ease' }}>
-                              <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                                  Écart de caisse détecté : {ecartDetecte > 0 ? '+' : ''}{ecartDetecte.toFixed(2)} €
-                              </p>
-                              <label style={{ display: 'block', fontSize: '12px', color: 'var(--color-danger)', marginBottom: '8px' }}>Pour valider la clôture NF525, une justification est obligatoire :</label>
-                              <textarea 
-                                  className="input-fournisseur" 
-                                  placeholder="Ex: Erreur de rendu de monnaie, ou oubli de saisie d'une petite caisse..."
-                                  rows="3"
-                                  value={justificationEcart}
-                                  onChange={e => setJustificationEcart(e.target.value)}
-                                  style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--color-danger)' }}
-                              />
-                          </div>
-                      )}
-
-                      <button 
-                          onClick={() => executerZDeCaisse(role === 'gerant' ? 'Gérant' : zEmployeSelect)} 
-                          disabled={(role === 'salon' && !zEmployeSelect) || fondCaisseMatin === '' || (role === 'salon' && configSalon.securite_pin_salon_active !== false && zCodePin.length < 4) || (ecartDetecte !== null && !justificationEcart.trim())} 
-                          className="btn-action" 
-                          style={{ width: '100%', padding: '16px', fontSize: '16px', background: (ecartDetecte !== null && !justificationEcart.trim()) ? 'var(--text-muted)' : (ecartDetecte !== null ? 'var(--color-danger)' : 'var(--text-main)') }}
-                      >
-                          {ecartDetecte !== null ? "Justifier et Sceller" : "Sceller la caisse"}
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {confirmDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>{confirmDialog.titre}</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5'}}>{confirmDialog.message}</p>
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setConfirmDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmDialog.action} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>{confirmDialog.btnTexte}</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {modifStockDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '360px'}}>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Modifier le stock</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px'}}>{modifStockDialog.nom}</p>
-                  <input type="number" min="0" value={modifStockDialog.valeur} onChange={(e) => setModifStockDialog({ ...modifStockDialog, valeur: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '16px', textAlign: 'center'}} autoFocus />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setModifStockDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmerModifStock} style={{flex: 1, background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Enregistrer</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {modifNomDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '360px'}}>
-                  <h2 style={{margin: '0 0 20px 0', color: 'var(--text-main)', fontSize: '20px'}}>Renommer la prestation</h2>
-                  <input type="text" value={modifNomDialog.nom} onChange={(e) => setModifNomDialog({ ...modifNomDialog, nom: e.target.value })} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '14px'}} autoFocus />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setModifNomDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Annuler</button>
-                      <button onClick={confirmerModifNom} disabled={!modifNomDialog.nom.trim()} style={{flex: 1, background: 'var(--btn-primary)', color: 'var(--btn-text)', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: modifNomDialog.nom.trim() ? 'pointer' : 'not-allowed', opacity: modifNomDialog.nom.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Enregistrer</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {annulationDialog && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '400px'}}>
-                  <div style={{color: 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>Annuler ce paiement</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>Cette action génère un ticket de compensation (Loi NF525). Vous pouvez annuler le ticket entier ou sélectionner des articles spécifiques.</p>
-                  
-                  {annulationDialog.lignes && annulationDialog.lignes.length > 0 && (
-                      <div style={{textAlign: 'left', background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '16px', maxHeight: '150px', overflowY: 'auto'}}>
-                          <div style={{fontSize: '12px', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px'}}>ARTICLES REMBOURSABLES :</div>
-                          {annulationDialog.lignes.map(ligne => {
-                              const inList = annulationDialog.lignes_a_annuler.find(l => l.id_article === ligne.id_article);
-                              const qte = inList ? inList.quantite : 0;
-                              return (
-                                  <div key={ligne.id_article} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '13px'}}>
-                                      <div style={{display: 'flex', flexDirection: 'column'}}>
-                                          <span style={{color: 'var(--text-main)', fontWeight: '500'}}>{ligne.nom_article_snapshot}</span>
-                                          <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>{ligne.prix_unitaire_ttc} € / unité (Max: {ligne.quantite_restante})</span>
-                                      </div>
-                                      <div style={{display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', padding: '2px'}}>
-                                          <button onClick={() => {
-                                              if (qte === 0) return;
-                                              const newLignes = [...annulationDialog.lignes_a_annuler];
-                                              if (qte === 1) {
-                                                  setAnnulationDialog({...annulationDialog, lignes_a_annuler: newLignes.filter(l => l.id_article !== ligne.id_article)});
-                                              } else {
-                                                  const idx = newLignes.findIndex(l => l.id_article === ligne.id_article);
-                                                  newLignes[idx].quantite -= 1;
-                                                  setAnnulationDialog({...annulationDialog, lignes_a_annuler: newLignes});
-                                              }
-                                          }} style={{background: 'none', border: 'none', padding: '4px 8px', cursor: 'pointer', color: 'var(--text-main)'}}>-</button>
-                                          <span style={{fontWeight: 'bold', minWidth: '16px', textAlign: 'center'}}>{qte}</span>
-                                          <button onClick={() => {
-                                              if (qte >= ligne.quantite_restante) return;
-                                              const newLignes = [...annulationDialog.lignes_a_annuler];
-                                              const idx = newLignes.findIndex(l => l.id_article === ligne.id_article);
-                                              if (idx >= 0) newLignes[idx].quantite += 1;
-                                              else newLignes.push({id_article: ligne.id_article, quantite: 1});
-                                              setAnnulationDialog({...annulationDialog, lignes_a_annuler: newLignes});
-                                          }} style={{background: 'none', border: 'none', padding: '4px 8px', cursor: 'pointer', color: 'var(--text-main)'}}>+</button>
-                                      </div>
-                                  </div>
-                              );
-                          })}
-                          {annulationDialog.lignes_a_annuler.length === 0 && (
-                              <div style={{fontSize: '11px', color: 'var(--color-danger)', marginTop: '8px', fontStyle: 'italic'}}>Aucun article sélectionné = Annulation totale du ticket.</div>
-                          )}
-                      </div>
-                  )}
-
-                  <textarea value={annulationDialog.motif} onChange={(e) => setAnnulationDialog({ ...annulationDialog, motif: e.target.value })} placeholder="Motif de l'annulation (ex : erreur de saisie, geste commercial...)" rows={3} style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--radius-input)', border: '1px solid var(--border-color)', marginBottom: '20px', fontFamily: 'inherit', fontSize: '13px', resize: 'vertical'}} autoFocus />
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => setAnnulationDialog(null)} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s'}}>Retour</button>
-                      <button onClick={confirmerAnnulationTicket} disabled={!annulationDialog.motif.trim()} style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: annulationDialog.motif.trim() ? 'pointer' : 'not-allowed', opacity: annulationDialog.motif.trim() ? 1 : 0.5, transition: 'all 0.15s'}}>Confirmer l'annulation</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {cancellationRobot && (
-          <div className="modal-overlay" style={{ zIndex: 10000 }}>
-              <div className="modal-content" style={{textAlign: 'left', maxWidth: '500px', width: '90%'}}>
-                  <div style={{color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                  </div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px', textAlign: 'center'}}>Détection de RDV</h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: '1.5', textAlign: 'center'}}>
-                      <strong>{cancellationRobot.nom_employe}</strong> a <strong>{cancellationRobot.rdvs.length} RDV</strong> sur cette période. Décochez ceux que vous allez confier à un autre coiffeur, et annulez le reste.
-                  </p>
-
-                  <div style={{marginBottom: '16px'}}>
-                      <label style={{fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px', display: 'block'}}>Message envoyé</label>
-                      <textarea 
-                          value={cancelMessageTemplate} 
-                          onChange={(e) => setCancelMessageTemplate(e.target.value)}
-                          style={{width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: '13px', minHeight: '80px', resize: 'vertical'}}
-                      />
-                      <span style={{fontSize: '10px', color: 'var(--text-muted)'}}>Les balises [Prénom], [Date] et [Lien] s'adapteront à chaque client.</span>
-                  </div>
-
-                  <div style={{maxHeight: '200px', overflowY: 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '8px', marginBottom: '24px'}}>
-                      {cancellationRobot.rdvs.map(rdv => {
-                          const hasPhone = rdv.telephone_client && rdv.telephone_client.trim().length >= 9;
-                          return (
-                              <label key={rdv.id_rdv} style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '10px', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', opacity: selectedCancelRdvs.includes(rdv.id_rdv) ? 1 : 0.6}}>
-                                  <input 
-                                      type="checkbox" 
-                                      checked={selectedCancelRdvs.includes(rdv.id_rdv)} 
-                                      onChange={() => {
-                                          if (selectedCancelRdvs.includes(rdv.id_rdv)) {
-                                              setSelectedCancelRdvs(selectedCancelRdvs.filter(id => id !== rdv.id_rdv));
-                                          } else {
-                                              setSelectedCancelRdvs([...selectedCancelRdvs, rdv.id_rdv]);
-                                          }
-                                      }}
-                                      style={{width: '18px', height: '18px', accentColor: 'var(--btn-primary)'}}
-                                  />
-                                  <div style={{flex: 1}}>
-                                      <div style={{fontWeight: 'bold', fontSize: '14px', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between'}}>
-                                          <span>{rdv.nom_client || 'Client inconnu'}</span>
-                                          <span style={{fontSize: '12px', fontWeight: 'normal'}}>{new Date(rdv.date_heure_debut.replace('Z', '')).toLocaleString('fr-FR', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
-                                      </div>
-                                      <div style={{fontSize: '12px', color: hasPhone ? 'var(--text-secondary)' : 'var(--color-danger)', fontWeight: hasPhone ? 'normal' : 'bold', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px'}}>
-                                          {hasPhone ? `📞 ${rdv.telephone_client} - ${rdv.prestation}` : `⚠️ Aucun numéro - Appel manuel requis`}
-                                      </div>
-                                  </div>
-                              </label>
-                          )
-                      })}
-                  </div>
-
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => { setCancellationRobot(null); chargerTout(); setRefreshTrigger(prev => prev + 1); }} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
-                          Ignorer
-                      </button>
-                      <button onClick={async () => {
-                          try {
-                              if (selectedCancelRdvs.length === 0) {
-                                  showToast("Aucun rendez-vous sélectionné", "info");
-                                  setCancellationRobot(null);
-                                  chargerTout(); setRefreshTrigger(prev => prev + 1);
-                                  return;
-                              }
-                              const res = await fetch(`${API_URL}/api/rdv/mass-cancel`, {
-                                  method: 'POST', headers: getAuthHeaders(true),
-                                  body: JSON.stringify({ rdv_ids: selectedCancelRdvs, id_employe: cancellationRobot.id_employe, message_personnalise: cancelMessageTemplate })
-                              });
-                              const data = await handleFetchError(res);
-                              showToast(data.message, "success");
-                              setCancellationRobot(null);
-                              chargerTout(); setRefreshTrigger(prev => prev + 1);
-                          } catch (e) { showToast(e.message || "Erreur d'annulation", "error"); }
-                      }} style={{flex: 2, background: 'var(--btn-primary)', color: 'white', border: 'none', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>
-                          Envoyer ({selectedCancelRdvs.length})
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {auditNf525 && (
-          <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{textAlign: 'center', maxWidth: '450px'}}>
-                  <div style={{color: auditNf525.conforme ? 'var(--color-success)' : 'var(--color-danger)', display: 'flex', justifyContent: 'center', marginBottom: '16px'}}>
-                      {auditNf525.conforme 
-                          ? <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                          : <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                      }
-                  </div>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '20px'}}>
-                      {auditNf525.conforme ? "Base de données intègre" : "Altération détectée"}
-                  </h2>
-                  <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.5'}}>
-                      {auditNf525.conforme 
-                          ? "Le chaînage cryptographique est parfaitement valide. Aucune donnée financière n'a été altérée." 
-                          : "Le système a détecté une rupture dans la chaîne cryptographique !"}
-                  </p>
-                  <div style={{background: 'var(--bg-app)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '13px'}}>
-                      <div style={{marginBottom: '8px'}}><strong>Tickets vérifiés :</strong> {auditNf525.total_tickets_verifies}</div>
-                      <div style={{marginBottom: '8px'}}><strong>Clôtures (Z) vérifiées :</strong> {auditNf525.total_z_verifies}</div>
-                      <div><strong>Journaux Techniques (JET) :</strong> {auditNf525.total_jet_verifies}</div>
-                  </div>
-                  
-                  {auditNf525.erreurs && auditNf525.erreurs.length > 0 && (
-                      <div style={{background: 'var(--bg-danger)', color: 'var(--color-danger)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '12px', maxHeight: '100px', overflowY: 'auto'}}>
-                          {auditNf525.erreurs.map((err, i) => <div key={i}>• {err}</div>)}
-                      </div>
-                  )}
-                  
-                  {auditNf525.alertes && auditNf525.alertes.length > 0 && (
-                      <div style={{background: 'var(--bg-info)', color: 'var(--color-info)', padding: '12px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left', fontSize: '12px', maxHeight: '100px', overflowY: 'auto'}}>
-                          {auditNf525.alertes.map((al, i) => <div key={i}>• {al}</div>)}
-                      </div>
-                  )}
-
-                  <button onClick={() => setAuditNf525(null)} className="btn-action" style={{width: '100%'}}>Fermer</button>
-              </div>
-          </div>
-      )}
-
-      {sauvetageClient && (
-          <div className="modal-overlay" style={{ zIndex: 100000 }}>
-              <div className="modal-content" style={{maxWidth: '420px'}}>
-                  <h2 style={{margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '18px'}}>Sauver ce client</h2>
-                  <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px'}}>Envoyez un SMS d'excuse avec une offre pour le faire revenir.</p>
-                  
-                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Offre ajoutée à sa fiche (Rappel en caisse)</label>
-                  <select 
-                      className="input-fournisseur" 
-                      value={remiseSauvetage} 
-                      onChange={(e) => {
-                          const val = e.target.value;
-                          setRemiseSauvetage(val);
-                          // Optionnel : auto-remplir le SMS en fonction du choix
-                          if (val === '-10% sur la prochaine visite') setSmsSauvetage("Bonjour, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -10% sur votre prochaine coupe pour nous faire pardonner. À très vite !");
-                          if (val === '-20% sur la prochaine visite') setSmsSauvetage("Bonjour, je suis le gérant du salon. Vraiment navré pour votre expérience. Voici -20% sur votre prochaine coupe pour nous faire pardonner. À très vite !");
-                          if (val === 'Soin offert à la prochaine visite') setSmsSauvetage("Bonjour, je suis le gérant du salon. Vraiment navré pour votre expérience. Un Soin vous sera offert lors de votre prochaine visite pour nous faire pardonner. À très vite !");
-                      }}
-                      style={{ marginBottom: '16px', width: '100%' }}
-                  >
-                      <option value="">Aucune (Juste un SMS d'excuse)</option>
-                      <option value="-10% sur la prochaine visite">-10% sur la prochaine visite</option>
-                      <option value="-20% sur la prochaine visite">-20% sur la prochaine visite</option>
-                      <option value="Soin offert à la prochaine visite">Soin offert à la prochaine visite</option>
-                  </select>
-
-                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Message SMS envoyé</label>
-                  <textarea className="input-fournisseur" rows={5} value={smsSauvetage} onChange={e => setSmsSauvetage(e.target.value)} style={{width: '100%', boxSizing: 'border-box', marginBottom: '20px', fontSize: '13px', resize: 'vertical'}} />
-                  
-                  <div style={{display: 'flex', gap: '12px'}}>
-                      <button onClick={() => { setSauvetageClient(null); setRemiseSauvetage(''); }} style={{flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer'}}>Annuler</button>
-                      <button onClick={envoyerSmsSauvetage} className="btn-action" style={{flex: 1, background: 'var(--color-danger)', color: 'white', border: 'none'}}>Envoyer l'offre</button>
-                  </div>
-              </div>
-          </div>
-      )}
+      <SauvetageClientDialog
+        sauvetageClient={sauvetageClient}
+        setSauvetageClient={setSauvetageClient}
+        remiseSauvetage={remiseSauvetage}
+        setRemiseSauvetage={setRemiseSauvetage}
+        smsSauvetage={smsSauvetage}
+        setSmsSauvetage={setSmsSauvetage}
+        envoyerSmsSauvetage={envoyerSmsSauvetage}
+      />
 
       {showPricingModal && (
-          <PricingModal 
-              onClose={() => setShowPricingModal(false)}
-              isSoftLock={isSoftLock}
-              isHardLock={isHardLock}
-              joursRestants={joursRestantsEssai}
-              token={token}
-              onSubscribe={async (plan, cycle) => {
-                  try {
-                      const res = await fetch(`${API_URL}/api/creer-checkout`, { 
-                          method: 'POST', 
-                          headers: getAuthHeaders(true), 
-                          body: JSON.stringify({ plan_choisi: plan, cycle_choisi: cycle }) 
-                      });
-                      
-                      const data = await res.json().catch(() => ({}));
-                      
-                      if (!res.ok) {
-                          // On remplace le toast caché par une alerte native bloquante
-                          alert(`🚨 STRIPE A BLOQUÉ : \n\n${data.erreur || "Erreur serveur"}`);
-                          return;
-                      }
-
-                      if (data.url) {
-                          window.location.href = data.url;
-                      } else if (data.success) {
-                          setShowPricingModal(false);
-                          showToast(data.message, "success");
-                      }
-                  } catch (err) {
-                      alert(`🚨 ERREUR RÉSEAU STRIPE : \n\n${err.message}`);
-                  }
-              }}
-          />
-      )}
-      {/* --- MODALE POINTEUSE PREMIUM --- */}
-      {pointeuse.open && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
-            <div className="carte" style={{ width: '90%', maxWidth: '400px', textAlign: 'center', position: 'relative', padding: '32px 24px' }}>
-                
-                <button onClick={() => setPointeuse({ open: false, step: 1, employe: null, pin: '' })} style={{ position: 'absolute', top: '16px', right: '16px', background: 'transparent', border: 'none', fontSize: '24px', color: 'var(--text-secondary)', cursor: 'pointer' }}>×</button>
-
-                {/* ÉTAPE 1 : CHOIX DE L'EMPLOYÉ */}
-                {pointeuse.step === 1 && (
-                    <>
-                        <h2 style={{ fontSize: '20px', marginBottom: '24px', color: 'var(--text-main)' }}>Qui êtes-vous ?</h2>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                            {employesListe.map(emp => {
-                                const statutData = statutsEquipe[emp.id_employe];
-                                const statut = statutData ? statutData.action : null;
-                                let ringColor = 'transparent';
-                                let badgeBg = 'var(--bg-app)';
-                                let badgeColor = 'var(--text-muted)';
-                                let badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
-
-                                if (statut === 'ENTREE' || statut === 'PAUSE_FIN') {
-                                    ringColor = 'var(--color-success)';
-                                    badgeBg = 'var(--bg-success)';
-                                    badgeColor = 'var(--color-success)';
-                                    badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
-                                } else if (statut === 'PAUSE_DEBUT') {
-                                    ringColor = '#f59e0b';
-                                    badgeBg = '#fef3c7';
-                                    badgeColor = '#f59e0b';
-                                    badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
-                                } else if (statut === 'SORTIE') {
-                                    ringColor = 'var(--color-danger)';
-                                    badgeBg = 'var(--bg-danger)';
-                                    badgeColor = 'var(--color-danger)';
-                                    badgeIcon = <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
-                                }
-
-                                return (
-                                <button key={emp.id_employe} onClick={() => setPointeuse({ ...pointeuse, step: 2, employe: emp, pin: '', erreurPin: null })} style={{ background: 'var(--bg-app)', border: `1px solid ${ringColor !== 'transparent' ? ringColor : 'var(--border-color)'}`, borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}>
-                                    <div style={{ position: 'relative' }}>
-                                        <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--btn-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 'bold', border: `2px solid ${ringColor !== 'transparent' ? ringColor : 'transparent'}` }}>
-                                            {emp.photo_url ? <img src={emp.photo_url} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}/> : emp.nom.substring(0, 2).toUpperCase()}
-                                        </div>
-                                        <div style={{ position: 'absolute', bottom: '-4px', right: '-4px', background: badgeBg, color: badgeColor, border: '2px solid var(--bg-app)', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            {badgeIcon}
-                                        </div>
-                                    </div>
-                                    <span style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '14px', marginTop: '4px' }}>{emp.nom.split(' ')[0]}</span>
-                                </button>
-                            )})}
-                        </div>
-                    </>
-                )}
-
-                {/* ÉTAPE 2 : CODE PIN */}
-                {pointeuse.step === 2 && (() => {
-                    const statutPinPointeuse = getStatutBlocagePin(pointeuse.employe?.id_employe);
-                    const prochainSeuil = statutPinPointeuse.tentatives < 3 ? 3 : (statutPinPointeuse.tentatives < 5 ? 5 : (statutPinPointeuse.tentatives < 7 ? 7 : 9));
-                    const essaisRestants = Math.max(0, prochainSeuil - statutPinPointeuse.tentatives);
-
-                    return (
-                    <div style={{ animation: 'fadeIn 0.3s ease' }}>
-                        <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', gap: '12px'}}>
-                            <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                                <button onClick={() => setPointeuse({ ...pointeuse, step: 1, pin: '', erreurPin: null })} style={{background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-main)'}}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
-                                <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-main)' }}>Code de {pointeuse.employe.nom.split(' ')[0]}</h2>
-                            </div>
-                            {statutPinPointeuse.tentatives > 0 && !statutPinPointeuse.bloque && (
-                                <span style={{ fontSize: '11px', fontWeight: '600', color: '#d97706', background: 'rgba(245, 158, 11, 0.12)', padding: '4px 10px', borderRadius: '999px' }}>
-                                    {essaisRestants} essai{essaisRestants > 1 ? 's' : ''} restant{essaisRestants > 1 ? 's' : ''}
-                                </span>
-                            )}
-                        </div>
-
-                        {(statutPinPointeuse.bloque || pointeuse.erreurPin) && (
-                            <div style={{ marginBottom: '20px', padding: '12px 14px', borderRadius: '10px', background: 'var(--bg-danger)', border: '1px solid var(--color-danger)', color: 'var(--color-danger)', fontSize: '12.5px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', textAlign: 'left', lineHeight: '1.4' }}>
-                                <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                <span>{statutPinPointeuse.bloque ? statutPinPointeuse.message : pointeuse.erreurPin}</span>
-                            </div>
-                        )}
-
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '28px', opacity: statutPinPointeuse.bloque ? 0.35 : 1 }}>
-                            {[0, 1, 2, 3].map(i => (
-                                <div key={i} style={{ width: '16px', height: '16px', borderRadius: '50%', border: `2px solid ${pointeuse.erreurPin ? 'var(--color-danger)' : 'var(--text-main)'}`, background: pointeuse.pin.length > i ? 'var(--text-main)' : 'transparent', transition: 'all 0.2s ease' }} />
-                            ))}
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', maxWidth: '280px', margin: '0 auto', opacity: statutPinPointeuse.bloque ? 0.4 : 1, pointerEvents: statutPinPointeuse.bloque ? 'none' : 'auto' }}>
-                            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-                                <button key={num} disabled={statutPinPointeuse.bloque} onClick={() => handlePointeusePin(num.toString())} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: statutPinPointeuse.bloque ? 'not-allowed' : 'pointer', boxShadow: 'var(--shadow-sm)' }}>{num}</button>
-                            ))}
-                            <div />
-                            <button disabled={statutPinPointeuse.bloque} onClick={() => handlePointeusePin('0')} className="hover-lift" style={{ padding: '16px', fontSize: '24px', fontWeight: 'bold', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', cursor: statutPinPointeuse.bloque ? 'not-allowed' : 'pointer', boxShadow: 'var(--shadow-sm)' }}>0</button>
-                            <button disabled={statutPinPointeuse.bloque} onClick={() => setPointeuse(prev => ({ ...prev, pin: prev.pin.slice(0, -1), erreurPin: null }))} className="hover-lift" style={{ padding: '16px', fontSize: '20px', fontWeight: 'bold', borderRadius: '12px', border: 'none', background: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: statutPinPointeuse.bloque ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
-                            </button>
-                        </div>
-                    </div>
-                    );
-                })()}
-
-                {/* ÉTAPE 3 : CHOIX DE L'ACTION (Logique Intelligente + Statut) */}
-                {pointeuse.step === 3 && (() => {
-                    const statutData = statutsEquipe[pointeuse.employe?.id_employe];
-                    const statutActuel = statutData ? statutData.action : null;
-                    
-                    // RÈGLES MÉTIER IMPLACABLES :
-                    const peutArriver = !statutActuel || statutActuel === 'SORTIE';
-                    const peutPause = statutActuel === 'ENTREE' || statutActuel === 'PAUSE_FIN';
-                    const peutRetourPause = statutActuel === 'PAUSE_DEBUT';
-                    const peutPartir = statutActuel === 'ENTREE' || statutActuel === 'PAUSE_DEBUT' || statutActuel === 'PAUSE_FIN';
-
-                    let statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
-                    let statutText = "Non arrivé";
-                    let statutColor = "var(--text-muted)";
-
-                    if (statutActuel === 'ENTREE' || statutActuel === 'PAUSE_FIN') {
-                        statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
-                        statutText = "En service";
-                        statutColor = "var(--color-success)";
-                    } else if (statutActuel === 'PAUSE_DEBUT') {
-                        statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
-                        statutText = "En pause";
-                        statutColor = "#f59e0b";
-                    } else if (statutActuel === 'SORTIE') {
-                        statutIcon = <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
-                        statutText = "Service terminé";
-                        statutColor = "var(--color-danger)";
-                    }
-
-                    return (
-                        <>
-                            <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '24px'}}>
-                                <div style={{ color: statutColor, display: 'flex', justifyContent: 'center', marginBottom: '8px', padding: '12px', background: 'var(--bg-app)', borderRadius: '50%', border: `1px solid ${statutColor}30` }}>
-                                    {statutIcon}
-                                </div>
-                                <h2 style={{ fontSize: '20px', margin: '0 0 4px 0', color: 'var(--text-main)' }}>Prêt, {(pointeuse.employe?.nom || '').split(' ')[0]} ?</h2>
-                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: statutColor, background: 'var(--bg-app)', padding: '4px 12px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                                    Statut actuel : {statutText}
-                                </span>
-                            </div>
-                            
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
-                                <button 
-                                    onClick={() => enregistrerPointage('ENTREE')} 
-                                    disabled={buttonsDisabled || !peutArriver}
-                                    className={peutArriver ? "hover-bg-card" : ""}
-                                    style={{ opacity: (buttonsDisabled || !peutArriver) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutArriver) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: peutArriver ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                                >
-                                    <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
-                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-                                    </div>
-                                    <div style={{textAlign: 'left'}}>
-                                        <span style={{display: 'block', fontSize: '15px'}}>Arrivée (Début de service)</span>
-                                        <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure d'arrivée</span>
-                                    </div>
-                                </button>
-                                
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                                    <button 
-                                        onClick={() => enregistrerPointage('PAUSE_DEBUT')} 
-                                        disabled={buttonsDisabled || !peutPause}
-                                        className={peutPause ? "hover-bg-hover" : ""}
-                                        style={{ opacity: (buttonsDisabled || !peutPause) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutPause) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: peutPause ? 'pointer' : 'not-allowed', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                                    >
-                                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>
-                                        Départ Pause
-                                    </button>
-                                    <button 
-                                        onClick={() => enregistrerPointage('PAUSE_FIN')} 
-                                        disabled={buttonsDisabled || !peutRetourPause}
-                                        className={peutRetourPause ? "hover-bg-hover" : ""}
-                                        style={{ opacity: (buttonsDisabled || !peutRetourPause) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutRetourPause) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: peutRetourPause ? 'pointer' : 'not-allowed', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                                    >
-                                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                                        Retour Pause
-                                    </button>
-                                </div>
-                                
-                                <button 
-                                    onClick={() => enregistrerPointage('SORTIE')} 
-                                    disabled={buttonsDisabled || !peutPartir}
-                                    className={peutPartir ? "hover-bg-card" : ""}
-                                    style={{ opacity: (buttonsDisabled || !peutPartir) ? 0.4 : 1, pointerEvents: (buttonsDisabled || !peutPartir) ? 'none' : 'auto', background: 'var(--bg-app)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--text-main)', padding: '20px', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: peutPartir ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)' }}
-                                >
-                                    <div style={{width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
-                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                                    </div>
-                                    <div style={{textAlign: 'left'}}>
-                                        <span style={{display: 'block', fontSize: '15px'}}>Départ (Fin de service)</span>
-                                        <span style={{display: 'block', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal', marginTop: '2px'}}>Enregistre votre heure de départ</span>
-                                    </div>
-                                </button>
-                            </div>
-                        </>
-                    );
-                })()}
-
-                {/* ÉTAPE 4 : CONFIRMATION VISUELLE (SUCCÈS) */}
-                {pointeuse.step === 4 && (
-                    <div style={{ padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', animation: 'fadeIn 0.4s ease' }}>
-                        <div style={{ color: 'var(--color-success)', marginBottom: '24px', animation: 'scaleIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
-                            <svg viewBox="0 0 24 24" width="72" height="72" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                                <polyline points="22 4 12 14.01 9 11.01" />
-                            </svg>
-                        </div>
-                        <h2 style={{ fontSize: '24px', margin: '0 0 12px 0', color: 'var(--text-main)' }}>
-                            {pointeuse.derniereAction === 'ENTREE' ? 'Bonne journée !' :
-                             pointeuse.derniereAction === 'PAUSE_DEBUT' ? 'Bonne pause !' :
-                             pointeuse.derniereAction === 'PAUSE_FIN' ? 'Bon retour !' :
-                             'Fin de service'}
-                        </h2>
-                        <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: 0 }}>
-                            Pointage enregistré à {new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                    </div>
-                )}
-            </div>
-        </div>
-      )}
-
-            {/* MODALE DE FUSION DES STOCKS */}
-      {showMergeModal && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{ maxWidth: '420px' }}>
-                  <div className="modal-header">
-                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Unifier les doublons de stock</h3>
-                      <button className="modal-close-btn" onClick={() => setShowMergeModal(false)}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                  </div>
-                  
-                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
-                      Cette opération additionnera les quantités de {selectedStocksToMerge.length} produits sélectionnés dans le produit final et supprimera les doublons.
-                  </p>
-
-                  <div style={{ marginBottom: '12px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Nom final du produit unifié</label>
-                      <input type="text" className="input-fournisseur" value={mergeForm.nom} onChange={e => setMergeForm({...mergeForm, nom: e.target.value})} style={{ marginBottom: 0 }} />
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-                      <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Référence</label>
-                          <input type="text" className="input-fournisseur" placeholder="Optionnel" value={mergeForm.reference} onChange={e => setMergeForm({...mergeForm, reference: e.target.value})} style={{ marginBottom: 0 }} />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Prix (€)</label>
-                          <input type="number" step="0.01" className="input-fournisseur" placeholder="0.00" value={mergeForm.prix} onChange={e => setMergeForm({...mergeForm, prix: e.target.value})} style={{ marginBottom: 0 }} />
-                      </div>
-                  </div>
-
-                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
-                      const statutPinFusion = getStatutBlocagePin(mergeForm.id_employe);
-                      return (
-                          <>
-                              <div style={{ marginBottom: '12px' }}>
-                                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable de la fusion</label>
-                                  <select className="input-fournisseur" value={mergeForm.id_employe} onChange={e => { setMergeForm({...mergeForm, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ marginBottom: 0 }}>
-                                      <option value="">-- Sélectionnez votre nom --</option>
-                                      <option value="gerant">Gérant (Moi-même)</option>
-                                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                  </select>
-                              </div>
-
-                              <div style={{ marginBottom: '20px' }}>
-                                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>
-                                      <span>Code PIN personnel (Validation NF525)</span>
-                                      {statutPinFusion.tentatives > 0 && !statutPinFusion.bloque && (
-                                          <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', textTransform: 'none' }}>
-                                              {statutPinFusion.essaisRestants} essai{statutPinFusion.essaisRestants > 1 ? 's' : ''} restant{statutPinFusion.essaisRestants > 1 ? 's' : ''}
-                                          </span>
-                                      )}
-                                  </label>
-                                  <input
-                                      type="password"
-                                      inputMode="numeric"
-                                      maxLength="10"
-                                      disabled={statutPinFusion.bloque}
-                                      className="input-fournisseur"
-                                      placeholder={statutPinFusion.bloque ? "Accès verrouillé" : "Votre code PIN"}
-                                      value={mergeForm.code_pin}
-                                      onChange={e => { setMergeForm({...mergeForm, code_pin: e.target.value.replace(/\D/g, '')}); setErreurPinAction(null); }}
-                                      style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold', opacity: statutPinFusion.bloque ? 0.5 : 1, border: (statutPinFusion.bloque || erreurPinAction) ? '1px solid var(--color-danger)' : undefined }}
-                                  />
-                                  {(statutPinFusion.bloque || erreurPinAction) && (
-                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
-                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                          <span>{statutPinFusion.bloque ? statutPinFusion.message : erreurPinAction}</span>
-                                      </div>
-                                  )}
-                              </div>
-                          </>
-                      );
-                  })()}
-
-                  <div style={{ display: 'flex', gap: '12px', marginTop: role === 'gerant' ? '24px' : '0' }}>
-                      <button onClick={() => { setShowMergeModal(false); setErreurPinAction(null); }} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
-                      <button
-                          disabled={role === 'salon' && configSalon.securite_pin_salon_active !== false && getStatutBlocagePin(mergeForm.id_employe).bloque}
-                          onClick={async () => {
-                          if (!mergeForm.nom.trim()) return showToast("Le nom du produit est requis.", "error");
-                          if (role === 'salon' && configSalon.securite_pin_salon_active !== false) {
-                              if (!mergeForm.id_employe) return showToast("Veuillez choisir l'employé responsable.", "error");
-                              if (!mergeForm.code_pin || mergeForm.code_pin.length < 4) return showToast("Le code PIN personnel est obligatoire.", "error");
-                          }
-                          try {
-                              const res = await fetch(`${API_URL}/api/stocks/fusionner`, {
-                                  method: 'POST',
-                                  headers: getAuthHeaders(true),
-                                  body: JSON.stringify({
-                                      ids_articles: selectedStocksToMerge,
-                                      nom: mergeForm.nom,
-                                      reference: mergeForm.reference,
-                                      prix: mergeForm.prix,
-                                      type_article: mergeForm.type_article,
-                                      id_employe: mergeForm.id_employe,
-                                      code_pin: mergeForm.code_pin
-                                  })
-                              });
-                              const data = await handleFetchError(res);
-                              showToast(data.message || "Stocks unifiés avec succès !", "success");
-                              setShowMergeModal(false);
-                              setIsStockMergeMode(false);
-                              setSelectedStocksToMerge([]);
-                              chargerTout();
-                          } catch (e) {
-                              if (e.data) appliquerRetourPinLocal(mergeForm.id_employe, e.data);
-                              setMergeForm({ ...mergeForm, code_pin: '' });
-                              showToast(e.message || "Erreur lors de la fusion", "error");
-                          }
-                      }} className="btn-action" style={{ flex: 2 }}>Confirmer et additionner</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {/* MODALE SAISIE MANUELLE FACTURE */}
-      {showSaisieManuelleFacture && (
-          <div className="modal-overlay">
-              <div className="modal-content" style={{ maxWidth: '460px' }}>
-                  <div className="modal-header">
-                      <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>Saisie manuelle d'une dépense</h3>
-                      <button className="modal-close-btn" onClick={() => { setShowSaisieManuelleFacture(false); setErreurPinAction(null); }}><svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-                  </div>
-
-                  <div style={{ marginBottom: '12px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Fournisseur</label>
-                      <input type="text" className="input-fournisseur" placeholder="Ex: L'Oréal, EDF, Loyer..." value={formFactureManuelle.nom_fournisseur} onChange={e => setFormFactureManuelle({...formFactureManuelle, nom_fournisseur: e.target.value})} style={{ marginBottom: 0 }} />
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-                      <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>N° Facture</label>
-                          <input type="text" className="input-fournisseur" placeholder="Optionnel" value={formFactureManuelle.numero_facture} onChange={e => setFormFactureManuelle({...formFactureManuelle, numero_facture: e.target.value})} style={{ marginBottom: 0 }} />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Date</label>
-                          <input type="date" className="input-fournisseur" value={formFactureManuelle.date_facture} onChange={e => setFormFactureManuelle({...formFactureManuelle, date_facture: e.target.value})} style={{ marginBottom: 0 }} />
-                      </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                      <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Moyen de paiement</label>
-                          <select className="input-fournisseur" value={formFactureManuelle.mode_paiement} onChange={e => setFormFactureManuelle({...formFactureManuelle, mode_paiement: e.target.value})} style={{ marginBottom: 0 }}>
-                              <option value="CARTE">Carte / TPE</option>
-                              <option value="ESPECES">Espèces (Caisse)</option>
-                              <option value="VIREMENT">Virement</option>
-                              <option value="PRELEVEMENT">Prélèvement</option>
-                              <option value="CHEQUE">Chèque</option>
-                          </select>
-                      </div>
-                      <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Compte comptable</label>
-                          <select className="input-fournisseur" value={formFactureManuelle.compte_comptable} onChange={e => setFormFactureManuelle({...formFactureManuelle, compte_comptable: e.target.value})} style={{ marginBottom: 0 }}>
-                              <option value="607">607 - Revente</option>
-                              <option value="604">604 - Prestations</option>
-                              <option value="6028">6028 - Consommables</option>
-                              <option value="613">613 - Loyer</option>
-                              <option value="6061">6061 - Énergie / Eau</option>
-                          </select>
-                      </div>
-                  </div>
-
-                  <div style={{ background: 'var(--bg-app)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
-                      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                          <div style={{ flex: '1 1 95px' }}>
-                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Montant HT (€)</label>
-                              <input
-                                  type="number"
-                                  step="0.01"
-                                  className="input-fournisseur"
-                                  placeholder="0.00"
-                                  value={formFactureManuelle.montant_ht}
-                                  onChange={e => {
-                                      const valHt = e.target.value;
-                                      const ht = parseFloat(valHt);
-                                      const tauxSel = formFactureManuelle.taux_tva_select ?? '20';
-                                      if (!isNaN(ht) && ht >= 0) {
-                                          if (tauxSel !== 'PERSO') {
-                                              const taux = parseFloat(tauxSel) || 0;
-                                              const tvaCalc = Number((ht * (taux / 100)).toFixed(2));
-                                              const ttcCalc = Number((ht + tvaCalc).toFixed(2));
-                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ht: valHt, montant_tva: tvaCalc.toFixed(2), montant_ttc: ttcCalc.toFixed(2) });
-                                          } else {
-                                              const tvaMan = parseFloat(formFactureManuelle.montant_tva) || 0;
-                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ht: valHt, montant_ttc: (ht + tvaMan).toFixed(2) });
-                                          }
-                                      } else {
-                                          setFormFactureManuelle({ ...formFactureManuelle, montant_ht: valHt });
-                                      }
-                                  }}
-                                  style={{ marginBottom: 0 }}
-                              />
-                          </div>
-                          <span style={{ paddingBottom: '10px', color: 'var(--text-muted)' }}>+</span>
-                          <div style={{ flex: '1 1 115px' }}>
-                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>TVA</label>
-                              <select
-                                  className="input-fournisseur"
-                                  value={formFactureManuelle.taux_tva_select ?? '20'}
-                                  onChange={e => {
-                                      const newTauxSel = e.target.value;
-                                      const ht = parseFloat(formFactureManuelle.montant_ht);
-                                      const ttc = parseFloat(formFactureManuelle.montant_ttc);
-                                      if (newTauxSel !== 'PERSO') {
-                                          const taux = parseFloat(newTauxSel) || 0;
-                                          if (!isNaN(ht) && ht > 0) {
-                                              const tvaCalc = Number((ht * (taux / 100)).toFixed(2));
-                                              const ttcCalc = Number((ht + tvaCalc).toFixed(2));
-                                              setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: newTauxSel, montant_tva: tvaCalc.toFixed(2), montant_ttc: ttcCalc.toFixed(2) });
-                                          } else if (!isNaN(ttc) && ttc > 0) {
-                                              const htCalc = Number((ttc / (1 + taux / 100)).toFixed(2));
-                                              const tvaCalc = Number((ttc - htCalc).toFixed(2));
-                                              setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: newTauxSel, montant_ht: htCalc.toFixed(2), montant_tva: tvaCalc.toFixed(2) });
-                                          } else {
-                                              setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: newTauxSel, montant_tva: '' });
-                                          }
-                                      } else {
-                                          setFormFactureManuelle({ ...formFactureManuelle, taux_tva_select: 'PERSO' });
-                                      }
-                                  }}
-                                  style={{ marginBottom: 0 }}
-                              >
-                                  <option value="20">20 % (Normal)</option>
-                                  <option value="10">10 % (Interm.)</option>
-                                  <option value="5.5">5,5 % (Réduit)</option>
-                                  <option value="2.1">2,1 % (Partic.)</option>
-                                  <option value="0">0 % (Exonéré)</option>
-                                  <option value="PERSO">Montant libre (€)</option>
-                              </select>
-                          </div>
-                          <span style={{ paddingBottom: '10px', color: 'var(--text-muted)' }}>=</span>
-                          <div style={{ flex: '1 1 95px' }}>
-                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>TTC (€)</label>
-                              <input
-                                  type="number"
-                                  step="0.01"
-                                  className="input-fournisseur"
-                                  placeholder="0.00"
-                                  value={formFactureManuelle.montant_ttc}
-                                  onChange={e => {
-                                      const valTtc = e.target.value;
-                                      const ttc = parseFloat(valTtc);
-                                      const tauxSel = formFactureManuelle.taux_tva_select ?? '20';
-                                      if (!isNaN(ttc) && ttc >= 0) {
-                                          if (tauxSel !== 'PERSO') {
-                                              const taux = parseFloat(tauxSel) || 0;
-                                              const htCalc = Number((ttc / (1 + taux / 100)).toFixed(2));
-                                              const tvaCalc = Number((ttc - htCalc).toFixed(2));
-                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ttc: valTtc, montant_ht: htCalc.toFixed(2), montant_tva: tvaCalc.toFixed(2) });
-                                          } else {
-                                              const tvaMan = parseFloat(formFactureManuelle.montant_tva) || 0;
-                                              setFormFactureManuelle({ ...formFactureManuelle, montant_ttc: valTtc, montant_ht: Math.max(0, ttc - tvaMan).toFixed(2) });
-                                          }
-                                      } else {
-                                          setFormFactureManuelle({ ...formFactureManuelle, montant_ttc: valTtc });
-                                      }
-                                  }}
-                                  style={{ marginBottom: 0, fontWeight: 'bold' }}
-                              />
-                          </div>
-                      </div>
-
-                      {formFactureManuelle.taux_tva_select === 'PERSO' ? (
-                          <div style={{ marginTop: '12px' }}>
-                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', fontWeight: '600' }}>Montant personnalisé de la TVA (€)</label>
-                              <input
-                                  type="number"
-                                  step="0.01"
-                                  className="input-fournisseur"
-                                  placeholder="Ex: 12.50"
-                                  value={formFactureManuelle.montant_tva}
-                                  onChange={e => {
-                                      const valTva = e.target.value;
-                                      const tva = parseFloat(valTva) || 0;
-                                      const ht = parseFloat(formFactureManuelle.montant_ht);
-                                      const ttc = parseFloat(formFactureManuelle.montant_ttc);
-                                      if (!isNaN(ht) && ht > 0) {
-                                          setFormFactureManuelle({ ...formFactureManuelle, montant_tva: valTva, montant_ttc: (ht + tva).toFixed(2) });
-                                      } else if (!isNaN(ttc) && ttc > 0) {
-                                          setFormFactureManuelle({ ...formFactureManuelle, montant_tva: valTva, montant_ht: Math.max(0, ttc - tva).toFixed(2) });
-                                      } else {
-                                          setFormFactureManuelle({ ...formFactureManuelle, montant_tva: valTva });
-                                      }
-                                  }}
-                                  style={{ marginBottom: 0 }}
-                              />
-                          </div>
-                      ) : (
-                          formFactureManuelle.montant_tva !== '' && (
-                              <div style={{ marginTop: '8px', fontSize: '11.5px', color: 'var(--text-secondary)', textAlign: 'right' }}>
-                                  Montant TVA calculé : <strong>{parseFloat(formFactureManuelle.montant_tva || 0).toFixed(2)} €</strong>
-                              </div>
-                          )
-                      )}
-                  </div>
-
-                  {role === 'salon' && configSalon.securite_pin_salon_active !== false && (() => {
-                      const statutPinDepense = getStatutBlocagePin(formFactureManuelle.id_employe);
-                      return (
-                          <>
-                              <div style={{ marginBottom: '12px' }}>
-                                  <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Employé responsable</label>
-                                  <select className="input-fournisseur" value={formFactureManuelle.id_employe} onChange={e => { setFormFactureManuelle({...formFactureManuelle, id_employe: e.target.value, code_pin: ''}); setErreurPinAction(null); }} style={{ marginBottom: 0 }}>
-                                      <option value="">-- Sélectionnez votre nom --</option>
-                                      <option value="gerant">Gérant (Moi-même)</option>
-                                      {(employesListe || []).map(emp => <option key={emp.id_employe} value={emp.id_employe}>{emp.nom}</option>)}
-                                  </select>
-                              </div>
-
-                              <div style={{ marginBottom: '20px' }}>
-                                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '4px' }}>
-                                      <span>Code PIN personnel (Validation NF525)</span>
-                                      {statutPinDepense.tentatives > 0 && !statutPinDepense.bloque && (
-                                          <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', textTransform: 'none' }}>
-                                              {statutPinDepense.essaisRestants} essai{statutPinDepense.essaisRestants > 1 ? 's' : ''} restant{statutPinDepense.essaisRestants > 1 ? 's' : ''}
-                                          </span>
-                                      )}
-                                  </label>
-                                  <input
-                                      type="password"
-                                      inputMode="numeric"
-                                      maxLength="10"
-                                      disabled={statutPinDepense.bloque}
-                                      className="input-fournisseur"
-                                      placeholder={statutPinDepense.bloque ? "Accès verrouillé" : "Votre code PIN"}
-                                      value={formFactureManuelle.code_pin}
-                                      onChange={e => { setFormFactureManuelle({...formFactureManuelle, code_pin: e.target.value.replace(/\D/g, '')}); setErreurPinAction(null); }}
-                                      style={{ marginBottom: 0, letterSpacing: '0.2em', textAlign: 'center', fontWeight: 'bold', opacity: statutPinDepense.bloque ? 0.5 : 1, border: (statutPinDepense.bloque || erreurPinAction) ? '1px solid var(--color-danger)' : undefined }}
-                                  />
-                                  {(statutPinDepense.bloque || erreurPinAction) && (
-                                      <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-danger)', color: 'var(--color-danger)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: '1.4' }}>
-                                          <svg viewBox="0 0 24 24" width="16" height="16" style={{ flexShrink: 0, marginTop: '1px' }} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                          <span>{statutPinDepense.bloque ? statutPinDepense.message : erreurPinAction}</span>
-                                      </div>
-                                  )}
-                              </div>
-                          </>
-                      );
-                  })()}
-
-                  <div style={{ display: 'flex', gap: '12px' }}>
-                      <button onClick={() => { setShowSaisieManuelleFacture(false); setErreurPinAction(null); }} style={{ flex: 1, background: 'var(--bg-app)', color: 'var(--text-main)', border: '1px solid var(--border-color)', padding: '12px', borderRadius: 'var(--radius-input)', fontWeight: '600', cursor: 'pointer' }}>Annuler</button>
-                      <button disabled={role === 'salon' && configSalon.securite_pin_salon_active !== false && getStatutBlocagePin(formFactureManuelle.id_employe).bloque} onClick={enregistrerFactureManuelle} className="btn-action" style={{ flex: 2 }}>Enregistrer la dépense</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-            {/* --- LANCEUR FLOTTANT "SIMULATEUR IA" (EXCLUSIVEMENT DANS LE SALON DE DÉMO) --- */}
-      {token && isSalonDemoActif && role === 'gerant' && (
-          <div style={{
-              position: 'fixed',
-              bottom: isMobile ? '92px' : '24px',
-              right: isMobile ? '16px' : '24px',
-              zIndex: 99990,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-end',
-              gap: '10px'
-          }}>
-              {showSimIAMenu && (
-                  <div style={{
-                      width: isMobile ? '290px' : '320px',
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '18px',
-                      padding: '14px',
-                      boxShadow: '0 20px 44px rgba(0,0,0,0.22)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '8px',
-                      animation: 'fadeIn 0.2s ease'
-                  }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 4px 8px 4px', borderBottom: '1px solid var(--border-color)' }}>
-                          <div>
-                              <span style={{ fontSize: '10px', fontWeight: '800', color: 'var(--color-success)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Outil de Démonstration Agent</span>
-                              <strong style={{ fontSize: '13.5px', color: 'var(--text-main)' }}>Simuler une détection de l'IA</strong>
-                          </div>
-                          <button type="button" onClick={() => setShowSimIAMenu(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}>✕</button>
-                      </div>
-
-                      {[
-                          {
-                              key: 'FACTURE',
-                              title: 'Facture Fournisseur (Split-Screen)',
-                              desc: 'Facture L\'Oréal Professionnel + 3 stocks',
-                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                          },
-                          {
-                              key: 'RDV',
-                              title: 'Nouveau Rendez-vous Client',
-                              desc: 'Balayage Minéral + Patine (Demain 15h)',
-                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                          },
-                          {
-                              key: 'STOCK',
-                              title: 'Livraison de Stock (+12 unités)',
-                              desc: 'Bon de livraison Shampoing Kératine',
-                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                          },
-                          {
-                              key: 'CONGES',
-                              title: 'Demande de Congés Payés (RH)',
-                              desc: 'Demande de 3 jours à arbitrer',
-                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 2v4M8 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9 14l2 2 4-4"/></svg>
-                          },
-                          {
-                              key: 'MALADIE',
-                              title: 'Arrêt Maladie & Robot SMS',
-                              desc: 'Arrêt immédiat + détection RDV en conflit',
-                              icon: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                          }
-                      ].map(item => (
-                          <button
-                              key={item.key}
-                              type="button"
-                              onClick={() => lancerSimulationIA(item.key)}
-                              className="hover-bg-card"
-                              style={{
-                                  display: 'flex', alignItems: 'center', gap: '12px',
-                                  width: '100%', textAlign: 'left', padding: '10px 12px',
-                                  borderRadius: '12px', border: '1px solid var(--border-color)',
-                                  background: 'var(--bg-app)', color: 'var(--text-main)',
-                                  cursor: 'pointer', transition: 'all 0.15s ease'
-                              }}
-                          >
-                              <div style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                  {item.icon}
-                              </div>
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                  <div style={{ fontSize: '12.5px', fontWeight: '800', color: 'var(--text-main)' }}>{item.title}</div>
-                                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.desc}</div>
-                              </div>
-                          </button>
-                      ))}
-                  </div>
-              )}
-
-              <button
-                  type="button"
-                  onClick={() => setShowSimIAMenu(!showSimIAMenu)}
-                  style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '9px',
-                      padding: '12px 18px',
-                      borderRadius: '999px',
-                      background: 'var(--text-main)',
-                      color: 'var(--bg-card)',
-                      border: '1px solid var(--border-color)',
-                      boxShadow: '0 12px 28px rgba(0,0,0,0.22)',
-                      fontWeight: '800',
-                      fontSize: '13px',
-                      cursor: 'pointer'
-                  }}
-              >
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e' }} />
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                  <span>Simulateur IA (Démo)</span>
-              </button>
-          </div>
-      )}
-
-      {toast && (
-        <div
-          className={`toast-notification ${toast.type}`}
-          style={{
-            position: 'fixed',
-            top: isMobile ? 'calc(env(safe-area-inset-top, 12px) + 14px)' : '24px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 9999999,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            padding: '12px 18px',
-            borderRadius: '999px',
-            background: 'var(--bg-card)',
-            color: 'var(--text-main)',
-            border: `1px solid ${toast.type === 'error' ? 'var(--color-danger)' : toast.type === 'info' ? 'var(--color-info)' : 'var(--color-success)'}`,
-            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.18)',
-             backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-            fontSize: '13.5px',
-            fontWeight: '600',
-            maxWidth: '90vw',
-            width: 'max-content',
-            pointerEvents: 'auto'
+        <PricingModal 
+          onClose={() => setShowPricingModal(false)}
+          isSoftLock={isSoftLock}
+          isHardLock={isHardLock}
+          joursRestants={joursRestantsEssai}
+          token={token}
+          onSubscribe={async (plan, cycle) => {
+            try {
+              const res = await fetch(`${API_URL}/api/creer-checkout`, { 
+                method: 'POST', 
+                headers: getAuthHeaders(true), 
+                body: JSON.stringify({ plan_choisi: plan, cycle_choisi: cycle }) 
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                alert();
+                return;
+              }
+              if (data.url) {
+                window.location.href = data.url;
+              } else if (data.success) {
+                setShowPricingModal(false);
+                showToast(data.message, 'success');
+              }
+            } catch (err) {
+              alert();
+            }
           }}
-        >
-          <span
-            style={{
-              width: '24px',
-              height: '24px',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-              background: toast.type === 'error' ? 'var(--bg-danger)' : toast.type === 'info' ? 'var(--bg-info)' : 'var(--bg-success)',
-              color: toast.type === 'error' ? 'var(--color-danger)' : toast.type === 'info' ? 'var(--color-info)' : 'var(--color-success)'
-            }}
-          >
-            {toast.type === 'error' ? (
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            ) : toast.type === 'info' ? (
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            )}
-          </span>
-          <span style={{ lineHeight: '1.35' }}>{toast.message}</span>
-        </div>
+        />
       )}
+
+      <PointeuseModal
+        pointeuse={pointeuse}
+        setPointeuse={setPointeuse}
+        employesListe={employesListe}
+        statutsEquipe={statutsEquipe}
+        getStatutBlocagePin={getStatutBlocagePin}
+        handlePointeusePin={handlePointeusePin}
+        enregistrerPointage={enregistrerPointage}
+        buttonsDisabled={buttonsDisabled}
+      />
+
+      <FusionStocksModal
+        showMergeModal={showMergeModal}
+        setShowMergeModal={setShowMergeModal}
+        selectedStocksToMerge={selectedStocksToMerge}
+        setSelectedStocksToMerge={setSelectedStocksToMerge}
+        mergeForm={mergeForm}
+        setMergeForm={setMergeForm}
+        role={role}
+        configSalon={configSalon}
+        getStatutBlocagePin={getStatutBlocagePin}
+        employesListe={employesListe}
+        erreurPinAction={erreurPinAction}
+        setErreurPinAction={setErreurPinAction}
+        setIsStockMergeMode={setIsStockMergeMode}
+        showToast={showToast}
+        chargerTout={chargerTout}
+        API_URL={API_URL}
+        getAuthHeaders={getAuthHeaders}
+        handleFetchError={handleFetchError}
+        appliquerRetourPinLocal={appliquerRetourPinLocal}
+      />
+
+      <SaisieFactureManuelleModal
+        showSaisieManuelleFacture={showSaisieManuelleFacture}
+        setShowSaisieManuelleFacture={setShowSaisieManuelleFacture}
+        formFactureManuelle={formFactureManuelle}
+        setFormFactureManuelle={setFormFactureManuelle}
+        role={role}
+        configSalon={configSalon}
+        employesListe={employesListe}
+        getStatutBlocagePin={getStatutBlocagePin}
+        erreurPinAction={erreurPinAction}
+        setErreurPinAction={setErreurPinAction}
+        enregistrerFactureManuelle={enregistrerFactureManuelle}
+      />
+
+      <SimulateurIAButton
+        token={token}
+        isSalonDemoActif={isSalonDemoActif}
+        role={role}
+        isMobile={isMobile}
+        showSimIAMenu={showSimIAMenu}
+        setShowSimIAMenu={setShowSimIAMenu}
+        lancerSimulationIA={lancerSimulationIA}
+      />
+
+      <ToastNotification
+        toast={toast}
+        isMobile={isMobile}
+      />
     </div>
     </>
   );
