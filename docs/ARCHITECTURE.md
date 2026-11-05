@@ -152,6 +152,7 @@ flowchart TB
 
 ### 3.3. Couche Métier & Services Modulaires
 Les fonctionnalités clés sont organisées en modules autonomes injectant leurs dépendances :
+- `services/caisse/` : Caisse Smart POS, encaissements multi-moyens (CB Stripe Terminal, espèces, pourboires isolés, fidélité), annulations partielles ou totales avec écritures de compensation, mouvements scellés d'espèces avec contrôle PIN collaborateur, clôture journalière Z avec cumul perpétuel inaltérable, contrôle matinal de régularisation et audit de conformité cryptographique NF525 (dossier technique légal PDF, vérification continue de la chaîne SHA-256 et JET logs).
 - `services/pdf/` : moteurs de rendu vectoriel PDFKit pour tickets de caisse scellés, liasses mensuelles certifiées et bons de commande fournisseurs.
 - `services/compta/` : génération du Fichier des Écritures Comptables (FEC), archivage fiscal scellé et clôtures de fin de mois.
 - `services/stock/` : algorithme prédictif de rupture selon l'historique des ventes, gestion des alertes d'inventaire, fusion d'articles et réassort.
@@ -187,7 +188,7 @@ sequenceDiagram
     autonumber
     actor Caisse as Gérant / Employé
     participant Front as Frontend (App.jsx)
-    participant Back as server.js (/api/caisse/payer)
+    participant Back as server.js / services/caisse (caisse.service.js)
     participant Stripe as Stripe Terminal (Lecteur TPE)
     participant DB as PostgreSQL (Tickets & JET)
     participant Socket as Socket.io Room

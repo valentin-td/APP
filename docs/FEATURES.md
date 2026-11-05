@@ -70,7 +70,7 @@
 
 - **Objectif** : Encaisser les prestations et produits vendus, gérer les paiements mixtes (CB, espèces, chèque), piloter le TPE physique Stripe Terminal, calculer la ventilation de TVA, et sceller chaque ticket avec une signature cryptographique chaînée SHA-256.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Caisse, panier, clavier PIN, sélection client/collaborateur).
-- **Fichiers Backend** : `server.js` (lignes ~2650-3300), `services/pdf/ticketPdf.service.js`.
+- **Fichiers Backend** : `services/caisse/caisse.service.js` (`encaisserTicket`, `encaisserPourboireIsole`, `annulerTicketCaisse`, `envoyerTicketCaisse`, `recupererLignesTicket`), `services/pdf/ticketPdf.service.js`, `server.js` (délégation).
 - **Routes API** :
   - `POST /api/caisse/payer`
   - `POST /api/caisse/pourboire-isole`
@@ -78,7 +78,7 @@
   - `POST /api/caisse/envoyer-ticket`
   - `GET /api/caisse/tickets/:id`
   - `GET /api/caisse/tickets/:id/pdf`
-- **Services / Modules** : `stripe` (Terminal Readers & PaymentIntents), `pdfkit`, `enregistrerJET`, `verifierClotureZ`.
+- **Services / Modules** : `services/caisse/caisse.service.js`, `stripe` (Terminal Readers & PaymentIntents), `pdfkit`, `enregistrerJET`, `verifierClotureZ`.
 - **Tables BDD** : `tickets`, `lignes_ticket`, `commissions`, `clients`, `employes`, `catalogue`, `configuration_salon`, `mouvements_caisse`, `jet_logs`.
 - **Dépendances Amont** : `configuration_salon`, `employes`, `catalogue`, `clotures_caisse` (vérification qu'un Z n'est pas déjà tiré pour la journée).
 - **Dépendances Aval** : Clôture Z, Commissions RH, Stocks (décrémentation automatique), Liasse comptable, FEC.
@@ -100,7 +100,7 @@
 
 - **Objectif** : Clôturer la journée de caisse, calculer les cumuls perpétuels (Grand Total brut, net, TVA par taux), sceller le rapport Z journalier avec hachage SHA-256 et verrouiller la caisse jusqu'au lendemain.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (modale de clôture Z, comptage du tiroir-caisse, écarts espèces).
-- **Fichiers Backend** : `server.js` (lignes ~3490-3750), `jobs/cronJobs.js` (`executerClotureFantome`).
+- **Fichiers Backend** : `services/caisse/caisse.service.js` (`cloturerCaisseZ`, `recupererStatutCloture`, `recupererVerificationMatinale`, `regulariserCaisse`, `recupererMouvementsJour`, `creerMouvementCaisse`), `jobs/cronJobs.js` (`executerClotureFantome`), `server.js` (délégation).
 - **Routes API** :
   - `POST /api/caisse/cloture`
   - `GET /api/caisse/cloture/statut`
@@ -108,7 +108,7 @@
   - `POST /api/caisse/regulariser`
   - `GET /api/caisse/mouvements/aujourdhui`
   - `POST /api/caisse/mouvements`
-- **Services / Modules** : `services/pdf/ticketPdf.service.js`, `crypto` (SHA-256), `enregistrerJET`.
+- **Services / Modules** : `services/caisse/caisse.service.js`, `services/pdf/ticketPdf.service.js`, `crypto` (SHA-256), `enregistrerJET`, `verifierPinActionSensibleSalon`.
 - **Tables BDD** : `clotures_caisse`, `tickets`, `mouvements_caisse`, `jet_logs`, `configuration_salon`.
 - **Dépendances Amont** : `tickets`, `mouvements_caisse`.
 - **Dépendances Aval** : Liasse mensuelle, Export FEC, Archive fiscale.
@@ -127,13 +127,13 @@
 
 ## 4. Journal des Événements Techniques (JET) & Audit NF525
 
-- **Objectif** : Enregistrer de façon immuable tous les événements système sensibles (connexions échouées, ouvertures de tiroir, modifications de prix, annulations de tickets, clôtures Z, déblocages PIN).
+- **Objectif** : Enregistrer de façon immuable tous les événements système sensibles (connexions échouées, ouvertures de tiroir, modifications de prix, annulations de tickets, clôtures Z, déblocages PIN) et générer l'attestation légale de conformité fiscale.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (écran de conformité administrative / Super Admin).
-- **Fichiers Backend** : `server.js` (`enregistrerJET`, `/api/admin/verifier-nf525`), `legal.js`.
+- **Fichiers Backend** : `services/caisse/caisse.service.js` (`enregistrerJET`, `verifierConformiteNF525`), `services/caisse/dossierNf525Pdf.service.js` (`genererDossierTechniqueNF525PDF`), `legal.js`, `server.js` (délégation).
 - **Routes API** :
   - `GET /api/admin/verifier-nf525`
   - `GET /api/admin/dossier-technique-nf525/pdf`
-- **Services / Modules** : `crypto` (SHA-256), `pdfkit`.
+- **Services / Modules** : `services/caisse/caisse.service.js`, `services/caisse/dossierNf525Pdf.service.js`, `crypto` (SHA-256), `pdfkit`.
 - **Tables BDD** : `jet_logs`, `tickets`, `clotures_caisse`.
 - **Dépendances Amont** : Déclenché par tous les modules de l'application via `enregistrerJET()`.
 - **Dépendances Aval** : Contrôles fiscaux, audits de certification.
@@ -141,6 +141,7 @@
   - `jet_logs` est une table en écriture seule (append-only). Aucun `UPDATE` ni `DELETE` ne doit jamais y être exécuté.
 - **Tests Recommandés** :
   - Exécution de l'audit automatique `/api/admin/verifier-nf525` (doit valider 100% de la chaîne sans anomalie).
+  - Téléchargement et contrôle visuel du dossier technique NF525 PDF.
 
 ---
 

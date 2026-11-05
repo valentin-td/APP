@@ -109,7 +109,7 @@ C'est la chaîne la plus critique de l'application. Une régression sur l'un de 
 ```mermaid
 flowchart LR
     subgraph Encaissement["Encaissement"]
-        Cart["Panier Caisse (App.jsx)"] --> PayRoute["POST /api/caisse/payer"]
+        Cart["Panier Caisse (App.jsx)"] --> PayRoute["POST /api/caisse/payer (services/caisse)"]
         PayRoute --> HashPrev["Vérification Hash Ticket N-1"]
         HashPrev --> HashCurr["Calcul Hash SHA-256 Ticket N"]
         HashCurr --> InsertTicket["INSERT tickets (Inaltérable)"]
@@ -119,7 +119,7 @@ flowchart LR
     end
 
     subgraph ClotureFiscale["Clôture Journalière"]
-        InsertTicket --> ClotureRoute["POST /api/caisse/cloture"]
+        InsertTicket --> ClotureRoute["POST /api/caisse/cloture (services/caisse)"]
         CronFantome["executerClotureFantome (3h00)"] --> ClotureRoute
         ClotureRoute --> HashZPrev["Vérification Hash Z N-1"]
         HashZPrev --> HashZCurr["Calcul Hash SHA-256 Z N"]

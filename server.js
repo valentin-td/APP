@@ -157,6 +157,27 @@ const {
     mettreAJourStatutSalonSuperAdmin,
     purgerSalonSuperAdmin
 } = require('./services/admin/superadmin.service');
+const {
+    initCaisseService,
+    enregistrerJET,
+    deduireCategorieMouvement,
+    enregistrerMouvementCaisseScelle,
+    creerVerifierClotureZMiddleware,
+    verifierPinActionSensibleSalon,
+    encaisserTicket,
+    encaisserPourboireIsole,
+    annulerTicketCaisse,
+    envoyerTicketCaisse,
+    recupererMouvementsJour,
+    creerMouvementCaisse,
+    cloturerCaisseZ,
+    recupererStatutCloture,
+    recupererVerificationMatinale,
+    regulariserCaisse,
+    verifierConformiteNF525,
+    recupererLignesTicket
+} = require('./services/caisse/caisse.service');
+const { genererDossierTechniqueNF525PDF } = require('./services/caisse/dossierNf525Pdf.service');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -784,6 +805,9 @@ async function envoyerNotificationPush(id_salon, cible, payload) {
     }
 }
 
+// Initialisation du service Caisse & Smart POS NF525
+initCaisseService({ pool, io, stripe, envoyerNotificationPush });
+
 function verifierToken(req, res, next) {
     const cookieHeader = req.headers.cookie;
     let token = null;
@@ -881,101 +905,7 @@ async function envoyerSMS_Intelligent(id_salon, apiKey, senderName, telephone, c
     }
 }
 
-async function enregistrerJET(id_salon, action, details = {}, dbClient = pool) {
-    try {
-        await dbClient.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
-        const dernier = await dbClient.query('SELECT hash_jet FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet DESC LIMIT 1', [id_salon]);
-        const hashPrecedent = dernier.rowCount > 0 ? dernier.rows[0].hash_jet : 'GENESIS_JET';
-        const dateISO = new Date().toISOString();
-        const detailsJSON = JSON.stringify(details || {});
-        const hashJet = crypto.createHash('sha256').update(`${id_salon}-${action}-${detailsJSON}-${dateISO}-${hashPrecedent}`).digest('hex');
-        await dbClient.query('INSERT INTO jet_logs (id_salon, action, details, date_creation, hash_precedent, hash_jet) VALUES ($1, $2, $3, $4, $5, $6)', [id_salon, action, detailsJSON, dateISO, hashPrecedent, hashJet]);
-        return hashJet;
-    } catch (e) { return null; }
-}
-
-function deduireCategorieMouvement(type_mouvement, motif, categorieExplicite = null) {
-    if (categorieExplicite && ['ACHAT_ESPECES', 'REMISE_BANQUE', 'APPORT_FONDS', 'PRELEVEMENT_GERANT', 'ECART_CAISSE'].includes(categorieExplicite)) {
-        return categorieExplicite;
-    }
-    if (type_mouvement === 'REGULARISATION') return 'ECART_CAISSE';
-    const m = String(motif || '').toLowerCase();
-    if (type_mouvement === 'ENTREE') {
-        return 'APPORT_FONDS';
-    }
-    if (m.includes('banque') || m.includes('dépôt') || m.includes('depot') || m.includes('remise') || m.includes('coffre')) {
-        return 'REMISE_BANQUE';
-    }
-    if (m.includes('facture') || m.includes('achat') || m.includes('fournisseur') || m.includes('courses') || m.includes('timbre') || m.includes('poste')) {
-        return 'ACHAT_ESPECES';
-    }
-    if (m.includes('gérant') || m.includes('gerant') || m.includes('patron') || m.includes('prélèvement') || m.includes('prelevement') || m.includes('acompte')) {
-        return 'PRELEVEMENT_GERANT';
-    }
-    return 'ACHAT_ESPECES';
-}
-
-async function enregistrerMouvementCaisseScelle(clientDB, { id_salon, id_employe = null, type_mouvement, montant, motif, categorie_comptable = null, autoriserJourCloture = false }) {
-    await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
-    if (!autoriserJourCloture && type_mouvement !== 'REGULARISATION') {
-        const zDejaFait = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
-        if (zDejaFait.rowCount > 0) {
-            throw new Error("Action bloquée (NF525) : La clôture Z d'aujourd'hui a déjà été scellée. Aucun mouvement d'espèces ne peut être ajouté sur une journée clôturée.");
-        }
-    }
-    const lastMvt = await clientDB.query('SELECT hash_mouvement FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL ORDER BY id_mouvement DESC LIMIT 1', [id_salon]);
-    const hashPrecedent = lastMvt.rowCount > 0 ? lastMvt.rows[0].hash_mouvement : 'GENESIS_MVT';
-    const montantFormate = Number(montant).toFixed(2);
-    const motifPropre = String(motif || '').trim();
-    const catFinale = deduireCategorieMouvement(type_mouvement, motifPropre, categorie_comptable);
-    const dateISO = new Date().toISOString();
-    const ins = await clientDB.query(
-        `INSERT INTO mouvements_caisse (id_salon, id_employe, type_mouvement, montant, motif, categorie_comptable, date_creation, hash_precedent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_mouvement`,
-        [id_salon, id_employe, type_mouvement, montantFormate, motifPropre, catFinale, dateISO, hashPrecedent]
-    );
-    const idMvt = ins.rows[0].id_mouvement;
-    const hashMouvement = crypto.createHash('sha256')
-        .update(`MVT-${id_salon}-${idMvt}-${type_mouvement}-${montantFormate}-${motifPropre}-${hashPrecedent}`)
-        .digest('hex');
-    await clientDB.query('UPDATE mouvements_caisse SET hash_mouvement = $1 WHERE id_mouvement = $2', [hashMouvement, idMvt]);
-    return { id_mouvement: idMvt, hash_mouvement: hashMouvement, hash_precedent: hashPrecedent, categorie_comptable: catFinale };
-}
-
-const verifierClotureZ = async (req, res, next) => {
-    const id_salon = req.user.id_salon;
-    const idTemp = req.body && req.body._id_temp ? String(req.body._id_temp).slice(0, 64) : null;
-    try {
-        let dateTicket = null; // null = ticket encaissé en direct
-        if (idTemp) {
-            if (req.body.methode_paiement === 'CARTE') return res.status(400).json({ erreur: "Un paiement par carte ne peut pas être enregistré hors-ligne." });
-            // Anti-doublon : ticket déjà synchronisé -> on répond OK sans rien recréer
-            const doublon = await pool.query('SELECT id_ticket FROM tickets WHERE id_salon = $1 AND id_temp_offline = $2', [id_salon, idTemp]);
-            if (doublon.rowCount > 0) return res.json({ message: "Ticket déjà synchronisé.", id_ticket: doublon.rows[0].id_ticket, deja_synchronise: true });
-            // On conserve la vraie date d'encaissement (max 7 jours, pas dans le futur) si son jour n'est pas déjà clôturé
-            const d = new Date(req.body.date_creation);
-            const maintenant = Date.now();
-            if (!isNaN(d) && d.getTime() <= maintenant + 5 * 60 * 1000 && d.getTime() >= maintenant - 7 * 24 * 3600 * 1000) {
-                const ferme = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE($2::timestamp)', [id_salon, d.toISOString()]);
-                if (ferme.rowCount === 0) dateTicket = d.toISOString();
-            }
-        }
-        // NF525 : Interdiction formelle d'encaisser sur une journée dont le Z est déjà scellé
-        const zCibleDejaFait = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = DATE(COALESCE($2::timestamp, NOW()))', [id_salon, dateTicket]);
-        if (zCibleDejaFait.rowCount > 0) {
-            return res.status(423).json({ erreur: "La clôture (Z) d'aujourd'hui a déjà été effectuée. Aucun nouvel encaissement n'est autorisé sur une journée clôturée." });
-        }
-        req.dateTicketEffective = dateTicket;
-        req.idTempOffline = idTemp;
-        const jourBloquant = await pool.query(
-            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < DATE(COALESCE($2::timestamp, NOW())) AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`, [id_salon, dateTicket]
-        );
-        if (jourBloquant.rowCount > 0 && jourBloquant.rows[0].jour) {
-            return res.status(423).json({ erreur: `Clôture (Z) manquante pour le ${new Date(jourBloquant.rows[0].jour).toLocaleDateString()}. Effectuez la clôture avant d'encaisser.`, z_manquant: jourBloquant.rows[0].jour });
-        }
-        next();
-    } catch (e) { res.status(500).json({ erreur: "Erreur vérification clôture." }); }
-};
+const verifierClotureZ = creerVerifierClotureZMiddleware({ pool });
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -2096,257 +2026,20 @@ app.post('/api/sms/winback', verifierToken, async (req, res) => {
     }
 });
 
+// =========================================================================
+// --- MODULE CAISSE & SMART POS (NF525) ---
+// =========================================================================
 app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé au poste Caisse/Salon ou au Gérant." });
-    const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement, pourboire, _id_temp, date_creation } = req.body;
-    const id_salon = req.user.id_salon;
-    const methode = methode_paiement || 'CARTE';
-    const montantBasket = parseFloat(montant) || 0;
-    const montantPourboire = parseFloat(pourboire) || 0;
-    const montantTotalAEncaisser = montantBasket + montantPourboire;
-    
-    if (montantTotalAEncaisser <= 0 || !Array.isArray(lignes) || lignes.length === 0) {
-        return res.status(400).json({ erreur: "Montant ou panier invalide." });
-    }
-    
-    // --- SÉCURITÉ ANTI-FRAUDE : VÉRIFICATION DU POINTAGE ---
-    // Si la pointeuse est activée dans ce salon, on vérifie le statut du collaborateur
-    const configData = await pool.query('SELECT mode_suivi_heures FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-    if (configData.rows.length > 0 && configData.rows[0].mode_suivi_heures === 'POINTEUSE') {
-        const empData = await pool.query('SELECT role FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-        if (empData.rows.length > 0 && empData.rows[0].role !== 'Gérant') {
-            const pointageData = await pool.query(`
-                SELECT type_action FROM pointages 
-                WHERE id_salon = $1 AND id_employe = $2 AND date_jour = CURRENT_DATE 
-                ORDER BY heure_action DESC LIMIT 1
-            `, [id_salon, id_employe]);
-            
-            const actionActuelle = pointageData.rows.length > 0 ? pointageData.rows[0].type_action : null;
-            if (!actionActuelle || actionActuelle === 'PAUSE_DEBUT' || actionActuelle === 'SORTIE') {
-                return res.status(403).json({ erreur: "Action refusée (Sécurité Serveur) : L'employé sélectionné n'a pas pointé son arrivée ou est en pause." });
-            }
-        }
-    }
-    // -----------------------------------------------------
-
-    const clientDB = await pool.connect();
-
     try {
-            let reader = null;
-            let paymentIntentId = null;
-            let intentStatus = null; // Remonté pour être accessible dans le bloc catch
-
-            if (methode === 'CARTE' && montantTotalAEncaisser > 0) {
-                const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-                const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
-
-                if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
-
-                const paymentIntent = await stripe.paymentIntents.create({
-                  amount: Math.round(montantTotalAEncaisser * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
-                });
-                paymentIntentId = paymentIntent.id;
-                intentStatus = paymentIntent.status;
-                reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
-
-                if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
-                    try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
-                }
-
-                let attempts = 0;
-                
-                while (intentStatus === 'requires_payment_method' && attempts < 30) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-                    intentStatus = checkIntent.status;
-                    attempts++;
-                }
-
-                if (intentStatus !== 'requires_capture') {
-                    try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
-                    try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
-                    throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
-                }
-            }
-
-            await clientDB.query('BEGIN');
-        
-        // 🚨 VERROU TRANSACTIONNEL : On bloque la lecture/écriture du compteur pour ce salon précis
-        const configRes = await clientDB.query('SELECT compteur_tickets, tva_intra FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
-        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
-        
-        // DÉTECTION FRANCHISE : Vérifie si le salon est assujetti à la TVA
-        const franchiseTVA = !configRes.rows[0].tva_intra || configRes.rows[0].tva_intra.trim() === '';
-        
-        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
-        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
-        
-        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', ''); // Ex: 202610
-        const numeroTicket = `TKT-${anneeMois}-${String(seq).padStart(6, '0')}`;
-
-        // Mise à jour du compteur pour le prochain ticket
-        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
-        
-        const ticketResult = await clientDB.query(
-            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, date_creation, id_temp_offline, date_synchro_hors_ligne, montant_pourboire) VALUES ($1, $2, $3, $4, $5, $6, $7, 'VALIDE', COALESCE($8::timestamp, NOW()), $9::varchar, CASE WHEN $9::varchar IS NULL THEN NULL::timestamp ELSE NOW() END, $10) RETURNING id_ticket, date_creation;`, 
-            [numeroTicket, id_client || null, id_employe, montantBasket, id_salon, recompense_appliquee || false, methode, req.dateTicketEffective || null, req.idTempOffline || null, montantPourboire]
+        const result = await encaisserTicket(
+            { pool, io, stripe, crypto, enregistrerJET },
+            { user: req.user, body: req.body, dateTicketEffective: req.dateTicketEffective, idTempOffline: req.idTempOffline }
         );
-        const idNouveauTicket = ticketResult.rows[0].id_ticket;
-        const dateCreationISO = new Date(ticketResult.rows[0].date_creation).toISOString();
-
-        const employeResult = await clientDB.query('SELECT * FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-        const employe = employeResult.rowCount > 0 ? employeResult.rows[0] : null;
-
-        let totalTvaTicketCents = 0;
-
-        if (lignes && lignes.length > 0) {
-            // Calcul de la somme brute des lignes pour répartir au centime près toute remise éventuelle (Cohérence NF525 : Somme Lignes === Ticket TTC)
-            const targetTicketCents = Math.round(montantBasket * 100);
-            const rawLines = lignes.map(l => ({
-                ...l,
-                rawCents: Math.round((parseFloat(l.quantite) || 0) * (parseFloat(l.prix_unitaire) || 0) * 100)
-            }));
-            const sumRawCents = rawLines.reduce((acc, l) => acc + l.rawCents, 0);
-
-            let cumulAllocatedCents = 0;
-            for (let i = 0; i < rawLines.length; i++) {
-                const ligne = rawLines[i];
-                let netLineCents = ligne.rawCents;
-                if (sumRawCents > 0 && sumRawCents !== targetTicketCents) {
-                    if (i === rawLines.length - 1) {
-                        netLineCents = Math.max(0, targetTicketCents - cumulAllocatedCents);
-                    } else {
-                        netLineCents = Math.round((ligne.rawCents * targetTicketCents) / sumRawCents);
-                        cumulAllocatedCents += netLineCents;
-                    }
-                }
-                const total_ligne = Number((netLineCents / 100).toFixed(2));
-                const qteNum = parseFloat(ligne.quantite) || 1;
-                const puEffectif = Number((total_ligne / qteNum).toFixed(2));
-
-                const articleSnapshot = await clientDB.query('SELECT nom, taux_tva FROM catalogue WHERE id_article = $1 AND id_salon = $2', [ligne.id_article, id_salon]);
-                const nomSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].nom : (ligne.nom || 'Article supprimé');
-                const tvaSnapshot = articleSnapshot.rowCount > 0 ? articleSnapshot.rows[0].taux_tva : 20.00;
-                const tauxTvaReel = franchiseTVA ? 0 : parseFloat(tvaSnapshot);
-
-                const lineHtCents = franchiseTVA ? netLineCents : Math.round(netLineCents / (1 + (tauxTvaReel / 100)));
-                totalTvaTicketCents += (netLineCents - lineHtCents);
-
-                await clientDB.query(`INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`, 
-                [idNouveauTicket, ligne.id_article, ligne.quantite, puEffectif, total_ligne, id_salon, nomSnapshot, tvaSnapshot]);
-                
-                const updateStockQuery = `UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3 AND type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE') RETURNING nom, stock_actuel, type_article;`;
-                const stockResult = await clientDB.query(updateStockQuery, [ligne.quantite, ligne.id_article, id_salon]);
-                let type_article = 'PRESTATION'; 
-                if (stockResult.rowCount > 0) type_article = stockResult.rows[0].type_article;
-                
-                // === DÉSTOCKAGE AUTOMATIQUE DES INGRÉDIENTS (RECETTES) ===
-                if (type_article === 'PRESTATION') {
-                    const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [nomSnapshot, id_salon]);
-                    if (protocoleRes.rowCount > 0) {
-                        const idProto = protocoleRes.rows[0].id_protocole;
-                        const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
-                        for (let ing of ingredients.rows) {
-                            const quantite_a_deduire = ing.quantite_necessaire * ligne.quantite;
-                            await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel - $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_deduire, ing.id_article, id_salon]);
-                        }
-                    }
-                }
-
-                if (employe) {
-                    const taux = (type_article === 'PRESTATION') ? employe.taux_commission_prestation : employe.taux_commission_produit;
-                    const baseHtCommission = Number((lineHtCents / 100).toFixed(2));
-                    const montant_commission = (baseHtCommission * (taux / 100)).toFixed(2);
-                    
-                    await clientDB.query(`INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon, date_creation) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, NOW()))`, 
-                    [id_employe, idNouveauTicket, baseHtCommission, montant_commission, type_article, id_salon, req.dateTicketEffective || null]);
-                }
-            }
-        }
-
-        const montantScelle = Number(montantBasket).toFixed(2);
-        const tvaScellee = (totalTvaTicketCents / 100).toFixed(2);
-        const chaineScellee = `${idNouveauTicket}|${numeroTicket}|${dateCreationISO}|VENTE|${methode}|${montantScelle}|${tvaScellee}|${previousHash}`;
-        const newHash = crypto.createHash('sha256').update(chaineScellee).digest('hex');
-        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineScellee, idNouveauTicket]);
-
-        await enregistrerJET(id_salon, req.idTempOffline ? 'ENCAISSEMENT_TICKET_OFFLINE_SYNC' : 'ENCAISSEMENT_TICKET', {
-            id_ticket: idNouveauTicket,
-            numero_ticket: numeroTicket,
-            montant_ttc: montantScelle,
-            tva_ttc: tvaScellee,
-            methode_paiement: methode,
-            id_temp_offline: req.idTempOffline || null,
-            hash_ticket: newHash
-        }, clientDB);
-
-        if (id_client) {
-            const clientCheck = await clientDB.query(`SELECT points_fidelite, tampons_fidelite, remise_winback FROM clients WHERE id_client = $1 AND id_salon = $2 FOR UPDATE`, [id_client, id_salon]);
-            if (clientCheck.rowCount === 0) throw new Error("Client introuvable dans ce salon.");
-            const clientFidelite = clientCheck.rows[0];
-
-            await clientDB.query(`UPDATE clients SET derniere_visite = CURRENT_DATE WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
-
-            const configRes = await clientDB.query(`SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1`, [id_salon]);
-            
-            if (configRes.rowCount > 0) {
-                const config = configRes.rows[0];
-                const utiliseWinback = Boolean(recompense_appliquee && clientFidelite.remise_winback);
-
-                if (utiliseWinback) {
-                    // On consomme la remise Winback et on crédite les points/tampons sur le montant payé
-                    await clientDB.query(`UPDATE clients SET remise_winback = NULL WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
-                    if (config.fidelite_type === 'POINTS') {
-                        const pointsToAdd = Math.max(0, Math.floor(montant));
-                        await clientDB.query(`UPDATE clients SET points_fidelite = COALESCE(points_fidelite, 0) + $1 WHERE id_client = $2 AND id_salon = $3`, [pointsToAdd, id_client, id_salon]);
-                    } else if (config.fidelite_type === 'TAMPONS') {
-                        await clientDB.query(`UPDATE clients SET tampons_fidelite = COALESCE(tampons_fidelite, 0) + 1 WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
-                    }
-                } else if (recompense_appliquee) {
-                    if (config.fidelite_type === 'POINTS') {
-                        if ((clientFidelite.points_fidelite || 0) < (config.fidelite_points_seuil || 0)) throw new Error("Points de fidélité insuffisants.");
-                        await clientDB.query(`UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1) WHERE id_client = $2 AND id_salon = $3`, [config.fidelite_points_seuil, id_client, id_salon]);
-                    } else if (config.fidelite_type === 'TAMPONS') {
-                        if ((clientFidelite.tampons_fidelite || 0) < (config.fidelite_tampons_seuil || 0)) throw new Error("Tampons de fidélité insuffisants.");
-                        await clientDB.query(`UPDATE clients SET tampons_fidelite = GREATEST(0, tampons_fidelite - $1) WHERE id_client = $2 AND id_salon = $3`, [config.fidelite_tampons_seuil, id_client, id_salon]);
-                    }
-                } else {
-                    if (config.fidelite_type === 'POINTS') {
-                        const pointsToAdd = Math.max(0, Math.floor(montant));
-                        await clientDB.query(`UPDATE clients SET points_fidelite = COALESCE(points_fidelite, 0) + $1 WHERE id_client = $2 AND id_salon = $3`, [pointsToAdd, id_client, id_salon]);
-                    } else if (config.fidelite_type === 'TAMPONS') {
-                        await clientDB.query(`UPDATE clients SET tampons_fidelite = COALESCE(tampons_fidelite, 0) + 1 WHERE id_client = $1 AND id_salon = $2`, [id_client, id_salon]);
-                    }
-                }
-            }
-        }
-
-        // 🚨 SÉCURITÉ : On ne capture l'argent QUE si tout le reste en BDD s'est bien passé
-            if (methode === 'CARTE' && montant > 0 && intentStatus === 'requires_capture') {
-                await stripe.paymentIntents.capture(paymentIntentId);
-            }
-
-            await clientDB.query('COMMIT');
-            
-            let messageFinal = (methode === 'CARTE' && montant > 0) ? `En attente du TPE... (Ticket #${idNouveauTicket})` : `Paiement en ${methode} validé (Ticket #${idNouveauTicket})`;
-            io.to(id_salon.toString()).emit('paiementValide', { message: messageFinal });
-            
-            res.json({ message: messageFinal, reader, id_ticket: idNouveauTicket });
-        } catch (error) {
-            await clientDB.query('ROLLBACK');
-            
-            // 🚨 SÉCURITÉ : Si la BDD a planté, on annule l'empreinte bancaire pour éviter un double débit
-            if (paymentIntentId && intentStatus === 'requires_capture') {
-                try { 
-                    await stripe.paymentIntents.cancel(paymentIntentId); 
-                    console.log(`[STRIPE] Paiement ${paymentIntentId} annulé suite à un crash BDD.`);
-                } catch(e) { 
-                    console.error("[STRIPE] Erreur annulation:", e); 
-                }
-            }
-
-            console.error("Erreur Encaisser:", error); res.status(500).json({ erreur: "Erreur lors de l'encaissement. " + error.message });
-        } finally { clientDB.release(); }
+        res.json(result);
+    } catch (error) {
+        console.error("Erreur Encaisser:", error);
+        res.status(error.status || 500).json({ erreur: "Erreur lors de l'encaissement. " + (error.message || '') });
+    }
 });
 
 // --- MODULE 5 & OBJECTIFS D'ÉQUIPE : KPIS INDIVIDUELS & GESTION DES OBJECTIFS PAR LE GÉRANT ---
@@ -2389,812 +2082,133 @@ app.delete('/api/equipe/objectifs/:id', verifierToken, async (req, res) => {
         res.status(e.status || 500).json({ erreur: e.message || "Erreur suppression de l'objectif." });
     }
 });
-// NOUVELLE ROUTE : ENCAISSEMENT D'UN POURBOIRE ISOLÉ (Post-Encaissement)
+// --- MODULE CAISSE SMART POS & SCELLAGE NF525 ---
 app.post('/api/caisse/pourboire-isole', verifierToken, verifierClotureZ, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé à la caisse." });
-    const { montant_pourboire, id_employe, methode_paiement, id_client } = req.body;
-    const id_salon = req.user.id_salon;
-    const methode = methode_paiement || 'CARTE';
-    const montantPb = parseFloat(montant_pourboire) || 0;
-
-    if (montantPb <= 0) return res.status(400).json({ erreur: "Montant invalide." });
-
-    const clientDB = await pool.connect();
     try {
-        let reader = null;
-        let paymentIntentId = null;
-        let intentStatus = null;
-
-        if (methode === 'CARTE') {
-            const configResult = await clientDB.query('SELECT stripe_reader_id FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-            const readerId = configResult.rowCount > 0 ? configResult.rows[0].stripe_reader_id : null;
-            if (!readerId) throw new Error("Aucun lecteur TPE configuré.");
-
-            const paymentIntent = await stripe.paymentIntents.create({
-                amount: Math.round(montantPb * 100), currency: 'eur', payment_method_types: ['card_present'], capture_method: 'manual', 
-            });
-            paymentIntentId = paymentIntent.id;
-            intentStatus = paymentIntent.status;
-            reader = await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntentId });
-
-            if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.includes('test')) {
-                try { await stripe.testHelpers.terminal.readers.presentPaymentMethod(readerId); } catch(e) {}
-            }
-
-            let attempts = 0;
-            while (intentStatus === 'requires_payment_method' && attempts < 30) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                const checkIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-                intentStatus = checkIntent.status;
-                attempts++;
-            }
-
-            if (intentStatus !== 'requires_capture') {
-                try { await stripe.terminal.readers.cancelAction(readerId); } catch(e) {}
-                try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
-                throw new Error("Paiement refusé ou délai d'attente dépassé sur le TPE.");
-            }
-        }
-
-        await clientDB.query('BEGIN');
-        
-        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
-        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
-        
-        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
-        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
-        
-        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', '');
-        const numeroTicket = `TKT-PB-${anneeMois}-${String(seq).padStart(6, '0')}`;
-
-        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
-        
-        const ticketResult = await clientDB.query(
-            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, date_creation, montant_pourboire) VALUES ($1, $2, $3, 0.00, $4, FALSE, $5, 'VALIDE', 'POURBOIRE', NOW(), $6) RETURNING id_ticket, date_creation;`, 
-            [numeroTicket, id_client || null, id_employe, id_salon, methode, montantPb]
+        const result = await encaisserPourboireIsole(
+            { pool, io, stripe, crypto, enregistrerJET },
+            { user: req.user, body: req.body }
         );
-        const idNouveauTicket = ticketResult.rows[0].id_ticket;
-        const dateCreationISO = new Date(ticketResult.rows[0].date_creation).toISOString();
-
-        const chaineScellee = `${idNouveauTicket}|${numeroTicket}|${dateCreationISO}|POURBOIRE|${methode}|0.00|0.00|${previousHash}`;
-        const newHash = crypto.createHash('sha256').update(chaineScellee).digest('hex');
-        
-        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineScellee, idNouveauTicket]);
-
-        await enregistrerJET(id_salon, 'ENCAISSEMENT_POURBOIRE_ISOLE', { id_ticket: idNouveauTicket, numero_ticket: numeroTicket, montant_pourboire: montantPb, methode_paiement: methode, hash_ticket: newHash }, clientDB);
-
-        if (methode === 'CARTE' && intentStatus === 'requires_capture') {
-            await stripe.paymentIntents.capture(paymentIntentId);
-        }
-
-        await clientDB.query('COMMIT');
-        
-        let messageFinal = methode === 'CARTE' ? `Pourboire validé sur TPE (Ticket #${idNouveauTicket})` : `Pourboire validé (Ticket #${idNouveauTicket})`;
-        io.to(id_salon.toString()).emit('paiementValide', { message: messageFinal });
-        res.json({ message: messageFinal, reader, id_ticket: idNouveauTicket });
-
+        res.json(result);
     } catch (error) {
-        await clientDB.query('ROLLBACK');
-        if (paymentIntentId && intentStatus === 'requires_capture') {
-            try { await stripe.paymentIntents.cancel(paymentIntentId); } catch(e) {}
-        }
-        res.status(500).json({ erreur: "Erreur lors de l'encaissement du pourboire." });
-    } finally { clientDB.release(); }
+        console.error("Erreur Encaisser Pourboire Isolé:", error);
+        res.status(error.status || 500).json({ erreur: "Erreur lors de l'encaissement du pourboire. " + (error.message || '') });
+    }
 });
 
 app.put('/api/caisse/annuler-ticket/:id', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant est habilité à annuler un ticket." });
-    const id_ticket = req.params.id;
-    const id_salon = req.user.id_salon;
-    const { motif, lignes_a_annuler } = req.body;
-    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Un motif d'annulation est obligatoire." });
-
-    const clientDB = await pool.connect();
     try {
-        await clientDB.query('BEGIN');
-
-        // NF525 : Interdiction d'émettre un ticket d'annulation sur une journée déjà clôturée ou si un Z passé est manquant
-        const zAujourdHui = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [id_salon]);
-        if (zAujourdHui.rowCount > 0) {
-            throw new Error("Action bloquée (NF525) : La clôture Z d'aujourd'hui a déjà été scellée. Impossible d'émettre un avoir d'annulation sur une journée clôturée.");
-        }
-        const zPasseManquant = await clientDB.query(
-            `SELECT MIN(DATE(t.date_creation)) as jour FROM tickets t WHERE t.id_salon = $1 AND DATE(t.date_creation) < CURRENT_DATE AND NOT EXISTS (SELECT 1 FROM clotures_caisse c WHERE c.id_salon = t.id_salon AND c.date_cloture = DATE(t.date_creation))`,
-            [id_salon]
+        const result = await annulerTicketCaisse(
+            { pool, crypto, enregistrerJET },
+            {
+                user: req.user,
+                id_ticket: req.params.id,
+                motif: req.body.motif,
+                lignes_a_annuler: req.body.lignes_a_annuler
+            }
         );
-        if (zPasseManquant.rowCount > 0 && zPasseManquant.rows[0].jour) {
-            throw new Error(`Action bloquée (NF525) : Clôture Z manquante pour le ${new Date(zPasseManquant.rows[0].jour).toLocaleDateString('fr-FR')}. Clôturez d'abord cette journée avant d'émettre un avoir.`);
-        }
-
-        const ticketRes = await clientDB.query(
-            "SELECT * FROM tickets WHERE id_ticket = $1 AND id_salon = $2 AND type_ticket != 'ANNULATION' FOR UPDATE",
-            [id_ticket, id_salon]
-        );
-        if (ticketRes.rowCount === 0) throw new Error("Ticket introuvable.");
-        const ticket = ticketRes.rows[0];
-
-        const lignesOrigine = await clientDB.query(
-            "SELECT id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, nom_article_snapshot, taux_tva_snapshot FROM lignes_ticket WHERE id_ticket = $1",
-            [id_ticket]
-        );
-
-        // Récupérer ce qui a déjà été annulé pour ce ticket
-        const lignesDejaAnnulees = await clientDB.query("SELECT id_article, SUM(ABS(quantite)) as qte_annulee FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_ticket_origine = $1) GROUP BY id_article", [id_ticket]);
-        let mapDejaAnnule = {};
-        lignesDejaAnnulees.rows.forEach(r => mapDejaAnnule[r.id_article] = parseFloat(r.qte_annulee));
-
-        let lignesToProcess = [];
-        if (lignes_a_annuler && lignes_a_annuler.length > 0) {
-            for (let reqLigne of lignes_a_annuler) {
-                let origLigne = lignesOrigine.rows.find(l => l.id_article == reqLigne.id_article);
-                if (origLigne) {
-                    let dejaAnnuleQte = mapDejaAnnule[origLigne.id_article] || 0;
-                    let maxAnnulable = origLigne.quantite - dejaAnnuleQte;
-                    let qte = Math.min(reqLigne.quantite, maxAnnulable);
-                    if (qte > 0) {
-                        const totalOrigine = parseFloat(origLigne.total_ligne_ttc) || 0;
-                        const totalLigneRembourse = (qte === Number(origLigne.quantite))
-                            ? totalOrigine
-                            : Number(((totalOrigine * qte) / Number(origLigne.quantite)).toFixed(2));
-                        lignesToProcess.push({
-                            ...origLigne,
-                            quantite: qte,
-                            total_ligne_ttc: totalLigneRembourse
-                        });
-                    }
-                }
-            }
-        } else {
-            // Fallback: Annulation totale de ce qui reste
-            for (let origLigne of lignesOrigine.rows) {
-                let dejaAnnuleQte = mapDejaAnnule[origLigne.id_article] || 0;
-                let maxAnnulable = origLigne.quantite - dejaAnnuleQte;
-                if (maxAnnulable > 0) {
-                    const totalOrigine = parseFloat(origLigne.total_ligne_ttc) || 0;
-                    const totalLigneRembourse = (maxAnnulable === Number(origLigne.quantite))
-                        ? totalOrigine
-                        : Number(((totalOrigine * maxAnnulable) / Number(origLigne.quantite)).toFixed(2));
-                    lignesToProcess.push({
-                        ...origLigne,
-                        quantite: maxAnnulable,
-                        total_ligne_ttc: totalLigneRembourse
-                    });
-                }
-            }
-        }
-
-        if (lignesToProcess.length === 0) throw new Error("Ce ticket a déjà été entièrement annulé.");
-
-        const montantCompensation = Number((-lignesToProcess.reduce((sum, l) => sum + parseFloat(l.total_ligne_ttc), 0)).toFixed(2));
-
-        // 🚨 VERROU TRANSACTIONNEL
-        const configRes = await clientDB.query('SELECT compteur_tickets FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
-        const seq = parseInt(configRes.rows[0].compteur_tickets) + 1;
-
-        const lastTicket = await clientDB.query('SELECT hash_ticket FROM tickets WHERE id_salon = $1 ORDER BY id_ticket DESC LIMIT 1', [id_salon]);
-        const previousHash = lastTicket.rowCount > 0 && lastTicket.rows[0].hash_ticket ? lastTicket.rows[0].hash_ticket : 'GENESIS_BLOCK';
-        
-        const anneeMois = new Date().toISOString().slice(0, 7).replace('-', '');
-        const numeroCompensation = `TKT-AN-${anneeMois}-${String(seq).padStart(6, '0')}`;
-
-        // Mise à jour du compteur pour le prochain ticket
-        await clientDB.query('UPDATE configuration_salon SET compteur_tickets = $1 WHERE id_salon = $2', [seq, id_salon]);
-
-        const compensationResult = await clientDB.query(
-            `INSERT INTO tickets (numero_ticket_caisse, id_client, id_employe, total_ttc, id_salon, recompense_utilisee, methode_paiement, statut, type_ticket, id_ticket_origine, motif_annulation)
-             VALUES ($1, $2, $3, $4, $5, FALSE, $6, 'VALIDE', 'ANNULATION', $7, $8) RETURNING id_ticket, date_creation;`,
-            [numeroCompensation, ticket.id_client, ticket.id_employe, montantCompensation, id_salon, ticket.methode_paiement, id_ticket, motif.trim()]
-        );
-        const idTicketCompensation = compensationResult.rows[0].id_ticket;
-        const dateCompISO = new Date(compensationResult.rows[0].date_creation).toISOString();
-
-        const configTvaRes = await clientDB.query('SELECT tva_intra FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const franchiseTVAAnnul = !configTvaRes.rows[0]?.tva_intra || configTvaRes.rows[0].tva_intra.trim() === '';
-        let totalTvaCompCents = 0;
-        for (const l of lignesToProcess) {
-            const lineCents = -Math.round(Math.abs(parseFloat(l.total_ligne_ttc) || 0) * 100);
-            const taux = franchiseTVAAnnul ? 0 : (parseFloat(l.taux_tva_snapshot) || 20);
-            const htCents = franchiseTVAAnnul ? lineCents : Math.round(lineCents / (1 + taux / 100));
-            totalTvaCompCents += (lineCents - htCents);
-        }
-
-        const montantCompensationScelle = Number(montantCompensation).toFixed(2);
-        const tvaCompScellee = (totalTvaCompCents / 100).toFixed(2);
-        const chaineCompScellee = `${idTicketCompensation}|${numeroCompensation}|${dateCompISO}|ANNULATION|${ticket.methode_paiement}|${montantCompensationScelle}|${tvaCompScellee}|${previousHash}`;
-        const newHash = crypto.createHash('sha256').update(chaineCompScellee).digest('hex');
-        await clientDB.query('UPDATE tickets SET hash_ticket = $1, donnees_scellees = $2 WHERE id_ticket = $3', [newHash, chaineCompScellee, idTicketCompensation]);
-
-        // Vérifier si le ticket est désormais entièrement compensé
-        const dejaCompenseRes = await clientDB.query("SELECT COALESCE(SUM(ABS(total_ttc)), 0) as deja_rembourse FROM tickets WHERE id_ticket_origine = $1 AND statut != 'ANNULE'", [id_ticket]);
-        const dejaRembourse = parseFloat(dejaCompenseRes.rows[0].deja_rembourse);
-        if (dejaRembourse >= parseFloat(ticket.total_ttc) - 0.01) {
-            await clientDB.query("UPDATE tickets SET est_compense = TRUE WHERE id_ticket = $1", [id_ticket]);
-        }
-
-        for (const ligne of lignesToProcess) {
-            await clientDB.query(
-                `INSERT INTO lignes_ticket (id_ticket, id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, id_salon, nom_article_snapshot, taux_tva_snapshot)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
-                [idTicketCompensation, ligne.id_article, -ligne.quantite, ligne.prix_unitaire_ttc, -ligne.total_ligne_ttc, id_salon, ligne.nom_article_snapshot, ligne.taux_tva_snapshot]
-            );
-            await clientDB.query("UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2 AND id_salon = $3", [ligne.quantite, ligne.id_article, id_salon]);
-            
-            // REMISE EN STOCK DES RECETTES SI PRÉSENTES
-            const protocoleRes = await clientDB.query('SELECT id_protocole FROM protocoles WHERE nom_prestation ILIKE $1 AND id_salon = $2 LIMIT 1', [ligne.nom_article_snapshot, id_salon]);
-            if (protocoleRes.rowCount > 0) {
-                const idProto = protocoleRes.rows[0].id_protocole;
-                const ingredients = await clientDB.query('SELECT id_article, quantite_necessaire FROM recettes_articles WHERE id_protocole = $1', [idProto]);
-                for (let ing of ingredients.rows) {
-                    const quantite_a_restaurer = ing.quantite_necessaire * ligne.quantite;
-                    await clientDB.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2 AND id_salon = $3', [quantite_a_restaurer, ing.id_article, id_salon]);
-                }
-            }
-        }
-
-        // Commissions : Proratisation basée sur le montant remboursé par rapport au ticket global
-        const commissionsOrigine = await clientDB.query("SELECT * FROM commissions WHERE id_ticket = $1", [id_ticket]);
-        if (commissionsOrigine.rowCount > 0 && parseFloat(ticket.total_ttc) > 0) {
-            const ratio = Math.abs(montantCompensation) / parseFloat(ticket.total_ttc);
-            for (const c of commissionsOrigine.rows) {
-                const commissionAnnulee = -(parseFloat(c.montant_commission) * ratio).toFixed(2);
-                const venteAnnulee = -(parseFloat(c.montant_vente) * ratio).toFixed(2);
-                await clientDB.query(
-                    `INSERT INTO commissions (id_employe, id_ticket, montant_vente, montant_commission, type_vente, id_salon)
-                     VALUES ($1, $2, $3, $4, $5, $6)`,
-                    [c.id_employe, idTicketCompensation, venteAnnulee, commissionAnnulee, c.type_vente, id_salon]
-                );
-            }
-        }
-
-        if (ticket.id_client) {
-            const estAnnulationTotale = Math.abs(montantCompensation) >= parseFloat(ticket.total_ttc) - 0.01;
-            
-            if (!ticket.recompense_utilisee) {
-                // Le ticket avait généré des points/tampons, on les retire au prorata
-                const pointsARetirer = Math.floor(Math.abs(montantCompensation));
-                const tamponsARetirer = estAnnulationTotale ? 1 : 0;
-                await clientDB.query("UPDATE clients SET points_fidelite = GREATEST(0, points_fidelite - $1), tampons_fidelite = GREATEST(0, tampons_fidelite - $2) WHERE id_client = $3", [pointsARetirer, tamponsARetirer, ticket.id_client]);
-            } else if (estAnnulationTotale) {
-                // Le ticket avait CONSOMMÉ une récompense, on la restitue au client (uniquement si annulation totale)
-                const configRes = await clientDB.query('SELECT fidelite_type, fidelite_points_seuil, fidelite_tampons_seuil FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-                if (configRes.rowCount > 0) {
-                    const config = configRes.rows[0];
-                    if (config.fidelite_type === 'POINTS') {
-                        await clientDB.query("UPDATE clients SET points_fidelite = points_fidelite + $1 WHERE id_client = $2", [config.fidelite_points_seuil, ticket.id_client]);
-                    } else if (config.fidelite_type === 'TAMPONS') {
-                        await clientDB.query("UPDATE clients SET tampons_fidelite = tampons_fidelite + $1 WHERE id_client = $2", [config.fidelite_tampons_seuil, ticket.id_client]);
-                    }
-                }
-            }
-        }
-
-        await enregistrerJET(id_salon, 'ANNULATION_TICKET', {
-            id_ticket_origine: parseInt(id_ticket),
-            id_ticket_compensation: idTicketCompensation,
-            montant: montantCompensation,
-            lignes_annulees: lignesToProcess.map(l => ({ id_article: l.id_article, quantite: l.quantite })),
-            motif: motif.trim()
-        }, clientDB);
-
-        await clientDB.query('COMMIT');
-        res.json({ message: "Remboursement validé (écriture de compensation générée). Stock et fidélité mis à jour." });
+        res.json(result);
     } catch (err) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: err.message });
-    } finally { clientDB.release(); }
+        console.error("Erreur Annulation Ticket:", err);
+        res.status(err.status || 500).json({ erreur: err.message || "Erreur lors de l'annulation." });
+    }
 });
 
 app.post('/api/caisse/envoyer-ticket', verifierToken, async (req, res) => {
-    const { id_ticket, email, id_client, methode } = req.body;
-    const id_salon = req.user.id_salon;
     try {
-        const salonConfig = await pool.query('SELECT nom_salon, email_reception_factures, mot_de_passe_app_email, brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        if (salonConfig.rowCount === 0) return res.status(404).json({ erreur: "Salon introuvable." });
-        const config = salonConfig.rows[0];
-
-        const ticketData = await pool.query('SELECT numero_ticket_caisse, total_ttc, date_creation, methode_paiement FROM tickets WHERE id_ticket = $1 AND id_salon = $2', [id_ticket, id_salon]);
-        if (ticketData.rowCount === 0) return res.status(404).json({ erreur: "Ticket introuvable." });
-        const ticket = ticketData.rows[0];
-        
-        const verifSms = await verifierEtIncrementerQuotaSMS(req.user.id_salon, 1);
-        if (!verifSms.autorise) {
-            return res.status(403).json({ erreur: verifSms.erreur });
-        }
-        
-
-        const textRecap = `Merci pour votre visite chez ${config.nom_salon} !\nTicket n°${ticket.numero_ticket_caisse} du ${new Date(ticket.date_creation).toLocaleDateString()}.\nMontant total : ${parseFloat(ticket.total_ttc).toFixed(2)} € (Réglé par ${ticket.methode_paiement}).\nÀ très bientôt !`;
-        
-        if (methode === 'email') {
-            if (!config.email_reception_factures || !config.mot_de_passe_app_email) return res.status(400).json({ erreur: "Email non configuré." });
-            let transporter = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: config.email_reception_factures, pass: dechiffrer(config.mot_de_passe_app_email) } });
-            await transporter.sendMail({ from: `"${config.nom_salon}" <${config.email_reception_factures}>`, to: email, subject: `Votre reçu - ${config.nom_salon}`, text: textRecap });
-            if (id_client && email) await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2 AND id_salon = $3', [email, id_client, id_salon]);
-        } else if (methode === 'sms') {
-            if (!config.brevo_api_key) return res.status(400).json({ erreur: "Clé Brevo non configurée." });
-            let telephoneEnvoi;
-            if (id_client) {
-                const client = await pool.query('SELECT telephone FROM clients WHERE id_client = $1 AND id_salon = $2', [id_client, id_salon]);
-                if (client.rowCount === 0 || !client.rows[0].telephone) return res.status(400).json({ erreur: "Aucun numéro." });
-                telephoneEnvoi = client.rows[0].telephone;
-            } else {
-                telephoneEnvoi = (req.body.telephone || '').trim();
-                if (!telephoneEnvoi) return res.status(400).json({ erreur: "Numéro de téléphone requis." });
-            }
-            await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
-                method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
-                body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: telephoneEnvoi, content: textRecap })
-            });
-
-            // Client non identifié dans la base -> on programme l'enquête de satisfaction (1h30 après l'envoi du ticket)
-            if (!id_client) {
-                const telNormalise = normaliserTelephone(telephoneEnvoi);
-                const dejaOptOut = await pool.query('SELECT 1 FROM sms_opt_out WHERE id_salon = $1 AND telephone = $2', [id_salon, telNormalise]);
-                const clientConnu = await pool.query(`SELECT 1 FROM clients WHERE id_salon = $1 AND RIGHT(regexp_replace(telephone, '\\D', '', 'g'), 9) = $2`, [id_salon, telNormalise]);
-                if (clientConnu.rowCount === 0 && dejaOptOut.rowCount === 0) {
-                    const tokenAvis = crypto.randomBytes(24).toString('hex');
-                    await pool.query(
-                        `INSERT INTO avis_demandes (id_salon, telephone, token, statut, date_prevue) VALUES ($1, $2, $3, 'EN_ATTENTE', NOW() + INTERVAL '1.5 hours')`,
-                        [id_salon, telephoneEnvoi, tokenAvis]
-                    );
-                }
-            }
-        }
-        res.json({ message: "Ticket envoyé." });
-    } catch (error) { res.status(500).json({ erreur: "Erreur envoi ticket." }); }
+        const result = await envoyerTicketCaisse(
+            { pool, nodemailer, dechiffrer, crypto, normaliserTelephone, verifierEtIncrementerQuotaSMS },
+            { user: req.user, body: req.body }
+        );
+        res.json(result);
+    } catch (error) {
+        console.error("Erreur envoi ticket:", error);
+        res.status(error.status || 500).json({ erreur: error.message || "Erreur lors de l'envoi du ticket." });
+    }
 });
 
 app.get('/api/caisse/mouvements/aujourdhui', verifierToken, async (req, res) => {
     try {
-        const result = await pool.query(
-            `SELECT m.*, e.nom as nom_employe FROM mouvements_caisse m LEFT JOIN employes e ON m.id_employe = e.id_employe WHERE m.id_salon = $1 AND DATE(m.date_creation) = CURRENT_DATE ORDER BY m.date_creation DESC`,
-            [req.user.id_salon]
-        );
-        res.json(result.rows);
-    } catch (e) { res.status(500).json({ erreur: "Erreur lecture mouvements." }); }
+        const rows = await recupererMouvementsJour({ pool }, req.user.id_salon);
+        res.json(rows);
+    } catch (e) {
+        console.error("Erreur récupération mouvements :", e);
+        res.status(500).json({ erreur: "Erreur serveur." });
+    }
 });
 
-async function verifierPinActionSensibleSalon(req, { id_employe, nom_operateur, code_pin, action_label }) {
-    if (req.user.role === 'gerant') {
-        return { autorise: true, id_employe: null, nom: 'Gérant' };
-    }
-
-    const id_salon = req.user.id_salon;
-    
-    if (req.user.role === 'salon') {
-        const confRes = await pool.query('SELECT COALESCE(securite_pin_salon_active, TRUE) as active FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const protectionActive = confRes.rowCount > 0 ? confRes.rows[0].active : true;
-        if (!protectionActive && !code_pin) {
-            return { autorise: true, id_employe: (id_employe && id_employe !== 'gerant') ? id_employe : null, nom: nom_operateur || 'Salon' };
-        }
-    }
-
-    let empRes;
-        if (id_employe && id_employe !== 'gerant') {
-            empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-        } else if (id_employe === 'gerant' || (nom_operateur && String(nom_operateur).trim() !== '')) {
-            const searchNom = id_employe === 'gerant' ? 'Gérant' : String(nom_operateur).trim();
-            if (id_employe === 'gerant' || searchNom.toLowerCase() === 'gérant') {
-                empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE est_gerant = TRUE AND id_salon = $1 LIMIT 1', [id_salon]);
-            } else {
-                empRes = await pool.query('SELECT id_employe, nom, code_pin, COALESCE(pin_tentatives_echouees, 0) as tentatives, pin_bloque_jusqua, COALESCE(pin_bloque_definitif, FALSE) as bloque_definitif FROM employes WHERE TRIM(nom) ILIKE TRIM($1) AND id_salon = $2 LIMIT 1', [searchNom, id_salon]);
-            }
-        } else {
-            const err = new Error("Veuillez sélectionner le collaborateur qui effectue l'opération et saisir son code PIN.");
-            err.require_pin = true;
-            throw err;
-        }
-
-        if (!empRes || empRes.rowCount === 0) {
-            const err = new Error("Collaborateur introuvable dans ce salon.");
-            err.require_pin = true;
-            throw err;
-        }
-
-    const emp = empRes.rows[0];
-
-    // 1. Vérification du blocage définitif
-    if (emp.bloque_definitif) {
-        const err = new Error(`Accès bloqué définitivement pour ${emp.nom} suite à de trop nombreuses tentatives. Le gérant doit débloquer votre profil dans l'espace Équipe.`);
-        err.require_pin = true;
-        err.locked_permanent = true;
-        throw err;
-    }
-
-    // 2. Vérification du blocage temporaire (15m / 30m / 1h)
-    if (emp.pin_bloque_jusqua && new Date(emp.pin_bloque_jusqua) > new Date()) {
-        const minRestantes = Math.max(1, Math.ceil((new Date(emp.pin_bloque_jusqua).getTime() - Date.now()) / 60000));
-        const err = new Error(`Actions sensibles temporairement verrouillées pour ${emp.nom}. Réessayez dans ${minRestantes} minute(s).`);
-        err.require_pin = true;
-        err.locked_until = emp.pin_bloque_jusqua;
-        throw err;
-    }
-
-    if (!code_pin || String(code_pin).trim() === '') {
-        const err = new Error(`Code PIN personnel requis pour valider cette opération (${action_label}).`);
-        err.require_pin = true;
-        throw err;
-    }
-
-    const pinSaisi = String(code_pin).trim();
-    let pinMatch = false;
-    if (emp.code_pin && emp.code_pin.startsWith('$2')) {
-        pinMatch = await bcrypt.compare(pinSaisi, emp.code_pin);
-    } else {
-        pinMatch = (String(emp.code_pin || '').trim() === pinSaisi);
-    }
-
-    // 3. Gestion de l'échec : Paliers 3 essais (15m) -> 5 essais (30m) -> 7 essais (1h) -> 9 essais (Définitif)
-    if (!pinMatch) {
-        const nouvellesTentatives = (parseInt(emp.tentatives, 10) || 0) + 1;
-        let bloqueJusqua = null;
-        let bloqueDefinitif = false;
-        let messageSanction = '';
-
-        if (nouvellesTentatives >= 9) {
-            bloqueDefinitif = true;
-            messageSanction = `Profil verrouillé définitivement. Le gérant doit vous débloquer depuis l'espace Équipe.`;
-        } else if (nouvellesTentatives === 7) {
-            bloqueJusqua = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-            messageSanction = `Actions sensibles bloquées pendant 1 heure (2 derniers essais restants avant blocage définitif).`;
-        } else if (nouvellesTentatives === 5) {
-            bloqueJusqua = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-            messageSanction = `Actions sensibles bloquées pendant 30 minutes.`;
-        } else if (nouvellesTentatives === 3) {
-            bloqueJusqua = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-            messageSanction = `Actions sensibles bloquées pendant 15 minutes.`;
-        } else {
-            const prochainSeuil = nouvellesTentatives < 3 ? 3 : (nouvellesTentatives < 5 ? 5 : (nouvellesTentatives < 7 ? 7 : 9));
-            const restants = prochainSeuil - nouvellesTentatives;
-            messageSanction = `${restants} essai(s) restant(s) avant verrouillage.`;
-        }
-
-        await pool.query(
-            'UPDATE employes SET pin_tentatives_echouees = $1, pin_bloque_jusqua = $2, pin_bloque_definitif = $3 WHERE id_employe = $4 AND id_salon = $5',
-            [nouvellesTentatives, bloqueJusqua, bloqueDefinitif, emp.id_employe, id_salon]
-        );
-        await enregistrerJET(id_salon, bloqueDefinitif ? 'PIN_BLOCAGE_DEFINITIF' : 'PIN_ACTION_SENSIBLE_ECHOUE', {
-            action: action_label,
-            collaborateur: emp.nom,
-            tentatives: nouvellesTentatives,
-            bloque_jusqua: bloqueJusqua,
-            bloque_definitif: bloqueDefinitif
-        }, pool);
-
-        if (bloqueDefinitif) {
-            envoyerNotificationPush(id_salon, 'gerant', {
-                title: "Alerte Sécurité PIN",
-                body: `Le code PIN de ${emp.nom} a été bloqué définitivement après 9 échecs. Déblocage requis dans Équipe.`,
-                url: '/?tab=equipe'
-            });
-        }
-
-        const err = new Error(`Code PIN incorrect pour ${emp.nom}. ${messageSanction}`);
-        err.require_pin = true;
-        err.tentatives = nouvellesTentatives;
-        err.locked_until = bloqueJusqua;
-        err.locked_permanent = bloqueDefinitif;
-        throw err;
-    }
-
-    // 4. Succès : Remise à zéro du compteur d'échecs
-    if (emp.tentatives > 0 || emp.pin_bloque_jusqua) {
-        await pool.query(
-            'UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2',
-            [emp.id_employe, id_salon]
-        );
-    }
-
-    return { autorise: true, id_employe: emp.id_employe, nom: emp.nom };
-}
-
 app.post('/api/caisse/mouvements', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Accès réservé à la caisse du salon ou au gérant." });
-    const { type_mouvement, montant, motif, id_employe, nom_operateur, code_pin, categorie_comptable } = req.body;
-    if (!['ENTREE', 'SORTIE'].includes(type_mouvement)) return res.status(400).json({ erreur: "Type de mouvement invalide." });
-    if (!motif || !motif.trim()) return res.status(400).json({ erreur: "Le motif est obligatoire." });
-    if (!montant || isNaN(montant) || parseFloat(montant) <= 0) return res.status(400).json({ erreur: "Montant invalide." });
-
-    // Vérification du PIN AVANT d'ouvrir la transaction (évite tout blocage SQL)
-    let operateurValide;
     try {
-        operateurValide = await verifierPinActionSensibleSalon(req, {
-            id_employe,
-            nom_operateur,
-            code_pin,
-            action_label: `Mouvement de caisse (${type_mouvement})`
-        });
-    } catch (pinErr) {
-        return res.status(400).json({
-            erreur: pinErr.message,
-            require_pin: true,
-            tentatives: pinErr.tentatives,
-            locked_until: pinErr.locked_until,
-            locked_permanent: pinErr.locked_permanent
+        const result = await creerMouvementCaisse(
+            { pool, verifierPinActionSensibleSalon, enregistrerMouvementCaisseScelle, enregistrerJET },
+            { user: req.user, req, body: req.body }
+        );
+        res.status(201).json(result);
+    } catch (e) {
+        res.status(e.status || 400).json({
+            erreur: e.message || "Erreur lors de la sauvegarde.",
+            require_pin: !!e.require_pin,
+            tentatives: e.tentatives,
+            locked_until: e.locked_until,
+            locked_permanent: e.locked_permanent
         });
     }
-
-    const clientDB = await pool.connect();
-    try {
-        await clientDB.query('BEGIN');
-        const scelle = await enregistrerMouvementCaisseScelle(clientDB, {
-            id_salon: req.user.id_salon,
-            id_employe: operateurValide.id_employe || id_employe || null,
-            type_mouvement,
-            montant: parseFloat(montant),
-            motif: motif.trim(),
-            categorie_comptable: categorie_comptable || null
-        });
-        await enregistrerJET(req.user.id_salon, 'MOUVEMENT_CAISSE', { id_mouvement: scelle.id_mouvement, operateur: operateurValide.nom, type_mouvement, categorie_comptable: scelle.categorie_comptable, montant: parseFloat(montant), motif: motif.trim(), hash_mouvement: scelle.hash_mouvement }, clientDB);
-        await clientDB.query('COMMIT');
-        res.status(201).json({ message: "Mouvement de caisse enregistré et scellé." });
-    } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(400).json({ erreur: e.message || "Erreur lors de la sauvegarde.", require_pin: !!e.require_pin });
-    } finally { clientDB.release(); }
 });
 
 app.post('/api/caisse/cloture', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "La clôture Z est réservée au gérant ou au poste Salon." });
-    const id_salon = req.user.id_salon;
-    const { ferme_par, id_employe, code_pin, fond_caisse_matin, total_especes_reel, justification_ecart } = req.body;
-
-    // 1. Vérification du code PIN HORS transaction (évite le Deadlock SQL avec pg_advisory_xact_lock)
-    let operateurCloture;
     try {
-        operateurCloture = await verifierPinActionSensibleSalon(req, {
-            id_employe: id_employe === 'gerant' ? 'gerant' : id_employe,
-            nom_operateur: ferme_par,
-            code_pin,
-            action_label: 'Clôture journalière Z'
-        });
-    } catch (pinErr) {
-        return res.status(400).json({
-            erreur: pinErr.message,
-            require_pin: true,
-            tentatives: pinErr.tentatives,
-            locked_until: pinErr.locked_until,
-            locked_permanent: pinErr.locked_permanent
+        const result = await cloturerCaisseZ(
+            { pool, crypto, verifierPinActionSensibleSalon, enregistrerJET },
+            { user: req.user, req, body: req.body }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({
+            erreur: e.message || "Erreur lors de la clôture.",
+            require_pin: !!e.require_pin,
+            tentatives: e.tentatives,
+            locked_until: e.locked_until,
+            locked_permanent: e.locked_permanent,
+            require_justification: !!e.require_justification,
+            ecart: e.ecart
         });
     }
-    const operateurFinalNom = operateurCloture.nom || ferme_par || 'Gérant';
-
-    const clientDB = await pool.connect();
-    try {
-        await clientDB.query('BEGIN');
-        
-        // Verrouillage transactionnel strict NF525 sur le salon
-        await clientDB.query('SELECT id_salon FROM configuration_salon WHERE id_salon = $1 FOR UPDATE', [id_salon]);
-        await clientDB.query('SELECT pg_advisory_xact_lock($1)', [parseInt(id_salon) || 0]);
-
-        // Bloquer la clôture si la clôture précédente est une clôture automatique non régularisée
-        const autoNonRegul = await clientDB.query(
-            `SELECT TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_z FROM clotures_caisse WHERE id_salon = $1 AND est_cloture_automatique = TRUE LIMIT 1`,
-            [id_salon]
-        );
-        if (autoNonRegul.rowCount > 0) {
-            throw new Error(`Veuillez d'abord régulariser le comptage espèces de la clôture automatique du ${autoNonRegul.rows[0].date_z} avant de clôturer la caisse.`);
-        }
-
-        const jourRes = await clientDB.query(
-            `SELECT TO_CHAR(MIN(jour_activite), 'YYYY-MM-DD') as jour_non_cloture
-             FROM (
-                 SELECT DATE(t.date_creation) as jour_activite FROM tickets t WHERE t.id_salon = $1
-                 UNION
-                 SELECT DATE(m.date_creation) as jour_activite FROM mouvements_caisse m WHERE m.id_salon = $1
-             ) act
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM clotures_caisse c
-                 WHERE c.id_salon = $1 AND c.date_cloture = act.jour_activite
-             )`,
-            [id_salon]
-        );
-
-        let dateACloturerStr;
-        if (jourRes.rowCount > 0 && jourRes.rows[0].jour_non_cloture) {
-             dateACloturerStr = jourRes.rows[0].jour_non_cloture;
-        } else {
-             const d = new Date();
-             dateACloturerStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        }
-
-        const dejaCloture = await clientDB.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = $2', [id_salon, dateACloturerStr]);
-        if (dejaCloture.rowCount > 0) throw new Error(`La caisse pour la date du ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')} a déjà été clôturée.`);
-
-        const caResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
-        const totalJour = Number(caResult.rows[0].total).toFixed(2);
-
-        // RÈGLE D'OR NF525 : Nouveau Cumul = Ancien Cumul (du dernier Z scellé) + CA du jour (verrouillé FOR UPDATE).
-        const dernierZInfo = await clientDB.query('SELECT signature_hash, numero_z_salon, cumul_perpetuel_ttc, total_especes_reel FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1 FOR UPDATE', [id_salon]);
-        
-        const ancienCumul = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].cumul_perpetuel_ttc ? parseFloat(dernierZInfo.rows[0].cumul_perpetuel_ttc) : 0;
-        const grandTotalPerpetuel = Number((ancienCumul + parseFloat(totalJour)).toFixed(2));
-        const hashPrecedent = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].signature_hash ? dernierZInfo.rows[0].signature_hash : 'GENESIS_Z';
-        const nextZ = dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].numero_z_salon ? parseInt(dernierZInfo.rows[0].numero_z_salon) + 1 : 1;
-
-        // --- CALCUL NF525 DE L'ÉCART DE CAISSE (CONTINUITÉ DU FOND DE CAISSE & RATTRAPAGE) ---
-        const dNow = new Date();
-        const aujourdhuiStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
-        const estRattrapageJourPasse = (dateACloturerStr < aujourdhuiStr);
-
-        const fCaisseMatin = (dernierZInfo.rowCount > 0 && dernierZInfo.rows[0].total_especes_reel !== null)
-            ? Number(parseFloat(dernierZInfo.rows[0].total_especes_reel).toFixed(2))
-            : Number((parseFloat(fond_caisse_matin) || 0).toFixed(2));
-
-        // Somme algébrique exacte (inclut le ticket d'origine + et l'éventuel ticket d'annulation - du jour) + les pourboires
-        const especesResult = await clientDB.query(`SELECT COALESCE(SUM(total_ttc + COALESCE(montant_pourboire, 0)), 0) as total FROM tickets WHERE id_salon = $1 AND DATE(date_creation) = $2 AND methode_paiement = 'ESPECES' AND statut != 'ANNULE'`, [id_salon, dateACloturerStr]);
-        const totalEspecesVentes = parseFloat(especesResult.rows[0].total);
-
-        const mouvementsResult = await clientDB.query(`SELECT COALESCE(SUM(CASE WHEN type_mouvement = 'ENTREE' THEN montant WHEN type_mouvement = 'SORTIE' THEN -montant ELSE montant END), 0) as total FROM mouvements_caisse WHERE id_salon = $1 AND DATE(date_creation) = $2`, [id_salon, dateACloturerStr]);
-        const totalMouvements = parseFloat(mouvementsResult.rows[0].total);
-
-        const tEspecesTheorique = Number((fCaisseMatin + totalEspecesVentes + totalMouvements).toFixed(2));
-        const tEspecesReel = estRattrapageJourPasse ? tEspecesTheorique : Number((parseFloat(total_especes_reel) || 0).toFixed(2));
-        const ecartCaisse = estRattrapageJourPasse ? 0 : Number((tEspecesReel - tEspecesTheorique).toFixed(2));
-        const justificationFinale = estRattrapageJourPasse
-            ? (justification_ecart || 'Rattrapage de clôture antérieure (Régularisation reportée au comptage matinal)')
-            : (justification_ecart || null);
-
-        // 🚨 SI L'ÉCART EST > 2€ ET QU'ON N'A PAS ENCORE DE JUSTIFICATION, ON BLOQUE !
-        if (!estRattrapageJourPasse && Math.abs(ecartCaisse) > 2.00 && (!justification_ecart || justification_ecart.trim() === '')) {
-            await clientDB.query('ROLLBACK');
-            return res.status(400).json({ 
-                erreur: `Un écart de caisse de ${ecartCaisse > 0 ? '+' : ''}${ecartCaisse.toFixed(2)} € a été détecté. Une justification est requise pour la loi NF525.`, 
-                require_justification: true, 
-                ecart: ecartCaisse 
-            });
-        }
-        // --------------------------------------------------------
-
-        const signature = crypto.createHash('sha256')
-            .update(`Z-${id_salon}-${nextZ}-${dateACloturerStr}-${totalJour}-${grandTotalPerpetuel.toFixed(2)}-${hashPrecedent}`)
-            .digest('hex');
-
-        await clientDB.query(
-            `INSERT INTO clotures_caisse (id_salon, total_encaisse, signature_hash, date_cloture, cumul_perpetuel_ttc, hash_precedent, ferme_par, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, est_cloture_automatique, numero_z_salon) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-            [id_salon, totalJour, signature, dateACloturerStr, grandTotalPerpetuel, hashPrecedent, operateurFinalNom, fCaisseMatin, tEspecesTheorique, tEspecesReel, ecartCaisse, justificationFinale, estRattrapageJourPasse, nextZ]
-        );
-
-        await enregistrerJET(id_salon, 'CLOTURE_Z', { numero_z: nextZ, date_cloture: dateACloturerStr, total_jour: totalJour, cumul_perpetuel: grandTotalPerpetuel, ecart_caisse: ecartCaisse, signature }, clientDB);
-
-        // --- PHASE 4 : WEBHOOK / POUSSÉE API TEMPS RÉEL (Ex: Pennylane) ---
-        try {
-            const configRes = await clientDB.query('SELECT pennylane_api_key FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-            const apiKey = configRes.rows[0]?.pennylane_api_key;
-            
-            if (apiKey && apiKey.trim() !== '') {
-                const dateCloture = dateACloturerStr;
-                const ecrituresRes = await clientDB.query(`
-                    SELECT t.numero_ticket_caisse, t.methode_paiement, t.total_ttc, lt.total_ligne_ttc, lt.taux_tva_snapshot, c.type_article 
-                    FROM tickets t JOIN lignes_ticket lt ON t.id_ticket = lt.id_ticket LEFT JOIN catalogue c ON lt.id_article = c.id_article 
-                    WHERE t.id_salon = $1 AND DATE(t.date_creation) = $2 AND t.statut = 'VALIDE'
-                `, [id_salon, dateCloture]);
-
-                if (ecrituresRes.rowCount > 0) {
-                    // Construction du Payload d'Écritures Comptables (Format générique Pennylane / Comptabilité API)
-                    const payloadPennylane = {
-                        journal_code: "VT",
-                        date: dateCloture,
-                        label: `Z de Caisse du ${dateCloture}`,
-                        entries: ecrituresRes.rows.map(row => ({
-                            reference: row.numero_ticket_caisse,
-                            montant_ttc: parseFloat(row.total_ttc),
-                            methode: row.methode_paiement,
-                            lignes: [{ type: row.type_article || 'PRESTATION', ht: Number((row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100)).toFixed(2)), tva: Number((row.total_ligne_ttc - (row.total_ligne_ttc / (1 + (row.taux_tva_snapshot || 20)/100))).toFixed(2)) }]
-                        }))
-                    };
-
-                    // Poussée vers l'API externe en tâche de fond (on n'attend pas la réponse pour ne pas bloquer le frontend)
-                    fetch('https://app.pennylane.com/api/v1/customer_invoices', { // Endpoint générique modulable
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                        body: JSON.stringify(payloadPennylane)
-                    }).then(r => {
-                        if (r.ok) console.log(`[API COMPTA] Z du ${dateCloture} (Salon ${id_salon}) poussé avec succès.`);
-                        else console.error(`[API COMPTA] Erreur API externe :`, r.status);
-                    }).catch(err => console.error(`[API COMPTA] Échec réseau :`, err.message));
-                }
-            }
-        } catch (apiErr) {
-            console.error("Erreur préparation Webhook Compta:", apiErr);
-        }
-        // ------------------------------------------------------------------
-
-        await clientDB.query('COMMIT');
-        res.json({ message: `Caisse clôturée avec succès pour le ${new Date(dateACloturerStr).toLocaleDateString('fr-FR')}.`, signature, cumul_perpetuel_ttc: grandTotalPerpetuel });
-    } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: e.message || "Erreur lors de la clôture." });
-    } finally { clientDB.release(); }
 });
 
 app.get('/api/caisse/cloture/statut', verifierToken, async (req, res) => {
     try {
-        const r = await pool.query('SELECT 1 FROM clotures_caisse WHERE id_salon = $1 AND date_cloture = CURRENT_DATE', [req.user.id_salon]);
-        const auto = await pool.query("SELECT TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_auto FROM clotures_caisse WHERE id_salon = $1 AND est_cloture_automatique = TRUE ORDER BY id_cloture DESC LIMIT 1", [req.user.id_salon]);
-        res.json({ 
-            cloture_faite: r.rowCount > 0,
-            derniere_cloture_auto: auto.rowCount > 0 ? auto.rows[0].date_auto : null
-        });
-    } catch (e) { res.status(500).json({ erreur: "Erreur vérification du statut de clôture." }); }
+        const statut = await recupererStatutCloture({ pool }, req.user.id_salon);
+        res.json(statut);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur vérification du statut de clôture." });
+    }
 });
 
 app.get('/api/caisse/verification-matinale', verifierToken, async (req, res) => {
     try {
-        // On cherche si la TOUTE DERNIÈRE clôture Z (globale du salon) était automatique et est toujours en attente
-        const auto = await pool.query(
-            "SELECT id_cloture, TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_cloture_fr, total_especes_theorique FROM clotures_caisse WHERE id_salon = $1 ORDER BY id_cloture DESC LIMIT 1", 
-            [req.user.id_salon]
-        );
-        
-        if (auto.rowCount > 0 && auto.rows[0].total_especes_theorique !== null) {
-            // Si c'est bien la dernière et qu'elle attend d'être régularisée
-            const derniereEstAuto = await pool.query(
-                "SELECT 1 FROM clotures_caisse WHERE id_cloture = $1 AND est_cloture_automatique = TRUE", 
-                [auto.rows[0].id_cloture]
-            );
-            
-            if (derniereEstAuto.rowCount > 0) {
-                return res.json({ necessite_regularisation: true, cloture: auto.rows[0] });
-            }
-        }
-        res.json({ necessite_regularisation: false });
-    } catch (e) { res.status(500).json({ erreur: "Erreur vérification matinale." }); }
+        const verif = await recupererVerificationMatinale({ pool }, req.user.id_salon);
+        res.json(verif);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur vérification matinale." });
+    }
 });
 
 app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "La régularisation de caisse est réservée au gérant ou au poste Salon." });
-    const { id_cloture, montant_reel, id_employe, nom_operateur, code_pin } = req.body;
-    let operateurRegu;
     try {
-        operateurRegu = await verifierPinActionSensibleSalon(req, {
-            id_employe: id_employe === 'gerant' ? 'gerant' : id_employe,
-            nom_operateur,
-            code_pin,
-            action_label: 'Régularisation matinale de caisse'
-        });
-    } catch (pinErr) {
-        return res.status(400).json({
-            erreur: pinErr.message,
-            require_pin: true,
-            tentatives: pinErr.tentatives,
-            locked_until: pinErr.locked_until,
-            locked_permanent: pinErr.locked_permanent
+        const result = await regulariserCaisse(
+            { pool, verifierPinActionSensibleSalon, enregistrerMouvementCaisseScelle, enregistrerJET },
+            { user: req.user, req, body: req.body }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({
+            erreur: e.message || "Erreur de régularisation.",
+            require_pin: !!e.require_pin,
+            tentatives: e.tentatives,
+            locked_until: e.locked_until,
+            locked_permanent: e.locked_permanent
         });
     }
-    const clientDB = await pool.connect();
-    try {
-        await clientDB.query('BEGIN');
-        const clotureRes = await clientDB.query("SELECT * FROM clotures_caisse WHERE id_cloture = $1 AND id_salon = $2 AND est_cloture_automatique = TRUE FOR UPDATE", [id_cloture, req.user.id_salon]);
-        if (clotureRes.rowCount === 0) throw new Error("Clôture automatique introuvable ou déjà régularisée.");
-        
-        const cloture = clotureRes.rows[0];
-        const theorique = parseFloat(cloture.total_especes_theorique);
-        const reel = parseFloat(montant_reel);
-        const ecart = Number((reel - theorique).toFixed(2));
-
-        // Si l'équipe constate un écart par rapport au théorique de la fermeture auto, on crée un mouvement scellé
-        if (Math.abs(ecart) > 0) {
-            await enregistrerMouvementCaisseScelle(clientDB, {
-                id_salon: req.user.id_salon,
-                id_employe: operateurRegu.id_employe || (id_employe && id_employe !== 'gerant' ? id_employe : null),
-                type_mouvement: 'REGULARISATION',
-                montant: ecart,
-                motif: `Régularisation ouverture suite fermeture auto (Z#${cloture.numero_z_salon || id_cloture})`,
-                categorie_comptable: 'ECART_CAISSE'
-            });
-        }
-        await enregistrerJET(req.user.id_salon, 'REGULARISATION_CAISSE', { id_cloture, numero_z: cloture.numero_z_salon, operateur: operateurRegu.nom, theorique, reel, ecart }, clientDB);
-
-        // On lève uniquement le flag est_cloture_automatique (autorisé par le trigger NF525) sans toucher aux colonnes scellées
-        await clientDB.query("UPDATE clotures_caisse SET est_cloture_automatique = FALSE WHERE id_cloture = $1", [id_cloture]);
-        
-        await clientDB.query('COMMIT');
-        res.json({ message: "Caisse régularisée avec succès." });
-    } catch (e) {
-        await clientDB.query('ROLLBACK');
-        res.status(500).json({ erreur: e.message || "Erreur de régularisation." });
-    } finally { clientDB.release(); }
 });
 
 app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
@@ -3207,506 +2221,30 @@ app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
 });
 
 // =========================================================================
-// --- AUDIT DE CONFORMITÉ NF525 (Vérification Cryptographique) ---
+// --- AUDIT DE CONFORMITÉ NF525 & DOSSIER TECHNIQUE LÉGAL ---
 // =========================================================================
 app.get('/api/admin/verifier-nf525', verifierToken, async (req, res) => {
     if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
-    const id_salon = req.user.id_salon;
-    
     try {
-        let erreurs = [];
-        let alertes = [];
-        
-        // 1. Audit des TICKETS
-        const tickets = await pool.query('SELECT id_ticket, numero_ticket_caisse, total_ttc, hash_ticket, donnees_scellees FROM tickets WHERE id_salon = $1 ORDER BY id_ticket ASC', [id_salon]);
-        let prevHashTicket = 'GENESIS_BLOCK';
-        
-        for (let t of tickets.rows) {
-            if (!t.hash_ticket) {
-                alertes.push(`Ticket #${t.id_ticket} non scellé (possible ticket hors-ligne en attente).`);
-                continue;
-            }
-            let hashValide = false;
-            if (t.donnees_scellees) {
-                const parts = t.donnees_scellees.split('|');
-                const prevInPayload = parts[parts.length - 1];
-                const idInPayload = parts[0];
-                const numInPayload = parts[1];
-                const ttcInPayload = parts[5];
-                const computedEnrichi = crypto.createHash('sha256').update(t.donnees_scellees).digest('hex');
-                if (
-                    prevInPayload === prevHashTicket &&
-                    computedEnrichi === t.hash_ticket &&
-                    String(t.id_ticket) === idInPayload &&
-                    String(t.numero_ticket_caisse) === numInPayload &&
-                    Number(t.total_ttc).toFixed(2) === ttcInPayload
-                ) {
-                    hashValide = true;
-                }
-            } else {
-                const computedFormatted = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${Number(t.total_ttc).toFixed(2)}-${prevHashTicket}`).digest('hex');
-                const computedLegacy = crypto.createHash('sha256').update(`${t.id_ticket}-${t.numero_ticket_caisse}-${parseFloat(t.total_ttc)}-${prevHashTicket}`).digest('hex');
-                if (computedFormatted === t.hash_ticket || computedLegacy === t.hash_ticket) {
-                    hashValide = true;
-                }
-            }
-            if (!hashValide) {
-                erreurs.push(`Rupture cryptographique sur le ticket #${t.id_ticket} (${t.numero_ticket_caisse}).`);
-                break;
-            }
-            prevHashTicket = t.hash_ticket;
-        }
-
-        // 2. Audit des CLÔTURES (Z) et continuité de numero_z_salon + cumul perpétuel
-        const clotures = await pool.query("SELECT id_cloture, numero_z_salon, total_encaisse, cumul_perpetuel_ttc, signature_hash, hash_precedent, date_cloture, TO_CHAR(date_cloture, 'YYYY-MM-DD') as date_cloture_ymd FROM clotures_caisse WHERE id_salon = $1 ORDER BY numero_z_salon ASC NULLS FIRST, id_cloture ASC", [id_salon]);
-        let prevHashZ = 'GENESIS_Z';
-        let expectedNumZ = 1;
-        let prevCumulZ = 0;
-        for (let c of clotures.rows) {
-            const dCloture = new Date(c.date_cloture);
-            const dateClotureYMD = c.date_cloture_ymd;
-            if (c.hash_precedent !== prevHashZ) {
-                erreurs.push(`Rupture de chaînage sur la clôture Z du ${dCloture.toLocaleDateString('fr-FR')}.`);
-                break;
-            }
-            if (c.numero_z_salon && parseInt(c.numero_z_salon) !== expectedNumZ) {
-                erreurs.push(`Rupture de séquence sur la numérotation Z : attendu Z#${expectedNumZ}, trouvé Z#${c.numero_z_salon}.`);
-                break;
-            }
-            const cumulAttendu = Number((prevCumulZ + parseFloat(c.total_encaisse || 0)).toFixed(2));
-            const cumulStocke = Number(parseFloat(c.cumul_perpetuel_ttc || 0).toFixed(2));
-            if (Math.abs(cumulStocke - cumulAttendu) > 0.02) {
-                erreurs.push(`Altération du cumul perpétuel sur Z#${c.numero_z_salon || c.id_cloture} (Attendu: ${cumulAttendu.toFixed(2)}€, Stocké: ${cumulStocke.toFixed(2)}€).`);
-                break;
-            }
-            const expectedHashZ = crypto.createHash('sha256')
-                .update(`Z-${id_salon}-${c.numero_z_salon || expectedNumZ}-${dateClotureYMD}-${Number(c.total_encaisse || 0).toFixed(2)}-${cumulStocke.toFixed(2)}-${prevHashZ}`)
-                .digest('hex');
-            if (c.signature_hash && c.signature_hash !== expectedHashZ) {
-                // Tolérance legacy si le Z a été généré avant le correctif déterministe, signalé en alerte
-                alertes.push(`Z#${c.numero_z_salon || expectedNumZ} (${dateClotureYMD}) signé avec l'ancien format d'horodatage dynamique.`);
-            }
-            prevCumulZ = cumulStocke;
-            expectedNumZ++;
-            prevHashZ = c.signature_hash;
-        }
-
-        // 2 bis. Audit des MOUVEMENTS DE CAISSE scellés
-        const mouvements = await pool.query('SELECT id_mouvement, type_mouvement, montant, motif, hash_precedent, hash_mouvement FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL ORDER BY id_mouvement ASC', [id_salon]);
-        let prevHashMvt = 'GENESIS_MVT';
-        for (let m of mouvements.rows) {
-            const expectedMvtHash = crypto.createHash('sha256')
-                .update(`MVT-${id_salon}-${m.id_mouvement}-${m.type_mouvement}-${Number(m.montant).toFixed(2)}-${String(m.motif || '').trim()}-${prevHashMvt}`)
-                .digest('hex');
-            if (m.hash_precedent !== prevHashMvt || m.hash_mouvement !== expectedMvtHash) {
-                erreurs.push(`Rupture de chaînage sur le mouvement de caisse #${m.id_mouvement}.`);
-                break;
-            }
-            prevHashMvt = m.hash_mouvement;
-        }
-
-        // 3. Audit du Journal des Événements Techniques (JET)
-        const jetLogs = await pool.query('SELECT id_jet, hash_jet, hash_precedent, action FROM jet_logs WHERE id_salon = $1 ORDER BY id_jet ASC', [id_salon]);
-        let prevHashJet = 'GENESIS_JET';
-        for (let j of jetLogs.rows) {
-            if (j.hash_precedent !== prevHashJet) {
-                erreurs.push(`Rupture de chaînage sur le Journal Technique (Action #${j.id_jet} - ${j.action}).`);
-                break;
-            }
-            prevHashJet = j.hash_jet;
-        }
-
-        // Traçabilité de l'audit lui-même
-        await enregistrerJET(id_salon, 'AUDIT_NF525_EXECUTE', { tickets: tickets.rowCount, clotures: clotures.rowCount, jet: jetLogs.rowCount, conforme: erreurs.length === 0 });
-
-        res.json({ 
-            conforme: erreurs.length === 0, 
-            erreurs,
-            alertes,
-            total_tickets_verifies: tickets.rowCount,
-            total_z_verifies: clotures.rowCount,
-            total_jet_verifies: jetLogs.rowCount
-        });
+        const rapport = await verifierConformiteNF525({ pool, crypto, enregistrerJET }, req.user.id_salon);
+        res.json(rapport);
     } catch (e) {
-        console.error("Erreur Audit:", e);
-        res.status(500).json({ erreur: "Erreur lors de l'audit NF525." });
+        console.error("Erreur vérification NF525 :", e);
+        res.status(500).json({ erreur: "Erreur lors de la vérification de conformité." });
     }
 });
 
-// =========================================================================
-// --- EXPORT PDF : DOSSIER TECHNIQUE NF525 & ATTESTATION INDIVIDUELLE ---
-// =========================================================================
 app.get('/api/admin/dossier-technique-nf525/pdf', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant' && req.user.role !== 'salon') {
-        return res.status(403).json({ erreur: "Accès réservé au gérant ou au poste de caisse lors d'un contrôle." });
-    }
-    const id_salon = req.user.id_salon;
-
     try {
-        const configRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        const salon = configRes.rows[0] || {};
-
-        const gerantRes = await pool.query("SELECT nom FROM employes WHERE id_salon = $1 AND est_gerant = TRUE LIMIT 1", [id_salon]);
-        const nomGerantSalon = gerantRes.rowCount > 0 ? gerantRes.rows[0].nom : 'Le Représentant Légal';
-
-        const statsFiscalesRes = await pool.query(`
-            SELECT 
-                (SELECT COUNT(*) FROM tickets WHERE id_salon = $1 AND hash_ticket IS NOT NULL) as nb_tickets_scelles,
-                (SELECT COUNT(*) FROM clotures_caisse WHERE id_salon = $1) as nb_z_scelles,
-                (SELECT COUNT(*) FROM mouvements_caisse WHERE id_salon = $1 AND hash_mouvement IS NOT NULL) as nb_mvt_scelles,
-                (SELECT COUNT(*) FROM jet_logs WHERE id_salon = $1) as nb_jet_scelles
-        `, [id_salon]);
-        const statsFiscales = statsFiscalesRes.rows[0] || {};
-
-        const dernierZRes = await pool.query(`
-            SELECT numero_z_salon, TO_CHAR(date_cloture, 'DD/MM/YYYY') as date_z, cumul_perpetuel_ttc, signature_hash
-            FROM clotures_caisse WHERE id_salon = $1
-            ORDER BY numero_z_salon DESC NULLS LAST, date_cloture DESC, id_cloture DESC LIMIT 1
-        `, [id_salon]);
-        const dernierZ = dernierZRes.rowCount > 0 ? dernierZRes.rows[0] : null;
-
-        // Variables Éditeur (surchageables via Render .env dès réception du Kbis définitif)
-        const EDITEUR = {
-            nom: process.env.EDITEUR_NOM || 'STACK',
-            forme: process.env.EDITEUR_FORME_JURIDIQUE || '[Forme juridique & Capital social à venir]',
-            siret: process.env.EDITEUR_SIRET || '[SIRET / SIREN en cours d\'immatriculation]',
-            rcs: process.env.EDITEUR_RCS || '[RCS à venir]',
-            adresse: process.env.EDITEUR_ADRESSE || '[Adresse du siège social à venir]',
-            representant: process.env.EDITEUR_REPRESENTANT || 'Valentin TARDY',
-            qualite: process.env.EDITEUR_QUALITE || 'Président / Gérant',
-            logiciel: 'STACK',
-            version: 'v1.0.0',
-            date_version: 'Octobre 2026'
-        };
-
-        await enregistrerJET(id_salon, 'EDITION_DOSSIER_TECHNIQUE_NF525', { version: EDITEUR.version, demande_par: req.user.role });
-
-        const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Dossier_Technique_NF525_Attestation_STACK_${id_salon}.pdf"`);
-        doc.pipe(res);
-
-        const MAIN_COLOR = '#111827';
-        const SEC_COLOR = '#4b5563';
-        const ACCENT_COLOR = '#166534';
-        const BORDER_COLOR = '#d1d5db';
-        const BG_LIGHT = '#f9fafb';
-        let currentY = 40;
-
-        const drawSectionHeader = (title) => {
-            if (currentY > 710) { doc.addPage(); currentY = 40; }
-            currentY += 8;
-            doc.rect(40, currentY, 515, 22).fill('#111827');
-            doc.font('Helvetica-Bold').fontSize(10).fillColor('#ffffff').text(title, 50, currentY + 6, { width: 495 });
-            currentY += 30;
-        };
-
-        const drawSubTitle = (subtitle) => {
-            if (currentY > 735) { doc.addPage(); currentY = 40; }
-            doc.font('Helvetica-Bold').fontSize(9.5).fillColor(ACCENT_COLOR).text(subtitle, 40, currentY);
-            currentY += 14;
-        };
-
-        const drawParagraph = (text, options = {}) => {
-            doc.font(options.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(options.size || 8.5).fillColor(options.color || SEC_COLOR);
-            const h = doc.heightOfString(text, { width: 515, lineGap: 2 });
-            if (currentY + h > 775) { doc.addPage(); currentY = 40; }
-            doc.text(text, 40, currentY, { width: 515, lineGap: 2, align: options.align || 'justify' });
-            currentY += h + 6;
-        };
-
-        const drawRow = (cols, isHeader = false, isBold = false) => {
-            const activeCols = cols.filter(c => c.w > 0);
-            const defaultFont = isHeader || isBold ? 'Helvetica-Bold' : 'Helvetica';
-            const defaultSize = isHeader ? 8 : 8.5;
-
-            let maxH = 0;
-            activeCols.forEach(col => {
-                doc.font(col.font || defaultFont).fontSize(col.size || defaultSize);
-                const h = doc.heightOfString(col.text != null ? String(col.text) : '', { width: col.w });
-                if (h > maxH) maxH = h;
-            });
-
-            if (currentY + maxH > 775) { doc.addPage(); currentY = 40; }
-
-            let xPos = 40;
-            activeCols.forEach(col => {
-                doc.font(col.font || defaultFont).fontSize(col.size || defaultSize).fillColor(col.color || (isHeader ? SEC_COLOR : MAIN_COLOR));
-                doc.text(col.text != null ? String(col.text) : '', xPos, currentY, { width: col.w, align: col.align || 'left' });
-                xPos += col.w + 10;
-            });
-
-            currentY += Math.max(maxH, 10) + 4;
-            doc.moveTo(40, currentY).lineTo(555, currentY).lineWidth(isHeader ? 1 : 0.5).strokeColor(isHeader ? MAIN_COLOR : BORDER_COLOR).stroke();
-            currentY += 5;
-        };
-
-        // =========================================================================
-        // PAGE 1 : EN-TÊTE OFFICIEL, IDENTIFICATION &ARCHITECTURE DE SÉCURITÉ
-        // =========================================================================
-        doc.rect(40, currentY, 515, 68).fillAndStroke('#f0fdf4', '#16a34a');
-        doc.font('Helvetica-Bold').fontSize(14).fillColor(MAIN_COLOR).text('DOSSIER TECHNIQUE DESCRIPTIF & ATTESTATION NF525', 52, currentY + 10);
-        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(ACCENT_COLOR).text('Article 286, I-3° bis du Code Général des Impôts — BOI-TVA-DECLA-30-10-30 — Article L. 80 O du LPF', 52, currentY + 30);
-        doc.font('Helvetica').fontSize(8.5).fillColor(SEC_COLOR).text(
-            `Document officiel généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} pour présentation immédiate à l'administration fiscale.`,
-            52, currentY + 46
+        await genererDossierTechniqueNF525PDF(
+            { pool, PDFDocument, enregistrerJET },
+            { id_salon: req.user.id_salon, role: req.user.role, res }
         );
-        currentY += 80;
-
-        // 1. IDENTIFICATION DE L'ÉDITEUR ET DU LOGICIEL
-        drawSectionHeader("1. IDENTIFICATION DE L'ÉDITEUR, DU LOGICIEL ET DE L'ÉTABLISSEMENT");
-        drawRow([
-            { text: 'Paramètre d\'identification', w: 195 },
-            { text: 'Valeur déclarée et certifiée', w: 310 }
-        ], true);
-        drawRow([{ text: 'Raison sociale de l\'Éditeur', w: 195, isBold: true }, { text: `${EDITEUR.nom} — ${EDITEUR.forme}`, w: 310 }]);
-        drawRow([{ text: 'Immatriculation Éditeur (SIRET / RCS)', w: 195 }, { text: `SIRET : ${EDITEUR.siret} | RCS : ${EDITEUR.rcs}`, w: 310 }]);
-        drawRow([{ text: 'Siège social de l\'Éditeur', w: 195 }, { text: EDITEUR.adresse, w: 310 }]);
-        drawRow([{ text: 'Représentant légal signataire', w: 195 }, { text: `${EDITEUR.representant}, agissant en qualité de ${EDITEUR.qualite}`, w: 310 }]);
-        drawRow([{ text: 'Nom et Version du logiciel de caisse', w: 195 }, { text: `${EDITEUR.logiciel} — Version ${EDITEUR.version} (Mise en production : ${EDITEUR.date_version})`, w: 310 }], false, true);
-        drawRow([{ text: 'Architecture et Technologie', w: 195 }, { text: 'Application Cloud SaaS Multi-Tenant — Node.js / PostgreSQL (ACID) / Cryptographie SHA-256', w: 310 }]);
-        drawRow([{ text: 'Absence de mode école / démo / devis', w: 195 }, { text: 'Certifié : Le logiciel ne comporte aucun mode formation, école ou brouillon d\'encaissement.', w: 310, color: ACCENT_COLOR }]);
-        drawRow([{ text: 'Établissement utilisateur (Assujetti)', w: 195 }, { text: `${salon.nom_salon || 'Salon'} ${salon.forme_juridique ? '(' + salon.forme_juridique + ')' : ''} — SIRET : ${salon.siret || 'Non renseigné'}`, w: 310 }]);
-        drawRow([{ text: 'Adresse de l\'établissement utilisateur', w: 195 }, { text: `${salon.adresse_salon || 'Non renseignée'} (ID Interne Salon : #${id_salon})`, w: 310 }]);
-
-        // 2. RESPECT DES 4 CONDITIONS LÉGALES (BOI-TVA-DECLA-30-10-30)
-        drawSectionHeader("2. ARCHITECTURE TECHNIQUE : RESPECT DES 4 CONDITIONS LÉGALES");
-
-        drawSubTitle("2.1. Condition d'Inaltérabilité (Triggers PostgreSQL & Interdiction des suppressions)");
-        drawParagraph(
-            "Les données d'origine relatives aux encaissements, lignes de vente, mouvements de caisse, clôtures journalières (Z), clôtures mensuelles et événements techniques (JET) sont enregistrées dans une base PostgreSQL sécurisée. " +
-            "Au niveau du moteur de base de données, le trigger PL/pgSQL strict « nf525_prevent_alteration() » est attaché en BEFORE DELETE OR UPDATE sur les tables « tickets », « lignes_ticket », « clotures_caisse », « mouvements_caisse », « jet_logs » et « liasses_mensuelles_validees ». " +
-            "Toute requête SQL visant à supprimer (DELETE) une ligne ou à modifier (UPDATE) un montant, un taux de TVA, une date, un mode de règlement ou un hash cryptographique déclenche une exception bloquante immédiate, sans aucune porte dérobée (y compris pour le Super-Administrateur)."
-        );
-        drawParagraph(
-            "Procédure de correction et d'annulation : Lorsqu'un ticket doit être annulé (totalement ou partiellement), le ticket initial reste strictement intact en base. Le système exige un motif obligatoire et génère un nouveau ticket d'avoir compensatoire (« type_ticket = ANNULATION », numéroté séquentiellement « TKT-AN-YYYYMM-XXXXXX ») comportant des montants algébriques négatifs, rattaché à la pièce d'origine via la clé « id_ticket_origine » et scellé dans la chaîne SHA-256.",
-            { bold: false }
-        );
-
-        drawSubTitle("2.2. Condition de Sécurisation (Chaînage Cryptographique SHA-256 & Verrous ACID)");
-        drawParagraph(
-            "Chaque opération fiscale fait l'objet d'un scellement numérique immédiat via l'algorithme standard SHA-256 (empreinte de 64 caractères hexadécimaux) intégrant l'empreinte de l'opération précédente du même établissement (Chaînage de type Blockchain locale par salon). " +
-            "La concurrence d'accès est protégée par des transactions SQL strictes (BEGIN / COMMIT) couplées à des verrous exclusifs (SELECT ... FOR UPDATE et pg_advisory_xact_lock), garantissant une séquentialité continue sans trou ni doublon."
-        );
-
-        // Tableau des formules de hachage SHA-256
-        drawRow([
-            { text: 'Chaîne Fiscale', w: 95 },
-            { text: 'Bloc Genesis', w: 75 },
-            { text: 'Structure exacte de la chaîne concaténée soumise au condensat SHA-256', w: 325 }
-        ], true);
-        drawRow([
-            { text: 'Tickets & Avoirs', w: 95, isBold: true },
-            { text: 'GENESIS_BLOCK', w: 75, font: 'Courier', size: 7.5 },
-            { text: '{id_ticket}|{numero_ticket}|{date_ISO}|{type_ticket}|{methode_paiement}|{total_ttc}|{total_tva}|{hash_precedent}', w: 325, font: 'Courier', size: 7.5 }
-        ]);
-        drawRow([
-            { text: 'Clôtures Z', w: 95, isBold: true },
-            { text: 'GENESIS_Z', w: 75, font: 'Courier', size: 7.5 },
-            { text: 'Z-{id_salon}-{numero_z_salon}-{date_cloture_YYYY-MM-DD}-{total_encaisse}-{cumul_perpetuel_ttc}-{hash_precedent}', w: 325, font: 'Courier', size: 7.5 }
-        ]);
-        drawRow([
-            { text: 'Mouvements Esp.', w: 95, isBold: true },
-            { text: 'GENESIS_MVT', w: 75, font: 'Courier', size: 7.5 },
-            { text: 'MVT-{id_salon}-{id_mouvement}-{type_mouvement}-{montant}-{motif}-{hash_precedent}', w: 325, font: 'Courier', size: 7.5 }
-        ]);
-        drawRow([
-            { text: 'Journal JET', w: 95, isBold: true },
-            { text: 'GENESIS_JET', w: 75, font: 'Courier', size: 7.5 },
-            { text: '{id_salon}-{action}-{details_json}-{date_ISO}-{hash_precedent}', w: 325, font: 'Courier', size: 7.5 }
-        ]);
-        drawRow([
-            { text: 'Liasses Mensuelles', w: 95, isBold: true },
-            { text: 'GENESIS_LIASSE', w: 75, font: 'Courier', size: 7.5 },
-            { text: 'LIASSE-{id_salon}-{mois_annee}-{ht}-{tva}-{ttc}-{cumul_perpetuel}-{signataire}-{date_ISO}-{hash_precedent}', w: 325, font: 'Courier', size: 7.5 }
-        ]);
-
-        // =========================================================================
-        // PAGE 2 : CLÔTURES Z, CONSERVATION, ARCHIVAGE & SCHÉMA DES TABLES
-        // =========================================================================
-        doc.addPage();
-        currentY = 40;
-
-        drawSubTitle("2.3. Règle de Calcul du Cumul Perpétuel (Grand Total) et Continuité des Clôtures Z");
-        drawParagraph(
-            "Conformément aux exigences de la norme NF525, chaque établissement dispose d'une séquence de clôture journalière propre et continue (« numero_z_salon » de 1 à N). " +
-            "Le Grand Total Perpétuel TTC (« cumul_perpetuel_ttc ») n'est jamais calculé par une somme globale a posteriori, mais exclusivement de manière incrémentale lors du scellement de chaque Z : " +
-            "Nouveau Cumul Perpétuel TTC = Ancien Cumul Perpétuel TTC (issu du dernier Z scellé verrouillé en FOR UPDATE) + Chiffre d'Affaires TTC de la journée clôturée (somme algébrique des tickets de vente et des avoirs d'annulation du jour). " +
-            "Il est strictement impossible d'enregistrer un nouvel encaissement ou un mouvement de caisse sur une journée dont le Z a été scellé (verrou HTTP 423)."
-        );
-
-        drawSubTitle("2.4. Condition de Conservation et Infrastructure d'Hébergement (6 ans LPF / 10 ans Compta)");
-        drawParagraph(
-            "• Hébergement souverain UE : Le serveur applicatif Node.js et la base de données PostgreSQL sont hébergés par Render Cloud dans la région Francfort (Allemagne — Union Européenne). Les pièces justificatives et documents PDF sont stockés de manière redondée sur Cloudflare R2.\n" +
-            "• Politique de sauvegarde (Backups) : La base PostgreSQL fait l'objet de sauvegardes automatiques quotidiennes (Snapshots + Point-in-Time Recovery) garantissant l'absence de perte de données.\n" +
-            "• Conciliation RGPD et Obligation Fiscale (Art. L. 102 B du LPF) : En cas de suppression d'un client, d'un collaborateur ou de résiliation complète d'un salon, aucune ligne des tables fiscales (« tickets », « lignes_ticket », « clotures_caisse », « mouvements_caisse », « jet_logs », « liasses_mensuelles_validees ») n'est supprimée pendant le délai légal de 6 ans (10 ans pour les pièces comptables). Les fiches personnes physiques liées sont uniquement anonymisées."
-        );
-
-        drawSubTitle("2.5. Condition d'Archivage, Export FEC et Vérification par l'Administration Fiscale");
-        drawParagraph(
-            "En cas de contrôle fiscal (article L. 80 O ou L. 47 A du LPF), l'interface met à disposition immédiate trois outils d'audit :\n" +
-            "1. Export de l'Archive Fiscale Scellée (GET /api/export-archive-fiscale) : Génère un fichier CSV UTF-8 contenant tous les tickets, lignes détaillées, clôtures Z et journaux techniques (JET) sur la période choisie, signé cryptographiquement en fin de fichier par un condensat HMAC-SHA256.\n" +
-            "2. Export du Fichier des Écritures Comptables — FEC (GET /api/export-fec) : Génère le fichier texte normé DGFiP (« SIRENFECYYYYMMDD.txt », encodage UTF-8, séparateur tabulation, 18 colonnes obligatoires Art. A.47 A-1 du LPF, numérotation continue EC-000001 à N, équilibre strict Débit = Crédit).\n" +
-            "3. Audit Cryptographique Automatisé (GET /api/admin/verifier-nf525) : Recalcule en temps réel chaque hash SHA-256 depuis le bloc Genesis pour détecter toute altération ou rupture de séquence."
-        );
-
-        // 3. DICTIONNAIRE DES TABLES FISCALES
-        drawSectionHeader("3. DICTIONNAIRE DES TABLES FISCALES ET DU JOURNAL TECHNIQUE (JET)");
-        drawRow([
-            { text: 'Table SQL', w: 110 },
-            { text: 'Clé & Séquence', w: 85 },
-            { text: 'Colonnes Fiscales Scellées et Rôle Réglementaire', w: 300 }
-        ], true);
-        drawRow([
-            { text: 'tickets', w: 110, font: 'Courier-Bold', size: 8 },
-            { text: 'id_ticket\nnumero_ticket_caisse', w: 85, size: 8 },
-            { text: 'En-tête des ventes et avoirs (TKT-YYYYMM-XXXXXX / TKT-AN-...). Contient date_creation, total_ttc, methode_paiement, type_ticket, id_ticket_origine, motif_annulation, donnees_scellees, hash_ticket.', w: 300, size: 8 }
-        ]);
-        drawRow([
-            { text: 'lignes_ticket', w: 110, font: 'Courier-Bold', size: 8 },
-            { text: 'id_ligne\n(FK id_ticket)', w: 85, size: 8 },
-            { text: 'Détail immuable des articles vendus avec snapshot figé au moment de la vente : nom_article_snapshot, quantite, prix_unitaire_ttc, total_ligne_ttc, taux_tva_snapshot.', w: 300, size: 8 }
-        ]);
-        drawRow([
-            { text: 'clotures_caisse', w: 110, font: 'Courier-Bold', size: 8 },
-            { text: 'id_cloture\nnumero_z_salon', w: 85, size: 8 },
-            { text: 'Clôtures journalières Z. Contient date_cloture, total_encaisse, cumul_perpetuel_ttc, fond_caisse_matin, total_especes_theorique, total_especes_reel, ecart_caisse, justification_ecart, hash_precedent, signature_hash.', w: 300, size: 8 }
-        ]);
-        drawRow([
-            { text: 'mouvements_caisse', w: 110, font: 'Courier-Bold', size: 8 },
-            { text: 'id_mouvement', w: 85, size: 8 },
-            { text: 'Traçabilité des flux d\'espèces hors ventes (ENTREE, SORTIE, REGULARISATION), categorie_comptable, montant, motif, date_creation, hash_precedent, hash_mouvement.', w: 300, size: 8 }
-        ]);
-        drawRow([
-            { text: 'jet_logs', w: 110, font: 'Courier-Bold', size: 8 },
-            { text: 'id_jet', w: 85, size: 8 },
-            { text: 'Journal des Événements Techniques (JET) chaîné : CONNEXION, ENCAISSEMENT_TICKET, ANNULATION_TICKET, MOUVEMENT_CAISSE, CLOTURE_Z, IMPRESSION_DUPLICATA_Z, CLOTURE_MENSUELLE, AUDIT_NF525, EXPORT_FEC.', w: 300, size: 8 }
-        ]);
-        drawRow([
-            { text: 'liasses_mensuelles\n_validees', w: 110, font: 'Courier-Bold', size: 8 },
-            { text: 'id_validation\n(id_salon, mois)', w: 85, size: 8 },
-            { text: 'Scellement mensuel signé par code PIN du gérant : total_ht, total_tva, total_ttc, cumul_perpetuel_ttc, valide_par, date_validation, hash_precedent, signature_hash.', w: 300, size: 8 }
-        ]);
-
-        // 4. ÉTAT CRYPTOGRAPHIQUE TEMPS RÉEL DU SALON
-        drawSectionHeader("4. ÉTAT DE SANTÉ CRYPTOGRAPHIQUE EN TEMPS RÉEL DE L'ÉTABLISSEMENT");
-        const splitHash32 = (h) => (h && h.length === 64) ? `${h.substring(0, 32)}\n${h.substring(32, 64)}` : (h || 'GENESIS_Z (Aucune clôture Z effectuée)');
-        drawRow([
-            { text: 'Compteur / Indicateur d\'intégrité NF525 (Salon #' + id_salon + ')', w: 250 },
-            { text: 'Valeur constatée en Base de Données', w: 255, align: 'right' }
-        ], true);
-        drawRow([{ text: 'Tickets de caisse et Avoirs scellés (SHA-256)', w: 250 }, { text: `${statsFiscales.nb_tickets_scelles || 0} pièce(s)`, w: 255, align: 'right' }]);
-        drawRow([{ text: 'Clôtures journalières (Z) scellées', w: 250 }, { text: `${statsFiscales.nb_z_scelles || 0} clôture(s)`, w: 255, align: 'right' }]);
-        drawRow([{ text: 'Mouvements d\'espèces scellés', w: 250 }, { text: `${statsFiscales.nb_mvt_scelles || 0} mouvement(s)`, w: 255, align: 'right' }]);
-        drawRow([{ text: 'Événements inscrits au Journal Technique (JET)', w: 250 }, { text: `${statsFiscales.nb_jet_scelles || 0} événement(s)`, w: 255, align: 'right' }]);
-        drawRow([
-            { text: 'Dernier Z scellé & Grand Total Perpétuel TTC', w: 250, isBold: true },
-            { text: dernierZ ? `Z N° ${String(dernierZ.numero_z_salon).padStart(4, '0')} du ${dernierZ.date_z} — Cumul : ${Number(dernierZ.cumul_perpetuel_ttc || 0).toFixed(2).replace('.', ',')} €` : 'Aucun Z clôturé à ce jour', w: 255, align: 'right', isBold: true }
-        ], false, true);
-        drawRow([
-            { text: 'Dernière empreinte SHA-256 de clôture Z', w: 250 },
-            { text: splitHash32(dernierZ ? dernierZ.signature_hash : null), w: 255, align: 'right', font: 'Courier-Bold', size: 7.5, color: ACCENT_COLOR }
-        ]);
-
-        // =========================================================================
-        // PAGE 3 (OU NOUVELLE PAGE) : ATTESTATION INDIVIDUELLE OFFICIELLE (MODÈLE DGFiP)
-        // =========================================================================
-        doc.addPage();
-        currentY = 40;
-
-        doc.rect(40, currentY, 515, 52).fillAndStroke('#111827', '#111827');
-        doc.font('Helvetica-Bold').fontSize(13).fillColor('#ffffff').text('ATTESTATION INDIVIDUELLE DE CONFORMITÉ', 50, currentY + 10, { align: 'center', width: 495 });
-        doc.font('Helvetica').fontSize(9).fillColor('#e5e7eb').text(
-            'Modèle conforme aux dispositions du 3° bis du I de l\'article 286 du Code Général des Impôts (BOI-LETTRE-000242)',
-            50, currentY + 30, { align: 'center', width: 495 }
-        );
-        currentY += 65;
-
-        // VOLET 1 : ÉDITEUR
-        doc.rect(40, currentY, 515, 235).strokeColor(MAIN_COLOR).lineWidth(1).stroke();
-        doc.rect(40, currentY, 515, 22).fill('#f3f4f6');
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text('VOLET 1 : PARTIE RÉSERVÉE À L\'ÉDITEUR DU LOGICIEL OU SYSTÈME DE CAISSE', 50, currentY + 6);
-        currentY += 30;
-
-        doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR).text(
-            `Je soussigné(e), ${EDITEUR.representant}, agissant en qualité de ${EDITEUR.qualite} de la structure éditrice désignée ci-dessous :`,
-            52, currentY, { width: 490 }
-        );
-        currentY += 20;
-
-        const drawAttestLine = (label, val) => {
-            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(SEC_COLOR).text(label, 52, currentY, { width: 175 });
-            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MAIN_COLOR).text(val, 230, currentY, { width: 310 });
-            currentY += 14;
-        };
-
-        drawAttestLine('• Raison sociale / Nom de l\'éditeur :', `${EDITEUR.nom} (${EDITEUR.forme})`);
-        drawAttestLine('• Numéro SIRET / SIREN :', `${EDITEUR.siret} — RCS : ${EDITEUR.rcs}`);
-        drawAttestLine('• Adresse du siège social :', EDITEUR.adresse);
-        drawAttestLine('• Nom et référence du logiciel :', `${EDITEUR.logiciel}`);
-        drawAttestLine('• Numéro de version (Majeure.Mineure) :', `${EDITEUR.version} (Date de mise en service : ${EDITEUR.date_version})`);
-        currentY += 6;
-
-        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(ACCENT_COLOR).text(
-            `ATTESTE que le logiciel ou système de caisse « ${EDITEUR.logiciel} » (version ${EDITEUR.version}) satisfait aux conditions d'inaltérabilité, de sécurisation, de conservation et d'archivage des données en vue du contrôle de l'administration fiscale, prévues au 3° bis du I de l'article 286 du Code Général des Impôts (Norme NF525).`,
-            52, currentY, { width: 490, lineGap: 2 }
-        );
-        currentY += 42;
-
-        doc.font('Helvetica').fontSize(8.5).fillColor(MAIN_COLOR).text(`Fait le : ${new Date().toLocaleDateString('fr-FR')}`, 52, currentY);
-        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MAIN_COLOR).text(`Signataire : ${EDITEUR.representant} (${EDITEUR.qualite})`, 260, currentY);
-        currentY += 14;
-        doc.font('Helvetica-Oblique').fontSize(7.5).fillColor(SEC_COLOR).text(
-            'Rappel légal : L\'établissement ou l\'utilisation d\'une fausse attestation est passible d\'une amende fiscale de 45 000 € (Art. 1770 duodecies du CGI) et de sanctions pénales de 3 ans d\'emprisonnement (Art. 441-1 du Code pénal).',
-            52, currentY, { width: 490 }
-        );
-        currentY += 35;
-
-        // VOLET 2 : ENTREPRISE ASSUJETTIE (LE SALON)
-        doc.rect(40, currentY, 515, 235).strokeColor(MAIN_COLOR).lineWidth(1).stroke();
-        doc.rect(40, currentY, 515, 22).fill('#f3f4f6');
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(MAIN_COLOR).text('VOLET 2 : PARTIE RÉSERVÉE À L\'ENTREPRISE UTILISATRICE ASSUJETTIE À LA TVA', 50, currentY + 6);
-        currentY += 30;
-
-        doc.font('Helvetica').fontSize(9).fillColor(MAIN_COLOR).text(
-            `Je soussigné(e), ${nomGerantSalon}, représentant légal de l'établissement utilisateur désigné ci-dessous :`,
-            52, currentY, { width: 490 }
-        );
-        currentY += 20;
-
-        drawAttestLine('• Raison sociale / Enseigne du Salon :', `${salon.nom_salon || 'Non renseigné'} ${salon.forme_juridique ? '(' + salon.forme_juridique + ')' : ''}`);
-        drawAttestLine('• Numéro SIRET :', `${salon.siret || 'À compléter dans Paramètres > Identité & Légal'}`);
-        drawAttestLine('• Adresse d\'exploitation :', `${salon.adresse_salon || 'À compléter dans Paramètres > Identité & Légal'}`);
-        drawAttestLine('• Régime de TVA / N° Intracom. :', salon.tva_intra && salon.tva_intra.trim() !== '' ? salon.tva_intra : 'Franchise en base de TVA (Art. 293 B du CGI)');
-        drawAttestLine('• Logiciel utilisé pour l\'encaissement :', `${EDITEUR.logiciel} ${EDITEUR.version} (Identifiant Salon Cloud : #${id_salon})`);
-        currentY += 6;
-
-        doc.font('Helvetica').fontSize(8.5).fillColor(MAIN_COLOR).text(
-            `Déclare utiliser le logiciel de caisse « ${EDITEUR.logiciel} » (${EDITEUR.version}) pour l'enregistrement des règlements de mes clients et reconnais avoir reçu la présente attestation individuelle de conformité délivrée par l'éditeur conformément à l'article 286, I-3° bis du CGI et à l'article L. 80 O du LPF.`,
-            52, currentY, { width: 490, lineGap: 2 }
-        );
-        currentY += 42;
-
-        doc.font('Helvetica').fontSize(8.5).fillColor(MAIN_COLOR).text(`Date de réception : ${new Date().toLocaleDateString('fr-FR')}`, 52, currentY);
-        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MAIN_COLOR).text(`Cachet et Signature de l'exploitant (${nomGerantSalon}) :`, 260, currentY);
-
-        // --- PAGINATION DYNAMIQUE ---
-        const range = doc.bufferedPageRange();
-        for (let i = range.start, end = range.start + range.count, page = 1; i < end; i++, page++) {
-            doc.switchToPage(i);
-            const originalBottomMargin = doc.page.margins.bottom;
-            doc.page.margins.bottom = 0;
-            doc.font('Helvetica').fontSize(8.5).fillColor(SEC_COLOR).text(
-                `STACK ${EDITEUR.version} — Dossier Technique & Attestation NF525 (Salon #${id_salon}) — Page ${page} / ${range.count}`,
-                0, 815,
-                { align: 'center', width: 595 }
-            );
-            doc.page.margins.bottom = originalBottomMargin;
-        }
-        doc.end();
     } catch (e) {
         console.error("Erreur génération PDF Dossier Technique NF525 :", e);
-        res.status(500).json({ erreur: "Erreur lors de la génération du Dossier Technique NF525." });
+        if (!res.headersSent) {
+            res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la génération du Dossier Technique NF525." });
+        }
     }
 });
 
@@ -3961,19 +2499,11 @@ app.post('/api/messages/:id/react', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/caisse/tickets/:id', verifierToken, async (req, res) => {
     try {
-        const lignes = await pool.query("SELECT id_article, quantite, prix_unitaire_ttc, total_ligne_ttc, nom_article_snapshot FROM lignes_ticket WHERE id_ticket = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
-        const lignesDejaAnnulees = await pool.query("SELECT id_article, SUM(ABS(quantite)) as qte_annulee FROM lignes_ticket WHERE id_ticket IN (SELECT id_ticket FROM tickets WHERE id_ticket_origine = $1) GROUP BY id_article", [req.params.id]);
-        
-        let mapAnnule = {};
-        lignesDejaAnnulees.rows.forEach(r => mapAnnule[r.id_article] = parseFloat(r.qte_annulee));
-        
-        const lignesDispos = lignes.rows.map(l => ({
-            ...l,
-            quantite_restante: l.quantite - (mapAnnule[l.id_article] || 0)
-        })).filter(l => l.quantite_restante > 0);
-
-        res.json({ lignes: lignesDispos });
-    } catch(e) { res.status(500).json({ erreur: "Erreur lors de la récupération du ticket." }); }
+        const data = await recupererLignesTicket({ pool }, { id_salon: req.user.id_salon, id_ticket: req.params.id });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur lors de la récupération du ticket." });
+    }
 });
 // =========================================================================
 // --- EXPORT PDF : FACTURE / TICKET CLIENT (CONFORMITÉ B2B & B2C) ---
@@ -4660,6 +3190,7 @@ if (process.env.SENTRY_DSN) {
 // =========================================================================
 initCronJobs({
     pool,
+    enregistrerJET,
     cron,
     crypto,
     dechiffrer,

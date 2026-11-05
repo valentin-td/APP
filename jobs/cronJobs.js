@@ -4,7 +4,7 @@
 let pool, cron, crypto, dechiffrer, ImapFlow, simpleParser, pdfParse, s3Client,
     PutObjectCommand, GetObjectCommand, getSignedUrl, analyserEmailAvecIA,
     envoyerEvenementSSE, envoyerNotificationPush, envoyerSMS, envoyerSMS_Intelligent,
-    normaliserTelephone, signalerErreur, nodemailer;
+    normaliserTelephone, signalerErreur, nodemailer, enregistrerJET;
 
 function initCronJobs(injected) {
     pool = injected.pool;
@@ -26,6 +26,7 @@ function initCronJobs(injected) {
     normaliserTelephone = injected.normaliserTelephone;
     signalerErreur = injected.signalerErreur;
     nodemailer = injected.nodemailer;
+    enregistrerJET = injected.enregistrerJET;
 
     // Planifications automatiques
     cron.schedule("*/10 8-19 * * *", () => { executerRobotComptable(); });

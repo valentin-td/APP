@@ -35,17 +35,18 @@ flowchart TD
 
 ### Détail des impacts et vérifications obligatoires
 
-#### 1. Si tu touches à `server.js` (Encaissement ou Caisse)
-- **Fonctionnalités impactées** : Encaissement physique, calcul de TVA, décrémentation des stocks, génération des primes employés, chaînage cryptographique.
+#### 1. Si tu touches à `services/caisse/caisse.service.js` ou `services/caisse/dossierNf525Pdf.service.js` (Encaissement, Mouvements, Clôture Z ou NF525)
+- **Fonctionnalités impactées** : Encaissement physique, pourboire isolé, annulation/avoir de compensation, calcul de TVA, décrémentation des stocks, génération des primes employés, chaînage cryptographique SHA-256 (tickets, Z, mouvements, JET), audit de conformité et dossier technique légal PDF.
 - **Risques majeurs** :
-  - Rupture de la chaîne de hachage SHA-256 (`signature_precedente`).
-  - Débit bancaire sans création de ticket en base.
-  - Décalage de centimes sur la ventilation de TVA.
+  - Rupture de la chaîne de hachage SHA-256 (`hash_ticket`, `signature_hash`, `hash_mouvement`, `hash_jet`).
+  - Débit bancaire sans création de ticket en base (nécessite l'annulation de l'empreinte bancaire Stripe en cas de rollback SQL).
+  - Décalage de centimes sur la ventilation de TVA ou le cumul perpétuel.
 - **Checklist de vérification** :
-  1. [ ] Lancer `node -c server.js`.
-  2. [ ] Tester un encaissement espèces (calcul du rendu de monnaie).
-  3. [ ] Vérifier que le ticket apparaît dans `tickets` avec une signature valide.
-  4. [ ] Lancer l'audit de conformité : `GET /api/admin/verifier-nf525` (doit retourner `"statut": "CONFORME"`).
+  1. [ ] Lancer `node -c server.js services/caisse/*.js`.
+  2. [ ] Tester un encaissement espèces / carte (calcul du rendu de monnaie ou capture Stripe).
+  3. [ ] Vérifier que le ticket apparaît dans `tickets` avec une signature SHA-256 valide et chaînée au bloc précédent.
+  4. [ ] Lancer l'audit de conformité : `GET /api/admin/verifier-nf525` (doit retourner `"conforme": true, "erreurs": []`).
+  5. [ ] Tester la génération du Dossier Technique NF525 : `GET /api/admin/dossier-technique-nf525/pdf` (génération vectorielle PDF valide sans timeout).
 
 ---
 
