@@ -130,12 +130,25 @@ flowchart TB
 ### 3.1. Couche Frontend (SPA Progressive Web App & Architecture Modulaire)
 - **Framework** : React 19.2.8 avec Vite 8.3.0.
 - **PWA & Offline** : `vite-plugin-pwa`, `sw.js` pour les notifications push web, et `localforage` (IndexedDB) pour le cache hors-ligne du catalogue et du panier caisse (`offline_tickets`).
-- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal, structuré en modules et contextes :
+- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal allégé (réduit de 11 553 à ~6 700 lignes), structuré en modules, onglets découpés, utilitaires et contextes :
   - `frontend/src/utils/auth.js` : décodage JWT/UI-token sécurisé, transformation VAPID Uint8Array et vérification des règles de complexité PIN.
   - `frontend/src/utils/fetchClient.js` : client HTTP intercepteur injectant automatiquement les cookies de session et le jeton Bearer sur toutes les requêtes API.
+  - `frontend/src/utils/text.js` : normalisation de recherche, formatage de noms, dates et portions de produits techniques.
+  - `frontend/src/utils/protocoles.js` : normalisation et validation des étapes de tutoriels/recettes techniques.
+  - `frontend/src/constants/theme.js` : constantes visuelles partagées (`COULEURS_EMPLOYES`).
   - `frontend/src/pages/ReservationPublique.jsx` : borne autonome de réservation en ligne publique anti-Planity avec calcul des créneaux et fidélité instantanée.
   - `frontend/src/components/auth/LoginView.jsx` : écran de connexion unifié (Gérant email/mdp, Employé PIN, Salon PIN, Récupération de mot de passe).
-  - `frontend/src/components/common/ThemeToggle.jsx` : composant de bascule de thème sombre / clair réutilisable.
+  - `frontend/src/components/common/` : composants graphiques mutualisés (`ThemeToggle.jsx`, `Avatar.jsx`, `SvgEmptyState.jsx`).
+  - `frontend/src/components/dashboard/DashboardTab.jsx` : tableaux de bord multi-rôles (Poste Salon, Salarié/Coiffeur, et Gérant avec KPIs exécutifs).
+  - `frontend/src/components/caisse/CaisseTab.jsx` : terminal de caisse Smart POS NF525, catalogue interactif, scanner code-barres caméra, pourboires, fidélité et checklist go-live.
+  - `frontend/src/components/actions/ActionsTab.jsx` : centre d'action opérationnel, gestion des tâches, sauvetage client winback et OCR factures IA.
+  - `frontend/src/components/agenda/AgendaTab.jsx` : planning hebdomadaire interactif, détection de collisions, modales RDV/absences et lecteur pas-à-pas de protocoles.
+  - `frontend/src/components/protocoles/ProtocolesTab.jsx` : Académie technique, éditeur pas-à-pas d'étapes avec proportions de produits, photos et minuteurs.
+  - `frontend/src/components/stock/StocksTab.jsx` : inventaire des produits labo/revente, réassort intelligent avec bons de commande PDF et fusion de doublons.
+  - `frontend/src/components/rh/RHTab.jsx` : pilotage RH, gestion des collaborateurs, fiches de paie, suivi des objectifs d'équipe, congés et arrêts maladie.
+  - `frontend/src/components/admin/AdminTab.jsx` : comptabilité, clôture journalière Z scellée NF525, petite caisse espèces et historiques annuels/mensuels.
+  - `frontend/src/components/chat/MessagerieTab.jsx` : messagerie d'équipe instantanée (Teams-style), mémos vocaux, photos et accusés de lecture ("Vu par").
+  - `frontend/src/components/superadmin/SuperAdminTab.jsx` : God Mode fondateur STACK, supervision du parc de salons, MRR et déclenchement manuel des robots CRON.
   - `frontend/src/context/` : contextes d'état partagé (`AuthContext.jsx`, `SocketContext.jsx`).
   - `Parametres.jsx` : panneau de configuration salon (TPE, SMS, alertes, forfaits, exports comptables).
   - `LiquidTabBar.jsx` : barre de navigation flottante avec retours haptiques.

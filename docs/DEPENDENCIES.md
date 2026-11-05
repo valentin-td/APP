@@ -265,11 +265,24 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
   - En cas de perte de connexion WebSocket, le client bascule en mode dégradé mais doit interroger l'API en polling.
   - Une fuite mémoire sur les listeners WebSocket impacterait tous les utilisateurs connectés.
 
-### 4.3. Le Fichier Géant Frontend `frontend/src/App.jsx`
-- **Rôle** : Contient **230 hooks React** et **11 550 lignes de JSX**.
-- **Risque** :
-  - Un re-render involontaire d'un état global entraîne le re-calcul complet des 11 onglets.
-  - Risque d'erreur `#310` ("Rendered more hooks than previous render") dès qu'un hook conditionnel est introduit.
+### 4.3. Le Frontend Modulaire & Composants Métier (`frontend/src/`)
+- **Orchestrateur racine** : `frontend/src/App.jsx` (réduit de 11 553 lignes à ~6 760 lignes après modularisation des 10 onglets).
+- **Structure modulaire en place** :
+  - `frontend/src/components/dashboard/DashboardTab.jsx` : Dashboard Salon, Salarié & Gérant.
+  - `frontend/src/components/caisse/CaisseTab.jsx` : Smart POS NF525, panier réactif, scanner code-barres.
+  - `frontend/src/components/actions/ActionsTab.jsx` : Centre de tâches d'action, IA OCR factures, sauvetage clients.
+  - `frontend/src/components/agenda/AgendaTab.jsx` : Planning hebdo, modales RDV/absences, tutoriel pas-à-pas de recettes.
+  - `frontend/src/components/protocoles/ProtocolesTab.jsx` : Académie technique, éditeur d'étapes et de proportions.
+  - `frontend/src/components/stock/StocksTab.jsx` : Stocks labo/revente, réassort PDF et fusion de doublons.
+  - `frontend/src/components/rh/RHTab.jsx` : Équipe, KPIs RH, fiches collaborateurs, congés et arrêts maladie.
+  - `frontend/src/components/admin/AdminTab.jsx` : Clôture Z NF525, mouvements d'espèces, historiques CA & liasse.
+  - `frontend/src/components/chat/MessagerieTab.jsx` : Chat interne temps réel d'équipe (Teams-style), mémos vocaux.
+  - `frontend/src/components/superadmin/SuperAdminTab.jsx` : God Mode fondateur, parc de salons, MRR et robots CRON.
+  - `frontend/src/components/common/` : `Avatar.jsx`, `SvgEmptyState.jsx`, `ThemeToggle.jsx`.
+  - `frontend/src/constants/theme.js` & `frontend/src/utils/` : `text.js`, `protocoles.js`, `auth.js`, `fetchClient.js`.
+- **Risques maîtrisés** :
+  - Isolation du rendu JSX par onglet métier.
+  - Prévention de l'erreur React `#310` en garantissant la constance de l'ordre d'appel des hooks au sein de chaque composant.
 
 ---
 

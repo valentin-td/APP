@@ -184,17 +184,19 @@ flowchart TD
 
 ---
 
-#### 13. Si tu touches au Frontend (`frontend/src/App.jsx`, `components/`, `context/`, `utils/`, `pages/`)
-- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente, authentification, temps réel et réservation publique.
+#### 13. Si tu touches au Frontend (`frontend/src/App.jsx`, `components/`, `context/`, `utils/`, `constants/`, `pages/`)
+- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente (`dashboard/`, `caisse/`, `actions/`, `agenda/`, `protocoles/`, `stock/`, `rh/`, `admin/`, `chat/`, `superadmin/`, `Parametres.jsx`), authentification (`components/auth/LoginView.jsx`), temps réel et réservation publique.
 - **Risques majeurs** :
-  - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.
-  - Régression visuelle ou perte de synchronisation des thèmes/styles.
+  - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion si des hooks sont appelés sous conditions.
+  - Régression visuelle ou perte de synchronisation des thèmes/styles CSS.
+  - Rupture des passages de props vers les onglets métier (`CaisseTab`, `AgendaTab`, etc.).
   - Perte de transmission du token API dans le client HTTP intercepteur.
 - **Checklist de vérification** :
   1. [ ] Lancer la compilation de contrôle : `cd frontend && npm run build` (doit compiler avec 0 erreur).
   2. [ ] Vérifier la présence des utilitaires d'authentification dans `frontend/src/utils/auth.js` et de l'intercepteur `frontend/src/utils/fetchClient.js`.
-  3. [ ] Tester impérativement le cycle complet : Déconnecté -> Connexion Gérant -> Navigation entre les onglets -> Déconnexion -> Connexion Employé PIN.
-  4. [ ] Tester l'accès à la borne publique de réservation sur `/reservation/:id_salon`.
+  3. [ ] En cas de modification d'un onglet métier, vérifier que ses props d'état et ses handlers sont synchronisés avec `App.jsx`.
+  4. [ ] Tester impérativement le cycle complet : Déconnecté -> Connexion Gérant -> Navigation entre les 11 onglets -> Déconnexion -> Connexion Employé PIN.
+  5. [ ] Tester l'accès à la borne publique de réservation sur `/reservation/:id_salon`.
 
 ---
 

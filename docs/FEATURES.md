@@ -69,7 +69,7 @@
 ## 2. Caisse Enregistreuse & Encaissement NF525
 
 - **Objectif** : Encaisser les prestations et produits vendus, gérer les paiements mixtes (CB, espèces, chèque), piloter le TPE physique Stripe Terminal, calculer la ventilation de TVA, et sceller chaque ticket avec une signature cryptographique chaînée SHA-256.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Caisse, panier, clavier PIN, sélection client/collaborateur).
+- **Fichiers Frontend** : `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/App.jsx` (Smart POS NF525, panier interactif, modal code-barres caméra, pourboires, sélection client/collaborateur, checklist go-live).
 - **Fichiers Backend** : `services/caisse/caisse.service.js` (`encaisserTicket`, `encaisserPourboireIsole`, `annulerTicketCaisse`, `envoyerTicketCaisse`, `recupererLignesTicket`), `services/pdf/ticketPdf.service.js`, `server.js` (délégation).
 - **Routes API** :
   - `POST /api/caisse/payer`
@@ -99,7 +99,7 @@
 ## 3. Clôture de Caisse Journalière (Z de Caisse) & Clôture Fantôme
 
 - **Objectif** : Clôturer la journée de caisse, calculer les cumuls perpétuels (Grand Total brut, net, TVA par taux), sceller le rapport Z journalier avec hachage SHA-256 et verrouiller la caisse jusqu'au lendemain.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (modale de clôture Z, comptage du tiroir-caisse, écarts espèces).
+- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/App.jsx` (modal de clôture Z, comptage du tiroir-caisse, régularisation matinale et écarts espèces).
 - **Fichiers Backend** : `services/caisse/caisse.service.js` (`cloturerCaisseZ`, `recupererStatutCloture`, `recupererVerificationMatinale`, `regulariserCaisse`, `recupererMouvementsJour`, `creerMouvementCaisse`), `jobs/cronJobs.js` (`executerClotureFantome`), `server.js` (délégation).
 - **Routes API** :
   - `POST /api/caisse/cloture`
@@ -128,7 +128,7 @@
 ## 4. Journal des Événements Techniques (JET) & Audit NF525
 
 - **Objectif** : Enregistrer de façon immuable tous les événements système sensibles (connexions échouées, ouvertures de tiroir, modifications de prix, annulations de tickets, clôtures Z, déblocages PIN) et générer l'attestation légale de conformité fiscale.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (écran de conformité administrative / Super Admin).
+- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/components/superadmin/SuperAdminTab.jsx`, `frontend/src/App.jsx` (écran de conformité administrative / Super Admin).
 - **Fichiers Backend** : `services/caisse/caisse.service.js` (`enregistrerJET`, `verifierConformiteNF525`), `services/caisse/dossierNf525Pdf.service.js` (`genererDossierTechniqueNF525PDF`), `legal.js`, `server.js` (délégation).
 - **Routes API** :
   - `GET /api/admin/verifier-nf525`
@@ -148,7 +148,7 @@
 ## 5. Agenda Métier & Planning des Rendez-Vous
 
 - **Objectif** : Gérer les rendez-vous du salon en interne : vue par collaborateur, glisser-déposer, gestion des durées, notifications de modification, synchro iCal avec Apple Calendar / Google Calendar.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Agenda, modale de prise de RDV).
+- **Fichiers Frontend** : `frontend/src/components/agenda/AgendaTab.jsx`, `frontend/src/App.jsx` (planning hebdomadaire, détection de collisions, modale de prise de RDV, déclaration absence et tutoriel pas-à-pas de recettes).
 - **Fichiers Backend** : `services/agenda/agenda.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/planning`
@@ -196,7 +196,7 @@
 ## 7. Fichier Clients, Historique & Fidélité
 
 - **Objectif** : Centraliser l'historique des visites, les formules techniques (colorations, mélanges), les coordonnées clients, et calculer automatiquement le statut de fidélité.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (recherche client caisse, fiche profil).
+- **Fichiers Frontend** : `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/components/actions/ActionsTab.jsx`, `frontend/src/utils/text.js`, `frontend/src/App.jsx` (recherche client caisse, fiche profil, suggestion intelligente et sauvetage winback).
 - **Fichiers Backend** : `services/clients/clients.service.js` (`recupererClients`, `creerClient`, `supprimerClient`, `recupererHistoriqueClient`, `mettreAJourNotesClient`), `server.js` (délégation).
 - **Routes API** :
   - `GET /api/clients`
@@ -219,7 +219,7 @@
 ## 8. Gestion des Collaborateurs & Sécurité PIN
 
 - **Objectif** : Gérer l'équipe du salon, attribuer les taux de commission (prestations et revente produits), sécuriser l'accès par code PIN haché, et garantir l'anonymisation RGPD sans détruire les tickets NF525.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Équipe, modal ajout/modification collaborateur).
+- **Fichiers Frontend** : `frontend/src/components/rh/RHTab.jsx`, `frontend/src/constants/theme.js`, `frontend/src/components/common/Avatar.jsx`, `frontend/src/App.jsx` (tableau de bord RH, modal ajout/modification collaborateur, attribution de couleurs).
 - **Fichiers Backend** : `server.js`, `services/rh/employes.service.js`.
 - **Routes API** :
   - `GET /api/employes`
@@ -245,7 +245,7 @@
 ## 9. Pointeuse Digitale & Décompte des Heures
 
 - **Objectif** : Permettre aux salariés de pointer leur arrivée, pauses et départ en salon via code PIN, calculer les heures effectives en direct et gérer les ajustements manuels d'heures du gérant.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (modal pointeuse, chronomètre en direct sur l'accueil).
+- **Fichiers Frontend** : `frontend/src/components/rh/RHTab.jsx`, `frontend/src/components/dashboard/DashboardTab.jsx`, `frontend/src/App.jsx` (modal pointeuse, badge live clocking, chronomètre en direct sur l'accueil).
 - **Fichiers Backend** : `server.js`, `services/rh/rh.service.js`.
 - **Routes API** :
   - `GET /api/rh/statut-pointages`
@@ -266,7 +266,7 @@
 ## 10. Rémunération, Commissions & Primes Collaborateurs
 
 - **Objectif** : Calculer en temps réel les primes et commissions acquises par chaque employé sur les prestations coiffure et la vente de produits, avec historique glissant sur 6 mois.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet RH, fiches collaborateurs).
+- **Fichiers Frontend** : `frontend/src/components/rh/RHTab.jsx`, `frontend/src/components/dashboard/DashboardTab.jsx`, `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/App.jsx` (onglet RH, historique des ventes employé, fiches collaborateurs).
 - **Fichiers Backend** : `server.js`, `services/rh/rh.service.js` (`calculerTableauBordRH`).
 - **Routes API** :
   - `GET /api/rh`
@@ -284,7 +284,7 @@
 ## 11. Absences, Congés & Justificatifs Médicaux
 
 - **Objectif** : Dépôt de congés payés ou d'arrêts maladie par les salariés, détection automatique des rendez-vous en conflit dans l'agenda, stockage chiffré des arrêts maladie sur Cloudflare R2, et validation/refus par le gérant.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (modal dépôt congé/arrêt, aperçu justificatif).
+- **Fichiers Frontend** : `frontend/src/components/rh/RHTab.jsx`, `frontend/src/components/agenda/AgendaTab.jsx`, `frontend/src/App.jsx` (modal dépôt congé/arrêt, arbitrage gérant, aperçu justificatif R2).
 - **Fichiers Backend** : `server.js`, `services/rh/rh.service.js`.
 - **Routes API** :
   - `GET /api/rh/absences`
@@ -306,7 +306,7 @@
 ## 12. Gamification, Dashboards d'Activité & Objectifs d'Équipe
 
 - **Objectif** : Motiver les équipes via des challenges mensuels (CA généré, taux de revente de produits, panier moyen, nombre de nouveaux clients, cagnotte globale de primes) et afficher les tableaux de bord analytiques salon, collaborateur et gérant.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (barres de progression, récompenses promises, onglet Dashboard).
+- **Fichiers Frontend** : `frontend/src/components/dashboard/DashboardTab.jsx`, `frontend/src/components/rh/RHTab.jsx`, `frontend/src/App.jsx` (barres de progression d'équipe, récompenses promises, KPIs gamifiés employé).
 - **Fichiers Backend** : `services/dashboard/dashboard.service.js`, `services/rh/rh.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/dashboard/salon`
@@ -328,7 +328,7 @@
 ## 13. Catalogue Prestations & Gestion Prédictive des Stocks
 
 - **Objectif** : Répertoire complet des prestations et des produits de revente/techniques, calcul prédictif de vélocité des ventes, détection des ruptures de stock imminentes, correction d'inventaire et fusion de doublons.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglets Produits & Caisse, modale de fusion, modale de réassort).
+- **Fichiers Frontend** : `frontend/src/components/stock/StocksTab.jsx`, `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/App.jsx` (onglets Stocks & Caisse, inventaire produits labo/revente, détection ruptures, modal de fusion des doublons).
 - **Fichiers Backend** : `server.js`, `services/stock/stock.service.js`.
 - **Routes API** :
   - `GET /api/catalogue`
@@ -355,7 +355,7 @@
 ## 14. Commandes Fournisseurs & Bons de Commande PDF
 
 - **Objectif** : Générer des bons de commande officiels au format PDF vectoriel et les envoyer par e-mail directement aux grossistes/fournisseurs (L'Oréal, Wella, Schwarzkopf, etc.).
-- **Fichiers Frontend** : `frontend/src/App.jsx` (panier de réassort fournisseur).
+- **Fichiers Frontend** : `frontend/src/components/stock/StocksTab.jsx`, `frontend/src/App.jsx` (panier de réassort fournisseur, génération bons de commande PDF et envoi email).
 - **Fichiers Backend** : `server.js`, `services/stock/stock.service.js`, `services/pdf/bonCommandePdf.service.js`.
 - **Routes API** :
   - `POST /api/catalogue/bon-commande-pdf`
@@ -372,7 +372,7 @@
 ## 15. Protocoles Techniques & Académie Coiffure
 
 - **Objectif** : Digitaliser le savoir-faire du salon : fiches protocoles par technique (Balayage, Ombré, Lissage brésilien) avec étapes chronométrées, photos et décompte automatique des doses de produits (recettes).
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Protocoles).
+- **Fichiers Frontend** : `frontend/src/components/protocoles/ProtocolesTab.jsx`, `frontend/src/components/agenda/AgendaTab.jsx`, `frontend/src/utils/protocoles.js`, `frontend/src/App.jsx` (Académie coiffure, éditeur pas-à-pas avec proportions et minuteurs, visionneuse de recettes).
 - **Fichiers Backend** : `server.js`, `services/protocoles/protocoles.service.js`.
 - **Routes API** :
   - `GET /api/protocoles`
@@ -391,7 +391,7 @@
 ## 16. Tâches d'Action & To-Do List Salon
 
 - **Objectif** : Organiser les tâches opérationnelles du salon (ménage, réassort, relances clients, déclarations) créées manuellement ou injectées par l'IA.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Actions).
+- **Fichiers Frontend** : `frontend/src/components/actions/ActionsTab.jsx`, `frontend/src/App.jsx` (centre d'action opérationnel, tri d'urgence, gestion to-do list salon).
 - **Fichiers Backend** : `server.js`, `services/protocoles/protocoles.service.js`.
 - **Routes API** :
   - `GET /api/taches`
@@ -410,7 +410,7 @@
 ## 17. Messagerie Interne d'Équipe
 
 - **Objectif** : Chat d'équipe privé et temps réel entre collaborateurs et gérant : messages texte, notes vocales audio (Base64), photos d'inspiration, réactions emojis et statuts de lecture ("Vu").
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet Messagerie, composant d'enregistrement audio).
+- **Fichiers Frontend** : `frontend/src/components/chat/MessagerieTab.jsx`, `frontend/src/App.jsx` (messagerie instantanée d'équipe, channels salon/privés, mémos vocaux, photos, accusés de lecture "Vu par").
 - **Fichiers Backend** : `server.js`, `services/chat/chat.service.js`.
 - **Routes API** :
   - `GET /api/messages`
@@ -492,7 +492,7 @@
 ## 21. Robot Comptable Autonome (IA IMAP & Factures OCR)
 
 - **Objectif** : Scruter la boîte mail professionnelle du salon toutes les 10 minutes, télécharger les factures fournisseurs en pièce jointe, extraire les montants HT/TVA/TTC et lignes produits via Groq LLM (modèle vision/texte rapide), et créer une tâche de validation pré-remplie.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (modale de validation facture IA, saisie manuelle).
+- **Fichiers Frontend** : `frontend/src/components/actions/ActionsTab.jsx`, `frontend/src/App.jsx` (centre d'action, upload facture PDF, OCR IA, validation/rejet et saisie manuelle).
 - **Fichiers Backend** : `services/ia/ia.service.js`, `server.js` (délégation des routes), `jobs/cronJobs.js` (`executerRobotComptable`).
 - **Routes API** :
   - `GET /api/ia/taches`
@@ -516,7 +516,7 @@
 ## 22. Comptabilité, Liasse Mensuelle & Export FEC
 
 - **Objectif** : Clôturer chaque mois comptable, générer la liasse PDF certifiée (Z de caisse agrégés, ventilation TVA, factures achats), générer le fichier FEC officiel (format DGI 18 colonnes) et l'archive fiscale annuelle scellée.
-- **Fichiers Frontend** : `frontend/src/Parametres.jsx` (téléchargement FEC, liasse, validation de fin de mois).
+- **Fichiers Frontend** : `frontend/src/components/admin/AdminTab.jsx`, `frontend/src/Parametres.jsx`, `frontend/src/App.jsx` (onglets Admin & Paramètres : clôtures Z, ventilation TVA, téléchargement FEC, liasse PDF, validation fin de mois).
 - **Fichiers Backend** : `server.js`, `services/compta/fec.service.js`, `services/compta/archiveFiscale.service.js`, `services/compta/clotureMensuelle.service.js`, `services/pdf/liassePdf.service.js`.
 - **Routes API** :
   - `GET /api/export-fec`
@@ -539,7 +539,7 @@
 ## 23. Multi-Établissements & Portabilité RGPD
 
 - **Objectif** : Permettre à un propriétaire de plusieurs salons de basculer instantanément de l'un à l'autre sans se reconnecter, créer de nouvelles succursales avec clonage du catalogue et de l'Académie, synchroniser ses prestations en 1 clic, et exporter l'intégralité des données salon au format standardisé (RGPD Art. 20 et NF525 en CSV et JSON scellé SHA-256).
-- **Fichiers Frontend** : `frontend/src/App.jsx` (sélecteur de salon dans l'en-tête, modale de gestion du groupe, export RGPD dans Paramètres).
+- **Fichiers Frontend** : `frontend/src/components/dashboard/DashboardTab.jsx`, `frontend/src/Parametres.jsx`, `frontend/src/App.jsx` (sélecteur multi-salons dans le header et le dashboard, switch de succursale, gestion du groupe, export RGPD).
 - **Fichiers Backend** : `services/salons/salons.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/mes-salons`
@@ -617,7 +617,7 @@
 ## 27. Super-Administration Système & Maintenance
 
 - **Objectif** : Tableau de bord de pilotage technique pour l'éditeur du logiciel : surveillance de la santé des salons, statistiques globales, déclenchement manuel des robots d'arrière-plan, simulation d'avance temporelle (time-travel) pour tester les clôtures, purge conforme RGPD avec conservation stricte NF525 et déblocage d'anomalies.
-- **Fichiers Frontend** : `frontend/src/App.jsx` (onglet SuperAdmin).
+- **Fichiers Frontend** : `frontend/src/components/superadmin/SuperAdminTab.jsx`, `frontend/src/App.jsx` (God Mode fondateur, surveillance du parc de salons, MRR et déclenchement forcé des robots).
 - **Fichiers Backend** : `services/admin/superadmin.service.js`, `server.js` (délégation des routes).
 - **Routes API** :
   - `GET /api/superadmin/stats`
