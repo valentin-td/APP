@@ -1,15 +1,12 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { io } from 'socket.io-client';
-import localforage from 'localforage';
+import { useState, useEffect } from 'react';
 import './App.css';
-import LiquidTabBar from './LiquidTabBar';
 import Parametres from './Parametres';
 import PopupLegal from './PopupLegal';   
 import PricingModal from './PricingModal';
 import { API_URL } from './api/config'; 
 
 import './utils/fetchClient';
-import { urlBase64ToUint8Array, decodeToken, isPinWeak } from './utils/auth';
+import { decodeToken, isPinWeak } from './utils/auth';
 import AvisPublic from './AvisPublic.jsx';
 import PageReservationPublique from './pages/ReservationPublique.jsx';
 import ThemeToggleComponent from './components/common/ThemeToggle.jsx';
@@ -53,6 +50,14 @@ import useClotureZ from './hooks/useClotureZ';
 import useProtocolesCoiffure from './hooks/useProtocolesCoiffure';
 import useEntitiesCRUD from './hooks/useEntitiesCRUD.jsx';
 import useAuthSession from './hooks/useAuthSession';
+import useOfflineSync from './hooks/useOfflineSync';
+import useMouvementsCaisse from './hooks/useMouvementsCaisse';
+import useGamificationEquipe from './hooks/useGamificationEquipe';
+import useAppDataLoader from './hooks/useAppDataLoader';
+import useActionsChecklist from './hooks/useActionsChecklist';
+import usePricingLock from './hooks/usePricingLock';
+import useResponsiveAgendaDate from './hooks/useResponsiveAgendaDate';
+import useSalonSettings from './hooks/useSalonSettings';
 
 
 function App() {
@@ -65,6 +70,61 @@ function App() {
           : new URLSearchParams(window.location.search).get('reservation');
       return <PageReservationPublique idSalon={idSalonPublic} />;
   }
+
+  // --- ÉTATS GLOBAUX FONDAMENTAUX ---
+  const [toast, setToast] = useState(null);
+  const showToast = (message, type = 'success') => {
+      setToast({ message, type });
+      setTimeout(() => setToast(null), 4000);
+  };
+  const [activeTab, setActiveTab] = useState('accueil');
+  const [erreurPinAction, setErreurPinAction] = useState(null);
+  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+  const [isOutilsMenuOpen, setIsOutilsMenuOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [annulationDialog, setAnnulationDialog] = useState(null);
+  const [cancellationRobot, setCancellationRobot] = useState(null);
+  const [selectedCancelRdvs, setSelectedCancelRdvs] = useState([]);
+  const [cancelMessageTemplate, setCancelMessageTemplate] = useState('');
+  const [messagesListe, setMessagesListe] = useState([]);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [expandedYear, setExpandedYear] = useState(new Date().getFullYear().toString());
+  const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
+
+  // --- HELPERS COMMUNS & GESTION DES ERREURS HTTP / NF525 ---
+  const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); };
+  const getAuthHeaders = (isJson = false) => { const headers = {}; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
+
+  const handleFetchError = async (res) => {
+      const data = await res.json().catch(() => ({})); 
+
+      if (res.status === 403 && data.require_upsell) {
+          throw new Error("Forfait insuffisant");
+      }
+      if (res.status === 403 && !data.require_upsell) {
+          throw new Error(data.erreur || "Accès refusé");
+      }
+      if (res.status === 401) { 
+          seDeconnecter(); 
+          throw new Error("Session expirée"); 
+      } 
+      if (res.status === 402) { 
+          setIsAbonnementInactif(true); 
+          throw new Error("Abonnement inactif"); 
+      } 
+      if (!res.ok) {
+          if (data.require_pin) {
+              setErreurPinAction(data.erreur || "Code PIN incorrect.");
+              if (typeof chargerTout === 'function') chargerTout();
+          }
+          const err = new Error(data.erreur || "Erreur serveur");
+          err.data = data;
+          throw err; 
+      }
+      setErreurPinAction(null);
+      return data; 
+  };
 
   // --- GESTION DE SESSION & AUTHENTIFICATION (useAuthSession) ---
   const {
@@ -125,22 +185,8 @@ function App() {
     setActiveTab: (t) => setActiveTab(t),
     showToast: (m, t) => showToast(m, t)
   });
-  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
 
-  // --- ÉTATS GLOBAUX DES MODULES 1, 3, 4 & 5 (PLACÉS EN HAUT POUR ÉVITER L'ERREUR REACT #310) ---
-  const [empGamificationKpis, setEmpGamificationKpis] = useState(null);
-  const [objectifsEquipeListe, setObjectifsEquipeListe] = useState([]);
-  const [showAddObjectifModal, setShowAddObjectifModal] = useState(false);
-  const [newObjectifForm, setNewObjectifForm] = useState({
-      titre: '',
-      type_indicateur: 'TAUX_REVENTE',
-      valeur_cible: '20',
-      id_employe: 'TOUS',
-      recompense: ''
-  });
-
+  // Interception du jeton Sandbox
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sbToken = params.get('sandbox_token');
@@ -158,34 +204,15 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-      const checkQueue = async () => {
-          const queue = await localforage.getItem('offline_tickets') || [];
-          setPendingOfflineCount(queue.length);
-      };
-      checkQueue();
-      const inter = setInterval(checkQueue, 3000); // Vérifie toutes les 3 secondes
-      return () => clearInterval(inter);
-  }, []);
-
-  const [isOutilsMenuOpen, setIsOutilsMenuOpen] = useState(false);
-
-  const SvgEmptyState = () => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-  );
-  
-  // Corrige le bug des "doubles clics" sur iPhone (PWA ajoutée à l'écran d'accueil) :
-  // en mode standalone, WebKit attend un évènement tactile réel avant de considérer
-  // les éléments comme interactifs, sinon le premier tap ne fait que simuler le
-  // survol (:hover) et il faut taper une seconde fois pour déclencher le clic.
+  // Fix pour les 'doubles clics' sur iPhone standalone (PWA)
   useEffect(() => {
       const noop = () => {};
       document.addEventListener('touchstart', noop, { passive: true });
       return () => document.removeEventListener('touchstart', noop);
   }, []);
 
+  // Gestion du thème sombre et coloration de la status bar iOS/Android
   useEffect(() => {
-      // On récupère ou on crée la balise qui contrôle la barre de statut mobile
       let metaThemeColor = document.querySelector('meta[name="theme-color"]');
       if (!metaThemeColor) {
           metaThemeColor = document.createElement('meta');
@@ -195,14 +222,14 @@ function App() {
 
       if (isDarkMode) {
           document.body.classList.add('dark-mode'); document.documentElement.classList.add('dark-mode');
-          document.documentElement.style.backgroundColor = '#0b0b0d'; // Force le fond racine
-          document.body.style.backgroundColor = '#0b0b0d'; // Fix: Force le fond iOS
-          metaThemeColor.setAttribute('content', '#0b0b0d'); // Colore la barre iOS/Android
+          document.documentElement.style.backgroundColor = '#0b0b0d';
+          document.body.style.backgroundColor = '#0b0b0d';
+          metaThemeColor.setAttribute('content', '#0b0b0d');
           localStorage.setItem('theme', 'dark');
       } else {
           document.body.classList.remove('dark-mode'); document.documentElement.classList.remove('dark-mode');
           document.documentElement.style.backgroundColor = '#f6f6f7';
-          document.body.style.backgroundColor = '#f6f6f7'; // Fix: Force le fond iOS
+          document.body.style.backgroundColor = '#f6f6f7';
           metaThemeColor.setAttribute('content', '#f6f6f7');
           localStorage.setItem('theme', 'light');
       }
@@ -212,21 +239,24 @@ function App() {
     <ThemeToggleComponent isFixed={isFixed} isDarkMode={isDarkMode} onToggle={() => setIsDarkMode(!isDarkMode)} />
   );
 
-
-
-  const [activeTab, setActiveTab] = useState('accueil');
-  const [dashboardData, setDashboardData] = useState(null);
-  const [avisStats, setAvisStats] = useState(null);
-  const [salonDashboardData, setSalonDashboardData] = useState(null);
-  const [employeDashboardData, setEmployeDashboardData] = useState(null);
-  const [rhData, setRhData] = useState([]);
-  const [absencesRH, setAbsencesRH] = useState([]);
-  const [historiqueData, setHistoriqueData] = useState([]);
-  const [expandedYear, setExpandedYear] = useState(new Date().getFullYear().toString());
-  const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
-  const [planningData, setPlanningData] = useState([]); 
-  const [superAdminData, setSuperAdminData] = useState(null);
-  const [superAdminSalons, setSuperAdminSalons] = useState([]);
+  // --- ÉTATS & LOGIQUE : SYNCHRONISATION HORS-LIGNE & RÉSEAU (useOfflineSync) ---
+  const {
+    isOffline,
+    setIsOffline,
+    pendingOfflineCount,
+    setPendingOfflineCount,
+    syncOfflineTickets,
+    syncEnCours
+  } = useOfflineSync({
+    token,
+    API_URL,
+    getAuthHeaders,
+    showToast,
+    chargerTout: () => { if (typeof chargerTout === "function") chargerTout(); },
+    decodeToken,
+    setMethodePaiement: (m) => { if (typeof setMethodePaiement === "function") setMethodePaiement(m); },
+    setTicketGenere: (t) => { if (typeof setTicketGenere === "function") setTicketGenere(t); }
+  });
 
   // --- GESTION DES ENTITÉS : CLIENTS, EMPLOYÉS, ARTICLES & EXPORTS (useEntitiesCRUD) ---
   const {
@@ -298,7 +328,9 @@ function App() {
     declencherExport,
     lancerAuditNF525,
     declencherExportFEC,
-    telechargerBilanJour
+    telechargerBilanJour,
+    configSalon,
+    setConfigSalon
   } = useEntitiesCRUD({
     token,
     userRole,
@@ -308,43 +340,112 @@ function App() {
     handleFetchError,
     chargerTout: () => { if (typeof chargerTout === "function") chargerTout(); },
     setIsAbonnementInactif,
-    configSalon,
-    setConfigSalon,
     heureActuelle: new Date(),
     API_URL,
     decodeToken,
     isPinWeak
   });
 
-  // --- SYNCHRONISATION GAMIFICATION & OBJECTIFS D'ÉQUIPE (REMONTÉ POUR ÉVITER REACT #310) ---
-  const chargerObjectifsEquipe = async () => {
-      try {
-          const res = await fetch(`${API_URL}/api/equipe/objectifs`, {
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
-          });
-          if (res.ok) {
-              const data = await res.json();
-              setObjectifsEquipeListe(Array.isArray(data) ? data : []);
-          }
-      } catch (e) {}
-  };
+  // --- ÉTATS & LOGIQUE : REVERSE TRIAL & VERROUILLAGE DES NIVEAUX (usePricingLock) ---
+  const {
+    showPricingModal,
+    setShowPricingModal,
+    isTrialing,
+    dateFinEssai,
+    joursRestantsEssai,
+    isSoftLock,
+    isHardLock,
+    aLeNiveau,
+    handleTabClick
+  } = usePricingLock({
+    configSalon,
+    userRole,
+    activeTab,
+    setActiveTab,
+    isAbonnementInactif,
+    showToast
+  });
 
-  useEffect(() => {
-      const currentRole = userRole;
-      if (currentRole === 'employe' && token && activeTab === 'accueil') {
-          fetch(`${API_URL}/api/employes/gamification-kpis`, {
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
-          })
-              .then(r => r.ok ? r.json() : null)
-              .then(data => { if (data) setEmpGamificationKpis(data); })
-              .catch(() => {});
-      }
-      if (currentRole === 'gerant' && token && activeTab === 'rh') {
-          chargerObjectifsEquipe();
-      }
-  }, [userRole, token, activeTab]);
+  // --- ÉTATS & LOGIQUE : RESPONSIVE & CALENDRIER MULTI-JOURS (useResponsiveAgendaDate) ---
+  const {
+    windowWidth,
+    isMobile,
+    isTablet,
+    nbJoursAffichage,
+    currentDate,
+    setCurrentDate,
+    startDate,
+    joursSemaine,
+    changerPeriode,
+    resetToToday,
+    heureDebutAgenda,
+    heureFinAgenda,
+    nbHeures
+  } = useResponsiveAgendaDate(configSalon);
 
-  // --- ÉTATS & LOGIQUE : GESTION MULTI-SALONS & FRANCHISE ---
+  // --- ÉTATS & LOGIQUE : PARAMÈTRES DU SALON & PUSH NOTIFICATIONS (useSalonSettings) ---
+  const {
+    sauvegarderParametres,
+    activerNotificationsPush
+  } = useSalonSettings({
+    token,
+    userRole,
+    configSalon,
+    setConfigSalon,
+    isOffline,
+    API_URL,
+    getAuthHeaders,
+    handleFetchError,
+    showToast,
+    chargerTout: () => { if (typeof chargerTout === "function") chargerTout(); }
+  });
+
+  // --- ÉTATS & LOGIQUE : ACTIONS, TÂCHES & CHECKLIST GO-LIVE (useActionsChecklist) ---
+  const {
+    checklistOnboarding,
+    setChecklistOnboarding,
+    showChecklistModal,
+    setShowChecklistModal,
+    basculerEtapeChecklist,
+    sauvetageClient,
+    setSauvetageClient,
+    smsSauvetage,
+    setSmsSauvetage,
+    remiseSauvetage,
+    setRemiseSauvetage,
+    envoyerSmsSauvetage,
+    tachesListe,
+    setTachesListe,
+    nouvelleTache,
+    setNouvelleTache,
+    isStockMergeMode,
+    setIsStockMergeMode,
+    selectedStocksToMerge,
+    setSelectedStocksToMerge,
+    showMergeModal,
+    setShowMergeModal,
+    mergeForm,
+    setMergeForm,
+    rhSortBy,
+    setRhSortBy,
+    rhPeriodeHeures,
+    setRhPeriodeHeures,
+    rhAvisExpanded,
+    setRhAvisExpanded,
+    getCouleurTache,
+    nbTachesUrgentes
+  } = useActionsChecklist({
+    token,
+    userRole,
+    decodeToken,
+    activeTab,
+    API_URL,
+    getAuthHeaders,
+    showToast,
+    chargerTout: () => { if (typeof chargerTout === "function") chargerTout(); }
+  });
+
+  // --- ÉTATS & LOGIQUE : GESTION MULTI-SALONS & FRANCHISE (useMultiSalons) ---
   const {
     mesSalonsGroupe,
     setMesSalonsGroupe,
@@ -370,108 +471,30 @@ function App() {
     setPosEmploye,
     setPanierCaisse
   });
-  const [tachesListe, setTachesListe] = useState([]);
-  const [nouvelleTache, setNouvelleTache] = useState({ titre: '', description: '', date_echeance: '' });
-  const [sauvetageClient, setSauvetageClient] = useState(null);
-  const [smsSauvetage, setSmsSauvetage] = useState('');
-  const [remiseSauvetage, setRemiseSauvetage] = useState('');
-  const [rhSortBy, setRhSortBy] = useState('ca');
-  const [rhPeriodeHeures, setRhPeriodeHeures] = useState('mois');
-  const [rhAvisExpanded, setRhAvisExpanded] = useState({});
-  const [isStockMergeMode, setIsStockMergeMode] = useState(false);
-  const [selectedStocksToMerge, setSelectedStocksToMerge] = useState([]);
-  const [showMergeModal, setShowMergeModal] = useState(false);
-  const [mergeForm, setMergeForm] = useState({ nom: '', reference: '', prix: '', type_article: 'PRODUIT_REVENTE', delai_livraison_jours: 3, id_employe: '', code_pin: '' });
-  const [erreurPinAction, setErreurPinAction] = useState(null);
-    const [checklistOnboarding, setChecklistOnboarding] = useState({
-    etape_materiel_ok: false,
-    etape_catalogue_ok: false,
-    etape_equipe_ok: false,
-    etape_stripe_ok: false,
-    etape_formation_ok: false,
-    statut_onboarding: 'EN_COURS' // Bloqué par défaut
+
+  // --- ÉTATS & LOGIQUE : GAMIFICATION & OBJECTIFS D'ÉQUIPE (useGamificationEquipe) ---
+  const {
+    empGamificationKpis,
+    setEmpGamificationKpis,
+    objectifsEquipeListe,
+    setObjectifsEquipeListe,
+    showAddObjectifModal,
+    setShowAddObjectifModal,
+    newObjectifForm,
+    setNewObjectifForm,
+    chargerObjectifsEquipe,
+    chargerKpisEmploye,
+    creerObjectifEquipe,
+    supprimerObjectifEquipe
+  } = useGamificationEquipe({
+    token,
+    userRole,
+    activeTab,
+    API_URL,
+    showToast
   });
 
-  
-  const [showChecklistModal, setShowChecklistModal] = useState(false);
-  
-  // Chargement automatique et systématique du verrou Go-Live dès qu'un token est présent
-  useEffect(() => {
-    if (!token) return;
-    fetch(`${API_URL}/api/onboarding/checklist`, {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`,
-        'Content-Type': 'application/json'
-      }
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data && data.statut_onboarding) {
-          setChecklistOnboarding(data);
-        }
-      })
-      .catch(() => {});
-  }, [token, activeTab]);
-
-  const basculerEtapeChecklist = async (champ) => {
-    const nextState = { ...checklistOnboarding, [champ]: !checklistOnboarding[champ] };
-    const toutCoche = Boolean(
-      nextState.etape_materiel_ok &&
-      nextState.etape_catalogue_ok &&
-      nextState.etape_equipe_ok &&
-      nextState.etape_stripe_ok &&
-      nextState.etape_formation_ok
-    );
-    nextState.statut_onboarding = toutCoche ? 'TERMINE' : 'EN_COURS';
-    setChecklistOnboarding(nextState);
-
-    try {
-      const res = await fetch(`${API_URL}/api/onboarding/checklist`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(nextState)
-      });
-      if (res.ok) {
-        const saved = await res.json();
-        setChecklistOnboarding(saved);
-        if (saved.statut_onboarding === 'TERMINE' && typeof showToast === 'function') {
-          showToast("Checklist Go-Live complétée à 100 % ! Votre caisse est déverrouillée.");
-        }
-      }
-    } catch (e) {}
-  };
-    
-  const envoyerSmsSauvetage = async () => {
-      try {
-          const res = await fetch(`${API_URL}/api/sms/winback`, { 
-              method: 'POST', 
-              headers: getAuthHeaders(true), 
-              body: JSON.stringify({ 
-                  id_client: sauvetageClient.id_client,
-                  telephone: sauvetageClient.telephone, 
-                  message: smsSauvetage,
-                  remise_winback: remiseSauvetage 
-              }) 
-          });
-          if (res.ok) { 
-              showToast("Offre de sauvetage envoyée et enregistrée !", "success"); 
-              setSauvetageClient(null); 
-              setRemiseSauvetage('');
-              chargerTout();
-          } else { 
-              const data = await res.json(); 
-              showToast(data.erreur || "Erreur d'envoi", "error"); 
-          }
-      } catch(e) { 
-          showToast("Erreur réseau", "error"); 
-      }
-  };
-  
-
-  // --- ÉTATS & LOGIQUE : POINTEUSE NUMÉRIQUE ---
+  // --- ÉTATS & LOGIQUE : POINTEUSE NUMÉRIQUE (usePointeuseRH) ---
   const {
     pointeuse,
     setPointeuse,
@@ -533,9 +556,6 @@ function App() {
     setNewArticle
   });
 
-
-
-  const [messagesListe, setMessagesListe] = useState([]);
   // --- ÉTATS & LOGIQUE : MESSAGERIE INTERNE (useInternalChat) ---
   const {
     chatActif,
@@ -587,55 +607,6 @@ function App() {
     handleFetchError,
     setConfirmDialog
   });
-  const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
-
-
-  
-  const [erreur, setErreur] = useState(null);
-
-  const urlParams = new URLSearchParams(window.location.search);
-
-
-  const [toast, setToast] = useState(null);
-
-  // Intercepte les retours de Stripe (Paiement ou Prise d'empreinte CB 0 € à l'installation)
-  useEffect(() => {
-      const params = new URLSearchParams(window.location.search);
-      const paiementStatus = params.get('paiement');
-      const sessionId = params.get('session_id');
-      const planUrl = params.get('plan');
-
-      if (paiementStatus === 'succes' || paiementStatus === 'empreinte_ok') {
-          fetch(`${API_URL}/api/stripe/confirmer-session`, {
-              method: 'POST',
-              headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
-              },
-              body: JSON.stringify({ session_id: sessionId, plan: planUrl })
-          })
-              .then(r => r.ok ? r.json() : null)
-              .then(data => {
-                  setChecklistOnboarding(prev => ({ ...prev, etape_stripe_ok: true }));
-                  if (typeof chargerTout === 'function') chargerTout();
-                  setToast({
-                      message: data?.message || "Empreinte bancaire Stripe validée (0 € aujourd'hui) ! Étape 4 Go-Live cochée.",
-                      type: 'success'
-                  });
-                  setTimeout(() => setToast(null), 5000);
-              })
-              .catch(() => {});
-          window.history.replaceState({}, document.title, "/");
-      } else if (paiementStatus === 'annule') {
-          setToast({ message: "Enregistrement de l'empreinte bancaire annulé.", type: 'error' });
-          setTimeout(() => setToast(null), 4000);
-          window.history.replaceState({}, document.title, "/");
-      }
-  }, []);
-
-  const [confirmDialog, setConfirmDialog] = useState(null);
-  const [annulationDialog, setAnnulationDialog] = useState(null);
-  const [cancellationRobot, setCancellationRobot] = useState(null);
 
   // --- ÉTATS & LOGIQUE : CERTIFICATION COMPTABLE & SIGNATURE (useComptaValidation) ---
   const {
@@ -667,104 +638,28 @@ function App() {
     handleFetchError
   });
 
-  const [selectedCancelRdvs, setSelectedCancelRdvs] = useState([]);
-  const [cancelMessageTemplate, setCancelMessageTemplate] = useState('');
-
-  const showToast = (message, type = 'success') => {
-      setToast({ message, type });
-      setTimeout(() => setToast(null), 4000);
-  };
-
-  const activerNotificationsPush = async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-          showToast("Les notifications Push ne sont pas supportées par ce navigateur.", "error");
-          return;
-      }
-      try {
-          const permission = await Notification.requestPermission();
-          if (permission !== 'granted') {
-              showToast("Vous avez refusé les notifications dans les réglages.", "error");
-              return;
-          }
-          const registration = await navigator.serviceWorker.ready;
-          
-          // 1. On récupère la clé publique du serveur
-          const response = await fetch(`${API_URL}/api/push/vapid-key`);
-          const data = await response.json();
-          const convertedVapidKey = urlBase64ToUint8Array(data.publicKey);
-
-          // 2. On génère le ticket d'abonnement de cet appareil
-          const subscription = await registration.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: convertedVapidKey
-          });
-
-          // 3. On l'envoie au serveur
-          const resSub = await fetch(`${API_URL}/api/push/subscribe`, {
-              method: 'POST',
-              headers: getAuthHeaders(true),
-              body: JSON.stringify({ subscription })
-          });
-
-          if(resSub.ok) {
-              showToast("Notifications activées avec succès sur ce téléphone !", "success");
-          } else {
-              showToast("Erreur lors de l'enregistrement côté serveur.", "error");
-          }
-      } catch (error) {
-          console.error(error);
-          showToast("Erreur lors de l'activation des notifications.", "error");
-      }
-  };
-  
-
-
-    const [mouvementsCaisse, setMouvementsCaisse] = useState([]);
-    const [showMouvementModal, setShowMouvementModal] = useState(false);
-    const [newMouvement, setNewMouvement] = useState({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '' });
-
-    // Nouveaux états pour le mode calculatrice de la Petite Caisse
-    const [modeCalculatrice, setModeCalculatrice] = useState(false);
-    const [ongletCalculatrice, setOngletCalculatrice] = useState('MONNAIES');
-    const [detailsMonnaie, setDetailsMonnaie] = useState({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
-
-    useEffect(() => {
-        if (modeCalculatrice) {
-            const total = ((parseInt(detailsMonnaie.b500)||0) * 500) + ((parseInt(detailsMonnaie.b200)||0) * 200) + ((parseInt(detailsMonnaie.b100)||0) * 100) +
-                          ((parseInt(detailsMonnaie.b50)||0) * 50) + ((parseInt(detailsMonnaie.b20)||0) * 20) + ((parseInt(detailsMonnaie.b10)||0) * 10) + ((parseInt(detailsMonnaie.b5)||0) * 5) +
-                          ((parseInt(detailsMonnaie.p2)||0) * 2) + ((parseInt(detailsMonnaie.p1)||0) * 1) + ((parseInt(detailsMonnaie.p050)||0) * 0.50) + ((parseInt(detailsMonnaie.p020)||0) * 0.20) +
-                          ((parseInt(detailsMonnaie.p010)||0) * 0.10) + ((parseInt(detailsMonnaie.p005)||0) * 0.05) + ((parseInt(detailsMonnaie.p002)||0) * 0.02) + ((parseInt(detailsMonnaie.p001)||0) * 0.01);
-            setNewMouvement(prev => ({ ...prev, montant: total > 0 ? total.toFixed(2) : '' }));
-        }
-    }, [detailsMonnaie, modeCalculatrice]);
-
-    const chargerMouvementsCaisse = async () => {
-        try {
-            const res = await fetch(`${API_URL}/api/caisse/mouvements/aujourdhui`, { headers: getAuthHeaders(true) });
-            if (res.ok) setMouvementsCaisse(await res.json());
-        } catch (e) {}
-    };
-
-    const ajouterMouvementCaisse = async () => {
-        if (!newMouvement.motif.trim() || !newMouvement.montant) return showToast("Veuillez remplir le montant et le motif.", "error");
-        try {
-            const res = await fetch(`${API_URL}/api/caisse/mouvements`, {
-                method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(newMouvement)
-            });
-            await handleFetchError(res);
-            showToast("Mouvement enregistré.", "success");
-            setShowMouvementModal(false);
-            setNewMouvement({ type_mouvement: 'SORTIE', montant: '', motif: '', id_employe: '', code_pin: '' });
-            setModeCalculatrice(false);
-            setDetailsMonnaie({ b500: '', b200: '', b100: '', b50: '', b20: '', b10: '', b5: '', p2: '', p1: '', p050: '', p020: '', p010: '', p005: '', p002: '', p001: '' });
-            chargerMouvementsCaisse();
-        } catch (e) { 
-            setNewMouvement({ ...newMouvement, code_pin: '' });
-            showToast(e.message, "error"); 
-        }
-    };
-
-
+  // --- ÉTATS & LOGIQUE : MOUVEMENTS DE PETITE CAISSE (useMouvementsCaisse) ---
+  const {
+    mouvementsCaisse,
+    setMouvementsCaisse,
+    showMouvementModal,
+    setShowMouvementModal,
+    newMouvement,
+    setNewMouvement,
+    modeCalculatrice,
+    setModeCalculatrice,
+    ongletCalculatrice,
+    setOngletCalculatrice,
+    detailsMonnaie,
+    setDetailsMonnaie,
+    chargerMouvementsCaisse,
+    ajouterMouvementCaisse
+  } = useMouvementsCaisse({
+    API_URL,
+    getAuthHeaders,
+    handleFetchError,
+    showToast
+  });
 
   // --- ÉTATS & LOGIQUE : CAISSE ENREGISTREUSE SMART POS NF525 (useCaissePOS) ---
   const {
@@ -830,40 +725,6 @@ function App() {
     clientSelectionne,
     ouvrirFicheClient
   });
-  
-  const COULEURS_EMPLOYES = ['#a2d2ff', '#b9fbc0', '#fcf6bd', '#ffc6ff', '#ffd6a5', '#c8b6ff'];
-
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-  useEffect(() => {
-      const handleResize = () => setWindowWidth(window.innerWidth);
-      window.addEventListener('resize', handleResize);
-      return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const isMobile = windowWidth < 768;
-  const isTablet = windowWidth >= 768 && windowWidth < 1024;
-  const nbJoursAffichage = isMobile ? 3 : (isTablet ? 4 : 7);
-
-  const getStartOfPeriod = (d, daysCount) => {
-      const date = new Date(d);
-      if (daysCount === 7) {
-          const day = date.getDay();
-          const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-          return new Date(date.setDate(diff));
-      }
-      return date; 
-  };
-
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const startDate = getStartOfPeriod(currentDate, nbJoursAffichage);
-  const joursSemaine = Array.from({length: nbJoursAffichage}).map((_, i) => { const d = new Date(startDate); d.setDate(d.getDate() + i); return d; });
-
-  const changerPeriode = (direction) => {
-      const newDate = new Date(currentDate);
-      newDate.setDate(newDate.getDate() + (direction * nbJoursAffichage));
-      setCurrentDate(newDate);
-  };
-  const resetToToday = () => setCurrentDate(new Date());
 
   // --- ÉTATS & LOGIQUE : PROTOCOLES COIFFURE ET FICHES TECHNIQUES (useProtocolesCoiffure) ---
   const {
@@ -912,7 +773,6 @@ function App() {
   });
 
   // --- ÉTATS & LOGIQUE : AGENDA PLANNING & ABSENCES (useAgendaPlanning) ---
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const {
     semaineOffset,
     setSemaineOffset,
@@ -969,50 +829,6 @@ function App() {
     chargerTout: () => { if (typeof chargerTout === 'function') chargerTout(); }
   });
 
-
-
-  const [showPricingModal, setShowPricingModal] = useState(false);
-
-  // --- LOGIQUE REVERSE TRIAL ---
-  const isTrialing = configSalon.plan_actuel === 'PREMIUM_TRIAL';
-  const dateFinEssai = configSalon.date_fin_essai ? new Date(configSalon.date_fin_essai) : null;
-  const joursRestantsEssai = dateFinEssai ? Math.ceil((dateFinEssai.getTime() - new Date().getTime()) / (1000 * 3600 * 24)) : 999;
-  
-  const isSoftLock = isTrialing && joursRestantsEssai <= 0 && joursRestantsEssai >= -7;
-  // On déclenche le "Hard Lock" si l'essai est terminé OU si l'abonnement est impayé
-  const isHardLock = (isTrialing && joursRestantsEssai < -7) || isAbonnementInactif;
-
-  useEffect(() => {
-      if ((isSoftLock || isHardLock) && userRole === 'gerant' && activeTab !== 'caisse' && !showPricingModal) {
-          setShowPricingModal(true);
-      }
-  }, [isSoftLock, isHardLock, userRole, activeTab]); // Retire 'token' et ajoute la sécurité anti-boucle
-
-  const aLeNiveau = (niveauRequis) => {
-      const plan = configSalon.plan_actuel || 'PREMIUM_TRIAL';
-      if (plan === 'PREMIUM_TRIAL' || plan === 'PREMIUM') return true;
-      if (niveauRequis === 'PRO' && (plan === 'PRO' || plan === 'PREMIUM')) return true;
-      return false;
-  };
-
-  const handleTabClick = (tabName) => {
-      // On vérifie les droits pour TOUS les rôles (gérant, salon, employé)
-      if (tabName === 'admin' && !aLeNiveau('PREMIUM')) {
-          if (userRole !== 'gerant') return showToast("Le gérant doit débloquer l'accès Premium.", "error");
-          setShowPricingModal(true);
-          return;
-      }
-      if (tabName === 'protocoles' && !aLeNiveau('PRO')) {
-          if (userRole !== 'gerant') return showToast("Le gérant doit débloquer l'accès Pro.", "error");
-          setShowPricingModal(true);
-          return;
-      }
-      
-      // Si tout va bien, on change d'onglet
-      setShowPricingModal(false);
-      setActiveTab(tabName);
-  };
-
   // --- ÉTATS & LOGIQUE : ANALYSE OCR & TÂCHES IA (useFacturesOCR) ---
   const {
     tachesIA,
@@ -1064,347 +880,63 @@ function App() {
     decodeToken
   });
 
-  const formatDateComplete = (d) => d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); }
-  const getAuthHeaders = (isJson = false) => { const headers = {}; if (isJson) headers['Content-Type'] = 'application/json'; return headers; };
-  
-  const handleFetchError = async (res) => {
-      const data = await res.json().catch(() => ({})); 
-
-      if (res.status === 403 && data.require_upsell) {
-          throw new Error("Forfait insuffisant");
-      }
-      if (res.status === 403 && !data.require_upsell) {
-          throw new Error(data.erreur || "Accès refusé");
-      }
-      if (res.status === 401) { 
-          seDeconnecter(); 
-          throw new Error("Session expirée"); 
-      } 
-      if (res.status === 402) { 
-          setIsAbonnementInactif(true); 
-          throw new Error("Abonnement inactif"); 
-      } 
-      if (!res.ok) {
-          if (data.require_pin) {
-              setErreurPinAction(data.erreur || "Code PIN incorrect.");
-              if (typeof chargerTout === 'function') chargerTout();
-          }
-          const err = new Error(data.erreur || "Erreur serveur");
-          err.data = data;
-          throw err; 
-      }
-      setErreurPinAction(null);
-      return data; 
-  };
-
-  const formatNomClient = (client) => {
-      if (!client) return 'Client inconnu';
-      if (client.prenom && client.nom) return `${client.prenom} ${client.nom}`;
-      return client.nom || 'Client sans nom';
-  };
-
-
-
-
-
-  useEffect(() => {
-      const handleOnline = () => { setIsOffline(false); syncOfflineTickets(); };
-      const handleOffline = () => { setIsOffline(true); setMethodePaiement('ESPECES'); }; 
-      
-      const checkNetworkAggressively = () => {
-          const currentOfflineStatus = !navigator.onLine;
-          if (isOffline !== currentOfflineStatus) {
-              setIsOffline(currentOfflineStatus);
-              if (!currentOfflineStatus) syncOfflineTickets();
-          }
-      };
-
-      window.addEventListener('online', handleOnline);
-      window.addEventListener('offline', handleOffline);
-      document.addEventListener('visibilitychange', checkNetworkAggressively);
-      window.addEventListener('focus', checkNetworkAggressively);
-
-      return () => {
-          window.removeEventListener('online', handleOnline);
-          window.removeEventListener('offline', handleOffline);
-          document.removeEventListener('visibilitychange', checkNetworkAggressively);
-          window.removeEventListener('focus', checkNetworkAggressively);
-      };
-  }, [token, isOffline]);
-
-  const syncEnCours = useRef(false);
-  const syncOfflineTickets = async () => {
-      if (!token || syncEnCours.current) return;
-      const queue = await localforage.getItem('offline_tickets') || [];
-      if (queue.length === 0) return;
-      const idSalonActuel = decodeToken(token)?.id_salon;
-
-      syncEnCours.current = true;
-      showToast(`Synchronisation de ${queue.length} ticket(s) en attente...`, "info");
-      let restants = [...queue];
-      let nbOk = 0, nbRejetes = 0, arret = null;
-
-      try {
-          // Ordre chronologique conservé : on s'arrête au premier échec temporaire
-          for (const ticket of queue) {
-              if (ticket._id_salon && idSalonActuel && String(ticket._id_salon) !== String(idSalonActuel)) continue; // ticket d'un autre salon : on n'y touche pas
-              let res;
-              try {
-                  res = await fetch(`${API_URL}/api/caisse/payer`, { method: 'POST', headers: getAuthHeaders(true), body: JSON.stringify(ticket) });
-              } catch (e) { arret = "Réseau instable, synchronisation reportée."; break; }
-
-              if (res.ok) {
-                  const data = await res.json().catch(() => ({}));
-                  restants = restants.filter(t => t !== ticket);
-                  nbOk++;
-                  await localforage.setItem('offline_tickets', restants);
-                  // Si ce ticket est encore affiché à l'écran (reçu ouvert), on remplace son ID temporaire par le vrai ID serveur
-                  setTicketGenere(prev => (prev && prev.id_ticket === ticket._id_temp) ? { ...prev, id_ticket: data.id_ticket, is_offline: false } : prev);
-                  continue;
-              }
-
-              const data = await res.json().catch(() => ({}));
-              if ([401, 402, 403, 423].includes(res.status) || res.status >= 500) {
-                  arret = res.status === 423 ? (data.erreur || "Clôture manquante : synchronisation reportée.")
-                        : res.status === 401 || res.status === 403 ? "Session expirée : reconnectez-vous, vos tickets sont conservés."
-                        : res.status === 402 ? "Abonnement inactif : vos tickets sont conservés."
-                        : "Serveur indisponible, synchronisation reportée.";
-                  break;
-              }
-
-              // Refus définitif (ex : donnée invalide) : on ne perd jamais le ticket, on le met de côté
-              const rejetes = await localforage.getItem('offline_tickets_rejetes') || [];
-              rejetes.push({ ...ticket, _erreur: data.erreur || `Erreur ${res.status}` });
-              await localforage.setItem('offline_tickets_rejetes', rejetes);
-              restants = restants.filter(t => t !== ticket);
-              await localforage.setItem('offline_tickets', restants);
-              nbRejetes++;
-          }
-      } finally { syncEnCours.current = false; }
-
-      if (nbOk > 0) chargerTout();
-      if (nbRejetes > 0) showToast(`${nbRejetes} ticket(s) refusé(s) par le serveur, conservés à part. Contactez le support.`, "error");
-      else if (arret) showToast(arret, "error");
-      else if (nbOk > 0) showToast("Tous les tickets hors-ligne ont été synchronisés !", "success");
-  };
-
-  // Nouvelle tentative automatique toutes les 5 minutes uniquement si hors-ligne
-  useEffect(() => {
-      if (!token) return;
-      const t = setInterval(() => { 
-          if (navigator.onLine && !syncEnCours.current) syncOfflineTickets(); 
-      }, 300000);
-      return () => clearInterval(t);
-  }, [token]);
-
-  const fetchAndCache = async (url, setter, cacheKey, expectedType = 'array') => {
-      const sanitizeData = (d) => {
-          if (expectedType === 'array') return Array.isArray(d) ? d : [];
-          return d || null; 
-      };
-
-      try {
-          const cacheBuster = url.includes('?') ? `&_=${Date.now()}` : `?_=${Date.now()}`;
-          const res = await fetch(`${API_URL}${url}${cacheBuster}`, { 
-              headers: getAuthHeaders(),
-              credentials: 'include',
-              cache: 'no-store'
-          });
-          const data = await handleFetchError(res);
-          const cleanData = sanitizeData(data);
-          setter(cleanData);
-          await localforage.setItem(cacheKey, cleanData);
-      } catch (e) {
-          const cachedData = await localforage.getItem(cacheKey);
-          setter(sanitizeData(cachedData));
-      }
-  };
-
-  // Extraction des dates en nombres primitifs purs pour garantir la stabilité absolue du useEffect
-  const planningStartTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[0].getTime() : 0;
-  const planningEndTs = joursSemaine && joursSemaine.length > 0 ? joursSemaine[joursSemaine.length - 1].getTime() : 0;
-
-  useEffect(() => {
-      if (token && !isAbonnementInactif && planningStartTs > 0) {
-          const startStr = formatDateInput(new Date(planningStartTs)); 
-          const endStr = formatDateInput(new Date(planningEndTs));
-          fetchAndCache(`/api/planning?startDate=${startStr}&endDate=${endStr}`, setPlanningData, 'planningData', 'object');
-          
-          if (decodeToken(token)?.role === 'employe') {
-              fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe', 'array');
-          }
-      }
-  // On n'utilise QUE des valeurs numériques et strings. Fini le windowWidth qui fluctue avec les barres de défilement !
-  }, [planningStartTs, planningEndTs, activeTab, refreshTrigger, token, isAbonnementInactif]);
-
-  // --- RÉCUPÉRATION DES STATUTS DE POINTAGE (Géré par usePointeuseRH) ---
-  const chargerTout = () => {
-    const role = decodeToken(token)?.role;
-
-    // Appel direct de notre nouvelle fonction pour que la caisse connaisse les statuts !
-    chargerStatutsPointage();
-
-    fetchAndCache('/api/employes', setEmployesListe, 'employesListe');
-    fetchAndCache('/api/messages', setMessagesListe, 'messagesListe');
-    fetchAndCache('/api/factures/historique', setHistoriqueData, 'historiqueData');
-    fetchAndCache('/api/taches', setTachesListe, 'tachesListe');
-
-    if (role === 'salon') fetchAndCache('/api/dashboard/salon', setSalonDashboardData, 'salonDashboardData', 'object');
-    if (role === 'employe') fetchAndCache('/api/dashboard/employe', setEmployeDashboardData, 'employeDashboardData', 'object');
-
-    fetch(`${API_URL}/api/settings?_=${Date.now()}`, { headers: getAuthHeaders(), cache: 'no-store' })
-        .then(handleFetchError)
-        .then(async (d) => {
-            const config = { 
-                nom_salon: d?.nom_salon || '', forme_juridique: d?.forme_juridique || '', siret: d?.siret || '', adresse_salon: d?.adresse_salon || '', tva_intra: d?.tva_intra || '',
-                google_api_key: d?.google_api_key || '', google_account_id: d?.google_account_id || '', google_location_id: d?.google_location_id || '', email_factures: d?.email_reception_factures || '', mot_de_passe_email: d?.mot_de_passe_app_email || '', brevo_api_key: d?.brevo_api_key || '', sms_sender_name: d?.sms_sender_name || 'MonSalon', lien_google_maps: d?.lien_google_maps || '', stripe_reader_id: d?.stripe_reader_id || '', heure_ouverture: d?.heure_ouverture || 8, heure_fermeture: d?.heure_fermeture || 20,
-                fidelite_type: d?.fidelite_type || 'NONE', fidelite_points_seuil: d?.fidelite_points_seuil || 100, fidelite_points_valeur: d?.fidelite_points_valeur || 10, fidelite_tampons_seuil: d?.fidelite_tampons_seuil || 10, fidelite_recompense_type: d?.fidelite_recompense_type || 'MONTANT', fidelite_recompense_valeur: d?.fidelite_recompense_valeur || '10', fidelite_delai_sms: d?.fidelite_delai_sms || 60,
-                telephone_gerant: d?.telephone_gerant || '', alertes_sms_actives: d?.alertes_sms_actives || false, email_comptable: d?.email_comptable || '', jour_envoi_bilan: d?.jour_envoi_bilan || 1, derniere_verif_stock: d?.derniere_verif_stock || null, pin_salon: (d?.pin_salon && !String(d.pin_salon).startsWith('$2')) ? d.pin_salon : '', securite_pin_salon_active: d?.securite_pin_salon_active !== false, temps_nettoyage_minutes: d?.temps_nettoyage_minutes || 0,
-                plan_actuel: d?.plan_actuel || 'PREMIUM_TRIAL', date_fin_essai: d?.date_fin_essai || null, pennylane_api_key: d?.pennylane_api_key || '', mode_suivi_heures: d?.mode_suivi_heures || 'MANUEL',
-                comptes_emails: Array.isArray(d?.comptes_emails) ? d.comptes_emails : (d?.email_reception_factures ? [{ email: d.email_reception_factures, mot_de_passe: d.mot_de_passe_app_email || '' }] : [])
-            };
-            setConfigSalon(config);
-            await localforage.setItem('configSalon', config);
-        }).catch(async () => {
-            const cachedConf = await localforage.getItem('configSalon');
-            if(cachedConf) setConfigSalon(cachedConf);
-        });
-
-    if (role === 'employe') return;
-
-    setDashboardData(null); 
-    fetchAndCache('/api/dashboard', setDashboardData, 'dashboardData', 'object');
-    fetchAndCache('/api/avis/stats', setAvisStats, 'avisStats', 'object');
-    fetchAndCache('/api/catalogue', setCatalogueListe, 'catalogueListe');
-    fetchAndCache('/api/stocks', setStocksData, 'stocksData');
-    if (role === 'gerant') {
-        fetchAndCache('/api/rh', setRhData, 'rhData');
-        chargerMesSalons();
-    }
-    fetchAndCache('/api/rh/absences', setAbsencesRH, 'absencesRH');
-    fetchAndCache('/api/clients', setClientsListe, 'clientsListe');
-    fetchAndCache('/api/protocoles', setProtocolesListe, 'protocolesListe');
-
-    if (decodeToken(token)?.id_salon === 38) {
-        fetchAndCache('/api/superadmin/stats', setSuperAdminData, 'superAdminData', 'object');
-        fetchAndCache('/api/superadmin/salons', setSuperAdminSalons, 'superAdminSalons');
-    }
-  };
-
-  useEffect(() => {
-      if (token && !isAbonnementInactif) { 
-          const user = decodeToken(token); setUserRole(user?.role || 'gerant');
-          if (user?.role === 'salon') {
-              const apiTok = localStorage.getItem('api_token');
-              const apiRole = decodeToken(apiTok)?.role;
-              if (apiTok && apiRole && apiRole !== 'salon') {
-                  localStorage.removeItem('api_token');
-              }
-          }
-          chargerTout();
-          if (user && user.id_salon && !isOffline && navigator.onLine) {
-              const newSocket = io(API_URL, {
-                  transports: ['websocket', 'polling'], // ESSENTIEL : Permet de basculer en HTTP si le WebSocket est bloqué par Render
-                  reconnectionAttempts: 10,
-                  timeout: 10000, // Augmenté pour éviter que Render ne coupe la connexion trop vite
-                  withCredentials: true,
-                  auth: { token: localStorage.getItem('api_token') }
-              });
-              newSocket.on('connect', () => {
-                  newSocket.emit('rejoindreSalon', user.id_salon);
-              });
-              newSocket.on('paiementValide', (data) => { showToast(data.message, "success"); if(user.role === 'gerant') chargerTout(); });
-              newSocket.on('nouveauRDV', () => { setRefreshTrigger(prev => prev + 1); });
-              newSocket.on('nouveauMessage', (data) => {
-                  // Filtrage de sécurité côté client : un employé ignore les messages privés qui ne le concernent pas
-                  if (user.role === 'employe' && data.id_destinataire !== 0 && data.id_expediteur !== user.id_employe && data.id_destinataire !== user.id_employe) {
-                      return;
-                  }
-                  setMessagesListe(prev => {
-                      const liste = prev || [];
-                      if (liste.some(m => Number(m.id_message) === Number(data.id_message))) return liste;
-                      return [...liste, data];
-                  });
-              });
-              newSocket.on('messageModifie', (data) => { setMessagesListe(prev => (prev || []).map(m => Number(m.id_message) === Number(data.id_message) ? { ...m, contenu: data.contenu } : m)); });
-              newSocket.on('messageSupprime', (data) => { setMessagesListe(prev => (prev || []).filter(m => Number(m.id_message) !== Number(data.id_message))); });
-              newSocket.on('messageReaction', (data) => { setMessagesListe(prev => (prev || []).map(m => Number(m.id_message) === Number(data.id_message) ? { ...m, reactions: data.reactions } : m)); });
-              newSocket.on('messageVu', (data) => {
-                  setMessagesListe(prev => (prev || []).map(m => {
-                      if (Number(m.id_message) !== Number(data.id_message)) return m;
-                      const existants = Array.isArray(m.vu_par) ? m.vu_par : [];
-                      const nouveaux = Array.isArray(data.vu_par) ? data.vu_par : [];
-                      return { ...m, vu_par: Array.from(new Set([...existants, ...nouveaux])) };
-                  }));
-              });
-              
-              // ÉCOUTE TEMPS RÉEL (Synchronisation instantanée des statuts et du chronomètre)
-              newSocket.on('statutPointageUpdate', (data) => {
-                  setStatutsEquipe(prev => ({ ...prev, [data.id_employe]: { action: data.type_action, heure: data.heure } }));
-              });
-              
-              newSocket.on('connect_error', () => {});
-              setSocket(newSocket);
-              return () => newSocket.disconnect();
-          }
-      } 
-  }, [token, isAbonnementInactif, isOffline]);
-
-
-
-
-
-
-
-  const sauvegarderParametres = async (customConfig = null) => {
-      if(isOffline || !navigator.onLine) return showToast("Action impossible hors-ligne.", "error");
-      const sourceConfig = (customConfig && typeof customConfig === 'object' && !customConfig.nativeEvent && !customConfig.target) ? customConfig : configSalon;
-      if(sourceConfig.pin_salon && !String(sourceConfig.pin_salon).startsWith('$2') && isPinWeak(sourceConfig.pin_salon)) {
-          return showToast("Le code PIN du salon est trop simple (évitez 0000, 1234...).", "error");
-      }
-      
-      try { 
-          const payload = { ...sourceConfig };
-          payload.securite_pin_salon_active = sourceConfig.securite_pin_salon_active !== false; 
-          if (userRole !== 'gerant') {
-              delete payload.pin_salon;
-              delete payload.securite_pin_salon_active;
-          }
-          
-          const response = await fetch(`${API_URL}/api/settings`, { 
-              method: 'POST', 
-              headers: getAuthHeaders(true), 
-              body: JSON.stringify(payload) 
-          }); 
-          await handleFetchError(response); 
-          
-          setConfigSalon(prev => ({ ...prev, ...sourceConfig, securite_pin_salon_active: sourceConfig.securite_pin_salon_active !== false }));
-          showToast("Vos paramètres ont bien été enregistrés.", "success");
-          chargerTout(); 
-          return true;
-      } catch (error) { 
-          console.error("Erreur Sauvegarde Paramètres :", error);
-          if(error.message !== "Abonnement inactif") {
-              showToast(`Erreur : ${error.message || "Impossible d'enregistrer"}`, "error");
-          }
-          return false;
-      }
-  };
-
-
-  // --- FONCTIONS : WORKFLOW DE VALIDATION COMPTABLE (useComptaValidation) ---
-  useEffect(() => {
-      if (activeTab === 'admin') {
-          chargerStatutMoisCompta();
-          chargerMouvementsCaisse();
-      }
-  }, [activeTab]);
-
-  
-
-
+  // --- ÉTATS & LOGIQUE : SYNCHRONISATION DES DONNÉES & SOCKETS (useAppDataLoader) ---
+  const {
+    dashboardData,
+    setDashboardData,
+    avisStats,
+    setAvisStats,
+    salonDashboardData,
+    setSalonDashboardData,
+    employeDashboardData,
+    setEmployeDashboardData,
+    rhData,
+    setRhData,
+    absencesRH,
+    setAbsencesRH,
+    historiqueData,
+    setHistoriqueData,
+    planningData,
+    setPlanningData,
+    superAdminData,
+    setSuperAdminData,
+    superAdminSalons,
+    setSuperAdminSalons,
+    basculerStatutSalon,
+    supprimerSalonAdmin,
+    fetchAndCache,
+    chargerTout,
+    socket
+  } = useAppDataLoader({
+    token,
+    userRole,
+    setUserRole,
+    isAbonnementInactif,
+    isOffline,
+    activeTab,
+    refreshTrigger,
+    setRefreshTrigger,
+    joursSemaine,
+    formatDateInput,
+    configSalon,
+    setConfigSalon,
+    setEmployesListe,
+    setMessagesListe,
+    setTachesListe,
+    setCatalogueListe,
+    setStocksData,
+    setClientsListe,
+    setProtocolesListe,
+    setStatutsEquipe,
+    chargerStatutsPointage,
+    chargerMesSalons,
+    getAuthHeaders,
+    handleFetchError,
+    showToast,
+    decodeToken,
+    setConfirmDialog,
+    API_URL
+  });
 
   // --- ÉTATS & LOGIQUE : CLÔTURE Z ET RÉGULARISATION NF525 (useClotureZ) ---
   const {
@@ -1464,27 +996,47 @@ function App() {
     setErreurPinAction
   });
 
+  // Déclencheurs Compta et Stripe
+  useEffect(() => {
+      if (activeTab === 'admin') {
+          chargerStatutMoisCompta();
+          chargerMouvementsCaisse();
+      }
+  }, [activeTab]);
 
+  useEffect(() => {
+      const params = new URLSearchParams(window.location.search);
+      const paiementStatus = params.get('paiement');
+      const sessionId = params.get('session_id');
+      const planUrl = params.get('plan');
 
-  const getCouleurTache = (tache) => {
-      if (tache.statut === 'FAIT') return 'var(--color-success)'; 
-      if (!tache.date_echeance) return '#f59e0b'; 
-      const joursRestants = (new Date(tache.date_echeance) - new Date()) / (1000 * 60 * 60 * 24);
-      if (joursRestants <= 2) return 'var(--color-danger)'; 
-      return '#f59e0b'; 
-  };
-
-  const nbTachesUrgentes = (tachesListe || []).filter(t => {
-      const prop = t.proprietaire || 'gerant';
-      const isUrgent = t.statut === 'A_FAIRE' && (!t.date_echeance || (new Date(t.date_echeance) - new Date()) / (1000 * 60 * 60 * 24) <= 2);
-      if (!isUrgent) return false;
-      
-      if (userRole === 'gerant') return true; // Le gérant est alerté de toutes les urgences
-      if (userRole === 'employe') return prop === `emp_${decodeToken(token)?.id_employe}` || prop === 'salon';
-      return prop === userRole || prop === 'salon';
-  }).length;
-
-
+      if (paiementStatus === 'succes' || paiementStatus === 'empreinte_ok') {
+          fetch(`${API_URL}/api/stripe/confirmer-session`, {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
+              },
+              body: JSON.stringify({ session_id: sessionId, plan: planUrl })
+          })
+              .then(r => r.ok ? r.json() : null)
+              .then(data => {
+                  setChecklistOnboarding(prev => ({ ...prev, etape_stripe_ok: true }));
+                  if (typeof chargerTout === 'function') chargerTout();
+                  setToast({
+                      message: data?.message || "Empreinte bancaire Stripe validée (0 € aujourd'hui) ! Étape 4 Go-Live cochée.",
+                      type: 'success'
+                  });
+                  setTimeout(() => setToast(null), 5000);
+              })
+              .catch(() => {});
+          window.history.replaceState({}, document.title, "/");
+      } else if (paiementStatus === 'annule') {
+          setToast({ message: "Enregistrement de l'empreinte bancaire annulé.", type: 'error' });
+          setTimeout(() => setToast(null), 4000);
+          window.history.replaceState({}, document.title, "/");
+      }
+  }, []);
   if (resetTokenUrl) {
       return (
         <div className="dashboard-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh', position: 'relative' }}>
@@ -1542,162 +1094,9 @@ function App() {
     );
   }
 
-  // Pop-up bloquant : le gérant doit accepter les documents contractuels avant tout (et avant le paiement)
-  if (token && userRole === 'gerant' && legalStatut && legalStatut.accepte === false) {
-    return (
-      <PopupLegal
-        apiBase={API_URL}
-        token={localStorage.getItem('api_token')}
-        onAccepted={() => setLegalStatut({ ...legalStatut, accepte: true })}
-        onRefuse={seDeconnecter}
-      />
-    );
-  }
-
-
   const role = userRole;
-  const heureDebutAgenda = Math.max(0, Math.min(23, parseInt(configSalon.heure_ouverture) || 8));
-  const heureFinAgenda = Math.max(heureDebutAgenda, Math.min(23, parseInt(configSalon.heure_fermeture) || 20));
-  const nbHeures = Math.max(1, heureFinAgenda - heureDebutAgenda + 1);
-
-  const getPrestationsSuggerees = (texteSaisi) => {
-      const prestationsDb = (catalogueListe || []).filter(a => a.type_article === 'PRESTATION');
-      const searchClean = nettoyerTexteRecherche(texteSaisi);
-
-      let resultats = [];
-      
-      if (!searchClean) {
-          const topNoms = (dashboardData?.top_3_prestations || []).map(p => (p.nom || '').toLowerCase() || '') || [];
-          const topPrestas = prestationsDb.filter(p => p.nom && topNoms.includes((p.nom || '').toLowerCase()));
-          const autresPrestas = prestationsDb.filter(p => !p.nom || !topNoms.includes((p.nom || '').toLowerCase()));
-          resultats = [...topPrestas, ...autresPrestas];
-      } else {
-          resultats = prestationsDb.filter(p => nettoyerTexteRecherche(p.nom).includes(searchClean));
-      }
-      
-      return resultats.slice(0, 5); 
-  };
-
-
-  const formatPortion = (qte) => {
-      const val = parseFloat(qte);
-      if (Math.abs(val - 0.13) < 0.01) return "1/8";
-      if (Math.abs(val - 0.25) < 0.01) return "1/4";
-      if (Math.abs(val - 0.33) < 0.01) return "1/3";
-      if (Math.abs(val - 0.5) < 0.01) return "1/2";
-      if (Math.abs(val - 0.67) < 0.01) return "2/3";
-      if (Math.abs(val - 0.75) < 0.01) return "3/4";
-      return val;
-  };
-
-  const getInitials = (name) => {
-      if (!name) return '??';
-      const parts = name.trim().split(' ');
-      if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();
-      return name.substring(0, 2).toUpperCase();
-  };
-
-  const renderAvatar = (url, name, size = 40) => (
-      url ? 
-      <img src={url} alt={name} style={{width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border-color)'}} /> : 
-      <div style={{width: size, height: size, borderRadius: '50%', background: 'var(--btn-primary)', color: 'var(--btn-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.4, fontWeight: 'bold', flexShrink: 0, border: '1px solid var(--border-color)'}}>{getInitials(name || 'Inconnu')}</div>
-  );
-
-// --- MODULE 3 : SCANNER DE CODE-BARRES CAMÉRA (CAISSE & STOCKS) ---
-  
-
-  // --- MODULE 5 & OBJECTIFS D'ÉQUIPE (FONCTIONS SANS HOOKS CONDITIONNELS) ---
-  const chargerKpisEmploye = async () => {
-      try {
-          const res = await fetch(`${API_URL}/api/employes/gamification-kpis`, {
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
-          });
-          if (res.ok) {
-              const data = await res.json();
-              if (data) setEmpGamificationKpis(data);
-          }
-      } catch (e) {}
-  };
-
-  const creerObjectifEquipe = async () => {
-      if (!newObjectifForm.titre.trim() || !newObjectifForm.valeur_cible) {
-          return showToast("Veuillez renseigner un intitulé et une valeur cible.", "error");
-      }
-      try {
-          const res = await fetch(`${API_URL}/api/equipe/objectifs`, {
-              method: 'POST',
-              headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${localStorage.getItem('api_token') || token}`
-              },
-              body: JSON.stringify(newObjectifForm)
-          });
-          if (res.ok) {
-              showToast("Objectif enregistré pour l'équipe.", "success");
-              setShowAddObjectifModal(false);
-              setNewObjectifForm({ titre: '', type_indicateur: 'TAUX_REVENTE', valeur_cible: '20', id_employe: 'TOUS', recompense: '' });
-              chargerObjectifsEquipe();
-          } else {
-              const err = await res.json().catch(() => ({}));
-              showToast(err.erreur || "Erreur lors de la création.", "error");
-          }
-      } catch (e) {
-          showToast("Erreur réseau.", "error");
-      }
-  };
-
-  const supprimerObjectifEquipe = async (idObj) => {
-      try {
-          const res = await fetch(`${API_URL}/api/equipe/objectifs/${idObj}`, {
-              method: 'DELETE',
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('api_token') || token}` }
-          });
-          if (res.ok) {
-              showToast("Objectif retiré.", "info");
-              chargerObjectifsEquipe();
-          }
-      } catch (e) {}
-  };
-
-
-
-  const iconBord = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
-  const iconCaisse = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>;
-  const iconAgenda = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
-  const iconActions = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
-  const iconCompta = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>;
-  const iconOutils = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>;
-
-  const onglMobilesParRole = (r) => {
-      const iconComptaLock = !aLeNiveau('PREMIUM') ? (
-          <div style={{position:'relative'}}>
-              <span style={{position:'absolute', top:'-4px', right:'-4px', color:'var(--text-muted)', background:'var(--bg-app)', borderRadius:'50%', padding:'1px', display:'flex'}}><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>
-              {iconCompta}
-          </div>
-      ) : iconCompta;
-
-      if (r === 'gerant') return [
-          { key: 'accueil', label: 'Bord', icon: iconBord },
-          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
-          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
-          { key: 'outils', label: 'Outils', icon: iconOutils },
-      ];
-      if (r === 'salon') return [
-          { key: 'accueil', label: 'Bord', icon: iconBord },
-          { key: 'caisse', label: 'Caisse', icon: iconCaisse },
-          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
-          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
-          { key: 'outils', label: 'Outils', icon: iconOutils },
-      ];
-      // employe
-      return [
-          { key: 'accueil', label: 'Bord', icon: iconBord },
-          { key: 'agenda', label: 'Agenda', badge: (tachesIA || []).some(t => t.type_tache === 'CLIENT'), icon: iconAgenda },
-          { key: 'admin', label: 'Compta', icon: iconComptaLock },
-          { key: 'actions', label: 'Actions', badge: nbTachesUrgentes > 0, icon: iconActions },
-          { key: 'outils', label: 'Outils', icon: iconOutils },
-      ];
-  };
+  const appliquerRetourPinLocal = (empId, err) => appliquerRetourPinLocalUtil(setEmployesListe, empId, err);
+  const getStatutBlocagePin = (empId) => getStatutBlocagePinUtil(employesListe, empId);
   return (
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
@@ -1744,7 +1143,6 @@ function App() {
         seDeconnecter={seDeconnecter}
         isOutilsMenuOpen={isOutilsMenuOpen}
         setIsOutilsMenuOpen={setIsOutilsMenuOpen}
-        onglMobilesParRole={onglMobilesParRole}
       />
 
       <div className="main-content">

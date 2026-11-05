@@ -185,7 +185,7 @@ flowchart TD
 ---
 
 #### 13. Si tu touches au Frontend (`frontend/src/App.jsx`, `hooks/`, `components/`, `context/`, `utils/`, `constants/`, `pages/`)
-- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente (`dashboard/`, `caisse/`, `actions/`, `agenda/`, `protocoles/`, `stock/`, `rh/`, `admin/`, `chat/`, `superadmin/`, `Parametres.jsx`), les 12 custom hooks de logique métier extraits (`frontend/src/hooks/`), les modales globales extraites (`frontend/src/components/modals/`), la navigation (`frontend/src/components/navigation/`), les composants mutualisés (`frontend/src/components/common/`), l'authentification (`components/auth/LoginView.jsx`, `hooks/useAuthSession.js`, `utils/auth.js`, `utils/pin.js`), le temps réel et la réservation publique.
+- **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente (`dashboard/`, `caisse/`, `actions/`, `agenda/`, `protocoles/`, `stock/`, `rh/`, `admin/`, `chat/`, `superadmin/`, `Parametres.jsx`), les 20 custom hooks de logique métier extraits (`frontend/src/hooks/`), les modales globales extraites (`frontend/src/components/modals/`), la navigation (`frontend/src/components/navigation/`), les composants mutualisés (`frontend/src/components/common/`), l'authentification (`components/auth/LoginView.jsx`, `hooks/useAuthSession.js`, `utils/auth.js`, `utils/pin.js`), le temps réel et la réservation publique.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion si des hooks sont appelés sous conditions.
   - Régression visuelle ou perte de synchronisation des thèmes/styles CSS.

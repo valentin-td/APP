@@ -266,7 +266,7 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
   - Une fuite mémoire sur les listeners WebSocket impacterait tous les utilisateurs connectés.
 
 ### 4.3. Le Frontend Modulaire & Composants Métier (`frontend/src/`)
-- **Orchestrateur racine** : `frontend/src/App.jsx` (réduit de 11 553 lignes à **2 467 lignes** [-78.6%] après extraction de tous les onglets de domaine, modales globales, composants de navigation et 12 custom hooks de logique métier).
+- **Orchestrateur racine** : `frontend/src/App.jsx` (réduit de 11 553 lignes à **1 865 lignes** [-83.8%] après extraction de tous les onglets de domaine, modales globales, composants de navigation et 20 custom hooks de logique métier).
 - **Hooks Métier Découplés (`frontend/src/hooks/`)** :
   - `useAuthSession.js` : Authentification multi-rôles (gérant, salon, employé avec PIN), tokens JWT, conformité légale NF525 (CGV/Politique), reset mot de passe et Reverse Trial Stripe.
   - `useCaissePOS.js` : Smart POS NF525, panier interactif, pourboires, remises, encaissement espèces/CB Stripe Terminal, éco-tickets et queue hors-ligne `localforage`.
@@ -280,6 +280,14 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
   - `useFacturesOCR.js` : Moteur OCR de détection et d'extraction de factures par IA, événements SSE temps réel, file d'attente de documents, simulateur salon démo et saisie manuelle.
   - `useProtocolesCoiffure.js` : Académie technique, fiches recettes de coiffure, étapes avec proportions de produits, photos/médias et calcul de rentabilité.
   - `useEntitiesCRUD.jsx` : Gestion CRUD centralisée des clients (historique et notes), des collaborateurs (PIN, commissions), du catalogue de prestations et de l'inventaire des stocks, ainsi que des exports comptables (FEC, liasse PDF) et de l'audit cryptographique NF525.
+  - `useOfflineSync.js` : Écouteur réseau (online/offline), boucle de vérification (3s/5min) et vidage automatique de la file d'attente des tickets hors-ligne scellés.
+  - `useMouvementsCaisse.js` : Mouvements d'espèces de caisse (entrées/sorties), calculatrice de pièces et billets, motifs prédéfinis et contrôle PIN.
+  - `useGamificationEquipe.js` : Objectifs d'équipe, paliers et KPIs collaborateurs gamifiés, modales de gestion et de suivi en temps réel.
+  - `useActionsChecklist.js` : Checklist Go-Live de démarrage salon, campagne SMS de sauvetage client (winback), to-do list et fusion de doublons de stocks.
+  - `useAppDataLoader.js` : Moteur de synchronisation globale IndexedDB (`localforage`), auto-fetch et écouteurs WebSockets temps réel (nouveaux RDV, paiements validés, chat).
+  - `usePricingLock.js` : Gestion de la logique de monétisation SaaS (Reverse Trial, soft lock, hard lock) et filtrage des accès par niveau d'abonnement (Essential, Pro, Premium).
+  - `useResponsiveAgendaDate.js` : Écouteur responsive dynamique (mobile 3j, tablette 4j, desktop 7j) et pagination temporelle de l'agenda avec bornes d'ouverture.
+  - `useSalonSettings.js` : Sauvegarde des paramètres de configuration du salon (horaires, sécurité PIN établissement NF525) et souscription aux notifications push Web/Mobile.
 - **Structure modulaire en place** :
   - `frontend/src/components/navigation/` :
     - `NavbarSidebar.jsx` : barre latérale de navigation desktop et intégration `LiquidTabBar`.

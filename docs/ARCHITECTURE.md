@@ -130,7 +130,7 @@ flowchart TB
 ### 3.1. Couche Frontend (SPA Progressive Web App & Architecture Modulaire)
 - **Framework** : React 19.2.8 avec Vite 8.3.0.
 - **PWA & Offline** : `vite-plugin-pwa`, `sw.js` pour les notifications push web, et `localforage` (IndexedDB) pour le cache hors-ligne du catalogue et du panier caisse (`offline_tickets`).
-- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal allégé (réduit de 11 553 à **2 467 lignes** [-78.6%], dont le JSX est entièrement découpé en composants autonomes et la logique métier extraite dans 12 custom hooks dédiés dans `frontend/src/hooks/`) :
+- **Gestion des états & Architecture Modulaire** : Composant racine `App.jsx` agissant comme orchestrateur principal allégé (réduit de 11 553 à **1 865 lignes** [-83.8%], dont le JSX est entièrement découpé en composants autonomes et la logique métier extraite dans 20 custom hooks dédiés dans `frontend/src/hooks/`) :
   - `frontend/src/hooks/` :
     - `useAuthSession.js` : Authentification multi-rôles (gérant, salon, employé avec code PIN), gestion des tokens JWT, conformité légale NF525 (CGV/Politique), mot de passe oublié et Reverse Trial Stripe.
     - `useCaissePOS.js` : Terminal Smart POS NF525, panier réactif, pourboires, remises, encaissement espèces/CB Stripe Terminal, génération de tickets et queue hors-ligne `localforage`.
@@ -144,6 +144,14 @@ flowchart TB
     - `useFacturesOCR.js` : Moteur OCR de détection et d'extraction de factures par IA, connexion SSE temps réel, file d'attente de documents, simulateur salon démo et saisie manuelle.
     - `useProtocolesCoiffure.js` : Académie technique, fiches recettes de coiffure, étapes avec proportions de produits, photos/médias et calcul de rentabilité.
     - `useEntitiesCRUD.jsx` : Gestion CRUD centralisée des clients, employés, prestations du catalogue et stocks, exports comptables (FEC, liasse PDF) et audit cryptographique NF525.
+    - `useOfflineSync.js` : Écouteur réseau (online/offline), boucle de vérification (3s/5min) et vidage automatique de la file d'attente des tickets hors-ligne scellés.
+    - `useMouvementsCaisse.js` : Mouvements d'espèces de caisse (entrées/sorties), calculatrice de pièces et billets, motifs prédéfinis et contrôle PIN.
+    - `useGamificationEquipe.js` : Objectifs d'équipe, paliers et KPIs collaborateurs gamifiés, modales de gestion et de suivi en temps réel.
+    - `useActionsChecklist.js` : Checklist Go-Live de démarrage salon, campagne SMS de sauvetage client (winback), to-do list et fusion de doublons de stocks.
+    - `useAppDataLoader.js` : Moteur de synchronisation globale IndexedDB (`localforage`), auto-fetch et écouteurs WebSockets temps réel (nouveaux RDV, paiements validés, chat).
+    - `usePricingLock.js` : Gestion de la logique de monétisation SaaS (Reverse Trial, soft lock, hard lock) et filtrage des accès par niveau d'abonnement (Essential, Pro, Premium).
+    - `useResponsiveAgendaDate.js` : Écouteur responsive dynamique (mobile 3j, tablette 4j, desktop 7j) et pagination temporelle de l'agenda avec bornes d'ouverture.
+    - `useSalonSettings.js` : Sauvegarde des paramètres de configuration du salon (horaires, sécurité PIN établissement NF525) et souscription aux notifications push Web/Mobile.
   - `frontend/src/utils/auth.js` : décodage JWT/UI-token sécurisé, transformation VAPID Uint8Array et vérification des règles de complexité PIN.
   - `frontend/src/utils/pin.js` : helpers de sécurité NF525 pour la gestion des tentatives et blocages PIN temporaires/définitifs (`getStatutBlocagePin`, `appliquerRetourPinLocal`).
   - `frontend/src/utils/fetchClient.js` : client HTTP intercepteur injectant automatiquement les cookies de session et le jeton Bearer sur toutes les requêtes API.
