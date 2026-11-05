@@ -6,6 +6,27 @@ import localforage from 'localforage';
 import { API_URL } from '../api/config';
 import { decodeToken } from '../utils/auth';
 
+// Identifie à quelle conversation (clé du contact) appartient un message
+export const getCleConversation = (msg, roleUtilisateur, myId) => {
+  if (Number(msg.id_destinataire) === 0) return 'salon';
+  if (roleUtilisateur === 'employe') {
+    if (Number(msg.id_expediteur) === Number(myId)) {
+      return msg.id_destinataire === null || Number(msg.id_destinataire) === -1 ? 'gerant' : msg.id_destinataire;
+    }
+    if (Number(msg.id_destinataire) === Number(myId)) {
+      return msg.id_expediteur === null || Number(msg.id_expediteur) === -1 ? 'gerant' : msg.id_expediteur;
+    }
+    return null;
+  }
+  if (roleUtilisateur === 'salon') {
+    if ((msg.id_expediteur === -1 && msg.id_destinataire === null) || (msg.id_expediteur === null && msg.id_destinataire === -1)) return 'gerant';
+  }
+  const estIdentitePatron = (v) => v === null || Number(v) === -1;
+  if (estIdentitePatron(msg.id_expediteur) && !estIdentitePatron(msg.id_destinataire)) return msg.id_destinataire;
+  if (estIdentitePatron(msg.id_destinataire) && !estIdentitePatron(msg.id_expediteur)) return msg.id_expediteur;
+  return null;
+};
+
 export function useInternalChat({
   token,
   role,
@@ -58,27 +79,6 @@ export function useInternalChat({
       }
     });
   }, []);
-
-  // Identifie à quelle conversation (clé du contact) appartient un message
-  const getCleConversation = (msg, roleUtilisateur, myId) => {
-    if (Number(msg.id_destinataire) === 0) return 'salon';
-    if (roleUtilisateur === 'employe') {
-      if (Number(msg.id_expediteur) === Number(myId)) {
-        return msg.id_destinataire === null || Number(msg.id_destinataire) === -1 ? 'gerant' : msg.id_destinataire;
-      }
-      if (Number(msg.id_destinataire) === Number(myId)) {
-        return msg.id_expediteur === null || Number(msg.id_expediteur) === -1 ? 'gerant' : msg.id_expediteur;
-      }
-      return null;
-    }
-    if (roleUtilisateur === 'salon') {
-      if ((msg.id_expediteur === -1 && msg.id_destinataire === null) || (msg.id_expediteur === null && msg.id_destinataire === -1)) return 'gerant';
-    }
-    const estIdentitePatron = (v) => v === null || Number(v) === -1;
-    if (estIdentitePatron(msg.id_expediteur) && !estIdentitePatron(msg.id_destinataire)) return msg.id_destinataire;
-    if (estIdentitePatron(msg.id_destinataire) && !estIdentitePatron(msg.id_expediteur)) return msg.id_expediteur;
-    return null;
-  };
 
   // Calcule, pour chaque conversation, s'il reste des messages non lus
   const nonLusParConv = useMemo(() => {

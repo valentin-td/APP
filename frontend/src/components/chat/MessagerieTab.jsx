@@ -2,6 +2,9 @@ import React from 'react';
 import ThemeToggle from '../common/ThemeToggle';
 import { renderAvatar } from '../common/Avatar';
 import { decodeToken } from '../../utils/auth';
+import { getCleConversation } from '../../hooks/useInternalChat';
+
+const CHAT_EMOJIS = ['👍', '❤️', '😂', '🔥', '👏', '😢'];
 
 export const MessagerieTab = ({
   isMobile,
@@ -25,6 +28,9 @@ export const MessagerieTab = ({
   resoudreProfilVu,
   activeMenuId,
   setActiveMenuId,
+  activeReactionId,
+  setActiveReactionId,
+  chatMessagesRef,
   replyToMsg,
   setReplyToMsg,
   demarrerEdition,
@@ -93,7 +99,7 @@ export const MessagerieTab = ({
                               .chat-vu-par-liste-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; color: var(--text-main); white-space: nowrap; }
                           `}</style>
                           <div className="chat-messages" ref={chatMessagesRef}>
-                                  {(messagesListe || []).filter(m => {
+                                  {(chatMessages || []).filter(m => {
                                       const myId = role === 'employe' ? decodeToken(token)?.id_employe : (role === 'salon' ? -1 : null);
                                       // 1. Message du Groupe Salon (id_destinataire === 0)
                                       if (m.id_destinataire === 0 || m.id_destinataire === '0' || m.id_destinataire === 'salon') {
@@ -204,7 +210,7 @@ export const MessagerieTab = ({
                                                                       <div className="chat-msg-menu" style={{zIndex: 999}}>
                                                                           <button onClick={() => { setReplyToMsg({ id_message: msg.id_message, nom_expediteur: msg.nom_expediteur || 'Gérant', extrait: msg.contenu || (isSafeAudio ? '🎤 Mémo vocal' : '📷 Photo') }); setActiveMenuId(null); }}>↩ Répondre</button>
                                                                           {isMine && <button onClick={() => demarrerEdition(msg)}> Modifier</button>}
-                                                                          <button onClick={() => supprimerMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}> Supprimer</button>
+                                                                          <button onClick={() => demanderSuppressionMessage(msg.id_message)} style={{color: 'var(--color-danger)'}}> Supprimer</button>
                                                                       </div>
                                                                   </>
                                                               )}

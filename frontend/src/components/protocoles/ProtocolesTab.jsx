@@ -4,6 +4,8 @@ import SvgEmptyState from '../common/SvgEmptyState';
 import { normaliserEtapeUI } from '../../utils/protocoles';
 import { formatPortion, nettoyerTexteRecherche } from '../../utils/text';
 
+const TAGS_DISPONIBLES = ['Coloration', 'Soin', 'Technique', 'Barbier', 'Coupe'];
+
 export const ProtocolesTab = ({
   isMobile,
   showAddPrestation,
@@ -25,6 +27,7 @@ export const ProtocolesTab = ({
   catalogueListe = [],
   protocolesListe = [],
   calculerIngredientsTotauxProtocole,
+  toggleTag,
   ajouterTagProtocole,
   supprimerTagProtocole,
   supprimerProtocole,
@@ -32,6 +35,9 @@ export const ProtocolesTab = ({
   deplacerEtapeRecette,
   supprimerEtapeRecette,
   ajouterIngredientSurEtapeExistante,
+  supprimerIngredientDuneEtape,
+  ajouterIngredientBrouillonEtape,
+  ajouterEtapeRecette,
   uploaderPhotoSurEtape,
   uploadMediaProtocole,
   creerProtocole,

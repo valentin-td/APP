@@ -45,6 +45,8 @@ export const DashboardTab = ({
   getAuthHeaders,
   handleFetchError,
   showToast,
+  setSauvetageClient,
+  setSmsSauvetage,
 }) => {
   return (
     <>

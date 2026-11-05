@@ -32,6 +32,7 @@ export function useAgendaPlanning({
   const setProtocoleVisible = setProtocoleVisibleProp || setInternalProtocoleVisible;
   const [filtresEmployes, setFiltresEmployes] = useState([]);
   const [expandedAbsenceDate, setExpandedAbsenceDate] = useState(null);
+  const [semaineOffset, setSemaineOffset] = useState(0);
 
   const [showModalRdv, setShowModalRdv] = useState(false);
   const defaultRdvDate = formatDateInput(new Date());

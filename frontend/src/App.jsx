@@ -1097,6 +1097,8 @@ function App() {
   const role = userRole;
   const appliquerRetourPinLocal = (empId, err) => appliquerRetourPinLocalUtil(setEmployesListe, empId, err);
   const getStatutBlocagePin = (empId) => getStatutBlocagePinUtil(employesListe, empId);
+  const statutCaisseCourant = getStatutBlocagePin(posEmploye);
+  const isEmployeCaisseBloque = Boolean(posEmploye && statutCaisseCourant?.bloque);
   return (
     <>
     <div className="app-root" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', overflowX: 'hidden' }}>
@@ -1208,6 +1210,8 @@ function App() {
                   getAuthHeaders={getAuthHeaders}
                   handleFetchError={handleFetchError}
                   showToast={showToast}
+                  setSauvetageClient={setSauvetageClient}
+                  setSmsSauvetage={setSmsSauvetage}
                 />
               )}
 
@@ -1406,10 +1410,11 @@ function App() {
                   setRechercheProtocole={setRechercheProtocole}
                   newArticle={newArticle}
                   setNewArticle={setNewArticle}
-                  creerArticle={creerArticle}
+                  creerArticle={ajouterArticle}
                   catalogueListe={catalogueListe}
                   protocolesListe={protocolesListe}
                   calculerIngredientsTotauxProtocole={calculerIngredientsTotauxProtocole}
+                  toggleTag={toggleTag}
                   ajouterTagProtocole={ajouterTagProtocole}
                   supprimerTagProtocole={supprimerTagProtocole}
                   supprimerProtocole={supprimerProtocole}
@@ -1417,6 +1422,9 @@ function App() {
                   deplacerEtapeRecette={deplacerEtapeRecette}
                   supprimerEtapeRecette={supprimerEtapeRecette}
                   ajouterIngredientSurEtapeExistante={ajouterIngredientSurEtapeExistante}
+                  supprimerIngredientDuneEtape={supprimerIngredientDuneEtape}
+                  ajouterIngredientBrouillonEtape={ajouterIngredientBrouillonEtape}
+                  ajouterEtapeRecette={ajouterEtapeRecette}
                   uploaderPhotoSurEtape={uploaderPhotoSurEtape}
                   uploadMediaProtocole={uploadMediaProtocole}
                   creerProtocole={creerProtocole}
@@ -1523,6 +1531,13 @@ function App() {
                   showToast={showToast}
                   chargerTout={chargerTout}
                   setRefreshTrigger={setRefreshTrigger}
+                  setCancellationRobot={setCancellationRobot}
+                  setSelectedCancelRdvs={setSelectedCancelRdvs}
+                  setCancelMessageTemplate={setCancelMessageTemplate}
+                  dessinerChronogramme={dessinerChronogramme}
+                  debloquerPinEmploye={debloquerPinEmploye}
+                  rhAvisExpanded={rhAvisExpanded}
+                  setRhAvisExpanded={setRhAvisExpanded}
                 />
               )}
 
@@ -1537,23 +1552,23 @@ function App() {
                   mouvementsCaisse={mouvementsCaisse}
                   demanderZDeCaisse={demanderZDeCaisse}
                   clotureFaiteAujourdhui={clotureFaiteAujourdhui}
-                  showClotureZModal={showClotureZModal}
-                  setShowClotureZModal={setShowClotureZModal}
-                  zPreview={zPreview}
-                  isCloturantZ={isCloturantZ}
-                  validerClotureZFinale={validerClotureZFinale}
                   telechargerBilanJour={telechargerBilanJour}
-                  telechargerDossierNF525={telechargerDossierNF525}
-                  telechargerArchiveMensuelle={telechargerArchiveMensuelle}
-                  showModalEntreeSortie={showModalEntreeSortie}
-                  setShowModalEntreeSortie={setShowModalEntreeSortie}
-                  typeMouvement={typeMouvement}
-                  setTypeMouvement={setTypeMouvement}
-                  montantMouvement={montantMouvement}
-                  setMontantMouvement={setMontantMouvement}
-                  motifMouvement={motifMouvement}
-                  setMotifMouvement={setMotifMouvement}
-                  validerMouvementCaisse={validerMouvementCaisse}
+                  statutMoisPrecedent={statutMoisPrecedent}
+                  previsualiserBrouillon={previsualiserBrouillon}
+                  setShowModalValidationCompta={setShowModalValidationCompta}
+                  chargerMouvementsCaisse={chargerMouvementsCaisse}
+                  setShowMouvementModal={setShowMouvementModal}
+                  erreurAnalyseIA={erreurAnalyseIA}
+                  setErreurAnalyseIA={setErreurAnalyseIA}
+                  setShowSaisieManuelleFacture={setShowSaisieManuelleFacture}
+                  aLeNiveau={aLeNiveau}
+                  handleUploadFactureManuel={handleUploadFactureManuel}
+                  isUploadingFacture={isUploadingFacture}
+                  progressionBatch={progressionBatch}
+                  setShowPricingModal={setShowPricingModal}
+                  declencherExport={declencherExport}
+                  declencherExportFEC={declencherExportFEC}
+                  lancerAuditNF525={lancerAuditNF525}
                   expandedYear={expandedYear}
                   setExpandedYear={setExpandedYear}
                   expandedMonth={expandedMonth}
@@ -1575,7 +1590,7 @@ function App() {
                   configSalon={configSalon}
                   contactsTries={contactsTries}
                   employesListe={employesListe}
-                  chatMessages={chatMessages}
+                  chatMessages={messagesListe}
                   formatDateSeparateur={formatDateSeparateur}
                   editingMsgId={editingMsgId}
                   setEditingMsgId={setEditingMsgId}
@@ -1587,6 +1602,9 @@ function App() {
                   resoudreProfilVu={resoudreProfilVu}
                   activeMenuId={activeMenuId}
                   setActiveMenuId={setActiveMenuId}
+                  activeReactionId={activeReactionId}
+                  setActiveReactionId={setActiveReactionId}
+                  chatMessagesRef={chatMessagesRef}
                   replyToMsg={replyToMsg}
                   setReplyToMsg={setReplyToMsg}
                   demarrerEdition={demarrerEdition}

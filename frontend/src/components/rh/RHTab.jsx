@@ -41,6 +41,13 @@ export const RHTab = ({
   showToast,
   chargerTout,
   setRefreshTrigger,
+  setCancellationRobot,
+  setSelectedCancelRdvs,
+  setCancelMessageTemplate,
+  dessinerChronogramme,
+  debloquerPinEmploye,
+  rhAvisExpanded,
+  setRhAvisExpanded,
 }) => {
                   const listeRh = Array.isArray(rhData) ? rhData : [];
                   const totalCaEquipe = listeRh.reduce((acc, e) => acc + (parseFloat(e.performances_actuelles?.ca_genere) || 0), 0);
