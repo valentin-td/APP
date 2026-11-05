@@ -90,6 +90,15 @@ const {
     marquerMessagesLus,
     reagirMessage
 } = require('./services/chat/chat.service');
+const {
+    recupererInfoAvis,
+    recupererStatsAvis,
+    arreterSmsClient,
+    enregistrerNoteAvis,
+    enregistrerCommentaireAvis,
+    envoyerSmsManuel,
+    envoyerSmsWinback
+} = require('./services/marketing/marketing.service');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -2554,127 +2563,74 @@ app.get('/api/planning', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/avis/info/:token', limiteurAvisPublic, async (req, res) => {
     try {
-        const r = await pool.query(`SELECT a.prenom, a.statut, a.note, a.id_salon, cs.nom_salon FROM avis_demandes a JOIN configuration_salon cs ON cs.id_salon = a.id_salon WHERE a.token = $1 AND a.date_creation > NOW() - INTERVAL '30 days'`, [req.params.token]);
-        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou expiré." });
-        const d = r.rows[0];
-        res.json({ prenom: d.prenom, nom_salon: d.nom_salon, etape: d.statut === 'REPONDU' ? 'termine' : (d.note && d.note <= 3 ? 'commentaire' : 'notation') });
-    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+        const result = await recupererInfoAvis({ pool }, req.params.token);
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur." });
+    }
 });
 
 app.get('/api/avis/stats', verifierToken, async (req, res) => {
     try {
-        const r = await pool.query(`
-            SELECT
-                COUNT(*) FILTER (WHERE statut IN ('ENVOYE', 'REPONDU')) as nb_envoyes,
-                COUNT(*) FILTER (WHERE statut = 'REPONDU') as nb_repondus,
-                ROUND(AVG(note) FILTER (WHERE note IS NOT NULL)::numeric, 1) as note_moyenne,
-                COUNT(*) FILTER (WHERE note >= 4) as nb_positifs,
-                COUNT(*) FILTER (WHERE note IS NOT NULL AND note <= 3) as nb_negatifs
-            FROM avis_demandes WHERE id_salon = $1
-        `, [req.user.id_salon]);
-        res.json(r.rows[0]);
-    } catch (e) { res.status(500).json({ erreur: "Erreur statistiques avis." }); }
+        const stats = await recupererStatsAvis({ pool }, req.user.id_salon);
+        res.json(stats);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur statistiques avis." });
+    }
 });
 
 app.post('/api/avis/:token/stop', async (req, res) => {
     try {
-        const r = await pool.query('SELECT id_salon, telephone FROM avis_demandes WHERE token = $1', [req.params.token]);
-        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide." });
-        const { id_salon, telephone } = r.rows[0];
-        await pool.query('INSERT INTO sms_opt_out (id_salon, telephone) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id_salon, normaliserTelephone(telephone)]);
-        await pool.query(`UPDATE avis_demandes SET statut = 'ANNULE' WHERE id_salon = $1 AND telephone = $2 AND statut = 'EN_ATTENTE'`, [id_salon, telephone]);
-        res.json({ message: "Vous ne recevrez plus ce type de message." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+        const result = await arreterSmsClient({ pool, normaliserTelephone }, req.params.token);
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur." });
+    }
 });
 
 app.post('/api/avis/:token/note', limiteurAvisPublic, async (req, res) => {
-    const note = parseInt(req.body.note);
-    if (!note || note < 1 || note > 5) return res.status(400).json({ erreur: "Note invalide." });
     try {
-        const r = await pool.query(`UPDATE avis_demandes SET note = $1, statut = CASE WHEN $1 >= 4 THEN 'REPONDU' ELSE statut END WHERE token = $2 AND note IS NULL RETURNING id_salon`, [note, req.params.token]);
-        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà utilisé." });
-        if (note >= 4) {
-            const salonInfo = await pool.query('SELECT lien_google_maps FROM configuration_salon WHERE id_salon = $1', [r.rows[0].id_salon]);
-            return res.json({ besoin_commentaire: false, lien_google_maps: salonInfo.rows[0]?.lien_google_maps || null });
-        }
-        res.json({ besoin_commentaire: true });
-    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+        const result = await enregistrerNoteAvis({ pool }, { token: req.params.token, note: req.body.note });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur." });
+    }
 });
 
 app.post('/api/avis/:token/commentaire', limiteurAvisPublic, async (req, res) => {
     try {
-        const r = await pool.query(`UPDATE avis_demandes SET commentaire = $1, statut = 'REPONDU' WHERE token = $2 AND note <= 3 AND statut != 'REPONDU' RETURNING id_salon, telephone, prenom, note`, [req.body.commentaire || '', req.params.token]);
-        if (r.rowCount === 0) return res.status(404).json({ erreur: "Lien invalide ou déjà traité." });
-        const d = r.rows[0];
-        
-        await pool.query(
-            `INSERT INTO taches_actions (id_salon, titre, description, source, donnees) VALUES ($1, $2, $3, 'AVIS_CLIENT', $4)`,
-            [d.id_salon, `Avis client insatisfait (${d.note}★) à recontacter`, `${d.prenom || 'Un client'} (${d.telephone}) a laissé une note de ${d.note}/5 : "${req.body.commentaire || '(aucun commentaire)'}"`, JSON.stringify({ telephone: d.telephone, prenom: d.prenom })]
+        const result = await enregistrerCommentaireAvis(
+            { pool, envoyerNotificationPush },
+            { token: req.params.token, commentaire: req.body.commentaire }
         );
-        
-        envoyerNotificationPush(d.id_salon, 'gerant', { title: "Avis client à traiter", body: `Note de ${d.note}/5 reçue, un commentaire vous attend dans Actions.`, url: '/?tab=actions' });
-        res.json({ message: "Merci pour votre retour." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur." }); }
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur." });
+    }
 });
 
 app.post('/api/sms/send', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'envoi de SMS est réservé au gérant et au poste Salon." });
-    const { telephone, message } = req.body;
     try {
-        const salonConfig = await pool.query('SELECT brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
-        const config = salonConfig.rows[0];
-        if (!config || !config.brevo_api_key) return res.status(400).json({ erreur: "SMS non configurés dans vos paramètres." });
-        await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
-            method: 'POST', headers: { 'accept': 'application/json', 'api-key': config.brevo_api_key, 'content-type': 'application/json' },
-            body: JSON.stringify({ type: 'transactional', unicodeEnabled: false, sender: (config.sms_sender_name || 'LeSalon').substring(0, 11), recipient: telephone, content: message })
-        });
-        res.json({ message: "SMS de sauvetage envoyé." });
-    } catch(e) { res.status(500).json({ erreur: "Erreur d'envoi." }); }
+        const result = await envoyerSmsManuel({ pool }, { id_salon: req.user.id_salon, role: req.user.role, telephone: req.body.telephone, message: req.body.message });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur d'envoi." });
+    }
 });
 
 app.post('/api/sms/winback', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'envoi d'offres Winback est réservé au gérant et au poste Salon." });
-    const id_salon = req.user.id_salon;
-    const { id_client, telephone, message, remise_winback } = req.body;
-
-    if (!telephone || !message) {
-        return res.status(400).json({ erreur: "Le téléphone et le message sont requis." });
-    }
-
     try {
-        const confRes = await pool.query('SELECT brevo_api_key, sms_sender_name FROM configuration_salon WHERE id_salon = $1', [id_salon]);
-        if (confRes.rowCount === 0 || !confRes.rows[0].brevo_api_key) {
-            return res.status(400).json({ erreur: "SMS non configurés dans vos paramètres." });
-        }
-
-        const { brevo_api_key, sms_sender_name } = confRes.rows[0];
-        const ok = await envoyerSMS_Intelligent(id_salon, brevo_api_key, sms_sender_name || 'MonSalon', telephone, message);
-
-        if (!ok) {
-            return res.status(500).json({ erreur: "Échec de l'envoi du SMS via Brevo (vérifiez votre clé ou quota)." });
-        }
-
-        if (remise_winback && String(remise_winback).trim() !== '') {
-            const remiseClean = String(remise_winback).trim();
-            if (id_client) {
-                await pool.query('UPDATE clients SET remise_winback = $1 WHERE id_client = $2 AND id_salon = $3', [remiseClean, id_client, id_salon]);
-            } else {
-                const tel9 = String(telephone).replace(/\D/g, '').slice(-9);
-                if (tel9.length >= 8) {
-                    await pool.query(
-                        `UPDATE clients SET remise_winback = $1 WHERE id_salon = $2 AND RIGHT(regexp_replace(telephone, '\\D', '', 'g'), 9) = $3`,
-                        [remiseClean, id_salon, tel9]
-                    );
-                }
-            }
-        }
-
-        res.json({ message: "Offre de sauvetage envoyée et enregistrée sur la fiche client !" });
+        const result = await envoyerSmsWinback(
+            { pool, envoyerSMS_Intelligent },
+            { id_salon: req.user.id_salon, role: req.user.role, body: req.body }
+        );
+        res.json(result);
     } catch (e) {
-        console.error("Erreur Winback:", e);
-        res.status(500).json({ erreur: "Erreur serveur lors de l'envoi." });
+        console.error("Erreur Winback :", e);
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur serveur lors de l'envoi." });
     }
 });
+
 app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "L'encaissement est réservé au poste Caisse/Salon ou au Gérant." });
     const { montant, id_employe, id_client, lignes, recompense_appliquee, methode_paiement, pourboire, _id_temp, date_creation } = req.body;

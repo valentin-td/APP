@@ -449,14 +449,14 @@
 
 - **Objectif** : Envoyer un SMS de demande d'avis après chaque prestation. Si la note est excellente (4 ou 5 étoiles), redirection vers la fiche Google Business du salon ; si la note est moyenne ou mauvaise (1 à 3 étoiles), ouverture d'un formulaire de recueil interne pour désamorcer l'insatisfaction.
 - **Fichiers Frontend** : `frontend/src/AvisPublic.jsx` (route `/avis/:token`).
-- **Fichiers Backend** : `server.js` (lignes ~2530-2590), `jobs/cronJobs.js` (`executerRobotAvisSatisfaction`).
+- **Fichiers Backend** : `server.js`, `services/marketing/marketing.service.js`, `jobs/cronJobs.js` (`executerRobotAvisSatisfaction`).
 - **Routes API** :
   - `GET /api/avis/info/:token`
   - `GET /api/avis/stats`
   - `POST /api/avis/:token/stop`
   - `POST /api/avis/:token/note`
   - `POST /api/avis/:token/commentaire`
-- **Services / Modules** : `limiteurAvisPublic`, `jobs/cronJobs.js`.
+- **Services / Modules** : `services/marketing/marketing.service.js`, `limiteurAvisPublic`, `jobs/cronJobs.js`.
 - **Tables BDD** : `avis_demandes`, `sms_opt_out`, `tickets`, `clients`, `configuration_salon`.
 - **Dépendances Amont** : `tickets` (encaissements du jour), `configuration_salon` (lien Google Maps).
 - **Dépendances Aval** : Statistiques e-réputation, Notation moyenne dans les fiches employés RH.
@@ -471,11 +471,11 @@
 
 - **Objectif** : Détecter automatiquement les clients dont la fréquence de visite habituelle est dépassée (risque de churn) et leur envoyer un SMS personnalisé de relance (winback), ainsi que des rappels de RDV 2 heures avant.
 - **Fichiers Frontend** : `frontend/src/Parametres.jsx` (modèles de SMS, quotas).
-- **Fichiers Backend** : `server.js`, `jobs/cronJobs.js` (`executerRobotMarketingEtPredictif`, `executerRobotsSmsAutomatiques`).
+- **Fichiers Backend** : `server.js`, `services/marketing/marketing.service.js`, `jobs/cronJobs.js` (`executerRobotMarketingEtPredictif`, `executerRobotsSmsAutomatiques`).
 - **Routes API** :
   - `POST /api/sms/send`
   - `POST /api/sms/winback`
-- **Services / Modules** : API Brevo HTTP/REST, `normaliserTelephone`.
+- **Services / Modules** : `services/marketing/marketing.service.js`, API Brevo HTTP/REST, `normaliserTelephone`.
 - **Tables BDD** : `clients`, `rendez_vous`, `sms_opt_out`, `configuration_salon`.
 - **Dépendances Amont** : Clé API Brevo configurée, solde SMS.
 - **Dépendances Aval** : Agenda, Rétention client.

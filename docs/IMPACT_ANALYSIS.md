@@ -99,7 +99,19 @@ flowchart TD
 
 ---
 
-#### 6. Si tu touches à `frontend/src/App.jsx`
+#### 6. Si tu touches à `services/marketing/marketing.service.js` (Avis & SMS)
+- **Fonctionnalités impactées** : Recueil d'avis clients, redirection Google Business, STOP SMS, envois transactionnels Brevo, offres winback.
+- **Risques majeurs** :
+  - Non-respect de l'opt-out SMS (violation RGPD et sanctions CNIL/opérateurs).
+  - Échec de création de la tâche d'alerte en cas de client mécontent.
+- **Checklist de vérification** :
+  1. [ ] Tester la prise en compte du STOP SMS (le numéro doit être stocké en base `sms_opt_out`).
+  2. [ ] Tester la notation 5★ (redirection Google Maps) vs 2★ (tâche d'action créée pour le gérant).
+  3. [ ] Vérifier la bonne gestion de la clé API Brevo manquante ou du solde épuisé.
+
+---
+
+#### 7. Si tu touches à `frontend/src/App.jsx`
 - **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.
