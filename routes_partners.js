@@ -3632,4 +3632,162 @@ router.post('/admin/scanner-expirations', verifierTokenPartner, verifierSuperAdm
   res.json({ message: `Vérification terminée : ${count} alerte(s) e-mail envoyée(s).` });
 });
 
+// ============================================================================
+// 9. GESTION DU STOCK TPE AGENT, ALERTES ONBOARDING & COMMANDES FONDATEUR
+// ============================================================================
+
+async function initTableTpePartners() {
+  await pool.query(`ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS tpe_stock INTEGER DEFAULT 0`).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS partner_commandes_tpe (
+      id_commande SERIAL PRIMARY KEY,
+      id_agent INTEGER NOT NULL,
+      quantite INTEGER NOT NULL,
+      adresse_livraison TEXT NOT NULL,
+      note TEXT DEFAULT '',
+      statut VARCHAR(30) DEFAULT 'EN_ATTENTE',
+      date_commande TIMESTAMP DEFAULT NOW(),
+      date_expedition TIMESTAMP DEFAULT NULL
+    )
+  `).catch(() => {});
+}
+initTableTpePartners();
+
+// A. Récupérer l'état du stock TPE de l'agent, ses onboardings prévus et ses commandes
+router.get('/tpe-stock', verifierTokenPartner, async (req, res) => {
+  try {
+    await initTableTpePartners();
+    const idAgent = getAgentIdFromReq(req);
+
+    const [agentRes, confRes, prospectsRes, commandesRes] = await Promise.all([
+      pool.query(`SELECT COALESCE(tpe_stock, 0) AS tpe_stock, prenom, nom FROM partner_agents WHERE id_agent = $1`, [idAgent]),
+      pool.query(`SELECT adresse_pro FROM partner_conformite_dossier WHERE id_agent = $1`, [idAgent]).catch(() => ({ rows: [] })),
+      pool.query(`
+        SELECT COUNT(*)::INT AS nb_prevus
+        FROM partner_prospects_reservations
+        WHERE id_agent = $1
+          AND COALESCE(statut_prospect, 'VERROUILLE') != 'SIGNE'
+          AND date_expiration_protection > NOW()
+      `, [idAgent]).catch(() => ({ rows: [{ nb_prevus: 0 }] })),
+      pool.query(`
+        SELECT * FROM partner_commandes_tpe
+        WHERE id_agent = $1
+        ORDER BY date_commande DESC
+        LIMIT 10
+      `, [idAgent])
+    ]);
+
+    const tpeStock = agentRes.rows[0]?.tpe_stock ?? 0;
+    const onboardingsPrevus = prospectsRes.rows[0]?.nb_prevus ?? 0;
+    const manquant = Math.max(0, onboardingsPrevus - tpeStock);
+
+    res.json({
+      tpe_stock: tpeStock,
+      onboardings_prevus: onboardingsPrevus,
+      manquant,
+      alerte_penurie: manquant > 0,
+      adresse_defaut: confRes.rows[0]?.adresse_pro || '',
+      commandes: commandesRes.rows
+    });
+  } catch (e) {
+    res.status(500).json({ error: "Erreur chargement du stock TPE." });
+  }
+});
+
+// B. Commander de nouveaux TPE (Notifie automatiquement le fondateur par e-mail Brevo)
+router.post('/tpe-stock/commander', verifierTokenPartner, async (req, res) => {
+  try {
+    await initTableTpePartners();
+    const idAgent = getAgentIdFromReq(req);
+    const quantite = Math.min(20, Math.max(1, parseInt(req.body.quantite, 10) || 1));
+    const adresse_livraison = String(req.body.adresse_livraison || '').trim();
+    const note = String(req.body.note || '').trim();
+
+    if (!adresse_livraison) {
+      return res.status(400).json({ error: "Veuillez préciser l'adresse de livraison." });
+    }
+
+    const agentRes = await pool.query(`SELECT prenom, nom, email, telephone, code_partenaire, COALESCE(tpe_stock, 0) AS tpe_stock FROM partner_agents WHERE id_agent = $1`, [idAgent]);
+    const ag = agentRes.rows[0] || {};
+
+    const ins = await pool.query(
+      `INSERT INTO partner_commandes_tpe (id_agent, quantite, adresse_livraison, note, statut)
+       VALUES ($1, $2, $3, $4, 'EN_ATTENTE') RETURNING *`,
+      [idAgent, quantite, adresse_livraison, note]
+    );
+
+    // Notification immédiate au fondateur (Valentin)
+    const emailFondateur = process.env.ADMIN_EMAIL || 'tardy.valentin04@gmail.com';
+    if (typeof envoyerEmailSMTP === 'function') {
+      envoyerEmailSMTP({
+        to: emailFondateur,
+        subject: `Commande TPE (${quantite} unité${quantite > 1 ? 's' : ''}) — ${ag.prenom || ''} ${ag.nom || ''}`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #111827; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 16px;">
+            <div style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Logistique STACK Partners</div>
+            <h2 style="margin: 6px 0 16px 0; font-size: 19px;">Nouvelle demande d'expédition TPE</h2>
+            <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; font-size: 13.5px; line-height: 1.6;">
+              <div><strong>Agent :</strong> ${ag.prenom || ''} ${ag.nom || ''} (${ag.code_partenaire || ''})</div>
+              <div><strong>Stock actuel :</strong> ${ag.tpe_stock} TPE</div>
+              <div><strong>Quantité commandée :</strong> ${quantite} TPE Stripe Reader</div>
+              <div><strong>Adresse d'expédition :</strong> ${adresse_livraison}</div>
+              <div><strong>Contact :</strong> ${ag.telephone || 'N/A'} • ${ag.email || ''}</div>
+              ${note ? `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb;"><strong>Note :</strong> ${note}</div>` : ''}
+            </div>
+          </div>
+        `
+      }).catch(() => {});
+    }
+
+    res.status(201).json({ message: "Demande d'expédition transmise à la direction STACK.", commande: ins.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: "Erreur lors de l'enregistrement de la commande." });
+  }
+});
+
+// C. Ajuster manuellement son stock TPE (ex: TPE remis à un salon ou reçu)
+router.patch('/tpe-stock/ajuster', verifierTokenPartner, async (req, res) => {
+  try {
+    await initTableTpePartners();
+    const idAgent = getAgentIdFromReq(req);
+    const nouveauStock = Math.max(0, parseInt(req.body.tpe_stock, 10) || 0);
+    await pool.query(`UPDATE partner_agents SET tpe_stock = $1 WHERE id_agent = $2`, [nouveauStock, idAgent]);
+    res.json({ tpe_stock: nouveauStock, message: "Stock mis à jour." });
+  } catch (e) {
+    res.status(500).json({ error: "Erreur mise à jour du stock." });
+  }
+});
+
+// D. GOD MODE : Lister les commandes TPE et valider l'expédition (incrémente automatiquement le stock de l'agent)
+router.get('/admin/tpe-commandes', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    await initTableTpePartners();
+    const r = await pool.query(`
+      SELECT c.*, a.prenom, a.nom, a.email, a.telephone, a.code_partenaire, COALESCE(a.tpe_stock, 0) AS tpe_stock
+      FROM partner_commandes_tpe c
+      JOIN partner_agents a ON a.id_agent = c.id_agent
+      ORDER BY CASE WHEN c.statut = 'EN_ATTENTE' THEN 0 ELSE 1 END, c.date_commande DESC
+    `);
+    res.json(r.rows);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+router.patch('/admin/tpe-commandes/:id/expedier', verifierTokenPartner, verifierSuperAdminDB, async (req, res) => {
+  try {
+    const cmdRes = await pool.query(`SELECT * FROM partner_commandes_tpe WHERE id_commande = $1`, [req.params.id]);
+    if (cmdRes.rowCount === 0) return res.status(404).json({ error: "Commande introuvable." });
+    const cmd = cmdRes.rows[0];
+
+    if (cmd.statut !== 'EXPEDIEE') {
+      await pool.query(`UPDATE partner_commandes_tpe SET statut = 'EXPEDIEE', date_expedition = NOW() WHERE id_commande = $1`, [cmd.id_commande]);
+      await pool.query(`UPDATE partner_agents SET tpe_stock = COALESCE(tpe_stock, 0) + $1 WHERE id_agent = $2`, [cmd.quantite, cmd.id_agent]);
+    }
+    res.json({ message: "Commande marquée comme expédiée et stock de l'agent crédité." });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
