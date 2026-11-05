@@ -55,6 +55,7 @@ flowchart TB
             SRV_Agenda["services/agenda/<br/>(agenda.service.js)"]
             SRV_Salons["services/salons/<br/>(salons.service.js)"]
             SRV_Stripe["services/stripe/<br/>(stripe.service.js)"]
+            SRV_IA["services/ia/<br/>(ia.service.js)"]
         end
 
         subgraph CoreMonolith["🏛️ Domaines en cours d'extraction (server.js)"]
@@ -159,6 +160,7 @@ Les fonctionnalités clés sont organisées en modules autonomes injectant leurs
 - `services/agenda/` : planning métier collaborateurs, gestion des rendez-vous (création, modification, suppression, annulation en masse), moteur de réservation en ligne publique (créneaux disponibles, fidélité) et export de calendrier iCal sync.
 - `services/salons/` : multi-salons et franchise (création de succursales, duplication du catalogue et tutoriels, switch rapide de salon sans reconnexion) et moteur d'export et portabilité intégrale RGPD / NF525 (JSON & CSV scellés SHA-256).
 - `services/stripe/` : monétisation SaaS Stripe, empreinte bancaire 0€ pendant 30j, gestion des formules (Essential, Pro, Premium), résiliation, webhooks Stripe et gardien central des quotas SMS mensuels.
+- `services/ia/` : robot d'analyse IA et traitement OCR des factures fournisseurs (PDF et images via Groq Qwen Vision), saisie manuelle sécurisée PIN, double écriture compta/stock, synchronisation de rendez-vous et détection d'arrêts maladie.
 
 ### 3.4. Couche Données (PostgreSQL & Stockage Objets)
 - **Base relationnelle** : PostgreSQL (hébergée sur Render, client `pg.Pool`).

@@ -489,7 +489,7 @@
 
 - **Objectif** : Scruter la boîte mail professionnelle du salon toutes les 10 minutes, télécharger les factures fournisseurs en pièce jointe, extraire les montants HT/TVA/TTC et lignes produits via Groq LLM (modèle vision/texte rapide), et créer une tâche de validation pré-remplie.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (modale de validation facture IA, saisie manuelle).
-- **Fichiers Backend** : `server.js` (lignes ~6240-6740), `jobs/cronJobs.js` (`executerRobotComptable`).
+- **Fichiers Backend** : `services/ia/ia.service.js`, `server.js` (délégation des routes), `jobs/cronJobs.js` (`executerRobotComptable`).
 - **Routes API** :
   - `GET /api/ia/taches`
   - `POST /api/ia/upload-facture`
@@ -498,7 +498,7 @@
   - `POST /api/ia/taches/:id/ignorer`
   - `DELETE /api/ia/taches/:id`
   - `GET /api/factures/historique`
-- **Services / Modules** : `ImapFlow`, `pdf-parse`, `openai` (Groq API), Cloudflare R2.
+- **Services / Modules** : `services/ia/ia.service.js`, `ImapFlow`, `pdf-parse`, `openai` (Groq API), Cloudflare R2.
 - **Tables BDD** : `factures_fournisseurs`, `ia_taches_attente`, `robot_memoire_emails`, `configuration_salon`.
 - **Dépendances Amont** : Identifiants IMAP du salon (chiffrés AES-256), Clé Groq/OpenAI.
 - **Dépendances Aval** : Liasse comptable, FEC, Stocks (si réassort détecté).

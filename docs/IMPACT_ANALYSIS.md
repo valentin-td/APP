@@ -149,7 +149,19 @@ flowchart TD
 
 ---
 
-#### 10. Si tu touches à `frontend/src/App.jsx`
+#### 10. Si tu touches à `services/ia/ia.service.js` (Robot IA & OCR Factures)
+- **Fonctionnalités impactées** : Extraction automatique des factures (IMAP et upload manuel PDF/image), saisie manuelle de facture sécurisée PIN, double action validation (écriture compta `factures_fournisseurs` + réassort stock catalogue), synchronisation de RDV et détection d'arrêts maladie.
+- **Risques majeurs** :
+  - Mauvaise extraction de TVA / HT / TTC menant à des déséquilibres comptables.
+  - Omission de la sortie de caisse espèces lors du règlement cash d'une dépense.
+  - Surcharge mémoire lors du parsing de PDFs volumineux (résolu par streaming R2).
+- **Checklist de vérification** :
+  1. [ ] Tester `POST /api/ia/upload-facture` avec un PDF test et vérifier la structure JSON normalisée.
+  2. [ ] Tester `POST /api/ia/taches/:id/valider` pour une dépense en espèces : vérifier l'insertion dans `factures_fournisseurs`, le scellement `mouvements_caisse` et l'incrément de stock `catalogue`.
+
+---
+
+#### 11. Si tu touches à `frontend/src/App.jsx`
 - **Fonctionnalités impactées** : L'ensemble des 11 onglets de l'application cliente.
 - **Risques majeurs** :
   - **Erreur React #310** : *"Rendered more/fewer hooks than during previous render"*. Écran blanc immédiat à la connexion ou déconnexion.
@@ -161,7 +173,7 @@ flowchart TD
 
 ---
 
-#### 11. Si tu touches à `jobs/cronJobs.js`
+#### 12. Si tu touches à `jobs/cronJobs.js`
 - **Fonctionnalités impactées** : Clôture fantôme de sécurité, relances SMS clients, robot comptable IA, rapport hebdomadaire.
 - **Risques majeurs** :
   - Boucle infinie ou surcharge CPU sur le serveur Render.
