@@ -46,6 +46,29 @@ const {
     envoyerCommandeFournisseur,
     enregistrerVerificationStock
 } = require('./services/stock/stock.service');
+const {
+    recupererEmployes,
+    mettreAJourMonPin,
+    debloquerPinEmploye,
+    ajouterEmploye,
+    modifierEmploye,
+    supprimerOuAnonymiserEmploye,
+    mettreAJourPhotoEmploye
+} = require('./services/rh/employes.service');
+const {
+    recupererGamificationKpis,
+    recupererObjectifsEquipe,
+    creerObjectifEquipe,
+    supprimerObjectifEquipe,
+    ajusterHeures,
+    recupererStatutPointages,
+    enregistrerPointage,
+    calculerTableauBordRH,
+    deposerAbsence,
+    deciderAbsence,
+    genererLienJustificatifAbsence,
+    recupererAbsences
+} = require('./services/rh/rh.service');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -958,65 +981,31 @@ app.post('/api/login', authLimiter, async (req, res) => {
 
 // --- GESTION DES HEURES (AJUSTEMENTS MANUELS DU MODE PRO) ---
 app.post('/api/rh/ajustements', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut ajuster les heures." });
-    const { id_employe, mois_annee, heures_ajoutees, motif } = req.body;
     try {
-        const empCheck = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, req.user.id_salon]);
-        if (empCheck.rowCount === 0) return res.status(403).json({ erreur: "Employé introuvable dans ce salon." });
-
-        await pool.query(
-            `INSERT INTO heures_ajustements (id_employe, mois_annee, heures_ajoutees, motif) VALUES ($1, $2, $3, $4)`,
-            [id_employe, mois_annee, heures_ajoutees, motif]
-        );
-        res.json({ message: "Ajustement enregistré avec succès" });
-    } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
+        const result = await ajusterHeures({ pool }, { id_salon: req.user.id_salon, role: req.user.role, body: req.body });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur BDD" });
+    }
 });
 
 // --- GESTION DE LA POINTEUSE NUMÉRIQUE (MODE PREMIUM) ---
-
-// Nouvelle route : Récupérer le statut actuel des employés
 app.get('/api/rh/statut-pointages', verifierToken, async (req, res) => {
     try {
-        // Récupère la dernière action de la journée pour chaque employé du salon
-        const statuts = await pool.query(`
-            SELECT DISTINCT ON (id_employe) id_employe, type_action, heure_action 
-            FROM pointages 
-            WHERE id_salon = $1 AND date_jour = CURRENT_DATE 
-            ORDER BY id_employe, heure_action DESC
-        `, [req.user.id_salon]);
-        
-        // On transforme ça en un dictionnaire { action, heure } pour le chronomètre
-        const mapStatuts = {};
-        statuts.rows.forEach(r => { mapStatuts[r.id_employe] = { action: r.type_action, heure: r.heure_action }; });
-        
+        const mapStatuts = await recupererStatutPointages({ pool }, req.user.id_salon);
         res.json(mapStatuts);
     } catch (e) { 
-        res.status(500).json({ erreur: "Erreur lecture statuts" }); 
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lecture statuts" }); 
     }
 });
 
 app.post('/api/rh/pointage', verifierToken, async (req, res) => {
-    const { id_employe, type_action } = req.body; // 'ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'
-    const id_salon = req.user.id_salon;
-    const actionsValides = ['ENTREE', 'PAUSE_DEBUT', 'PAUSE_FIN', 'SORTIE'];
-    if (!actionsValides.includes(type_action)) return res.status(400).json({ erreur: "Action de pointage invalide." });
-    if (req.user.role === 'employe' && Number(req.user.id_employe) !== Number(id_employe)) {
-        return res.status(403).json({ erreur: "Vous ne pouvez pointer que pour votre propre profil." });
-    }
     try {
-        const empCheck = await pool.query('SELECT 1 FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-        if (empCheck.rowCount === 0) return res.status(404).json({ erreur: "Employé introuvable dans ce salon." });
-
-        await pool.query(
-            `INSERT INTO pointages (id_employe, id_salon, date_jour, type_action) VALUES ($1, $2, CURRENT_DATE, $3)`,
-            [id_employe, id_salon, type_action]
-        );
-        
-        // NOTIFICATION TEMPS RÉEL (WebSockets) avec l'heure exacte
-        io.to(id_salon.toString()).emit('statutPointageUpdate', { id_employe, type_action, heure: new Date().toISOString() });
-        
-        res.json({ message: "Pointage enregistré" });
-    } catch (e) { res.status(500).json({ erreur: "Erreur BDD" }); }
+        const result = await enregistrerPointage({ pool, io }, { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, body: req.body });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur BDD" });
+    }
 });
 
 app.post('/api/employes/login-pin', authLimiter, async (req, res) => {
@@ -2919,224 +2908,43 @@ app.post('/api/caisse/payer', verifierToken, verifierClotureZ, async (req, res) 
 });
 
 // --- MODULE 5 & OBJECTIFS D'ÉQUIPE : KPIS INDIVIDUELS & GESTION DES OBJECTIFS PAR LE GÉRANT ---
-async function initialiserTableObjectifs() {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS objectifs_equipe (
-            id_objectif SERIAL PRIMARY KEY,
-            id_salon INT NOT NULL,
-            id_employe INT DEFAULT NULL,
-            titre VARCHAR(160) NOT NULL,
-            type_indicateur VARCHAR(50) NOT NULL,
-            valeur_cible NUMERIC(10,2) NOT NULL,
-            recompense VARCHAR(160) DEFAULT NULL,
-            date_creation TIMESTAMP DEFAULT NOW()
-        )
-    `).catch(() => {});
-}
-
-async function calculerKpisIndividuelsEmploye(id_salon, id_employe) {
-    const ticketsRes = await pool.query(
-        `SELECT 
-            COUNT(DISTINCT CASE WHEN COALESCE(type_ticket, 'VENTE') = 'VENTE' AND total_ttc > 0 THEN id_ticket END) AS nb_tickets_mois,
-            COALESCE(SUM(CASE WHEN COALESCE(type_ticket, 'VENTE') != 'ANNULATION' THEN total_ttc ELSE 0 END), 0) AS ca_ttc_mois,
-            COALESCE(SUM(COALESCE(montant_pourboire, 0)), 0) AS pourboires_mois
-         FROM tickets
-         WHERE id_salon = $1
-           AND id_employe = $2
-           AND statut = 'VALIDE'
-           AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
-        [id_salon, id_employe]
-    );
-
-    const fidelesRes = await pool.query(
-        `SELECT COUNT(DISTINCT t.id_client) AS nb_fideles
-         FROM tickets t
-         WHERE t.id_salon = $1
-           AND t.id_employe = $2
-           AND t.id_client IS NOT NULL
-           AND DATE_TRUNC('month', t.date_creation) = DATE_TRUNC('month', CURRENT_DATE)
-           AND (SELECT COUNT(*) FROM tickets t2 WHERE t2.id_salon = $1 AND t2.id_client = t.id_client AND COALESCE(t2.type_ticket, 'VENTE') = 'VENTE') >= 2`,
-        [id_salon, id_employe]
-    );
-
-    const commRes = await pool.query(
-        `SELECT
-            COALESCE(SUM(CASE WHEN type_vente = 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_prestation,
-            COALESCE(SUM(CASE WHEN type_vente != 'PRESTATION' THEN montant_commission ELSE 0 END), 0) AS comm_produit,
-            COUNT(DISTINCT CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN id_ticket END) AS nb_tickets_avec_produit,
-            COUNT(CASE WHEN type_vente != 'PRESTATION' AND montant_vente > 0 THEN 1 END) AS nb_lignes_produits
-         FROM commissions
-         WHERE id_salon = $1
-           AND id_employe = $2
-           AND DATE_TRUNC('month', date_creation) = DATE_TRUNC('month', CURRENT_DATE)`,
-        [id_salon, id_employe]
-    );
-
-    const tRow = ticketsRes.rows[0] || {};
-    const fRow = fidelesRes.rows[0] || {};
-    const cRow = commRes.rows[0] || {};
-
-    const nbTickets = parseInt(tRow.nb_tickets_mois, 10) || 0;
-    const caTtc = parseFloat(tRow.ca_ttc_mois) || 0;
-    const pourboires = parseFloat(tRow.pourboires_mois) || 0;
-    const commPresta = parseFloat(cRow.comm_prestation) || 0;
-    const commProduit = parseFloat(cRow.comm_produit) || 0;
-    const totalComm = Number((commPresta + commProduit).toFixed(2));
-    const nbTicketsProduit = parseInt(cRow.nb_tickets_avec_produit, 10) || 0;
-    const nbProduitsVendus = parseInt(cRow.nb_lignes_produits, 10) || 0;
-    const nbFideles = parseInt(fRow.nb_fideles, 10) || 0;
-
-    const panierMoyen = nbTickets > 0 ? Number((caTtc / nbTickets).toFixed(2)) : 0;
-    const tauxRevente = nbTickets > 0 ? Math.min(100, Math.round((nbTicketsProduit / nbTickets) * 100)) : 0;
-    const tauxFidelisation = nbTickets > 0 ? Math.min(100, Math.round((nbFideles / nbTickets) * 100)) : 0;
-
-    return {
-        nb_clients_mois: nbTickets,
-        ca_ttc_mois: Number(caTtc.toFixed(2)),
-        panier_moyen: panierMoyen,
-        taux_revente: tauxRevente,
-        taux_fidelisation: tauxFidelisation,
-        nb_produits_vendus: nbProduitsVendus,
-        nb_tickets_avec_produit: nbTicketsProduit,
-        comm_prestation: Number(commPresta.toFixed(2)),
-        comm_produit: Number(commProduit.toFixed(2)),
-        commission_totale: totalComm,
-        pourboires_mois: Number(pourboires.toFixed(2)),
-        cagnotte_globale: Number((totalComm + pourboires).toFixed(2))
-    };
-}
-
-function evaluerValeurObjectif(type_indicateur, kpis) {
-    if (type_indicateur === 'CA_TTC') return kpis.ca_ttc_mois || 0;
-    if (type_indicateur === 'TAUX_REVENTE') return kpis.taux_revente || 0;
-    if (type_indicateur === 'PANIER_MOYEN') return kpis.panier_moyen || 0;
-    if (type_indicateur === 'PRODUITS_VENDUS') return kpis.nb_produits_vendus || 0;
-    if (type_indicateur === 'NB_CLIENTS') return kpis.nb_clients_mois || 0;
-    if (type_indicateur === 'CAGNOTTE_PRIMES') return kpis.cagnotte_globale || 0;
-    return 0;
-}
-
 app.get('/api/employes/gamification-kpis', verifierToken, async (req, res) => {
-    const id_salon = req.user.id_salon;
-    const id_employe = req.user.role === 'employe'
-        ? parseInt(req.user.id_employe, 10)
-        : parseInt(req.query.id_employe, 10);
-
-    if (!id_employe) return res.status(400).json({ erreur: "Identifiant employé requis." });
-
     try {
-        await initialiserTableObjectifs();
-        const kpis = await calculerKpisIndividuelsEmploye(id_salon, id_employe);
-
-        const objRes = await pool.query(
-            `SELECT * FROM objectifs_equipe
-             WHERE id_salon = $1 AND (id_employe IS NULL OR id_employe = $2)
-             ORDER BY date_creation DESC`,
-            [id_salon, id_employe]
+        const kpis = await recupererGamificationKpis(
+            { pool },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, query_id_employe: req.query.id_employe }
         );
-
-        const objectifs_assignes = objRes.rows.map(o => {
-            const cible = parseFloat(o.valeur_cible) || 1;
-            const actuel = evaluerValeurObjectif(o.type_indicateur, kpis);
-            const progression = Math.min(100, Math.round((actuel / cible) * 100));
-            return {
-                id_objectif: o.id_objectif,
-                titre: o.titre,
-                type_indicateur: o.type_indicateur,
-                valeur_cible: cible,
-                valeur_actuelle: actuel,
-                progression,
-                atteint: actuel >= cible,
-                recompense: o.recompense || ''
-            };
-        });
-
-        res.json({ ...kpis, objectifs_assignes });
+        res.json(kpis);
     } catch (e) {
         console.error("Erreur gamification KPIs :", e);
-        res.status(500).json({ erreur: "Erreur calcul KPIs employé." });
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur calcul KPIs employé." });
     }
 });
 
 app.get('/api/equipe/objectifs', verifierToken, async (req, res) => {
     try {
-        await initialiserTableObjectifs();
-        const id_salon = req.user.id_salon;
-
-        const objRes = await pool.query(
-            `SELECT o.*, e.nom AS nom_employe
-             FROM objectifs_equipe o
-             LEFT JOIN employes e ON o.id_employe = e.id_employe AND e.id_salon = o.id_salon
-             WHERE o.id_salon = $1
-             ORDER BY o.date_creation DESC`,
-            [id_salon]
-        );
-
-        const empRes = await pool.query('SELECT id_employe, nom FROM employes WHERE id_salon = $1 ORDER BY nom ASC', [id_salon]);
-        const kpisParEmp = {};
-        for (const emp of empRes.rows) {
-            kpisParEmp[emp.id_employe] = await calculerKpisIndividuelsEmploye(id_salon, emp.id_employe);
-        }
-
-        const objectifsEnrichis = objRes.rows.map(o => {
-            const cible = parseFloat(o.valeur_cible) || 1;
-            let valeurActuelle = 0;
-            if (o.id_employe && kpisParEmp[o.id_employe]) {
-                valeurActuelle = evaluerValeurObjectif(o.type_indicateur, kpisParEmp[o.id_employe]);
-            } else {
-                const listeValeurs = Object.values(kpisParEmp).map(k => evaluerValeurObjectif(o.type_indicateur, k));
-                if (o.type_indicateur === 'TAUX_REVENTE' || o.type_indicateur === 'PANIER_MOYEN') {
-                    valeurActuelle = listeValeurs.length > 0 ? Number((listeValeurs.reduce((a, b) => a + b, 0) / listeValeurs.length).toFixed(1)) : 0;
-                } else {
-                    valeurActuelle = Number(listeValeurs.reduce((a, b) => a + b, 0).toFixed(2));
-                }
-            }
-            const progression = Math.min(100, Math.round((valeurActuelle / cible) * 100));
-            return {
-                ...o,
-                valeur_cible: cible,
-                valeur_actuelle: valeurActuelle,
-                progression,
-                atteint: valeurActuelle >= cible
-            };
-        });
-
+        const objectifsEnrichis = await recupererObjectifsEquipe({ pool }, req.user.id_salon);
         res.json(objectifsEnrichis);
     } catch (e) {
-        res.status(500).json({ erreur: "Erreur récupération des objectifs." });
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur récupération des objectifs." });
     }
 });
 
 app.post('/api/equipe/objectifs', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Action réservée au gérant." });
-    const { titre, type_indicateur, valeur_cible, id_employe, recompense } = req.body;
-    const cibleNum = parseFloat(valeur_cible);
-
-    if (!titre || !type_indicateur || isNaN(cibleNum) || cibleNum <= 0) {
-        return res.status(400).json({ erreur: "Veuillez renseigner un titre, un indicateur et une valeur cible valide." });
-    }
-
     try {
-        await initialiserTableObjectifs();
-        const empIdFinal = (id_employe && id_employe !== 'TOUS') ? parseInt(id_employe, 10) : null;
-        await pool.query(
-            `INSERT INTO objectifs_equipe (id_salon, id_employe, titre, type_indicateur, valeur_cible, recompense)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [req.user.id_salon, empIdFinal, String(titre).trim(), type_indicateur, cibleNum, recompense ? String(recompense).trim() : null]
-        );
-        res.status(201).json({ message: "Objectif créé avec succès." });
+        const result = await creerObjectifEquipe({ pool }, { id_salon: req.user.id_salon, role: req.user.role, body: req.body });
+        res.status(result.status || 201).json({ message: result.message });
     } catch (e) {
-        res.status(500).json({ erreur: "Erreur création de l'objectif." });
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur création de l'objectif." });
     }
 });
 
 app.delete('/api/equipe/objectifs/:id', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Action réservée au gérant." });
     try {
-        await pool.query('DELETE FROM objectifs_equipe WHERE id_objectif = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
-        res.json({ message: "Objectif supprimé." });
+        const result = await supprimerObjectifEquipe({ pool }, { id_salon: req.user.id_salon, role: req.user.role, id_objectif: req.params.id });
+        res.json(result);
     } catch (e) {
-        res.status(500).json({ erreur: "Erreur suppression de l'objectif." });
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur suppression de l'objectif." });
     }
 });
 // NOUVELLE ROUTE : ENCAISSEMENT D'UN POURBOIRE ISOLÉ (Post-Encaissement)
@@ -5953,115 +5761,56 @@ app.delete('/api/clients/:id', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur suppression client." }); }
 });
 
+// =========================================================================
+// --- MODULE GESTION DE L'ÉQUIPE & EMPLOYÉS ---
+// =========================================================================
 app.get('/api/employes', verifierToken, async (req, res) => {
     try {
-        const result = await pool.query(
-            'SELECT e.id_employe, e.nom, e.role, e.taux_commission_prestation, e.taux_commission_produit, e.photo_url, e.est_gerant, e.type_contrat, e.heures_mensuelles_base, e.id_salon, COALESCE(e.pin_tentatives_echouees, 0) as pin_tentatives_echouees, e.pin_bloque_jusqua, COALESCE(e.pin_bloque_definitif, FALSE) as pin_bloque_definitif, EXISTS(SELECT 1 FROM pointages p WHERE p.id_employe = e.id_employe AND p.date_jour = CURRENT_DATE) as a_pointe_aujourdhui FROM employes e WHERE e.id_salon = $1 ORDER BY e.nom ASC',
-            [req.user.id_salon]
-        );
-        res.json(result.rows);
-    } catch (e) { res.status(500).json({erreur: "Erreur employés."}); }
+        const rows = await recupererEmployes({ pool }, req.user.id_salon);
+        res.json(rows);
+    } catch (e) { res.status(500).json({ erreur: "Erreur employés." }); }
 });
 
 app.put('/api/employes/mon-pin', verifierToken, async (req, res) => {
-    if (req.user.role !== 'employe') return res.status(403).json({ erreur: "Réservé aux employés." });
-    const { nouveau_pin } = req.body;
     try {
-        if (!nouveau_pin || isPinWeak(nouveau_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple ou invalide." });
-        const hashPin = await bcrypt.hash(String(nouveau_pin).trim(), 10);
-        await pool.query('UPDATE employes SET code_pin = $1 WHERE id_employe = $2 AND id_salon = $3', [hashPin, req.user.id_employe, req.user.id_salon]);
-        res.json({ message: "Code PIN mis à jour avec succès." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la mise à jour." }); }
+        const result = await mettreAJourMonPin({ pool }, { id_salon: req.user.id_salon, role: req.user.role, id_employe: req.user.id_employe, nouveau_pin: req.body.nouveau_pin });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la mise à jour." }); }
 });
 
 app.put('/api/employes/:id/debloquer-pin', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut débloquer le code PIN d'un collaborateur." });
     try {
-        const r = await pool.query(
-            'UPDATE employes SET pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $1 AND id_salon = $2 RETURNING nom',
-            [req.params.id, req.user.id_salon]
-        );
-        if (r.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable." });
-        await enregistrerJET(req.user.id_salon, 'DEBLOCAGE_PIN_EMPLOYE', { id_employe: parseInt(req.params.id, 10), nom: r.rows[0].nom, debloque_par: 'gerant' });
-        res.json({ message: `Accès PIN débloqué pour ${r.rows[0].nom}.` });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors du déblocage." }); }
+        const result = await debloquerPinEmploye({ pool, enregistrerJET }, { id_salon: req.user.id_salon, role: req.user.role, id_employe_cible: req.params.id });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur lors du déblocage." }); }
 });
+
 app.post('/api/employes', verifierToken, async (req, res) => { 
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut ajouter un employé." });
-    const { nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, type_contrat, heures_mensuelles_base } = req.body;
     try { 
-        if (!code_pin) return res.status(400).json({ erreur: "Le code PIN est obligatoire." });
-        if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
-        
-        const hashPin = await bcrypt.hash(code_pin, 10);
-        
-        await pool.query(`
-            INSERT INTO employes (nom, role, taux_commission_prestation, taux_commission_produit, code_pin, photo_url, type_contrat, heures_mensuelles_base, id_salon) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        `, [
-            nom, 
-            role || 'Employé', 
-            taux_commission_prestation || 0, 
-            taux_commission_produit || 0, 
-            hashPin, 
-            photo_url || null, 
-            type_contrat || '35H', 
-            heures_mensuelles_base || 151.67, 
-            req.user.id_salon
-        ]); 
-        
-        res.status(201).json({message: "Employé ajouté"});
-    } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
+        const result = await ajouterEmploye({ pool }, { id_salon: req.user.id_salon, role: req.user.role, body: req.body });
+        res.status(result.status || 201).json({ message: result.message });
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur BDD" }); }
 });
+
 app.put('/api/employes/:id', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut modifier un employé." });
-    const { nom, code_pin, taux_commission_prestation, taux_commission_produit } = req.body;
     try {
-        if (code_pin && code_pin.trim() !== '') {
-            if (isPinWeak(code_pin)) return res.status(400).json({ erreur: "Ce code PIN est trop simple (évitez 0000, 1234...)." });
-            const hashPin = await bcrypt.hash(code_pin, 10);
-            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3, code_pin = $4, pin_tentatives_echouees = 0, pin_bloque_jusqua = NULL, pin_bloque_definitif = FALSE WHERE id_employe = $5 AND id_salon = $6', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, hashPin, req.params.id, req.user.id_salon]);
-        } else {
-            await pool.query('UPDATE employes SET nom = $1, taux_commission_prestation = $2, taux_commission_produit = $3 WHERE id_employe = $4 AND id_salon = $5', [nom, taux_commission_prestation || 0, taux_commission_produit || 0, req.params.id, req.user.id_salon]);
-        }
-        res.json({message: "Employé modifié"});
-    } catch (e) { res.status(500).json({erreur: `Erreur BDD : ${e.message}`}); }
+        const result = await modifierEmploye({ pool }, { id_salon: req.user.id_salon, role: req.user.role, id_employe_cible: req.params.id, body: req.body });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur BDD" }); }
 });
+
 app.delete('/api/employes/:id', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut supprimer un employé." });
     try {
-        const liePiece = await pool.query(
-            'SELECT 1 FROM tickets WHERE id_employe = $1 AND id_salon = $2 UNION SELECT 1 FROM commissions WHERE id_employe = $1 AND id_salon = $2 LIMIT 1',
-            [req.params.id, req.user.id_salon]
-        );
-        if (liePiece.rowCount > 0) {
-            await pool.query(
-                "UPDATE employes SET nom = 'Collaborateur Anonymisé #' || id_employe, code_pin = NULL, photo_url = NULL WHERE id_employe = $1 AND id_salon = $2",
-                [req.params.id, req.user.id_salon]
-            );
-            await enregistrerJET(req.user.id_salon, 'ANONYMISATION_EMPLOYE_RGPD', { id_employe: parseInt(req.params.id, 10) });
-            return res.json({ message: "Collaborateur anonymisé (conservation fiscale NF525 des tickets liés)." });
-        }
-        await pool.query('DELETE FROM employes WHERE id_employe = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]);
-        res.json({ message: "Employé supprimé" });
-    } catch (e) { res.status(500).json({ erreur: "Erreur suppression employé." }); }
+        const result = await supprimerOuAnonymiserEmploye({ pool, enregistrerJET }, { id_salon: req.user.id_salon, role: req.user.role, id_employe_cible: req.params.id });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur suppression employé." }); }
 });
 
 app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
-    if (req.user.role !== 'employe' || parseInt(req.params.id) !== req.user.id_employe) return res.status(403).json({ erreur: "Action non autorisée." });
-    const photo = req.body.photo_url || null;
-    if (photo) {
-        if (typeof photo !== 'string' || photo.length > 2000000) {
-            return res.status(400).json({ erreur: "Photo trop volumineuse (max 1.5 Mo)." });
-        }
-        if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(photo)) {
-            return res.status(400).json({ erreur: "Format de photo invalide (JPG, PNG ou WEBP requis)." });
-        }
-    }
     try {
-        await pool.query('UPDATE employes SET photo_url = $1 WHERE id_employe = $2 AND id_salon = $3', [photo, req.user.id_employe, req.user.id_salon]);
-        res.json({ message: "Photo mise à jour." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour photo." }); }
+        const result = await mettreAJourPhotoEmploye({ pool }, { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, id_employe_cible: req.params.id, photo_url: req.body.photo_url });
+        res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ erreur: e.message || "Erreur mise à jour photo." }); }
 });
 
 // =========================================================================
@@ -6167,308 +5916,65 @@ app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
         res.status(e.status || 400).json({ erreur: e.message || "Erreur lors de la fusion des stocks." }); 
     }
 });
+// =========================================================================
+// --- MODULE RH : TABLEAU DE BORD, CONGÉS ET ARRÊTS MALADIE ---
+// =========================================================================
 app.get('/api/rh', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Accès RH réservé au gérant." });
-    const id_salon = req.user.id_salon;
     try {
-        const rhQuery = `SELECT e.id_employe, e.nom, e.photo_url, COALESCE(e.role, 'Employé') as role, e.type_contrat, e.heures_mensuelles_base, e.est_gerant, COUNT(DISTINCT CASE WHEN c.type_vente = 'PRESTATION' THEN c.id_ticket END) as clients_coiffes, COUNT(CASE WHEN c.type_vente != 'PRESTATION' THEN 1 END) as produits_vendus, COALESCE(SUM(c.montant_vente), 0) as ca_genere, COALESCE(SUM(c.montant_commission), 0) as prime_estimee FROM employes e LEFT JOIN commissions c ON e.id_employe = c.id_employe AND c.id_salon = $1 WHERE e.id_salon = $1 GROUP BY e.id_employe, e.nom, e.photo_url, e.role, e.type_contrat, e.heures_mensuelles_base, e.est_gerant ORDER BY e.id_employe;`;
-        const rhResult = await pool.query(rhQuery, [id_salon]);
-
-        // Calcul des heures pointées (Aujourd'hui, Cette semaine, Ce mois-ci) y compris session en cours
-        const now = new Date();
-        const debutMois = new Date(now.getFullYear(), now.getMonth(), 1);
-        const jourSemaine = now.getDay();
-        const diffLundi = now.getDate() - jourSemaine + (jourSemaine === 0 ? -6 : 1);
-        const debutSemaine = new Date(now.getFullYear(), now.getMonth(), diffLundi);
-        debutSemaine.setHours(0, 0, 0, 0);
-        const debutRecherche = debutMois < debutSemaine ? debutMois : debutSemaine;
-        const formatYMDLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const aujourdhuiYMD = formatYMDLocal(now);
-
-        const pointagesRes = await pool.query(
-            `SELECT id_employe, TO_CHAR(date_jour, 'YYYY-MM-DD') as date_ymd, type_action, heure_action
-             FROM pointages
-             WHERE id_salon = $1 AND date_jour >= $2
-             ORDER BY id_employe ASC, date_jour ASC, heure_action ASC`,
-            [id_salon, formatYMDLocal(debutRecherche)]
-        );
-
-        const moisCourantStr = aujourdhuiYMD.slice(0, 7);
-        const ajustRes = await pool.query(
-            `SELECT ha.id_employe, COALESCE(SUM(ha.heures_ajoutees), 0) as total_ajust
-             FROM heures_ajustements ha
-             JOIN employes e ON e.id_employe = ha.id_employe
-             WHERE ha.mois_annee = $1 AND e.id_salon = $2
-             GROUP BY ha.id_employe`,
-            [moisCourantStr, id_salon]
-        );
-        const mapAjustMois = {};
-        ajustRes.rows.forEach(r => { mapAjustMois[r.id_employe] = parseFloat(r.total_ajust) || 0; });
-
-        const parEmpJour = {};
-        pointagesRes.rows.forEach(pt => {
-            const cle = `${pt.id_employe}_${pt.date_ymd}`;
-            if (!parEmpJour[cle]) parEmpJour[cle] = { id_employe: pt.id_employe, date_ymd: pt.date_ymd, actions: [] };
-            parEmpJour[cle].actions.push({ type: pt.type_action, ts: new Date(pt.heure_action).getTime() });
-        });
-
-        const heuresParEmploye = {};
-        Object.values(parEmpJour).forEach(jour => {
-            let debutTravail = null;
-            let debutPause = null;
-            let cumulMs = 0;
-
-            jour.actions.forEach(act => {
-                if (act.type === 'ENTREE') {
-                    if (debutTravail === null) debutTravail = act.ts;
-                } else if (act.type === 'PAUSE_DEBUT') {
-                    if (debutTravail !== null && debutPause === null) debutPause = act.ts;
-                } else if (act.type === 'PAUSE_FIN') {
-                    if (debutPause !== null) {
-                        debutTravail += (act.ts - debutPause);
-                        debutPause = null;
-                    }
-                } else if (act.type === 'SORTIE') {
-                    if (debutTravail !== null) {
-                        const finEff = debutPause !== null ? debutPause : act.ts;
-                        if (finEff > debutTravail) cumulMs += (finEff - debutTravail);
-                        debutTravail = null;
-                        debutPause = null;
-                    }
-                }
-            });
-
-            // Si la session est toujours ouverte aujourd'hui, on compte le temps en direct jusqu'à maintenant
-            if (debutTravail !== null) {
-                if (jour.date_ymd === aujourdhuiYMD) {
-                    const finDirect = debutPause !== null ? debutPause : Date.now();
-                    if (finDirect > debutTravail) cumulMs += (finDirect - debutTravail);
-                } else if (debutPause !== null && debutPause > debutTravail) {
-                    cumulMs += (debutPause - debutTravail);
-                }
-            }
-
-            const hJour = cumulMs / 3600000;
-            if (!heuresParEmploye[jour.id_employe]) {
-                heuresParEmploye[jour.id_employe] = { aujourdhui: 0, semaine: 0, mois: 0 };
-            }
-            const dObj = new Date(jour.date_ymd + 'T12:00:00');
-            if (jour.date_ymd === aujourdhuiYMD) heuresParEmploye[jour.id_employe].aujourdhui += hJour;
-            if (dObj >= debutSemaine) heuresParEmploye[jour.id_employe].semaine += hJour;
-            if (dObj >= debutMois) heuresParEmploye[jour.id_employe].mois += hJour;
-        });
-
-        const employesData = await Promise.all(rhResult.rows.map(async (emp) => {
-            const histoQuery = `SELECT COALESCE(SUM(montant_commission), 0) as total_prime FROM commissions WHERE id_employe = $1 AND id_salon = $2 GROUP BY EXTRACT(MONTH FROM date_creation), EXTRACT(YEAR FROM date_creation) ORDER BY EXTRACT(YEAR FROM date_creation) ASC, EXTRACT(MONTH FROM date_creation) ASC;`;
-            const histoResult = await pool.query(histoQuery, [emp.id_employe, id_salon]);
-            let historique = histoResult.rows.map(r => parseFloat(r.total_prime));
-            while(historique.length < 6) historique.unshift(0);
-            if (historique.every(val => val === 0)) historique = [0, 0, 0, 0, 0, parseFloat(emp.prime_estimee) || 0];
-            const avisEmp = await pool.query(`SELECT note, commentaire, prenom, date_creation FROM avis_demandes WHERE id_salon = $2 AND id_employe = $1 AND statut = 'REPONDU' AND note IS NOT NULL ORDER BY date_creation DESC`, [emp.id_employe, id_salon]);
-            const notes = avisEmp.rows.map(a => a.note);
-            const moyenneNote = notes.length > 0 ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : null;
-            const hEmp = heuresParEmploye[emp.id_employe] || { aujourdhui: 0, semaine: 0, mois: 0 };
-            const ajustMois = mapAjustMois[emp.id_employe] || 0;
-
-            return {
-                id_employe: emp.id_employe,
-                nom: emp.nom,
-                role: emp.role,
-                est_gerant: emp.est_gerant,
-                type_contrat: emp.type_contrat || '35H',
-                heures_mensuelles_base: parseFloat(emp.heures_mensuelles_base) || 151.67,
-                photo_url: emp.photo_url,
-                heures_effectuees: {
-                    aujourdhui: Number(hEmp.aujourdhui.toFixed(2)),
-                    semaine: Number(hEmp.semaine.toFixed(2)),
-                    mois: Number((hEmp.mois + ajustMois).toFixed(2)),
-                    ajustements_mois: Number(ajustMois.toFixed(2))
-                },
-                performances_actuelles: {
-                    clients_coiffes: parseInt(emp.clients_coiffes),
-                    produits_vendus: parseInt(emp.produits_vendus),
-                    ca_genere: parseFloat(emp.ca_genere),
-                    prime_estimee: parseFloat(emp.prime_estimee)
-                },
-                historique_primes: historique.slice(-6),
-                note_moyenne: moyenneNote,
-                nb_avis: notes.length,
-                derniers_avis: avisEmp.rows.slice(0, 3)
-            };
-        }));
+        const employesData = await calculerTableauBordRH({ pool }, { id_salon: req.user.id_salon, role: req.user.role });
         res.json(employesData);
     } catch (erreur) {
-        res.status(500).json({ erreur: "Erreur requête RH." });
+        res.status(erreur.status || 500).json({ erreur: erreur.message || "Erreur requête RH." });
     }
 });
 
-// =========================================================================
-// --- MODULE RH : CONGÉS ET ARRÊTS MALADIE ---
-// =========================================================================
-
-// 1. L'employé dépose une absence (Congé ou Arrêt)
+// 1. Dépôt d'absence (Congé ou Arrêt maladie)
 app.post('/api/rh/absences', verifierToken, verifierPlan(['PREMIUM']), async (req, res) => {
-    const { type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fichier_base64, nom_fichier, type_mime } = req.body;
-    const id_salon = req.user.id_salon;
-    const id_employe = req.user.role === 'employe' ? req.user.id_employe : req.body.id_employe;
-
     try {
-        const emp = await pool.query('SELECT nom FROM employes WHERE id_employe = $1 AND id_salon = $2', [id_employe, id_salon]);
-        if (emp.rowCount === 0) return res.status(404).json({ erreur: "Collaborateur introuvable dans ce salon." });
-        const nomEmploye = emp.rows[0].nom;
-
-        const conflit = await pool.query(
-            `SELECT 1 FROM absences_employes 
-             WHERE id_salon = $1 AND id_employe = $2 AND statut != 'REFUSE' 
-             AND date_debut <= $4 AND date_fin >= $3`,
-            [id_salon, id_employe, date_debut, date_fin]
+        const result = await deposerAbsence(
+            { pool, s3Client, PutObjectCommand, envoyerNotificationPush },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, body: req.body }
         );
-        
-        if (conflit.rowCount > 0) {
-            return res.status(400).json({ erreur: "Une absence ou demande est déjà enregistrée sur ces dates pour ce collaborateur." });
-        }
-
-        let fileKey = null;
-
-        if (fichier_base64 && nom_fichier) {
-            if (typeof fichier_base64 !== 'string' || fichier_base64.length > 7000000) {
-                return res.status(400).json({ erreur: "Justificatif trop volumineux (max 5 Mo)." });
-            }
-            // 🚨 SÉCURITÉ : Liste blanche stricte pour bloquer les Malwares et XSS stockés
-            const allowedMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
-            const extension = nom_fichier.split('.').pop().toLowerCase();
-            const allowedExts = ['pdf', 'jpg', 'jpeg', 'png'];
-
-            if (!type_mime || !allowedMimes.includes(type_mime) || !allowedExts.includes(extension)) {
-                return res.status(400).json({ erreur: "Format de fichier non autorisé. Seuls les PDF, JPG et PNG sont acceptés." });
-            }
-
-            fileKey = `salons/${id_salon}/employes/${id_employe}/absences/${Date.now()}.${extension}`;
-            const buffer = Buffer.from(fichier_base64.replace(/^data:.*,/, ''), 'base64');
-            await s3Client.send(new PutObjectCommand({
-                Bucket: process.env.R2_BUCKET_NAME, Key: fileKey, Body: buffer, ContentType: type_mime,
-            }));
-        }
-
-        const statutInitial = type_demande === 'ARRET_MALADIE' ? 'VALIDE' : 'EN_ATTENTE';
-
-        const result = await pool.query(
-            `INSERT INTO absences_employes (id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fichier_cle_r2, statut)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id_absence`,
-            [id_salon, id_employe, type_demande, nature_absence, type_prolongation, date_debut, moment_debut, date_fin, moment_fin, heures_sortie, commentaire, fileKey, statutInitial]
-        );
-
-        // --- DÉTECTION DÉTAILLÉE DES CONFLITS D'AGENDA ---
-        let conflits = [];
-        if (statutInitial === 'VALIDE') {
-            const rdvs = await pool.query(
-                `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
-                 FROM rendez_vous WHERE id_salon = $1 AND id_employe = $2 
-                 AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') >= $3 
-                 AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') <= $4
-                 ORDER BY date_heure_debut ASC`,
-                [id_salon, id_employe, date_debut, date_fin]
-            );
-            conflits = rdvs.rows;
-        }
-
-        if (type_demande === 'ARRET_MALADIE') {
-            await pool.query(
-                "INSERT INTO taches_actions (id_salon, titre, description, source) VALUES ($1, $2, $3, 'IA')",
-                [id_salon, `URGENCE : Arrêt maladie de ${nomEmploye}`, `${nomEmploye} a déposé un arrêt maladie du ${date_debut} au ${date_fin}. Vérifiez l'agenda pour déplacer ses rendez-vous.`]
-            );
-            envoyerNotificationPush(id_salon, 'gerant', { title: "Arrêt Maladie", body: `${nomEmploye} est en arrêt maladie jusqu'au ${date_fin}.`, url: '/?tab=actions' });
-            res.json({ message: "Arrêt maladie enregistré.", conflits });
-        } else {
-            envoyerNotificationPush(id_salon, 'gerant', { title: "Demande de congés", body: `${nomEmploye} a posé une demande du ${date_debut} au ${date_fin}.`, url: '/?tab=equipe' });
-            res.json({ message: "Demande envoyée pour validation.", conflits });
-        }
+        res.json(result);
     } catch (e) {
-        res.status(500).json({ erreur: "Erreur lors de l'enregistrement de l'absence." });
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de l'enregistrement de l'absence." });
     }
 });
 
-
-// 2. Le gérant Valide ou Refuse un congé
+// 2. Décision du gérant (validation ou refus)
 app.put('/api/rh/absences/:id/decision', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant') return res.status(403).json({ erreur: "Seul le gérant peut valider ou refuser une absence." });
-    
-    const { statut, motif_refus } = req.body;
     try {
-        let conflits = [];
-        if (statut === 'VALIDE') {
-            const absenceResInfo = await pool.query("SELECT id_employe, TO_CHAR(date_debut, 'YYYY-MM-DD') as date_debut_str, TO_CHAR(date_fin, 'YYYY-MM-DD') as date_fin_str FROM absences_employes WHERE id_absence = $1 AND id_salon = $2", [req.params.id, req.user.id_salon]);
-            if (absenceResInfo.rowCount > 0) {
-                const absInfo = absenceResInfo.rows[0];
-                const rdvs = await pool.query(
-                    `SELECT id_rdv, nom_client, telephone_client, date_heure_debut, prestation 
-                     FROM rendez_vous WHERE id_salon=$1 AND id_employe=$2 
-                     AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') >= $3 
-                     AND TO_CHAR(date_heure_debut::timestamp, 'YYYY-MM-DD') <= $4
-                     ORDER BY date_heure_debut ASC`,
-                    [req.user.id_salon, absInfo.id_employe, absInfo.date_debut_str, absInfo.date_fin_str]
-                );
-                conflits = rdvs.rows;
-            }
-        }
-
-        const absRes = await pool.query(
-            `UPDATE absences_employes SET statut = $1, motif_refus = $2 WHERE id_absence = $3 AND id_salon = $4 RETURNING id_employe, date_debut, date_fin, type_demande`,
-            [statut, motif_refus || null, req.params.id, req.user.id_salon]
+        const result = await deciderAbsence(
+            { pool, envoyerNotificationPush },
+            { id_salon: req.user.id_salon, role: req.user.role, id_absence: req.params.id, body: req.body }
         );
-        
-        if (absRes.rowCount > 0) {
-            const absence = absRes.rows[0];
-            const dDebut = new Date(absence.date_debut).toLocaleDateString('fr-FR');
-            const dFin = new Date(absence.date_fin).toLocaleDateString('fr-FR');
-            const message = statut === 'VALIDE' 
-                ? `Vos ${absence.type_demande === 'CONGES' ? 'congés' : 'absences'} du ${dDebut} au ${dFin} ont été validés.` 
-                : (motif_refus ? `Votre demande a été refusée. Motif : ${motif_refus}` : `Votre demande de congés a été refusée.`);
-                
-            envoyerNotificationPush(req.user.id_salon, { type: 'employe', id_employe: absence.id_employe }, { title: "Décision RH", body: message, url: '/?tab=agenda' });
-        }
-        res.json({ message: `Demande passée au statut : ${statut}`, conflits });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors de la décision." }); }
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la décision." });
+    }
 });
 
-// 3. Lire un justificatif sécurisé (Lien éphémère de 15 minutes)
+// 3. Lire un justificatif sécurisé (Lien éphémère de 15 minutes R2)
 app.get('/api/rh/absences/:id/justificatif', verifierToken, async (req, res) => {
     try {
-        // Seul le gérant ou l'employé concerné peut voir le document
-        const absenceRes = await pool.query(
-            'SELECT id_employe, fichier_cle_r2 FROM absences_employes WHERE id_absence = $1 AND id_salon = $2',
-            [req.params.id, req.user.id_salon]
+        const result = await genererLienJustificatifAbsence(
+            { pool, s3Client, GetObjectCommand, getSignedUrl },
+            { id_salon: req.user.id_salon, role: req.user.role, id_employe_auth: req.user.id_employe, id_absence: req.params.id }
         );
-
-        if (absenceRes.rowCount === 0 || !absenceRes.rows[0].fichier_cle_r2) {
-            return res.status(404).json({ erreur: "Aucun justificatif trouvé." });
-        }
-
-        if (req.user.role !== 'gerant' && (req.user.role !== 'employe' || Number(req.user.id_employe) !== Number(absenceRes.rows[0].id_employe))) {
-            return res.status(403).json({ erreur: "Accès refusé à ce justificatif médical." });
-        }
-
-        // Génération d'une URL temporaire
-        const command = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: absenceRes.rows[0].fichier_cle_r2 });
-        const urlTemporaire = await getSignedUrl(s3Client, command, { expiresIn: 900 });
-
-        res.json({ url: urlTemporaire });
-    } catch (e) { res.status(500).json({ erreur: "Erreur génération lien sécurisé." }); }
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur génération lien sécurisé." });
+    }
 });
 
 // 4. Récupérer toutes les absences (pour le tableau de bord RH du gérant)
 app.get('/api/rh/absences', verifierToken, async (req, res) => {
-    if (req.user.role !== 'gerant' && req.user.role !== 'salon') return res.status(403).json({ erreur: "Accès refusé." });
     try {
-        const result = await pool.query(`
-            SELECT a.*, e.nom as nom_employe 
-            FROM absences_employes a 
-            JOIN employes e ON a.id_employe = e.id_employe 
-            WHERE a.id_salon = $1 
-            ORDER BY CASE WHEN a.statut = 'EN_ATTENTE' THEN 0 ELSE 1 END, a.date_creation DESC
-        `, [req.user.id_salon]);
-        res.json(result.rows);
-    } catch (e) { res.status(500).json({ erreur: "Erreur lecture absences." }); }
+        const absences = await recupererAbsences({ pool }, { id_salon: req.user.id_salon, role: req.user.role });
+        res.json(absences);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lecture absences." });
+    }
 });
 
 app.get('/api/dashboard/salon', verifierToken, async (req, res) => {
