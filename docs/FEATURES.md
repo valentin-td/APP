@@ -42,7 +42,7 @@
 
 - **Objectif** : Authentifier les gérants (email/mot de passe), les employés (code PIN à la caisse ou sur mobile), gérer les sessions JWT sécurisées (cookies HTTP-Only) et protéger les routes contre les attaques par force brute.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (écrans de login gérant, login PIN collaborateur, reset password).
-- **Fichiers Backend** : `server.js` (routes auth), `services/rh/employes.service.js` (règles PIN).
+- **Fichiers Backend** : `services/auth/auth.service.js` (chiffrement AES, PIN, JWT, rate-limiters), `config/db.js` (pool et initialisation triggers), `services/rh/employes.service.js` (règles PIN), `server.js` (orchestration et montage des routes).
 - **Routes API** :
   - `POST /api/register`
   - `POST /api/login`
@@ -197,7 +197,7 @@
 
 - **Objectif** : Centraliser l'historique des visites, les formules techniques (colorations, mélanges), les coordonnées clients, et calculer automatiquement le statut de fidélité.
 - **Fichiers Frontend** : `frontend/src/App.jsx` (recherche client caisse, fiche profil).
-- **Fichiers Backend** : `server.js` (lignes ~1956-1975 et 5745-5750).
+- **Fichiers Backend** : `services/clients/clients.service.js` (`recupererClients`, `creerClient`, `supprimerClient`, `recupererHistoriqueClient`, `mettreAJourNotesClient`), `server.js` (délégation).
 - **Routes API** :
   - `GET /api/clients`
   - `POST /api/clients`
@@ -435,7 +435,7 @@
 
 - **Objectif** : Avertir instantanément le personnel et les gérants (nouveau message, nouvelle réservation en ligne, alerte stock, arrêt maladie) sur écran allumé (SSE) ou appareil en veille (WebPush VAPID).
 - **Fichiers Frontend** : `frontend/src/sw.js`, `frontend/src/App.jsx`.
-- **Fichiers Backend** : `server.js` (`envoyerNotificationPush`, SSE `/api/events/:id_salon`).
+- **Fichiers Backend** : `services/notifications/notifications.service.js` (`envoyerEvenementSSE`, `gererConnexionSSE`, `envoyerNotificationPush`, `recupererVapidPublicKey`, `enregistrerPushSubscription`, `envoyerSMS`, `envoyerSMS_Intelligent`), `config/db.js` (gestion des clés VAPID en base), `server.js` (délégation).
 - **Routes API** :
   - `GET /api/events/:id_salon`
   - `GET /api/push/vapid-key`
@@ -603,7 +603,7 @@
 
 - **Objectif** : Soumettre obligatoirement au gérant lors de sa première connexion les CGV et conditions contractuelles, recueillir son consentement éclairé, horodater l'acceptation et sceller une preuve cryptographique infalsifiable (SHA-256) avec génération d'un certificat PDF.
 - **Fichiers Frontend** : `frontend/src/PopupLegal.jsx`, `frontend/src/textesLegaux.js`.
-- **Fichiers Backend** : `legal.js` (~450 lignes).
+- **Fichiers Backend** : `legal.js` (~450 lignes), `services/pdf/legalAcceptancePdf.service.js` (`creerMiddlewareSSOSandbox`, `creerMiddlewareCertificatLegalPDF`), `server.js` (délégation).
 - **Routes API** : `/api/legal/*` (gérées via `legal.js`).
 - **Services / Modules** : `crypto` (SHA-256), `pdfkit`.
 - **Tables BDD** : `acceptations_legales`.

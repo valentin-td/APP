@@ -249,8 +249,8 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
 
 ### 4.1. Le Pool de Connexions PostgreSQL (`pg.Pool`)
 - **Situation actuelle** :
-  - `server.js` instancie un pool unique partagé entre toutes les requêtes Express, les crons et les services.
-  - `routes_partners.js` instancie son **propre pool séparé** `new Pool()`.
+  - `config/db.js` instancie et exporte le pool unique partagé entre toutes les requêtes Express, les crons et les services métiers.
+  - `routes_partners.js` instancie son propre pool dédié.
 - **Risque** :
   - Épuisement de la limite de connexions PostgreSQL autorisée par Render (ex: 20 à 50 connexions max sur les plans standards).
   - Un pic d'activité sur le portail partenaires peut faire tomber le serveur de caisse en production.

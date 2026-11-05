@@ -38,15 +38,21 @@ flowchart TB
         CORS["CORS Handler & Express Rate Limiters"]
     end
 
-    subgraph BackendCore["⚙️ Backend Node.js / Express 5 (server.js)"]
+    subgraph BackendCore["⚙️ Backend Node.js / Express 5 (server.js - Orchestrateur)"]
         direction TB
-        MW["Middlewares (verifierToken, verifierPlan, verifierSuperAdmin)"]
+        CFG_DB["config/db.js<br/>(Pool PG, migrations, triggers NF525)"]
+        MW["services/auth/auth.service.js<br/>(verifierToken, verifierPlan, verifierSuperAdmin, limiters)"]
         RouterPartners["Routeur Partenaires (routes_partners.js)"]
         ModuleLegal["Module Légal & Signature (legal.js)"]
         
-        subgraph ModularServices["📦 Services Métier Découplés"]
+        subgraph ModularServices["📦 Services Métier Découplés (100% Modulaire)"]
+            SRV_Auth["services/auth/<br/>(auth.service.js)"]
+            SRV_Caisse["services/caisse/<br/>(caisse.service.js, dossierNf525Pdf)"]
+            SRV_Clients["services/clients/<br/>(clients.service.js)"]
+            SRV_Notif["services/notifications/<br/>(notifications.service.js)"]
+            SRV_Settings["services/settings/<br/>(settings.service.js)"]
             SRV_Compta["services/compta/<br/>(fec, clotureMensuelle, archiveFiscale)"]
-            SRV_PDF["services/pdf/<br/>(ticketPdf, liassePdf, bonCommandePdf)"]
+            SRV_PDF["services/pdf/<br/>(ticketPdf, liassePdf, bonCommandePdf, legalAcceptancePdf)"]
             SRV_Stock["services/stock/<br/>(stock.service.js)"]
             SRV_RH["services/rh/<br/>(rh.service.js, employes.service.js)"]
             SRV_Proto["services/protocoles/<br/>(protocoles.service.js)"]
@@ -58,10 +64,6 @@ flowchart TB
             SRV_IA["services/ia/<br/>(ia.service.js)"]
             SRV_Dashboard["services/dashboard/<br/>(dashboard.service.js)"]
             SRV_Admin["services/admin/<br/>(superadmin.service.js)"]
-        end
-
-        subgraph CoreMonolith["🏛️ Domaines en cours d'extraction (server.js)"]
-            DomainCaisse["Caisse NF525 & Clôtures Z"]
         end
 
         subgraph BackgroundJobs["⏱️ Tâches de Fond & Robots (jobs/cronJobs.js)"]
@@ -97,7 +99,6 @@ flowchart TB
     %% Passerelle -> Backend
     RenderAPI --> CORS --> MW
     MW --> ModularServices
-    MW --> CoreMonolith
     MW --> RouterPartners
     MW --> ModuleLegal
 
@@ -105,22 +106,21 @@ flowchart TB
     RenderAPI -.->|"Initialise au boot"| BackgroundJobs
 
     %% Backend & Jobs -> BDD / Storage
+    CFG_DB --> PG
     ModularServices --> PG
-    CoreMonolith --> PG
     RouterPartners --> PG
     BackgroundJobs --> PG
     
     ModularServices --> R2
-    CoreMonolith --> R2
     BackgroundJobs --> R2
 
     %% Backend & Jobs -> Services Externes
-    CoreMonolith --> Stripe
+    ModularServices --> Stripe
     BackgroundJobs --> Brevo
     BackgroundJobs --> Groq
     BackgroundJobs --> Gmail
     ModularServices --> Sentry
-    CoreMonolith --> VAPID
+    SRV_Notif --> VAPID
 ```
 
 ---
@@ -150,10 +150,16 @@ flowchart TB
   - Middleware `verifierPlan(['PRO', 'PREMIUM'])` : contrôle d'accès aux fonctionnalités avancées (IA, OCR factures, pointeuse).
   - Middleware `verifierSuperAdmin` : réservé au support technique et administration globale.
 
-### 3.3. Couche Métier & Services Modulaires
-Les fonctionnalités clés sont organisées en modules autonomes injectant leurs dépendances :
+### 3.3. Couche Métier & Services Modulaires (100% Découplée)
+L'intégralité du backend est organisée en 15 domaines fonctionnels autonomes injectant leurs dépendances :
+- `config/db.js` : configuration centralisée du pool PostgreSQL, synchronisation et migrations automatiques du schéma relationnel (tables, colonnes, contraintes d'unicité, clés VAPID et triggers stricts d'inaltérabilité NF525).
+- `services/auth/` : authentification unifiée, chiffrement bidirectionnel AES-256-CBC, contrôle des codes PIN faibles, sessions JWT avec cookies HTTP-Only, vérification des plans d'abonnement (PRO/PREMIUM), paliers de verrouillage NF525 (15m, 30m, 1h, définitif), flux d'oubli/réinitialisation de mot de passe et limiteurs anti-brute force (`authLimiter`, `limiteurAvisPublic`, `limiteurReservationPublique`).
+- `services/notifications/` : notifications temps réel Server-Sent Events (SSE), notifications push web VAPID multi-cibles (gérant, employé, groupe), normalisation des numéros de téléphone et passerelle transactionnelle SMS intelligente (Brevo) avec contrôle des quotas mensuels.
+- `services/settings/` : configuration globale du salon (GMB, Pennylane, horaires, fidélité, coordonnées bancaires et comptables), checklist d'onboarding go-live pour déverrouiller la caisse, masquage des secrets pour le personnel non-gérant et traçabilité JET.
+- `services/clients/` : annuaire clients, historique d'achats/visites/gains de fidélité, notes techniques, et suppression avec anonymisation pseudonymisée RGPD préservant la conservation fiscale NF525 des tickets liés.
+- `services/pdf/legalAcceptancePdf.service.js` : middleware SSO Sandbox (accès direct caisse pour salons DEMO et VIDE) et générateur vectoriel PDFKit du certificat officiel d'acceptation électronique des CGUV, RGPD et SEPA (2 pages certifiées, empreintes SHA-256).
 - `services/caisse/` : Caisse Smart POS, encaissements multi-moyens (CB Stripe Terminal, espèces, pourboires isolés, fidélité), annulations partielles ou totales avec écritures de compensation, mouvements scellés d'espèces avec contrôle PIN collaborateur, clôture journalière Z avec cumul perpétuel inaltérable, contrôle matinal de régularisation et audit de conformité cryptographique NF525 (dossier technique légal PDF, vérification continue de la chaîne SHA-256 et JET logs).
-- `services/pdf/` : moteurs de rendu vectoriel PDFKit pour tickets de caisse scellés, liasses mensuelles certifiées et bons de commande fournisseurs.
+- `services/pdf/` : moteurs de rendu vectoriel PDFKit pour tickets de caisse scellés, liasses mensuelles certifiées, bons de commande fournisseurs et certificats contractuels légaux.
 - `services/compta/` : génération du Fichier des Écritures Comptables (FEC), archivage fiscal scellé et clôtures de fin de mois.
 - `services/stock/` : algorithme prédictif de rupture selon l'historique des ventes, gestion des alertes d'inventaire, fusion d'articles et réassort.
 - `services/rh/` : calcul analytique des heures travaillées, gestion du pointage direct, détection des conflits d'agenda lors des arrêts, et anonymisation conforme NF525/RGPD.
@@ -166,6 +172,7 @@ Les fonctionnalités clés sont organisées en modules autonomes injectant leurs
 - `services/ia/` : robot d'analyse IA et traitement OCR des factures fournisseurs (PDF et images via Groq Qwen Vision), saisie manuelle sécurisée PIN, double écriture compta/stock, synchronisation de rendez-vous et détection d'arrêts maladie.
 - `services/dashboard/` : tableaux de bord d'activité salon, métriques de performance et commissions individuelles collaborateurs, KPI financiers gérant (CA, panier moyen, top prestations, intégration Google My Business et NPS).
 - `services/admin/` : espace super-administrateur (statistiques globales MRR, gestion des accès et suspensions salons, déclenchement forcé des robots, simulateur temporel et purge sécurisée conforme RGPD/NF525).
+- `server.js` : chef d'orchestre principal épuré, supervisant l'injection des dépendances, le montage des routes REST, la liaison WebSocket et le déclenchement des robots d'arrière-plan.
 
 ### 3.4. Couche Données (PostgreSQL & Stockage Objets)
 - **Base relationnelle** : PostgreSQL (hébergée sur Render, client `pg.Pool`).

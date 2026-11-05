@@ -209,6 +209,33 @@ flowchart TD
 
 ---
 
+#### 15. Si tu touches à `services/auth/auth.service.js` ou `config/db.js` (Sécurité, Sessions & BDD)
+- **Fonctionnalités impactées** : 100% des accès gérants et employés, vérification des rôles, signatures JWT, déclenchement des triggers inaltérables NF525, pool relationnel PostgreSQL.
+- **Risques majeurs** :
+  - Rejet universel des requêtes (`verifierToken` renvoyant 401/403).
+  - Blocage accidentel de l'initialisation de schéma ou altération des triggers PostgreSQL (`nf525_prevent_alteration`).
+  - Défaillance du verrouillage PIN entraînant une vulnérabilité aux attaques par force brute.
+- **Checklist de vérification** :
+  1. [ ] Lancer `node -c server.js config/*.js services/auth/*.js`.
+  2. [ ] Valider la présence de `ENCRYPTION_SECRET` et `JWT_SECRET`.
+  3. [ ] Tester le login gérant, le login PIN employé, et le blocage à 3, 5, 7, 9 tentatives.
+  4. [ ] Tester le reset de mot de passe par email.
+
+---
+
+#### 16. Si tu touches à `services/settings/`, `services/clients/` ou `services/notifications/` (Services Transverses)
+- **Fonctionnalités impactées** : Configuration du salon, checklist d'onboarding, annuaire clients, flux SSE et push web, SMS transactionnels.
+- **Risques majeurs** :
+  - Suppression physique d'un client au lieu d'une anonymisation pseudonymisée (violation fiscale si des tickets sont rattachés).
+  - Déconnexion silencieuse des flux SSE en caisse.
+  - Fuite des identifiants sensibles de messagerie IMAP ou Pennylane aux employés.
+- **Checklist de vérification** :
+  1. [ ] Lancer `node -c server.js services/settings/*.js services/clients/*.js services/notifications/*.js`.
+  2. [ ] Vérifier que la suppression d'un client avec tickets bascule en anonymisation `Client Anonymisé #ID` avec log JET.
+  3. [ ] Vérifier que les paramètres renvoyés aux employés masquent les clés et mots de passe sensibles.
+
+---
+
 ## 3. Zones Sensibles & Points d'Attention Particuliers
 
 ### 🚨 1. Inaltérabilité NF525 & Intégrité Cryptographique
