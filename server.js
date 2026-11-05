@@ -36,6 +36,16 @@ const {
     obtenirStatutMois
 } = require('./services/compta/clotureMensuelle.service');
 const envoyerBilanComptable = (id_salon, mois_annee) => envoyerBilanComptableService({ pool, genererBufferLiassePdf }, { id_salon, mois_annee });
+const {
+    calculerPrevisionStocks,
+    creerOuReapproArticle,
+    supprimerArticle,
+    renommerArticle,
+    corrigerStock,
+    fusionnerStocks,
+    envoyerCommandeFournisseur,
+    enregistrerVerificationStock
+} = require('./services/stock/stock.service');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const OpenAI = require('openai');
 const webpush = require('web-push');
@@ -3938,11 +3948,12 @@ app.post('/api/caisse/regulariser', verifierToken, async (req, res) => {
 });
 
 app.post('/api/stocks/verification/fait', verifierToken, async (req, res) => {
-    if (!['gerant', 'salon'].includes(req.user.role)) return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
     try {
-        await pool.query('UPDATE configuration_salon SET derniere_verif_stock = CURRENT_DATE WHERE id_salon = $1', [req.user.id_salon]);
-        res.json({ message: "Vérification des stocks enregistrée." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors de l'enregistrement." }); }
+        const result = await enregistrerVerificationStock({ pool }, { id_salon: req.user.id_salon, role: req.user.role });
+        res.json(result);
+    } catch (e) { 
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de l'enregistrement." }); 
+    }
 });
 
 // =========================================================================
@@ -6053,69 +6064,44 @@ app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
     } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour photo." }); }
 });
 
-app.get('/api/catalogue', verifierToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]); res.json(result.rows); } catch (e) { res.status(500).json({erreur: "Erreur catalogue."}); }});
+// =========================================================================
+// --- MODULE CATALOGUE, STOCKS ET COMMANDES FOURNISSEURS ---
+// =========================================================================
+app.get('/api/catalogue', verifierToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM catalogue WHERE id_salon =  ORDER BY type_article, nom ASC', [req.user.id_salon]);
+        res.json(result.rows);
+    } catch (e) { 
+        res.status(500).json({ erreur: "Erreur catalogue." }); 
+    }
+});
 
-app.post('/api/catalogue', verifierToken, async (req, res) => { 
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Modification du catalogue réservée au gérant et au salon." });
-    const { nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours } = req.body;
-    try { 
-        const typeArticleFormatte = type_article || 'PRESTATION'; 
-        const prixFormatte = parseFloat((prix || "0").toString().replace(',', '.')) || 0; 
-        const stockFormatte = parseInt(stock_actuel) || 0; 
-        const refFormattee = reference ? reference.trim() : null; 
-        const tvaFormattee = (taux_tva !== undefined && taux_tva !== null && taux_tva !== '') ? parseFloat(taux_tva.toString().replace(',', '.')) : 20.00; 
-        const delaiFormatte = parseInt(delai_livraison_jours) || 3;
-
-        if (typeArticleFormatte === 'PRODUIT_REVENTE') { 
-            if (!refFormattee || refFormattee.length < 4) { return res.status(400).json({ erreur: "Réf valide requise." }); } 
-        } 
-        
-        const checkQuery = `SELECT * FROM catalogue WHERE (nom ILIKE $1 OR (reference = $2 AND reference IS NOT NULL)) AND id_salon = $3`; 
-        const checkResult = await pool.query(checkQuery, [nom, refFormattee, req.user.id_salon]); 
-        
-        if (checkResult.rowCount > 0) { 
-            const art = checkResult.rows[0]; 
-            if (refFormattee && art.reference === refFormattee && typeArticleFormatte === 'PRODUIT_REVENTE') { 
-                if (!nom || nom.trim() === '') { 
-                    await pool.query('UPDATE catalogue SET stock_actuel = stock_actuel + $1 WHERE id_article = $2', [stockFormatte, art.id_article]); 
-                    await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: art.id_article, action: 'REAPPRO_STOCK', ajout: stockFormatte }); 
-                    return res.status(200).json({ message: `Stock mis à jour (+${stockFormatte})` }); 
-                } else if (nom.trim().toLowerCase() !== art.nom.toLowerCase()) { 
-                    return res.status(400).json({ erreur: `Référence déjà utilisée.` }); 
-                } 
-            } 
-            if (art.nom.toLowerCase() === nom.trim().toLowerCase()) { 
-                return res.status(400).json({ erreur: `L'article existe déjà.` }); 
-            } 
-        } 
-        
-        const dureeFormattee = parseInt(req.body.duree_estimee_minutes) || 30;
-        const inserted = await pool.query('INSERT INTO catalogue (nom, type_article, prix, stock_actuel, reference, taux_tva, delai_livraison_jours, duree_estimee_minutes, id_salon) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id_article', [nom, typeArticleFormatte, prixFormatte, stockFormatte, refFormattee, tvaFormattee, delaiFormatte, dureeFormattee, req.user.id_salon]);
-        await enregistrerJET(req.user.id_salon, 'CREATION_ARTICLE', { id_article: inserted.rows[0].id_article, nom, type_article: typeArticleFormatte, prix: prixFormatte, taux_tva: tvaFormattee }); 
-        res.status(201).json({ message: "Article ajouté avec succès !" }); 
-    } catch (e) { res.status(500).json({ erreur: `Erreur interne : ${e.message}` }); }
+app.post('/api/catalogue', verifierToken, async (req, res) => {
+    try {
+        const result = await creerOuReapproArticle({ pool, enregistrerJET }, { id_salon: req.user.id_salon, role: req.user.role, body: req.body });
+        res.status(result.status || 200).json({ message: result.message });
+    } catch (e) { 
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur interne" }); 
+    }
 });
 
 app.delete('/api/catalogue/:id', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Suppression réservée au gérant et au salon." });
-    try { const articleRes = await pool.query('SELECT nom, type_article, prix FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); await pool.query('DELETE FROM catalogue WHERE id_article = $1 AND id_salon = $2', [req.params.id, req.user.id_salon]); if (articleRes.rowCount > 0) { await enregistrerJET(req.user.id_salon, 'SUPPRESSION_ARTICLE', { id_article: req.params.id, ...articleRes.rows[0] }); } res.json({message: "Article supprimé"}); } catch (e) { res.status(500).json({erreur: "Erreur suppression article."}); }
+    try {
+        const result = await supprimerArticle({ pool, enregistrerJET }, { id_salon: req.user.id_salon, role: req.user.role, id_article: req.params.id });
+        res.json(result);
+    } catch (e) { 
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur suppression article." }); 
+    }
 });
 
 app.put('/api/catalogue/:id/nom', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Modification réservée au gérant et au salon." });
-    const nouveauNom = (req.body.nom || '').trim();
-    if (!nouveauNom) return res.status(400).json({ erreur: "Le nom ne peut pas être vide." });
     try {
-        const doublon = await pool.query('SELECT 1 FROM catalogue WHERE id_salon = $1 AND id_article != $2 AND nom ILIKE $3', [req.user.id_salon, req.params.id, nouveauNom]);
-        if (doublon.rowCount > 0) return res.status(400).json({ erreur: "Une prestation porte déjà ce nom." });
-        const result = await pool.query('UPDATE catalogue SET nom = $1 WHERE id_article = $2 AND id_salon = $3 RETURNING id_article', [nouveauNom, req.params.id, req.user.id_salon]);
-        if (result.rowCount === 0) return res.status(404).json({ erreur: "Article introuvable." });
-        await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: req.params.id, action: 'RENOMMAGE', nouveau_nom: nouveauNom });
-        res.json({ message: "Nom mis à jour." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur lors du renommage." }); }
+        const result = await renommerArticle({ pool, enregistrerJET }, { id_salon: req.user.id_salon, role: req.user.role, id_article: req.params.id, nouveauNom: req.body.nom });
+        res.json(result);
+    } catch (e) { 
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors du renommage." }); 
+    }
 });
-
-// --- MODULE 4 CORRIGÉ : BON DE COMMANDE FOURNISSEUR (Délégué à services/pdf/bonCommandePdf.service) ---
 
 app.post('/api/catalogue/bon-commande-pdf', verifierToken, async (req, res) => {
     if (req.user.role === 'employe') return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
@@ -6123,283 +6109,62 @@ app.post('/api/catalogue/bon-commande-pdf', verifierToken, async (req, res) => {
     if (!Array.isArray(lignes) || lignes.length === 0) {
         return res.status(400).json({ erreur: "Aucun produit sélectionné dans le bon de commande." });
     }
-
     try {
-        const salonRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
+        const salonRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = ', [req.user.id_salon]);
         const salon = salonRes.rows[0] || {};
         const { buffer, numCommande } = await genererBufferBonCommandePDF(salon, fournisseur, lignes, commentaire);
-
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="${numCommande}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename=\"${numCommande}.pdf\"`);
         res.send(buffer);
-    } catch (e) {
+    } catch (e) { 
         console.error("Erreur génération Bon de commande PDF :", e);
-        res.status(500).json({ erreur: "Erreur création PDF : " + e.message });
+        res.status(500).json({ erreur: "Erreur création PDF : " + e.message }); 
     }
 });
 
 app.post('/api/catalogue/envoyer-commande', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Réservé au gérant et au salon." });
-    const { email_fournisseur, fournisseur, lignes, commentaire } = req.body;
-    if (!email_fournisseur || !String(email_fournisseur).includes('@')) {
-        return res.status(400).json({ erreur: "Adresse e-mail du fournisseur invalide." });
-    }
-    if (!Array.isArray(lignes) || lignes.length === 0) {
-        return res.status(400).json({ erreur: "Aucun produit sélectionné." });
-    }
-
     try {
-        const salonRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [req.user.id_salon]);
-        const salon = salonRes.rows[0] || {};
-        const nomSalon = salon.nom_salon || 'Notre Salon';
-        const adresseSalon = salon.adresse || salon.adresse_salon || '';
-        const telSalon = salon.telephone || salon.telephone_salon || '';
-        const siretSalon = salon.siret || salon.siret_salon || '';
-        const dateJour = new Date().toLocaleDateString('fr-FR');
-
-        // Génère également le PDF pour l'attacher directement à l'e-mail Brevo
-        const { buffer, numCommande } = await genererBufferBonCommandePDF(salon, fournisseur, lignes, commentaire);
-
-        const lignesHtml = lignes.map(l =>
-            `<tr>
-                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-weight:bold;">${l.reference || 'SANS-REF'}</td>
-                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${l.nom}</td>
-                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold;">${l.quantite_commande}</td>
-            </tr>`
-        ).join('');
-
-        const sujetMail = `Bon de commande ${numCommande} — ${nomSalon} (${dateJour})`;
-        const corpsHtml = `
-            <div style="font-family:sans-serif;color:#111827;max-width:620px;">
-                <h2 style="margin-bottom:4px;">Bon de commande — ${nomSalon}</h2>
-                <p style="color:#4b5563;font-size:14px;">Bonjour ${fournisseur || ''},<br/>Veuillez trouver ci-joint et ci-dessous notre commande de réassort du ${dateJour} :</p>
-                <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px;">
-                    <thead>
-                        <tr style="background:#f3f4f6;text-align:left;">
-                            <th style="padding:8px 10px;">Référence</th>
-                            <th style="padding:8px 10px;">Produit</th>
-                            <th style="padding:8px 10px;text-align:right;">Quantité</th>
-                        </tr>
-                    </thead>
-                    <tbody>${lignesHtml}</tbody>
-                </table>
-                ${commentaire ? `<p style="font-size:13px;background:#f9fafb;padding:10px;border-radius:8px;"><strong>Note :</strong> ${commentaire}</p>` : ''}
-                <p style="font-size:12.5px;color:#6b7280;margin-top:20px;">
-                    <strong>${nomSalon}</strong><br/>
-                    ${adresseSalon} ${telSalon ? `• Tél : ${telSalon}` : ''} ${siretSalon ? `• SIRET : ${siretSalon}` : ''}
-                </p>
-            </div>
-        `;
-
-        // 1. Envoi via l'API Brevo (avec le PDF en pièce jointe)
-        if (process.env.BREVO_API_KEY) {
-            const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.SENDER_EMAIL || process.env.EMAIL_EXPEDITEUR || process.env.EMAIL_USER || process.env.SMTP_USER || 'tardy.valentin04@gmail.com';
-            const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
-                method: 'POST',
-                headers: {
-                    'accept': 'application/json',
-                    'api-key': process.env.BREVO_API_KEY,
-                    'content-type': 'application/json'
-                },
-                body: JSON.stringify({
-                    sender: { name: nomSalon, email: senderEmail },
-                    to: [{ email: email_fournisseur.trim() }],
-                    subject: sujetMail,
-                    htmlContent: corpsHtml,
-                    attachment: [
-                        {
-                            name: `${numCommande}.pdf`,
-                            content: buffer.toString('base64')
-                        }
-                    ]
-                })
-            });
-
-            if (brevoRes.ok) {
-                return res.json({ message: `Bon de commande PDF envoyé par mail à ${email_fournisseur} !` });
-            } else {
-                const errBrevo = await brevoRes.text();
-                console.error("Erreur Brevo API :", errBrevo);
-            }
-        }
-
-        // 2. Fallback Nodemailer si défini
-        if (typeof transporter !== 'undefined' && transporter?.sendMail) {
-            await transporter.sendMail({
-                from: process.env.BREVO_SENDER_EMAIL || process.env.SMTP_USER || process.env.EMAIL_USER,
-                to: email_fournisseur.trim(),
-                subject: sujetMail,
-                html: corpsHtml,
-                attachments: [{ filename: `${numCommande}.pdf`, content: buffer }]
-            });
-            return res.json({ message: `Bon de commande envoyé à ${email_fournisseur} !` });
-        }
-
-        // 3. Repli automatique sur l'application mail de l'appareil si aucune clé n'est active
-        return res.status(200).json({ fallback_mailto: true, sujet: sujetMail, message: "Ouverture de votre messagerie avec la commande pré-remplie." });
-    } catch (e) {
+        const result = await envoyerCommandeFournisseur(
+            { pool, genererBufferBonCommandePDF, transporter: typeof transporter !== 'undefined' ? transporter : null },
+            { id_salon: req.user.id_salon, role: req.user.role, body: req.body }
+        );
+        res.json(result);
+    } catch (e) { 
         console.error("Erreur envoi commande mail :", e);
-        res.status(500).json({ erreur: "Erreur envoi mail : " + e.message });
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur envoi mail." }); 
     }
 });
 
 app.get('/api/stocks', verifierToken, async (req, res) => {
     try {
-        const stockResult = await pool.query(`
-            WITH ConsommationDirecte AS (
-                SELECT lt.id_article, SUM(lt.quantite) as qte
-                FROM lignes_ticket lt
-                JOIN tickets t ON t.id_ticket = lt.id_ticket
-                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE
-                  AND t.date_creation >= NOW() - INTERVAL '30 days'
-                GROUP BY lt.id_article
-            ),
-            ConsommationRecettes AS (
-                SELECT ra.id_article, SUM(ra.quantite_necessaire * lt.quantite) as qte
-                FROM lignes_ticket lt
-                JOIN tickets t ON t.id_ticket = lt.id_ticket
-                JOIN protocoles p ON p.id_salon = $1 AND TRIM(p.nom_prestation) ILIKE TRIM(lt.nom_article_snapshot)
-                JOIN recettes_articles ra ON ra.id_protocole = p.id_protocole
-                WHERE lt.id_salon = $1 AND t.statut != 'ANNULE' AND t.type_ticket != 'ANNULATION' AND t.est_compense = FALSE
-                  AND t.date_creation >= NOW() - INTERVAL '30 days'
-                GROUP BY ra.id_article
-            ),
-            ConsommationTotale AS (
-                SELECT id_article, SUM(qte) as total_30j FROM (
-                    SELECT * FROM ConsommationDirecte UNION ALL SELECT * FROM ConsommationRecettes
-                ) x GROUP BY id_article
-            )
-            SELECT c.id_article, c.nom, c.stock_actuel, c.seuil_alerte, c.type_article,
-                   COALESCE(ct.total_30j, 0) as consommation_30j
-            FROM catalogue c
-            LEFT JOIN ConsommationTotale ct ON ct.id_article = c.id_article
-            WHERE c.id_salon = $1 AND c.type_article IN ('PRODUIT_REVENTE', 'CONSOMMABLE')
-            ORDER BY c.nom ASC
-        `, [req.user.id_salon]);
-
-        const stocksAvecTendance = stockResult.rows.map(p => {
-            const vitesseJour = parseFloat(p.consommation_30j) / 30;
-            const stockActuel = parseFloat(p.stock_actuel);
-            let joursRestants = null;
-            let dateRuptureProjetee = null;
-            if (vitesseJour > 0) {
-                joursRestants = Math.floor(stockActuel / vitesseJour);
-                const d = new Date();
-                d.setDate(d.getDate() + joursRestants);
-                dateRuptureProjetee = d.toISOString().slice(0, 10);
-            }
-            return { ...p, vitesse_jour: Math.round(vitesseJour * 100) / 100, jours_restants: joursRestants, date_rupture_prevue: dateRuptureProjetee };
-        });
-
-        res.json(stocksAvecTendance);
-    } catch (erreur) { res.status(500).json({ erreur: "Erreur stocks." }); }
+        const stocks = await calculerPrevisionStocks({ pool }, req.user.id_salon);
+        res.json(stocks);
+    } catch (erreur) { 
+        res.status(500).json({ erreur: "Erreur stocks." }); 
+    }
 });
 
 app.put('/api/stocks/:id', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "Correction du stock réservée au gérant et au salon." });
-    const nouveauStock = parseInt(req.body.nouveau_stock);
-    if (isNaN(nouveauStock) || nouveauStock < 0) return res.status(400).json({ erreur: "Quantité invalide." });
     try {
-        const result = await pool.query('UPDATE catalogue SET stock_actuel = $1 WHERE id_article = $2 AND id_salon = $3 RETURNING id_article', [nouveauStock, req.params.id, req.user.id_salon]);
-        if (result.rowCount === 0) return res.status(404).json({ erreur: "Produit introuvable." });
-        await enregistrerJET(req.user.id_salon, 'MODIFICATION_ARTICLE', { id_article: req.params.id, action: 'CORRECTION_STOCK', nouvelle_valeur: nouveauStock });
-        res.json({ message: "Stock mis à jour." });
-    } catch (e) { res.status(500).json({ erreur: "Erreur mise à jour du stock." }); }
+        const result = await corrigerStock({ pool, enregistrerJET }, { id_salon: req.user.id_salon, role: req.user.role, id_article: req.params.id, nouveauStock: req.body.nouveau_stock });
+        res.json(result);
+    } catch (e) { 
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur mise à jour du stock." }); 
+    }
 });
 
 app.post('/api/stocks/fusionner', verifierToken, async (req, res) => {
-    if (req.user.role === 'employe') return res.status(403).json({ erreur: "La fusion des stocks est réservée au gérant et au poste Salon." });
-    const { ids_articles, nom, reference, prix, type_article, delai_livraison_jours, id_employe, code_pin } = req.body;
-    const id_salon = req.user.id_salon;
-
-    if (!Array.isArray(ids_articles) || ids_articles.length < 2) {
-        return res.status(400).json({ erreur: "Sélectionnez au moins 2 produits à unifier." });
-    }
-    if (!nom || !String(nom).trim()) {
-        return res.status(400).json({ erreur: "Le nom du produit unifié est requis." });
-    }
-
-    let operateurValide;
     try {
-        operateurValide = await verifierPinActionSensibleSalon(req, {
-            id_employe: id_employe === 'gerant' ? 'gerant' : id_employe,
-            nom_operateur: id_employe === 'gerant' ? 'Gérant' : null,
-            code_pin,
-            action_label: 'Fusion de stocks'
-        });
-    } catch (pinErr) {
-        return res.status(400).json({
-            erreur: pinErr.message,
-            require_pin: true,
-            tentatives: pinErr.tentatives,
-            locked_until: pinErr.locked_until,
-            locked_permanent: pinErr.locked_permanent
-        });
-    }
-
-    try {
-        const clientDB = await pool.connect();
-        try {
-            await clientDB.query('BEGIN');
-            const idsClean = ids_articles.map(id => parseInt(id, 10)).filter(n => !isNaN(n));
-            const articlesRes = await clientDB.query(
-                'SELECT id_article, nom, stock_actuel, prix, reference, type_article, delai_livraison_jours FROM catalogue WHERE id_salon = $1 AND id_article = ANY($2::int[]) FOR UPDATE',
-                [id_salon, idsClean]
-            );
-            if (articlesRes.rowCount < 2) throw new Error("Les produits sélectionnés sont introuvables.");
-
-            const idMaitre = idsClean[0];
-            const idsDoublons = idsClean.slice(1);
-            const stockTotal = articlesRes.rows.reduce((sum, a) => sum + (parseInt(a.stock_actuel, 10) || 0), 0);
-            const artMaitre = articlesRes.rows.find(a => a.id_article === idMaitre) || articlesRes.rows[0];
-
-            const nomFinal = String(nom).trim();
-            const refFinale = reference && String(reference).trim() !== '' ? String(reference).trim() : (artMaitre.reference || null);
-            const prixFinal = (prix !== undefined && prix !== '' && !isNaN(parseFloat(prix))) ? parseFloat(String(prix).replace(',', '.')) : (parseFloat(artMaitre.prix) || 0);
-            const typeFinal = type_article || artMaitre.type_article || 'PRODUIT_REVENTE';
-            const delaiFinal = parseInt(delai_livraison_jours, 10) || artMaitre.delai_livraison_jours || 3;
-
-            // Mise à jour des recettes de l'Académie pour pointer vers l'article maître
-            await clientDB.query(
-                'UPDATE recettes_articles SET id_article = $1 WHERE id_article = ANY($2::int[])',
-                [idMaitre, idsDoublons]
-            );
-
-            // Mise à jour de l'article maître avec la somme des stocks
-            await clientDB.query(
-                'UPDATE catalogue SET nom = $1, reference = $2, prix = $3, type_article = $4, stock_actuel = $5, delai_livraison_jours = $6 WHERE id_article = $7 AND id_salon = $8',
-                [nomFinal, refFinale, prixFinal, typeFinal, stockTotal, delaiFinal, idMaitre, id_salon]
-            );
-
-            // Suppression des doublons (ou archivage hors stock si liés à d'anciennes lignes_ticket scellées NF525)
-            await clientDB.query(
-                'DELETE FROM catalogue WHERE id_salon = $1 AND id_article = ANY($2::int[]) AND id_article NOT IN (SELECT DISTINCT id_article FROM lignes_ticket WHERE id_salon = $1 AND id_article IS NOT NULL)',
-                [id_salon, idsDoublons]
-            );
-            await clientDB.query(
-                "UPDATE catalogue SET type_article = 'ARCHIVE_FUSION', stock_actuel = 0, reference = NULL WHERE id_salon = $1 AND id_article = ANY($2::int[])",
-                [id_salon, idsDoublons]
-            );
-
-            await enregistrerJET(id_salon, 'FUSION_ARTICLES_STOCK', {
-                operateur: operateurValide.nom,
-                id_employe: operateurValide.id_employe,
-                id_article_maitre: idMaitre,
-                ids_supprimes: idsDoublons,
-                nom_unifie: nomFinal,
-                stock_total_unifie: stockTotal
-            }, clientDB);
-
-            await clientDB.query('COMMIT');
-            res.json({ message: `${articlesRes.rowCount} produits unifiés avec succès (Stock total : ${stockTotal}).`, stock_total: stockTotal });
-        } catch (dbErr) {
-            await clientDB.query('ROLLBACK');
-            throw dbErr;
-        } finally {
-            clientDB.release();
+        const result = await fusionnerStocks(
+            { pool, enregistrerJET, verifierPinActionSensibleSalon },
+            { id_salon: req.user.id_salon, role: req.user.role, req, body: req.body }
+        );
+        res.json(result);
+    } catch (e) { 
+        if (e.details) {
+            return res.status(e.status || 400).json({ erreur: e.message, ...e.details });
         }
-    } catch (e) {
-        res.status(400).json({ erreur: e.message || "Erreur lors de la fusion des stocks." });
+        res.status(e.status || 400).json({ erreur: e.message || "Erreur lors de la fusion des stocks." }); 
     }
 });
 app.get('/api/rh', verifierToken, async (req, res) => {
