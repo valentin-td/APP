@@ -18,13 +18,8 @@ function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori }) {
   const [photoIdx, setPhotoIdx] = useState(0);
   const [apercuCreneaux, setApercuCreneaux] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(true);
-  const [dayOffset, setDayOffset] = useState(0);
 
-  const startDateStr = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + dayOffset);
-    return d.toLocaleString('fr-CA', { timeZone: 'Europe/Paris' }).slice(0, 10);
-  }, [dayOffset]);
+  const startDateStr = useMemo(() => new Date().toLocaleString('fr-CA', { timeZone: 'Europe/Paris' }).slice(0, 10), []);
 
   useEffect(() => {
     let active = true;
@@ -35,9 +30,7 @@ function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori }) {
         if (active && data) setApercuCreneaux(data);
         if (active) setLoadingSlots(false);
       })
-      .catch(() => {
-        if (active) setLoadingSlots(false);
-      });
+      .catch(() => { if (active) setLoadingSlots(false); });
     return () => { active = false; };
   }, [salon.id_salon, startDateStr]);
 
@@ -48,246 +41,99 @@ function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori }) {
     window.location.href = `/?reservation=${salon.id_salon}${paramsExtra}`;
   };
 
+  // Aplatir les créneaux pour le design vertical (Max 4 créneaux affichés)
+  const allSlots = [];
+  if (apercuCreneaux?.jours) {
+    apercuCreneaux.jours.forEach(j => {
+      j.matin.forEach(h => allSlots.push({ date: j.date, heure: h, label: j.label_jour }));
+      j.apres_midi.forEach(h => allSlots.push({ date: j.date, heure: h, label: j.label_jour }));
+    });
+  }
+  const displaySlots = allSlots.slice(0, 4);
+
   return (
-    <div style={{
-      backgroundColor: '#ffffff',
-      borderRadius: '14px',
-      border: '1px solid #e5e7eb',
-      overflow: 'hidden',
-      display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : '310px 1fr',
-      boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
-      transition: 'box-shadow 0.2s ease'
-    }}>
-      {/* CARROUSEL PHOTOS À GAUCHE */}
-      <div style={{ position: 'relative', height: isMobile ? '220px' : '100%', minHeight: '260px', backgroundColor: '#111827', overflow: 'hidden' }}>
+    <div
+      onClick={() => allerSurSalon()}
+      style={{
+        backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e5e7eb',
+        overflow: 'hidden', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 4px 15px rgba(0,0,0,0.03)', cursor: 'pointer',
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+      }}
+    >
+      {/* PHOTO TOP */}
+      <div style={{ position: 'relative', height: '240px', backgroundColor: '#111827', overflow: 'hidden' }}>
         {photos.length > 0 ? (
-          <img
-            src={photos[photoIdx % photos.length]}
-            alt={salon.nom_salon}
-            onClick={() => allerSurSalon()}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer', display: 'block' }}
-          />
+          <img src={photos[photoIdx % photos.length]} alt={salon.nom_salon} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         ) : (
-          <div
-            onClick={() => allerSurSalon()}
-            style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff', cursor: 'pointer', padding: '20px', boxSizing: 'border-box', textAlign: 'center' }}
-          >
-            <div style={{ width: '54px', height: '54px', borderRadius: '14px', border: '1.5px solid rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px', fontSize: '18px', fontWeight: '800', letterSpacing: '0.08em' }}>
+          <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
+            <div style={{ width: '54px', height: '54px', borderRadius: '14px', border: '1.5px solid rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px', fontSize: '18px', fontWeight: '800' }}>
               {String(salon.nom_salon || 'S').slice(0, 2).toUpperCase()}
             </div>
-            <span style={{ fontSize: '14px', fontWeight: '700' }}>{salon.nom_salon}</span>
           </div>
         )}
 
-        {/* BOUTON COEUR FAVORIS */}
+        {/* COEUR FAVORIS */}
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleFavori(salon); }}
-          aria-label="Ajouter aux favoris"
-          style={{
-            position: 'absolute', top: '12px', right: '12px',
-            width: '34px', height: '34px', borderRadius: '50%',
-            backgroundColor: 'rgba(17, 24, 39, 0.45)',
-            border: 'none', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#ffffff'
-          }}
+          style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '50%', backgroundColor: 'rgba(17, 24, 39, 0.45)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', backdropFilter: 'blur(4px)' }}
         >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill={isFav ? '#ffffff' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-          </svg>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill={isFav ? '#ffffff' : 'none'} stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
         </button>
 
-        {/* FLÈCHES ET DOTS DU CARROUSEL */}
+        {/* DOTS & FLÈCHES */}
         {photos.length > 1 && (
           <>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx - 1 + photos.length) % photos.length); }}
-              style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.9)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx + 1) % photos.length); }}
-              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.9)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx - 1 + photos.length) % photos.length); }} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.8)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx + 1) % photos.length); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.8)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg></button>
             <div style={{ position: 'absolute', bottom: '12px', left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: '5px' }}>
               {photos.map((_, idx) => (
-                <span
-                  key={idx}
-                  style={{
-                    width: idx === photoIdx % photos.length ? '16px' : '6px',
-                    height: '6px',
-                    borderRadius: '999px',
-                    backgroundColor: idx === photoIdx % photos.length ? '#ffffff' : 'rgba(255,255,255,0.55)',
-                    transition: 'all 0.2s ease'
-                  }}
-                />
+                <span key={idx} style={{ width: idx === photoIdx % photos.length ? '16px' : '6px', height: '6px', borderRadius: '999px', backgroundColor: idx === photoIdx % photos.length ? '#ffffff' : 'rgba(255,255,255,0.55)', transition: 'all 0.2s ease' }} />
               ))}
             </div>
           </>
         )}
       </div>
 
-      {/* CONTENU DROITE : INFOS SALON + SÉLECTEUR DE CRÉNEAUX 3 JOURS + ACTIONS */}
-      <div style={{ padding: isMobile ? '18px' : '22px 26px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '16px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 290px', gap: '20px', alignItems: 'start' }}>
-          {/* Infos principales */}
-          <div>
-            <h3
-              onClick={() => allerSurSalon()}
-              style={{ margin: '0 0 6px 0', fontSize: '19px', fontWeight: '800', color: '#111827', cursor: 'pointer', letterSpacing: '-0.01em' }}
-            >
-              {salon.nom_salon}
-            </h3>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#6b7280', marginBottom: '8px' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              <span>{salon.adresse_salon}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#4b5563', fontWeight: '500' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              {salon.nb_avis > 0 ? (
-                <>
-                  <strong style={{ color: '#111827' }}>{salon.note_moyenne}</strong>
-                  <span>({salon.nb_avis} avis)</span>
-                </>
-              ) : (
-                <span>Nouveau sur STACK</span>
-              )}
-              <span>•</span>
-              <span style={{ fontWeight: '700', color: '#111827' }}>{salon.gamme_prix || '€€'}</span>
-            </div>
-          </div>
-
-          {/* Sélecteur de créneaux direct (Colonnes 3 jours + MATIN / APRÈS-MIDI) */}
-          <div style={{ borderLeft: isMobile ? 'none' : '1px solid #f3f4f6', paddingLeft: isMobile ? 0 : '18px' }}>
-            {loadingSlots ? (
-              <div style={{ fontSize: '12px', color: '#9ca3af', textAlign: 'center', padding: '20px 0' }}>
-                Chargement des disponibilités...
-              </div>
-            ) : apercuCreneaux?.prochaine_disponibilite ? (
-              <div
-                onClick={() => allerSurSalon(`&date=${apercuCreneaux.prochaine_disponibilite.date}`)}
-                style={{
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '10px',
-                  padding: '14px',
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                  backgroundColor: '#f9fafb'
-                }}
-              >
-                <div style={{ fontSize: '10.5px', fontWeight: '800', color: '#6b7280', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: '4px' }}>
-                  PROCHAINE DISPONIBILITÉ
-                </div>
-                <div style={{ fontSize: '13px', fontWeight: '700', color: '#111827', textTransform: 'capitalize' }}>
-                  {apercuCreneaux.prochaine_disponibilite.label} ({apercuCreneaux.prochaine_disponibilite.premier_creneau})
-                </div>
-              </div>
-            ) : (
-              <div>
-                {/* En-tête des 3 jours avec flèches */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <button
-                    type="button"
-                    disabled={dayOffset === 0}
-                    onClick={() => setDayOffset(Math.max(0, dayOffset - 3))}
-                    style={{ background: 'none', border: 'none', cursor: dayOffset === 0 ? 'default' : 'pointer', opacity: dayOffset === 0 ? 0.25 : 1, padding: '2px', color: '#111827' }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
-                  </button>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', flex: 1, textAlign: 'center', gap: '6px' }}>
-                    {(apercuCreneaux?.jours || []).map(j => (
-                      <div key={j.date} style={{ fontSize: '11.5px', fontWeight: '700', color: '#111827' }}>
-                        <span style={{ color: '#6b7280', fontWeight: '500' }}>{j.label_jour} </span>
-                        <span>{j.numero_jour}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setDayOffset(dayOffset + 3)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: '#111827' }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-                  </button>
-                </div>
-
-                {/* Ligne MATIN */}
-                <div style={{ fontSize: '9.5px', fontWeight: '700', color: '#9ca3af', textAlign: 'center', letterSpacing: '0.08em', margin: '4px 0' }}>
-                  MATIN
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', marginBottom: '6px' }}>
-                  {(apercuCreneaux?.jours || []).map(j => (
-                    <div key={j.date + '_m'} style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-                      {j.matin.length === 0 ? (
-                        <span style={{ fontSize: '11px', color: '#d1d5db', padding: '4px 0' }}>—</span>
-                      ) : (
-                        j.matin.slice(0, 2).map(h => (
-                          <button
-                            key={h}
-                            type="button"
-                            onClick={() => allerSurSalon(`&date=${j.date}&heure=${encodeURIComponent(h)}`)}
-                            style={{ width: '100%', padding: '4px 0', fontSize: '11.5px', fontWeight: '600', color: '#111827', backgroundColor: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}
-                          >
-                            {h}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Ligne APRÈS-MIDI */}
-                <div style={{ fontSize: '9.5px', fontWeight: '700', color: '#9ca3af', textAlign: 'center', letterSpacing: '0.08em', margin: '4px 0' }}>
-                  APRÈS-MIDI
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
-                  {(apercuCreneaux?.jours || []).map(j => (
-                    <div key={j.date + '_am'} style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-                      {j.apres_midi.length === 0 ? (
-                        <span style={{ fontSize: '11px', color: '#d1d5db', padding: '4px 0' }}>—</span>
-                      ) : (
-                        j.apres_midi.slice(0, 2).map(h => (
-                          <button
-                            key={h}
-                            type="button"
-                            onClick={() => allerSurSalon(`&date=${j.date}&heure=${encodeURIComponent(h)}`)}
-                            style={{ width: '100%', padding: '4px 0', fontSize: '11.5px', fontWeight: '600', color: '#111827', backgroundColor: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer' }}
-                          >
-                            {h}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+      {/* INFOS SALON (BOTTOM) */}
+      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+          <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: '10px' }}>
+            {salon.nom_salon}
+          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13.5px', fontWeight: '700', color: '#111827', flexShrink: 0 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="#111827" stroke="#111827" strokeWidth="1"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            {salon.note_moyenne || 'Nouveau'}
           </div>
         </div>
+        <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {salon.ville} • {salon.gamme_prix || '€€'}
+        </div>
 
-        {/* Barre d'actions en bas de carte */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '14px', borderTop: '1px solid #f3f4f6' }}>
-          <button
-            type="button"
-            onClick={() => allerSurSalon('#description-salon')}
-            style={{ background: 'none', border: 'none', padding: 0, fontSize: '13px', fontWeight: '600', color: '#111827', textDecoration: 'underline', cursor: 'pointer' }}
-          >
-            Plus d'informations
-          </button>
-          <button
-            type="button"
-            onClick={() => allerSurSalon()}
-            style={{ backgroundColor: '#1f2328', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '13.5px', fontWeight: '700', cursor: 'pointer' }}
-          >
-            Prendre RDV
-          </button>
+        {/* CRÉNEAUX DISPONIBLES (MINI PILULES) */}
+        <div style={{ marginTop: 'auto' }}>
+          {loadingSlots ? (
+            <div style={{ fontSize: '12px', color: '#9ca3af', textAlign: 'center', padding: '10px 0' }}>Disponibilités en cours...</div>
+          ) : displaySlots.length > 0 ? (
+            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+              {displaySlots.map((slot, i) => (
+                <button
+                  key={i}
+                  onClick={(e) => { e.stopPropagation(); allerSurSalon(`&date=${slot.date}&heure=${encodeURIComponent(slot.heure)}`); }}
+                  style={{ flexShrink: 0, padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#111827', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                >
+                  {slot.label} {slot.heure}
+                </button>
+              ))}
+            </div>
+          ) : apercuCreneaux?.prochaine_disponibilite ? (
+            <div style={{ fontSize: '12px', fontWeight: '700', color: '#4b5563', padding: '8px 12px', backgroundColor: '#f3f4f6', borderRadius: '8px', textAlign: 'center' }}>
+              Dispo le {apercuCreneaux.prochaine_disponibilite.date.split('-').reverse().slice(0,2).join('/')} à {apercuCreneaux.prochaine_disponibilite.premier_creneau}
+            </div>
+          ) : (
+            <div style={{ fontSize: '12px', fontWeight: '600', color: '#9ca3af', textAlign: 'center', padding: '8px 0' }}>Aucun créneau immédiat</div>
+          )}
         </div>
       </div>
     </div>
@@ -381,62 +227,35 @@ export default function MarketplaceHub() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#ffffff', color: '#111827', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
 
-      {/* HEADER GLOBAL PLANITY-STYLE */}
+      {/* HEADER EXECUTIVE STACK */}
       <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 80 }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: isMobile ? '12px 16px' : '16px 32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '16px' : '36px' }}>
-            <div
-              onClick={() => { setModeVue('ACCUEIL'); setSearchVille(''); setSearchQ(''); }}
-              style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800', fontSize: '19px', letterSpacing: '0.22em', color: '#111827', cursor: 'pointer' }}
-            >
-              <span>STACK</span>
-            </div>
-
-            {!isMobile && (
-              <nav style={{ display: 'flex', alignItems: 'center', gap: '26px' }}>
-                {CATEGORIES_HEADER.map(cat => {
-                  const actif = categorieHeader === cat;
-                  return (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => {
-                        setCategorieHeader(cat);
-                        if (cat === 'Barbier') setChipActif('Barbier');
-                        else setChipActif('TOUS');
-                      }}
-                      style={{
-                        background: 'none', border: 'none', padding: '4px 0',
-                        fontSize: '14px', fontWeight: actif ? '700' : '500',
-                        color: '#111827', cursor: 'pointer',
-                        borderBottom: actif ? '2px solid #111827' : '2px solid transparent'
-                      }}
-                    >
-                      {cat}
-                    </button>
-                  );
-                })}
-              </nav>
-            )}
+        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: isMobile ? '12px 16px' : '16px 32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          
+          <div
+            onClick={() => { setModeVue('ACCUEIL'); setSearchVille(''); setSearchQ(''); }}
+            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800', fontSize: '19px', letterSpacing: '0.22em', color: '#111827', cursor: 'pointer' }}
+          >
+            <img src="/logo-stack.png" alt="STACK" style={{ height: '24px', width: 'auto', objectFit: 'contain' }} />
+            <span>STACK</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {!isMobile && (
               <button
                 type="button"
                 onClick={() => { window.location.href = '/?pro=1'; }}
                 style={{
-                  backgroundColor: '#f3f4f6',
-                  color: '#111827',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  padding: '10px 16px',
-                  fontSize: '13px',
+                  background: 'none',
+                  color: '#4b5563',
+                  border: 'none',
+                  fontSize: '13.5px',
                   fontWeight: '600',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: '4px'
                 }}
               >
-                Je suis un professionnel de beauté
+                STACK pour les Pros
               </button>
             )}
             <button
@@ -448,8 +267,8 @@ export default function MarketplaceHub() {
                 border: 'none',
                 borderRadius: '8px',
                 padding: '10px 18px',
-                fontSize: '13px',
-                fontWeight: '600',
+                fontSize: '13.5px',
+                fontWeight: '700',
                 cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -457,35 +276,39 @@ export default function MarketplaceHub() {
               }}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-              <span>{clientConnecte ? 'Mon compte' : 'Mon compte'}</span>
+              <span>{clientConnecte ? 'Mon Espace' : 'Se connecter'}</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* =================================================================== */}
-      {/* VUE 1 : PAGE D'ACCUEIL MARKETPLACE (HERO BANNER + VILLES)           */}
+      {/* VUE 1 : PAGE D'ACCUEIL MARKETPLACE (HERO + RADAR)                   */}
       {/* =================================================================== */}
       {modeVue === 'ACCUEIL' ? (
         <>
-          {/* HERO BANNER */}
+          {/* HERO BANNER (RECHERCHE + PILLS) */}
           <section style={{
             position: 'relative',
-            minHeight: isMobile ? '360px' : '440px',
+            minHeight: isMobile ? '380px' : '460px',
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
             padding: isMobile ? '32px 16px' : '48px 24px',
-            backgroundImage: 'linear-gradient(rgba(17, 24, 39, 0.48), rgba(17, 24, 39, 0.58)), url("https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1800&q=80")',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center'
+            backgroundColor: '#ffffff',
+            backgroundImage: 'radial-gradient(circle at center, #f3f4f6 1px, transparent 1px)',
+            backgroundSize: '24px 24px'
           }}>
-            <div style={{ maxWidth: '920px', width: '100%', textAlign: 'center' }}>
-              <h1 style={{ color: '#ffffff', fontSize: isMobile ? '26px' : '40px', fontWeight: '600', margin: '0 0 28px 0', letterSpacing: '-0.02em', textShadow: '0 2px 12px rgba(0,0,0,0.3)' }}>
-                Réserver en ligne un RDV avec un {categorieHeader.toLowerCase()}
+            <div style={{ maxWidth: '860px', width: '100%', textAlign: 'center', position: 'relative', zIndex: 10 }}>
+              <h1 style={{ color: '#111827', fontSize: isMobile ? '28px' : '44px', fontWeight: '800', margin: '0 0 12px 0', letterSpacing: '-0.03em' }}>
+                L'Excellence près de chez vous.
               </h1>
+              <p style={{ fontSize: isMobile ? '14px' : '16px', color: '#6b7280', margin: '0 0 32px 0', fontWeight: '500' }}>
+                Réservez dans les meilleurs salons et instituts du réseau STACK.
+              </p>
 
-              {/* BARRE DE RECHERCHE DOUBLE UNIFIÉE */}
+              {/* BARRE DE RECHERCHE UNIFIÉE */}
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -494,129 +317,147 @@ export default function MarketplaceHub() {
                 }}
                 style={{
                   backgroundColor: '#ffffff',
-                  borderRadius: '12px',
-                  padding: isMobile ? '12px' : '8px 8px 8px 20px',
+                  borderRadius: '16px',
+                  padding: isMobile ? '12px' : '8px 8px 8px 24px',
                   display: 'flex',
                   flexDirection: isMobile ? 'column' : 'row',
                   alignItems: 'stretch',
-                  gap: isMobile ? '10px' : '0',
-                  boxShadow: '0 16px 40px rgba(0,0,0,0.22)'
+                  gap: isMobile ? '12px' : '0',
+                  boxShadow: '0 20px 40px rgba(0,0,0,0.06)',
+                  border: '1px solid #e5e7eb'
                 }}
               >
-                <div style={{ flex: 1, textAlign: 'left', paddingRight: isMobile ? 0 : '16px', borderRight: isMobile ? 'none' : '1px solid #e5e7eb', borderBottom: isMobile ? '1px solid #e5e7eb' : 'none', paddingBottom: isMobile ? '8px' : 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '2px' }}>
+                <div style={{ flex: 1, textAlign: 'left', paddingRight: isMobile ? 0 : '16px', borderRight: isMobile ? 'none' : '1px solid #e5e7eb', borderBottom: isMobile ? '1px solid #e5e7eb' : 'none', paddingBottom: isMobile ? '12px' : 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#9ca3af', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     Que cherchez-vous ?
                   </label>
                   <input
                     type="text"
-                    placeholder="Nom du salon, prestations (coupe, balayage...)"
+                    placeholder="Ex: Balayage, Barbier..."
                     value={searchQ}
                     onChange={e => setSearchQ(e.target.value)}
-                    style={{ border: 'none', outline: 'none', fontSize: '14px', fontWeight: '500', color: '#111827', width: '100%', padding: '2px 0' }}
+                    style={{ border: 'none', outline: 'none', fontSize: '15px', fontWeight: '600', color: '#111827', width: '100%', padding: '2px 0' }}
                   />
                 </div>
 
-                <div style={{ flex: 1, textAlign: 'left', paddingLeft: isMobile ? 0 : '18px', paddingRight: isMobile ? 0 : '16px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '2px' }}>
-                    Où
+                <div style={{ flex: 1, textAlign: 'left', paddingLeft: isMobile ? 0 : '20px', paddingRight: isMobile ? 0 : '16px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#9ca3af', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Où ?
                   </label>
                   <input
                     type="text"
-                    placeholder="Adresse, ville..."
+                    placeholder="Adresse, Ville..."
                     value={searchVille}
                     onChange={e => setSearchVille(e.target.value)}
-                    style={{ border: 'none', outline: 'none', fontSize: '14px', fontWeight: '500', color: '#111827', width: '100%', padding: '2px 0' }}
+                    style={{ border: 'none', outline: 'none', fontSize: '15px', fontWeight: '600', color: '#111827', width: '100%', padding: '2px 0' }}
                   />
                 </div>
 
                 <button
                   type="submit"
                   style={{
-                    backgroundColor: '#1f2328',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: isMobile ? '14px' : '16px 28px',
-                    fontSize: '14.5px',
-                    fontWeight: '600',
-                    cursor: 'pointer',
-                    flexShrink: 0
+                    backgroundColor: '#111827', color: '#ffffff', border: 'none',
+                    borderRadius: '10px', padding: isMobile ? '16px' : '0 32px',
+                    fontSize: '15px', fontWeight: '700', cursor: 'pointer', flexShrink: 0
                   }}
                 >
                   Rechercher
                 </button>
               </form>
+
+              {/* PILLS CATÉGORIES */}
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '28px' }}>
+                {[
+                  { id: 'Coiffure femme', label: 'Coiffure', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg> },
+                  { id: 'Barbier', label: 'Barbier', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg> },
+                  { id: 'Esthétique', label: 'Esthétique', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg> }
+                ].map(c => (
+                  <button
+                    key={c.id}
+                    onClick={() => { setChipActif(c.id); setModeVue('RESULTATS'); lancerRecherche(searchVille, searchQ, c.id); }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '8px 16px', borderRadius: '999px', border: '1px solid #e5e7eb',
+                      backgroundColor: '#ffffff', color: '#111827', fontSize: '13px', fontWeight: '600',
+                      cursor: 'pointer', boxShadow: '0 2px 5px rgba(0,0,0,0.02)'
+                    }}
+                  >
+                    {c.icon} {c.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </section>
 
-          {/* SECTION VILLES & DÉCOUVERTE */}
-          <section style={{ maxWidth: '1200px', margin: '0 auto', padding: isMobile ? '36px 16px' : '56px 32px' }}>
-            <div style={{ textAlign: 'center', marginBottom: '36px' }}>
-              <div style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '6px' }}>
-                DÉCOUVREZ NOS PROFESSIONNELS
+          {/* BANDEAU PREUVE SOCIALE STACK */}
+          <div style={{ backgroundColor: '#111827', padding: '20px 16px' }}>
+            <div style={{ maxWidth: '1000px', margin: '0 auto', display: 'flex', justifyContent: 'space-around', alignItems: 'center', flexWrap: 'wrap', gap: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#ffffff', fontSize: '13.5px', fontWeight: '700' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                +450 Salons partenaires
               </div>
-              <h2 style={{ margin: 0, fontSize: isMobile ? '24px' : '30px', fontWeight: '700', color: '#111827' }}>
-                {categorieHeader}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#ffffff', fontSize: '13.5px', fontWeight: '700' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Paiement 100% sécurisé
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#ffffff', fontSize: '13.5px', fontWeight: '700' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Réservation 24h/24
+              </div>
+            </div>
+          </div>
+
+          {/* LE RADAR STACK (CARTE ANIMÉE) */}
+          <section style={{ maxWidth: '1200px', margin: '0 auto', padding: isMobile ? '36px 16px' : '56px 32px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+              <h2 style={{ margin: 0, fontSize: isMobile ? '24px' : '28px', fontWeight: '800', color: '#111827', letterSpacing: '-0.02em' }}>
+                La sélection STACK
               </h2>
+              <div style={{ fontSize: '15px', color: '#6b7280', marginTop: '8px' }}>Explorez notre réseau d'établissements d'exception.</div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '24px', marginBottom: '56px' }}>
-              {villesPopulaires.slice(0, 6).map(item => (
-                <div
-                  key={item.ville}
-                  onClick={() => {
-                    setSearchVille(item.ville);
-                    setModeVue('RESULTATS');
-                    lancerRecherche(item.ville, searchQ, chipActif);
-                  }}
-                  style={{ cursor: 'pointer', group: 'true' }}
-                >
-                  <div style={{ height: '210px', borderRadius: '12px', overflow: 'hidden', backgroundColor: '#111827', marginBottom: '12px', position: 'relative' }}>
-                    {item.photo_url && (
-                      <img
-                        src={item.photo_url}
-                        alt={item.ville}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.3s ease' }}
-                      />
-                    )}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '2px' }}>
-                    Découvrez nos
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '15.5px', fontWeight: '700', color: '#111827' }}>
-                      {categorieHeader}s à {item.ville}
-                    </span>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-                  </div>
-                </div>
-              ))}
+            <div style={{ position: 'relative', height: isMobile ? '280px' : '420px', borderRadius: '24px', backgroundColor: '#0f172a', overflow: 'hidden', border: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 20px 40px rgba(0,0,0,0.1)' }}>
+              <style>{`@keyframes spin-radar { 100% { transform: rotate(360deg); } } @keyframes pulse-dot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.6); opacity: 0.6; } }`}</style>
+              
+              {/* Grille de fond cartographique */}
+              <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(#1e293b 1px, transparent 1px), linear-gradient(90deg, #1e293b 1px, transparent 1px)', backgroundSize: '40px 40px', opacity: 0.6 }}></div>
+              
+              {/* Faisceau rotatif */}
+              <div style={{ position: 'absolute', width: '150%', height: '150%', background: 'conic-gradient(from 0deg, transparent 70%, rgba(56, 189, 248, 0.25) 100%)', animation: 'spin-radar 4s linear infinite', borderRadius: '50%' }}></div>
+              
+              {/* Salons (Points lumineux) */}
+              <div style={{ position: 'absolute', top: '35%', left: '25%', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#38bdf8', boxShadow: '0 0 14px #38bdf8', animation: 'pulse-dot 2.5s infinite' }}></div>
+              <div style={{ position: 'absolute', top: '55%', left: '70%', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#10b981', boxShadow: '0 0 16px #10b981', animation: 'pulse-dot 2s infinite' }}></div>
+              <div style={{ position: 'absolute', top: '75%', left: '45%', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#38bdf8', boxShadow: '0 0 10px #38bdf8' }}></div>
+              <div style={{ position: 'absolute', top: '25%', left: '60%', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#8b5cf6', boxShadow: '0 0 18px #8b5cf6', animation: 'pulse-dot 3s infinite' }}></div>
+              <div style={{ position: 'absolute', top: '65%', left: '30%', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', boxShadow: '0 0 14px #10b981', animation: 'pulse-dot 2.8s infinite' }}></div>
+
+              {/* Texte Central */}
+              <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', backgroundColor: 'rgba(15, 23, 42, 0.75)', padding: '20px 32px', borderRadius: '16px', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ fontSize: '12px', fontWeight: '800', color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '6px' }}>Réseau Connecté</div>
+                <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '800', color: '#ffffff', letterSpacing: '-0.02em' }}>Déjà +450 salons référencés</div>
+                <div style={{ fontSize: '14.5px', color: '#94a3b8', marginTop: '6px' }}>Mises à jour des disponibilités en temps réel.</div>
+              </div>
             </div>
 
-            {/* APERÇU DIRECT DES ÉTABLISSEMENTS PARTENAIRES */}
+            {/* LISTE DES SALONS (SI PRÉSENTS) */}
             {salons.length > 0 && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ marginTop: '56px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                   <h3 style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#111827' }}>
-                    Établissements disponibles immédiatement en ligne
+                    Salons fraîchement ajoutés
                   </h3>
                   <button
                     type="button"
                     onClick={() => setModeVue('RESULTATS')}
                     style={{ background: 'none', border: 'none', fontSize: '13.5px', fontWeight: '700', color: '#111827', textDecoration: 'underline', cursor: 'pointer' }}
                   >
-                    Voir tous les salons ({salons.length})
+                    Voir tout ({salons.length})
                   </button>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
                   {salons.slice(0, 4).map(s => (
-                    <SalonMarketplaceCard
-                      key={s.id_salon}
-                      salon={s}
-                      isMobile={isMobile}
-                      favorisIds={favorisIds}
-                      onToggleFavori={handleToggleFavori}
-                    />
+                    <SalonMarketplaceCard key={s.id_salon} salon={s} isMobile={isMobile} favorisIds={favorisIds} onToggleFavori={handleToggleFavori} />
                   ))}
                 </div>
               </div>
@@ -748,7 +589,7 @@ export default function MarketplaceHub() {
                 </button>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))', gap: '24px' }}>
                 {salons.map(salon => (
                   <SalonMarketplaceCard
                     key={salon.id_salon}
