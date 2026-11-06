@@ -9,6 +9,8 @@ import './utils/fetchClient';
 import { decodeToken, isPinWeak, isTokenExpired } from './utils/auth';
 import AvisPublic from './AvisPublic.jsx';
 import PageReservationPublique from './pages/ReservationPublique.jsx';
+import MarketplaceHub from './pages/MarketplaceHub.jsx';
+import EspaceClientPage from './pages/EspaceClientPage.jsx';
 import ThemeToggleComponent from './components/common/ThemeToggle.jsx';
 import LoginView from './components/auth/LoginView.jsx';
 import CaisseTab from './components/caisse/CaisseTab.jsx';
@@ -61,14 +63,40 @@ import useSalonSettings from './hooks/useSalonSettings';
 
 
 function App() {
-  if (window.location.pathname.startsWith('/avis/')) {
-      return <AvisPublic token={window.location.pathname.split('/avis/')[1]} />;
+  const urlParams = new URLSearchParams(window.location.search);
+  const resParam = urlParams.get('reservation');
+  const path = window.location.pathname;
+
+  if (path.startsWith('/avis/')) {
+      return <AvisPublic token={path.split('/avis/')[1]} />;
   }
-  if (window.location.pathname.startsWith('/reservation/') || new URLSearchParams(window.location.search).get('reservation')) {
-      const idSalonPublic = window.location.pathname.startsWith('/reservation/')
-          ? window.location.pathname.split('/reservation/')[1]?.split('/')[0]
-          : new URLSearchParams(window.location.search).get('reservation');
+
+  // 1. Espace Mon Compte Plein Écran
+  if (path === '/mon-compte' || resParam === 'mon-compte') {
+      return <EspaceClientPage />;
+  }
+
+  // 2. Vitrine spécifique d'un salon (Lien direct /?reservation=ID_SALON préservé à 100%)
+  if ((path.startsWith('/reservation/') && path !== '/reservation/explore') || (resParam && !isNaN(parseInt(resParam, 10)))) {
+      const idSalonPublic = path.startsWith('/reservation/')
+          ? path.split('/reservation/')[1]?.split('/')[0]
+          : resParam;
       return <PageReservationPublique idSalon={idSalonPublic} />;
+  }
+
+  // 3. Portail Marketplace Global Planity (/coiffeurs, /explore, ou racine publique sans session Pro)
+  const hasProContext = Boolean(
+      localStorage.getItem('token') ||
+      localStorage.getItem('ui_token') ||
+      localStorage.getItem('api_token') ||
+      urlParams.get('pro') === '1' ||
+      urlParams.get('sandbox_token') ||
+      urlParams.get('paiement') ||
+      urlParams.get('token')
+  );
+
+  if (path.startsWith('/coiffeurs') || path === '/explore' || resParam === 'explore' || (path === '/' && !hasProContext)) {
+      return <MarketplaceHub />;
   }
 
   // --- ÉTATS GLOBAUX FONDAMENTAUX ---
