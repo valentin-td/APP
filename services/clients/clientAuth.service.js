@@ -54,14 +54,23 @@ async function inscrireClient({ pool: p }, { id_salon, nom, prenom, telephone, e
     const emailClean = email ? String(email).trim().toLowerCase() : null;
     const hash = await bcrypt.hash(String(mot_de_passe).trim(), 10);
 
-    // Vérifier si un client existe déjà avec ce téléphone dans ce salon
-    const existRes = await dbPool.query(
-        `SELECT id_client, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite, mot_de_passe_hash
-         FROM clients
-         WHERE id_salon = $1 AND (telephone = $2 OR REPLACE(REPLACE(telephone, ' ', ''), '.', '') = $3)
-         LIMIT 1`,
-        [id_salon, telephone.trim(), telClean]
-    );
+    // Vérifier si un client existe déjà avec ce téléphone (dans ce salon ou globalement sur STACK)
+    const existRes = id_salon
+        ? await dbPool.query(
+            `SELECT id_client, id_salon, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite, mot_de_passe_hash
+             FROM clients
+             WHERE id_salon = $1 AND (telephone = $2 OR REPLACE(REPLACE(telephone, ' ', ''), '.', '') = $3)
+             LIMIT 1`,
+            [id_salon, telephone.trim(), telClean]
+        )
+        : await dbPool.query(
+            `SELECT id_client, id_salon, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite, mot_de_passe_hash
+             FROM clients
+             WHERE telephone = $1 OR REPLACE(REPLACE(telephone, ' ', ''), '.', '') = $2
+             ORDER BY id_client DESC
+             LIMIT 1`,
+            [telephone.trim(), telClean]
+        );
 
     let client;
     if (existRes.rowCount > 0) {
@@ -121,14 +130,27 @@ async function connecterClient({ pool: p }, { id_salon, identifiant, mot_de_pass
     const idClean = String(identifiant).trim();
     const telClean = idClean.replace(/[^\d+]/g, '');
 
-    const resClient = await dbPool.query(
-        `SELECT id_client, id_salon, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite, mot_de_passe_hash
-         FROM clients
-         WHERE id_salon = $1 
-           AND (LOWER(TRIM(email)) = LOWER($2) OR telephone = $2 OR REPLACE(REPLACE(telephone, ' ', ''), '.', '') = $3)
-         LIMIT 1`,
-        [id_salon, idClean, telClean]
-    );
+    let resClient = { rowCount: 0, rows: [] };
+    if (id_salon) {
+        resClient = await dbPool.query(
+            `SELECT id_client, id_salon, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite, mot_de_passe_hash
+             FROM clients
+             WHERE id_salon = $1 
+               AND (LOWER(TRIM(email)) = LOWER($2) OR telephone = $2 OR REPLACE(REPLACE(telephone, ' ', ''), '.', '') = $3)
+             LIMIT 1`,
+            [id_salon, idClean, telClean]
+        );
+    }
+    if (resClient.rowCount === 0) {
+        resClient = await dbPool.query(
+            `SELECT id_client, id_salon, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite, mot_de_passe_hash
+             FROM clients
+             WHERE LOWER(TRIM(email)) = LOWER($1) OR telephone = $1 OR REPLACE(REPLACE(telephone, ' ', ''), '.', '') = $2
+             ORDER BY (mot_de_passe_hash IS NOT NULL) DESC, id_client DESC
+             LIMIT 1`,
+            [idClean, telClean]
+        );
+    }
 
     if (resClient.rowCount === 0) {
         const err = new Error("Identifiant ou mot de passe incorrect.");
@@ -178,8 +200,8 @@ async function recupererProfilClient({ pool: p }, { id_client, id_salon }) {
     const cliRes = await dbPool.query(
         `SELECT id_client, id_salon, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite, date_naissance
          FROM clients
-         WHERE id_client = $1 AND id_salon = $2`,
-        [id_client, id_salon]
+         WHERE id_client = $1`,
+        [id_client]
     );
     if (cliRes.rowCount === 0) {
         const err = new Error("Profil client introuvable.");
@@ -392,6 +414,161 @@ async function annulerRdvParClient({ pool: p, io, stripe }, { id_client, id_salo
     };
 }
 
+/**
+ * Récupère tous les rendez-vous (à venir et passés) du client dans TOUS les salons STACK
+ * GET /api/public/client/rdvs-tous-salons
+ */
+async function recupererRdvsTousSalons({ pool: p }, { id_client }) {
+    const dbPool = p || pool;
+    const { normaliserUrlMedia } = require('../settings/settings.service');
+
+    const cliRes = await dbPool.query(
+        `SELECT id_client, id_salon, nom, prenom, telephone, email, solde_avoir, points_fidelite, tampons_fidelite
+         FROM clients
+         WHERE id_client = $1`,
+        [id_client]
+    );
+    if (cliRes.rowCount === 0) {
+        const err = new Error("Client introuvable.");
+        err.status = 404;
+        throw err;
+    }
+    const client = cliRes.rows[0];
+    const telClean = String(client.telephone || '').replace(/[^\d+]/g, '');
+    const emailClean = String(client.email || '').trim().toLowerCase();
+
+    const rdvsRes = await dbPool.query(
+        `SELECT 
+            r.id_rdv,
+            r.id_salon,
+            r.date_heure_debut,
+            r.prestation,
+            r.prestations_details,
+            COALESCE(r.duree_minutes, 30) AS duree_minutes,
+            CASE WHEN r.date_annulation IS NOT NULL OR r.statut = 'ANNULE' THEN 'ANNULE' ELSE 'CONFIRME' END AS statut,
+            r.acompte_paye,
+            r.statut_acompte,
+            e.nom AS employe_nom,
+            s.nom_salon,
+            COALESCE(s.adresse_salon, '') AS adresse_salon,
+            s.logo_url,
+            s.photos_salon,
+            COALESCE(s.delai_annulation_heures, 24) AS delai_annulation_heures,
+            (
+                SELECT c.prix FROM catalogue c 
+                WHERE c.id_salon = r.id_salon AND c.nom = SPLIT_PART(r.prestation, ' + ', 1)
+                LIMIT 1
+            ) AS prix_catalogue
+         FROM rendez_vous r
+         JOIN configuration_salon s ON s.id_salon = r.id_salon
+         LEFT JOIN employes e ON e.id_employe = r.id_employe
+         WHERE r.id_client = $1
+            OR ($2 != '' AND REPLACE(REPLACE(r.telephone_client, ' ', ''), '.', '') = $2)
+            OR ($3 != '' AND LOWER(TRIM(r.email_client)) = $3)
+         ORDER BY r.date_heure_debut DESC`,
+        [id_client, telClean, emailClean]
+    );
+
+    const now = new Date();
+    const rdvs_a_venir = [];
+    const rdvs_passes = [];
+
+    rdvsRes.rows.forEach(r => {
+        const dateRdv = new Date(String(r.date_heure_debut).replace('Z', ''));
+        const rawPhotos = r.photos_salon;
+        const listPhotos = Array.isArray(rawPhotos)
+            ? rawPhotos
+            : (typeof rawPhotos === 'string' ? (() => { try { return JSON.parse(rawPhotos); } catch (e) { return []; } })() : []);
+        const photoSalon = listPhotos.map(normaliserUrlMedia).filter(Boolean)[0] || normaliserUrlMedia(r.logo_url) || null;
+
+        let details = [];
+        if (Array.isArray(r.prestations_details) && r.prestations_details.length > 0) {
+            details = r.prestations_details;
+        } else if (typeof r.prestations_details === 'string') {
+            try { details = JSON.parse(r.prestations_details); } catch (e) { details = []; }
+        }
+        const prixTotal = details.length > 0
+            ? details.reduce((acc, item) => acc + (parseFloat(item.prix) || 0), 0)
+            : (parseFloat(r.prix_catalogue) || 0);
+
+        const itemObj = {
+            id_rdv: r.id_rdv,
+            id_salon: r.id_salon,
+            nom_salon: r.nom_salon || 'Salon STACK',
+            adresse_salon: r.adresse_salon || '',
+            photo_salon: photoSalon,
+            date_heure_debut: r.date_heure_debut,
+            prestation: r.prestation || 'Prestation coiffure',
+            prestations_details: details,
+            duree_minutes: parseInt(r.duree_minutes, 10) || 30,
+            prix_total: prixTotal,
+            employe_nom: r.employe_nom ? r.employe_nom.split(' ')[0] : 'Collaborateur',
+            statut: r.statut,
+            acompte_paye: parseFloat(r.acompte_paye || 0),
+            peut_annuler_sans_frais: (dateRdv.getTime() - now.getTime()) >= (parseInt(r.delai_annulation_heures, 10) || 24) * 3600 * 1000
+        };
+
+        if (dateRdv >= now && r.statut !== 'ANNULE') {
+            rdvs_a_venir.push(itemObj);
+        } else {
+            rdvs_passes.push(itemObj);
+        }
+    });
+
+    rdvs_a_venir.sort((a, b) => new Date(a.date_heure_debut) - new Date(b.date_heure_debut));
+
+    return {
+        client: {
+            id_client: client.id_client,
+            id_salon: client.id_salon,
+            nom: client.nom,
+            prenom: client.prenom,
+            telephone: client.telephone,
+            email: client.email,
+            solde_avoir: parseFloat(client.solde_avoir || 0)
+        },
+        rdvs_a_venir,
+        rdvs_passes
+    };
+}
+
+/**
+ * Mise à jour des informations du client connecté
+ * PUT /api/public/client/me
+ */
+async function mettreAJourProfilClient({ pool: p }, { id_client, body }) {
+    const dbPool = p || pool;
+    const { nom, prenom, telephone, email, nouveau_mot_de_passe } = body;
+
+    if (nouveau_mot_de_passe && String(nouveau_mot_de_passe).trim().length >= 6) {
+        const hash = await bcrypt.hash(String(nouveau_mot_de_passe).trim(), 10);
+        await dbPool.query(`UPDATE clients SET mot_de_passe_hash = $1 WHERE id_client = $2`, [hash, id_client]);
+    }
+
+    const upd = await dbPool.query(
+        `UPDATE clients
+         SET nom = COALESCE($1, nom),
+             prenom = COALESCE($2, prenom),
+             telephone = COALESCE($3, telephone),
+             email = COALESCE($4, email)
+         WHERE id_client = $5
+         RETURNING id_client, id_salon, nom, prenom, telephone, email, solde_avoir`,
+        [
+            nom ? nom.trim() : null,
+            prenom !== undefined ? String(prenom).trim() : null,
+            telephone ? telephone.trim() : null,
+            email ? email.trim().toLowerCase() : null,
+            id_client
+        ]
+    );
+
+    return {
+        success: true,
+        message: "Vos informations ont bien été enregistrées.",
+        client: upd.rows[0]
+    };
+}
+
 module.exports = {
     initClientAuthService,
     genererTokenClient,
@@ -399,5 +576,7 @@ module.exports = {
     inscrireClient,
     connecterClient,
     recupererProfilClient,
+    recupererRdvsTousSalons,
+    mettreAJourProfilClient,
     annulerRdvParClient
 };
