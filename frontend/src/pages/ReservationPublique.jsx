@@ -836,10 +836,7 @@ export default function PageReservationPublique({ idSalon }) {
                   {suggestionsUpsell.length > 0 && (
                     <div style={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
                       <div style={{ fontSize: '13.5px', fontWeight: '800', color: '#111827', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ width: '24px', height: '24px', borderRadius: '6px', backgroundColor: '#111827', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                        </div>
-                        <span>Envie de parfaire ce moment ?</span>
+                        <span>Complétez votre rendez-vous (optionnel) :</span>
                       </div>
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                         {suggestionsUpsell.filter(up => !panierPrestations.some(p => (p.id_article || p.id) === up.id_article)).map(up => (
@@ -1256,8 +1253,12 @@ export default function PageReservationPublique({ idSalon }) {
 
                       {/* NOTICE ANTI-NOSHOW */}
                       {antiNoShowActif && (
-                        <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '14px 16px', marginBottom: '18px', fontSize: '13px', color: '#1e40af', lineHeight: 1.5 }}>
-                          🛡️ <strong>Garantie Anti-NoShow :</strong> Pour valider votre créneau, un acompte de {acomptePourcent}% ({montantAcompteRequis.toFixed(2)} €) est requis par carte bancaire. Il sera directement décompté de votre note au salon. Annulation gratuite jusqu'à 24h avant le rendez-vous.
+                        <div style={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '12px 16px', marginBottom: '18px', fontSize: '13px', color: '#4b5563', lineHeight: 1.5, display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                          <div>
+                            <strong style={{ color: '#111827', display: 'block', marginBottom: '4px' }}>Paiement sécurisé</strong>
+                            Un acompte de {acomptePourcent}% ({montantAcompteRequis.toFixed(2)} €) est requis pour confirmer votre réservation. Ce montant sera déduit du total à régler sur place. Modifiable et annulable sans frais jusqu'à 24h à l'avance.
+                          </div>
                         </div>
                       )}
 
