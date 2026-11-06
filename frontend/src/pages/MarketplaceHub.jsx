@@ -5,28 +5,193 @@ import { useState, useEffect, useMemo } from 'react';
 import { API_URL } from '../api/config';
 import { isTokenExpired } from '../utils/auth';
 
-{/* CRÉNEAUX DISPONIBLES (MINI PILULES) */}
-        <div style={{ marginTop: 'auto' }}>
+const CATEGORIES_HEADER = ['Coiffeur', 'Barbier', 'Manucure', 'Institut de beauté', 'Bien-être'];
+const CHIPS_FILTRES = [
+  { id: 'TOUS', label: 'Tous les salons' },
+  { id: 'Coiffure homme', label: 'Coiffure homme' },
+  { id: 'Coiffure femme', label: 'Coiffure femme' },
+  { id: 'Coiffure jeunes', label: 'Coiffure jeunes' },
+  { id: 'Barbier', label: 'Barbier' }
+];
+
+const PHOTOS_SALON_DEFAUT = [
+  'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=900&q=80',
+  'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=900&q=80',
+  'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=900&q=80',
+  'https://images.unsplash.com/photo-1633681926022-84c23e8cb2d6?auto=format&fit=crop&w=900&q=80',
+  'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=900&q=80'
+];
+
+function nettoyerNomVille(villeBrute, adresseBrute) {
+  const source = String(villeBrute || adresseBrute || '').trim();
+  const matchCp = source.match(/\b\d{5}\s+([A-Za-zÀ-ÖØ-öø-ÿ\-\s']+)/);
+  if (matchCp && matchCp[1]) return matchCp[1].trim();
+  if (/^\d+/.test(source) || /(rue|avenue|boulevard|chemin|place|impasse|allée|route)/i.test(source)) {
+    const parts = source.split(',');
+    const last = parts[parts.length - 1].trim();
+    if (!/^\d+/.test(last) && !/(rue|avenue|boulevard|chemin|place|impasse|allée|route)/i.test(last)) {
+      return last || 'France';
+    }
+    return 'France';
+  }
+  return source || 'France';
+}
+
+function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori, onSlotsLoaded }) {
+  const [photoIdx, setPhotoIdx] = useState(0);
+  const [apercuCreneaux, setApercuCreneaux] = useState(null);
+  const [loadingSlots, setLoadingSlots] = useState(true);
+
+  const startDateStr = useMemo(() => new Date().toLocaleString('fr-CA', { timeZone: 'Europe/Paris' }).slice(0, 10), []);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingSlots(true);
+    fetch(`${API_URL}/api/public/marketplace/salon/${salon.id_salon}/creneaux-apercu?startDate=${startDateStr}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (active && data) {
+          setApercuCreneaux(data);
+          if (typeof onSlotsLoaded === 'function') {
+            onSlotsLoaded(salon.id_salon, data);
+          }
+        }
+        if (active) setLoadingSlots(false);
+      })
+      .catch(() => { if (active) setLoadingSlots(false); });
+    return () => { active = false; };
+  }, [salon.id_salon, startDateStr]);
+
+  const aVraiesPhotos = Array.isArray(salon.photos_salon) && salon.photos_salon.length > 0;
+  const fallbackPhoto = PHOTOS_SALON_DEFAUT[(Number(salon.id_salon) || 0) % PHOTOS_SALON_DEFAUT.length];
+  const photos = aVraiesPhotos ? salon.photos_salon : [fallbackPhoto];
+  const isFav = favorisIds.includes(salon.id_salon);
+  const villePropre = nettoyerNomVille(salon.ville, salon.adresse_salon);
+
+  const allerSurSalon = (paramsExtra = '') => {
+    window.location.href = `/?reservation=${salon.id_salon}${paramsExtra}`;
+  };
+
+  const allSlots = [];
+  if (apercuCreneaux?.jours) {
+    apercuCreneaux.jours.forEach(j => {
+      j.matin.forEach(h => allSlots.push({ date: j.date, heure: h, label: j.label_jour }));
+      j.apres_midi.forEach(h => allSlots.push({ date: j.date, heure: h, label: j.label_jour }));
+    });
+  }
+  const displaySlots = allSlots.slice(0, 4);
+
+  return (
+    <div
+      onClick={() => allerSurSalon()}
+      style={{
+        backgroundColor: '#ffffff',
+        borderRadius: '16px',
+        border: '1px solid #e5e7eb',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 4px 16px rgba(15, 23, 42, 0.04)',
+        cursor: 'pointer',
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+      }}
+    >
+      {/* PHOTO DE COUVERTURE */}
+      <div style={{ position: 'relative', height: '215px', backgroundColor: '#111827', overflow: 'hidden' }}>
+        <img
+          src={photos[photoIdx % photos.length]}
+          alt={salon.nom_salon}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', filter: aVraiesPhotos ? 'none' : 'brightness(0.88)' }}
+        />
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(17,24,39,0.5) 0%, transparent 45%)', pointerEvents: 'none' }} />
+
+        <div style={{
+          position: 'absolute', bottom: '12px', left: '12px',
+          padding: '4px 10px', borderRadius: '999px',
+          backgroundColor: 'rgba(17, 24, 39, 0.72)', color: '#ffffff',
+          fontSize: '11px', fontWeight: '700', letterSpacing: '0.04em',
+          backdropFilter: 'blur(4px)'
+        }}>
+          {villePropre}
+        </div>
+
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleFavori(salon); }}
+          style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '50%', backgroundColor: 'rgba(17, 24, 39, 0.5)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', backdropFilter: 'blur(4px)' }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill={isFav ? '#ffffff' : 'none'} stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        </button>
+
+        {photos.length > 1 && (
+          <>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx - 1 + photos.length) % photos.length); }} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.88)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx + 1) % photos.length); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.88)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg></button>
+          </>
+        )}
+      </div>
+
+      {/* CONTENU DE LA CARTE */}
+      <div style={{ padding: '16px 18px 18px 18px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '4px' }}>
+          <h3 style={{ margin: 0, fontSize: '16.5px', fontWeight: '800', color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {salon.nom_salon}
+          </h3>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '13px', fontWeight: '700', color: '#111827', flexShrink: 0 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="#111827" stroke="#111827" strokeWidth="1"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <span>{salon.note_moyenne || 'Nouveau'}</span>
+          </div>
+        </div>
+
+        <div style={{ fontSize: '12.5px', color: '#6b7280', marginBottom: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {salon.adresse_salon} • <strong style={{ color: '#111827' }}>{salon.gamme_prix || '€€'}</strong>
+        </div>
+
+        {/* CRÉNEAUX EN GRILLE 2 COLONNES */}
+        <div style={{ marginTop: 'auto', paddingTop: '12px', borderTop: '1px solid #f3f4f6' }}>
           {loadingSlots ? (
-            <div style={{ fontSize: '12px', color: '#9ca3af', textAlign: 'center', padding: '10px 0' }}>Disponibilités en cours...</div>
+            <div style={{ fontSize: '12px', color: '#9ca3af', textAlign: 'center', padding: '8px 0' }}>
+              Vérification des créneaux...
+            </div>
           ) : displaySlots.length > 0 ? (
-            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
-              {displaySlots.map((slot, i) => (
-                <button
-                  key={i}
-                  onClick={(e) => { e.stopPropagation(); allerSurSalon(`&date=${slot.date}&heure=${encodeURIComponent(slot.heure)}`); }}
-                  style={{ flexShrink: 0, padding: '6px 10px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#111827', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
-                >
-                  {slot.label} {slot.heure}
-                </button>
-              ))}
+            <div>
+              <div style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Prochains créneaux</span>
+                <span style={{ color: '#059669' }}>En direct</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {displaySlots.slice(0, 2).map((slot, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); allerSurSalon(`&date=${slot.date}&heure=${encodeURIComponent(slot.heure)}`); }}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      border: '1px solid #e5e7eb',
+                      backgroundColor: '#f9fafb',
+                      color: '#111827',
+                      fontSize: '12.5px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {slot.label} {slot.heure}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : apercuCreneaux?.prochaine_disponibilite ? (
-            <div style={{ fontSize: '12px', fontWeight: '700', color: '#4b5563', padding: '8px 12px', backgroundColor: '#f3f4f6', borderRadius: '8px', textAlign: 'center' }}>
-              Dispo le {apercuCreneaux.prochaine_disponibilite.date.split('-').reverse().slice(0,2).join('/')} à {apercuCreneaux.prochaine_disponibilite.premier_creneau}
+            <div style={{ fontSize: '12px', fontWeight: '700', color: '#374151', padding: '9px 12px', backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', textAlign: 'center' }}>
+              Prochaine dispo : {apercuCreneaux.prochaine_disponibilite.date.split('-').reverse().slice(0, 2).join('/')} à {apercuCreneaux.prochaine_disponibilite.premier_creneau}
             </div>
           ) : (
-            <div style={{ fontSize: '12px', fontWeight: '600', color: '#9ca3af', textAlign: 'center', padding: '8px 0' }}>Aucun créneau immédiat</div>
+            <div style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', padding: '9px 12px', backgroundColor: '#f9fafb', borderRadius: '8px', textAlign: 'center' }}>
+              Consulter le planning →
+            </div>
           )}
         </div>
       </div>
