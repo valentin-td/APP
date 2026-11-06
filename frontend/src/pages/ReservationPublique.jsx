@@ -113,8 +113,8 @@ export default function PageReservationPublique({ idSalon }) {
     if (s.horaires_ouverture && typeof s.horaires_ouverture === 'object') {
       return s.horaires_ouverture;
     }
-    const hOuv = s.heure_ouverture !== undefined ? String(s.heure_ouverture).padStart(2, '0') + ':00' : '09:00';
-    const hFerm = s.heure_fermeture !== undefined ? String(s.heure_fermeture).padStart(2, '0') + ':00' : '19:00';
+    const hOuv = s.heure_ouverture !== undefined ? String(s.heure_ouverture).padStart(2, '0') + ':00' : '08:00';
+    const hFerm = s.heure_fermeture !== undefined ? String(s.heure_fermeture).padStart(2, '0') + ':00' : '17:00';
     return {
       Lundi: `${hOuv} - ${hFerm}`,
       Mardi: `${hOuv} - ${hFerm}`,
@@ -129,16 +129,16 @@ export default function PageReservationPublique({ idSalon }) {
   const avisStats = useMemo(() => {
     const s = infos?.salon || {};
     const avisListe = infos?.avis || s.avis_recents || [];
-    const noteMoyenne = Number(s.note_moyenne || infos?.note_moyenne || 4.9).toFixed(1).replace('.', ',');
-    const nbAvis = s.nb_avis ?? infos?.nb_avis ?? (avisListe.length > 0 ? avisListe.length : 48);
-    return {
-      noteGlobale: noteMoyenne,
-      nbAvis,
-      accueil: noteMoyenne,
-      proprete: noteMoyenne,
-      cadre: noteMoyenne,
-      qualite: noteMoyenne,
-      liste: avisListe
+    let vraieMoyenne = 0;
+    if (avisListe.length > 0) {
+        const sum = avisListe.reduce((acc, av) => acc + (Number(av.note) || 5), 0);
+        vraieMoyenne = sum / avisListe.length;
+    }
+    const noteMoyenne = avisListe.length > 0 ? vraieMoyenne.toFixed(1).replace('.', ',') : "N/A";
+    return { 
+      noteGlobale: noteMoyenne, 
+      nbAvis: avisListe.length, 
+      liste: avisListe 
     };
   }, [infos]);
 
@@ -245,7 +245,7 @@ export default function PageReservationPublique({ idSalon }) {
 
       {/* BARRE DE NAVIGATION SUPÉRIEURE SOBRIÉTÉ EXECUTIVE */}
       <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div style={{ maxWidth: '1160px', margin: '0 auto', padding: isMobile ? '14px 16px' : '16px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ maxWidth: '1024px', margin: '0 auto', padding: isMobile ? '14px 16px' : '16px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800', fontSize: '17px', letterSpacing: '0.18em', color: '#111827' }}>
             STACK
           </div>
@@ -928,20 +928,21 @@ export default function PageReservationPublique({ idSalon }) {
       {/* BARRE RÉCAPITULATIVE FLOTTANTE EN BAS LORSQU'UNE PRESTATION EST SÉLECTIONNÉE */}
       {!confirmationOk && prestaChoisie && (
         <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#ffffff', borderTop: '1px solid #e5e7eb', padding: '14px 24px', boxShadow: '0 -4px 20px rgba(0,0,0,0.06)', zIndex: 100 }}>
-          <div style={{ maxWidth: '1160px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '600' }}>{prestaChoisie.nom}</div>
-              <div style={{ fontSize: '17px', fontWeight: '800', color: '#111827' }}>
-                {parseFloat(prestaChoisie.prix).toFixed(2)} € <span style={{ fontSize: '13px', fontWeight: '500', color: '#6b7280' }}>• {prestaChoisie.duree_estimee_minutes || 30} min</span>
-              </div>
+          <div style={{ maxWidth: '1024px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{prestaChoisie.nom}</span>
+              <span style={{ fontSize: '15px', color: '#d1d5db' }}>|</span>
+              <span style={{ fontSize: '15px', fontWeight: '700', color: '#111827' }}>{parseFloat(prestaChoisie.prix).toFixed(2)} €</span>
+              <span style={{ fontSize: '15px', color: '#d1d5db' }}>|</span>
+              <span style={{ fontSize: '14px', color: '#6b7280', fontWeight: '500' }}>{prestaChoisie.duree_estimee_minutes || 30} min</span>
             </div>
             <div style={{ textAlign: 'right' }}>
               {creneauSelectionne ? (
-                <div style={{ fontSize: '13.5px', fontWeight: '700', color: '#111827' }}>
+                <div style={{ fontSize: '14.5px', fontWeight: '800', color: '#111827' }}>
                   Créneau : {creneauSelectionne.heure} ({new Date(creneauSelectionne.date_heure_debut).toLocaleDateString('fr-FR')})
                 </div>
               ) : (
-                <div style={{ fontSize: '13px', color: '#6b7280', fontWeight: '500' }}>
+                <div style={{ fontSize: '14px', color: '#4b5563', fontWeight: '600' }}>
                   Sélectionnez votre créneau ci-dessus
                 </div>
               )}
