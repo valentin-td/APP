@@ -511,7 +511,7 @@ export default function PageReservationPublique({ idSalon }) {
         </div>
       </header>
 
-      <main style={{ maxWidth: '1160px', margin: '0 auto', padding: isMobile ? '20px 16px' : '32px 28px' }}>
+      <main style={{ maxWidth: '1024px', margin: '0 auto', padding: isMobile ? '20px 16px' : '32px 28px' }}>
 
         {/* EN-TÊTE ÉTABLISSEMENT */}
         <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: '16px', marginBottom: '22px' }}>
@@ -519,22 +519,21 @@ export default function PageReservationPublique({ idSalon }) {
             <h1 style={{ margin: '0 0 8px 0', fontSize: isMobile ? '24px' : '30px', fontWeight: '800', color: '#111827', letterSpacing: '-0.02em' }}>
               {nomSalon}
             </h1>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '13.5px', color: '#4b5563' }}>
-              <span
-                onClick={() => {
-                  const el = document.getElementById('localisation-salon');
-                  if (el) el.scrollIntoView({ behavior: 'smooth' });
-                }}
-                style={{ cursor: 'pointer', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13.5px', color: '#4b5563' }}>
+              <a
+                href="#localisation-salon"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#4b5563', textDecoration: 'underline', fontWeight: '500' }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                {adresseSalon}
-              </span>
-              <span>•</span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="#fbbf24" stroke="#fbbf24" strokeWidth="1"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                {avisStats.noteGlobale} ({avisStats.nbAvis} avis)
-              </span>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                <span>{adresseSalon}</span>
+              </a>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#4b5563', fontWeight: '500' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                <strong style={{ color: '#111827' }}>{avisStats.noteGlobale}</strong>
+                <span>({avisStats.nbAvis} avis)</span>
+                <span>•</span>
+                <span>€€</span>
+              </div>
             </div>
           </div>
         </div>
