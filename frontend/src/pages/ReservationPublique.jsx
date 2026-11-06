@@ -146,6 +146,27 @@ export default function PageReservationPublique({ idSalon }) {
     };
   }, [infos]);
 
+  const indicateurPrix = useMemo(() => {
+    const prestations = infos?.prestations || [];
+    if (prestations.length === 0) return '€€';
+    
+    const prixTries = prestations
+      .map(p => parseFloat(p.prix) || 0)
+      .filter(prix => prix > 0)
+      .sort((a, b) => a - b);
+      
+    if (prixTries.length === 0) return '€€';
+    
+    const milieu = Math.floor(prixTries.length / 2);
+    const mediane = prixTries.length % 2 !== 0 
+      ? prixTries[milieu] 
+      : (prixTries[milieu - 1] + prixTries[milieu]) / 2;
+      
+    if (mediane < 20) return '€';
+    if (mediane > 50) return '€€€';
+    return '€€';
+  }, [infos]);
+
   const verifierFideliteTel = (telVal) => {
     setClientTel(telVal);
     if (telVal.replace(/\s+/g, '').length >= 8) {
@@ -289,7 +310,7 @@ export default function PageReservationPublique({ idSalon }) {
                 <strong style={{ color: '#111827' }}>{avisStats.noteGlobale}</strong>
                 <span>({avisStats.nbAvis} avis)</span>
                 <span>•</span>
-                <span>€€</span>
+                <span>{indicateurPrix}</span>
               </div>
             </div>
           </div>
