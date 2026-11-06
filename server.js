@@ -59,9 +59,16 @@ const {
     inscrireClient,
     connecterClient,
     recupererProfilClient,
+    recupererRdvsTousSalons,
+    mettreAJourProfilClient,
     annulerRdvParClient,
     verifierTokenClient
 } = require('./services/clients/clientAuth.service');
+const {
+    rechercherSalonsMarketplace,
+    recupererVillesPopulaires,
+    recupererApercuCreneauxSalon
+} = require('./services/marketplace/marketplace.service');
 const {
     creerMiddlewareSSOSandbox,
     creerMiddlewareCertificatLegalPDF
@@ -854,11 +861,67 @@ app.post('/api/public/client/annuler-rdv/:id_rdv', verifierTokenClient, async (r
     try {
         const result = await annulerRdvParClient(
             { pool, io, stripe },
-            { id_client: req.client.id_client, id_salon: req.client.id_salon, id_rdv: req.params.id_rdv }
+            { id_client: req.client.id_client, id_salon: req.body?.id_salon || req.client.id_salon, id_rdv: req.params.id_rdv }
         );
         res.json(result);
     } catch (e) {
         res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de l'annulation du rendez-vous." });
+    }
+});
+
+app.get('/api/public/client/rdvs-tous-salons', verifierTokenClient, async (req, res) => {
+    try {
+        const result = await recupererRdvsTousSalons({ pool }, { id_client: req.client.id_client });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur récupération des rendez-vous." });
+    }
+});
+
+app.put('/api/public/client/me', verifierTokenClient, async (req, res) => {
+    try {
+        const result = await mettreAJourProfilClient({ pool }, { id_client: req.client.id_client, body: req.body });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur mise à jour profil client." });
+    }
+});
+
+// =========================================================================
+// --- MODULE MARKETPLACE PUBLIQUE (FAÇON PLANITY) ---
+// =========================================================================
+app.get('/api/public/marketplace/salons', limiteurReservationPublique, async (req, res) => {
+    try {
+        const result = await rechercherSalonsMarketplace({ pool }, {
+            q: req.query.q,
+            ville: req.query.ville,
+            categorie: req.query.categorie,
+            page: req.query.page
+        });
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ erreur: e.message || "Erreur lors de la recherche de salons." });
+    }
+});
+
+app.get('/api/public/marketplace/villes-populaires', limiteurReservationPublique, async (req, res) => {
+    try {
+        const villes = await recupererVillesPopulaires({ pool });
+        res.json({ villes });
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur chargement des villes populaires." });
+    }
+});
+
+app.get('/api/public/marketplace/salon/:id_salon/creneaux-apercu', limiteurReservationPublique, async (req, res) => {
+    try {
+        const result = await recupererApercuCreneauxSalon({ pool }, {
+            id_salon: req.params.id_salon,
+            startDate: req.query.startDate
+        });
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ erreur: "Erreur chargement aperçu créneaux." });
     }
 });
 
