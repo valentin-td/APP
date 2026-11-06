@@ -40,7 +40,11 @@ export default function PageReservationPublique({ idSalon }) {
   const [etapeActive, setEtapeActive] = useState(1);
   const [prestaChoisie, setPrestaChoisie] = useState(null);
   const [employeChoisi, setEmployeChoisi] = useState('AUTO');
-  const [dateChoisie, setDateChoisie] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateChoisie, setDateChoisie] = useState(() => {
+    // Utilise le fuseau horaire de Paris pour éviter un décalage de date la nuit
+    const tzDate = new Date().toLocaleString("fr-CA", { timeZone: "Europe/Paris" });
+    return tzDate.slice(0, 10);
+  });
   const [creneaux, setCreneaux] = useState([]);
   const [loadingCreneaux, setLoadingCreneaux] = useState(false);
   const [creneauSelectionne, setCreneauSelectionne] = useState(null);
@@ -209,11 +213,13 @@ export default function PageReservationPublique({ idSalon }) {
     for (let i = 0; i < 14; i++) {
       const d = new Date();
       d.setDate(d.getDate() + i);
+      // Correction du décalage UTC
+      const localDateStr = d.toLocaleString("fr-CA", { timeZone: "Europe/Paris" }).slice(0, 10);
       jours.push({
-        date: d.toISOString().slice(0, 10),
-        jourFmt: d.toLocaleDateString('fr-FR', { weekday: 'short' }),
+        date: localDateStr,
+        jourFmt: d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', ''),
         numFmt: d.getDate(),
-        moisFmt: d.toLocaleDateString('fr-FR', { month: 'short' })
+        moisFmt: d.toLocaleDateString('fr-FR', { month: 'short' }).replace('.', '')
       });
     }
     return jours;
