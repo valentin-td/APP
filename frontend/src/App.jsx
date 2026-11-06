@@ -90,6 +90,13 @@ function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [expandedYear, setExpandedYear] = useState(new Date().getFullYear().toString());
   const [expandedMonth, setExpandedMonth] = useState(["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][new Date().getMonth()]);
+  const [configSalon, setConfigSalon] = useState({
+    nom_salon: '', forme_juridique: '', siret: '', adresse_salon: '', tva_intra: '',
+    google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
+    fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
+    telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null, pin_salon: '', temps_nettoyage_minutes: 0,
+    plan_actuel: 'PREMIUM_TRIAL', date_fin_essai: null
+  });
 
   // --- HELPERS COMMUNS & GESTION DES ERREURS HTTP / NF525 ---
   const formatDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -328,9 +335,7 @@ function App() {
     declencherExport,
     lancerAuditNF525,
     declencherExportFEC,
-    telechargerBilanJour,
-    configSalon,
-    setConfigSalon
+    telechargerBilanJour
   } = useEntitiesCRUD({
     token,
     userRole,
@@ -340,6 +345,8 @@ function App() {
     handleFetchError,
     chargerTout: () => { if (typeof chargerTout === "function") chargerTout(); },
     setIsAbonnementInactif,
+    configSalon,
+    setConfigSalon,
     heureActuelle: new Date(),
     API_URL,
     decodeToken,

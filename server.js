@@ -1352,7 +1352,7 @@ app.put('/api/employes/:id/photo', verifierToken, async (req, res) => {
 // =========================================================================
 app.get('/api/catalogue', verifierToken, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM catalogue WHERE id_salon =  ORDER BY type_article, nom ASC', [req.user.id_salon]);
+        const result = await pool.query('SELECT * FROM catalogue WHERE id_salon = $1 ORDER BY type_article, nom ASC', [req.user.id_salon]);
         res.json(result.rows);
     } catch (e) { 
         res.status(500).json({ erreur: "Erreur catalogue." }); 

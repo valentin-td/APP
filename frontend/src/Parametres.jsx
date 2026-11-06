@@ -55,9 +55,11 @@ const TITRES = {
 };
 
 export default function Parametres({
-  configSalon, setConfigSalon, onSave, onBack, onLogout,
+  configSalon: rawConfigSalon, setConfigSalon: rawSetConfigSalon, onSave, onBack, onLogout,
   salonId, isDarkMode, onToggleTheme, onEnablePush, role, photoUrl, onUploadPhoto, employesListe
 }) {
+  const configSalon = rawConfigSalon || {};
+  const setConfigSalon = typeof rawSetConfigSalon === 'function' ? rawSetConfigSalon : () => {};
   const [section, setSection] = useState(null);   // null = liste principale
 
   useEffect(() => {
@@ -67,7 +69,7 @@ export default function Parametres({
   const retour = () => (section ? setSection(null) : onBack());
   const statut = (ok, oui = 'Configuré', non = 'À configurer') => (ok ? oui : non);
 
-  const fideliteLabel = { NONE: 'Désactivé', POINTS: 'Points', TAMPONS: 'Tampons' }[configSalon.fidelite_type || 'NONE'];
+  const fideliteLabel = { NONE: 'Désactivé', POINTS: 'Points', TAMPONS: 'Tampons' }[(configSalon && configSalon.fidelite_type) || 'NONE'];
 
   // Rôle "gerant" : accès complet. Rôle "salon" : uniquement les horaires. Rôle "employe" : rien de spécifique (affichage + légal + déconnexion seulement).
   const groupesHaut = role === 'gerant' ? [
@@ -273,7 +275,7 @@ const groupesBas = [
         }
       })
       .catch(() => {});
-  }, [configSalon.plan_actuel]);
+  }, [configSalon?.plan_actuel]);
 
   const FORFAITS_STACK = [
     {
