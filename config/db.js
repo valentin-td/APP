@@ -56,6 +56,7 @@ async function initDatabaseSchema({ webpush } = {}) {
       ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS stripe_payment_intent_id VARCHAR(255);
       ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS date_annulation TIMESTAMP;
       ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS motif_annulation VARCHAR(255);
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS statut VARCHAR(30) DEFAULT 'CONFIRME';
 
       ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS anti_noshow_actif BOOLEAN DEFAULT FALSE;
       ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS anti_noshow_pourcentage INT DEFAULT 30;

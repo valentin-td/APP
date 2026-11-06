@@ -639,8 +639,10 @@
 ## 28. Vitrine Réservation Publique (Planity-Style), Multi-Prestations & Up-Sell
 
 - **Objectif** : Offrir aux clients finaux un tunnel de réservation haut de gamme inspiré des standards Planity : galerie photo plein écran, logo de l'établissement, description personnalisée, sélection d'une ou plusieurs prestations dans un panier cumulatif, suggestions de ventes additionnelles express (soins et massages), et sélection intelligente du collaborateur selon ses expertises ou optimisation des créneaux creux ("Peu importe").
-- **Fichiers Frontend** : `frontend/src/pages/ReservationPublique.jsx`, `frontend/src/Parametres.jsx` (gestion galerie, logo, description, mode up-sell).
+- **Fichiers Frontend** : `frontend/src/pages/ReservationPublique.jsx`, `frontend/src/Parametres.jsx` (gestion galerie, logo, description, mode up-sell), `frontend/src/hooks/useAppDataLoader.js` (hydratation et persistance des médias dans configSalon).
 - **Fichiers Backend** : `services/agenda/agenda.service.js`, `services/settings/settings.service.js`, `server.js`.
+- **Galerie Bento** : Grande photo couverture sur 2 lignes à gauche, 3 photos secondaires à droite et 5ème tuile cliquable "Voir les X photos" ouvrant la modale plein écran. Fallback dynamique pour 1 ou 2 photos.
+- **Calcul des Créneaux** : Exclusion des collaborateurs absents (`absences_employes`), détection stricte des rendez-vous existants sans annulation (`date_annulation IS NULL`), fermeture hebdomadaire (dimanche) et pré-sélection automatique du lendemain si consultation en dehors des heures d'ouverture.
 - **Routes API** :
   - `GET /api/public/reservation/:id_salon`
   - `GET /api/public/reservation/:id_salon/creneaux`

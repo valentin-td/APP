@@ -127,6 +127,29 @@ const groupesBas = [
   const [isSavingDescription, setIsSavingDescription] = useState(false);
   const [galerieNotice, setGalerieNotice] = useState(null);
 
+  // Synchronisation dynamique dès l'ouverture de la section Vitrine & Galerie
+  useEffect(() => {
+    if (section === 'galerie') {
+      const tokenLocal = localStorage.getItem('token_api') || localStorage.getItem('token') || localStorage.getItem('ui_token');
+      fetch(`${API_URL}/api/settings?_=${Date.now()}`, {
+        headers: tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {},
+        cache: 'no-store'
+      })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => {
+          if (d) {
+            setConfigSalon(prev => ({
+              ...prev,
+              logo_url: d.logo_url !== undefined ? d.logo_url : prev.logo_url,
+              photos_salon: Array.isArray(d.photos_salon) ? d.photos_salon : prev.photos_salon,
+              description_salon: d.description_salon !== undefined ? d.description_salon : prev.description_salon
+            }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [section]);
+
   const handleUploadVisuel = async (event, type) => {
     const file = event.target.files?.[0];
     if (!file) return;

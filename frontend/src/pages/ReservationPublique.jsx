@@ -41,6 +41,14 @@ export default function PageReservationPublique({ idSalon }) {
   const [employeChoisi, setEmployeChoisi] = useState('AUTO');
   const [dateChoisie, setDateChoisie] = useState(() => {
     const tzDate = new Date().toLocaleString("fr-CA", { timeZone: "Europe/Paris" });
+    const nowParis = new Date();
+    const heuresParis = parseInt(nowParis.toLocaleString("fr-FR", { timeZone: "Europe/Paris", hour: '2-digit', hour12: false }), 10) || 0;
+    // Si l'heure actuelle à Paris dépasse 18h, on pré-sélectionne directement le lendemain
+    if (heuresParis >= 18) {
+      const demain = new Date();
+      demain.setDate(demain.getDate() + 1);
+      return demain.toLocaleString("fr-CA", { timeZone: "Europe/Paris" }).slice(0, 10);
+    }
     return tzDate.slice(0, 10);
   });
   const [creneaux, setCreneaux] = useState([]);
@@ -530,23 +538,164 @@ export default function PageReservationPublique({ idSalon }) {
           </div>
         </div>
 
-        {/* GRILLE PHOTOS / BANNIÈRE */}
-        {photosSalon.length > 0 ? (
-          <div style={{ marginBottom: '32px' }}>
+        {/* GALERIE BENTO (DISPOSITION CONFORME AVEC TOUTES LES PHOTOS ET MODALE PLEIN ÉCRAN) */}
+        {photosSalon.length >= 3 ? (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1fr 1fr',
+            gridTemplateRows: isMobile ? '240px' : '185px 185px',
+            gap: '12px',
+            marginBottom: '36px',
+            borderRadius: '16px',
+            overflow: 'hidden'
+          }}>
+            {/* GRANDE PHOTO COUVERTURE (À GAUCHE, SUR 2 LIGNES) */}
             <div style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
-              gap: '12px',
-              height: isMobile ? '240px' : '340px'
+              gridRow: isMobile ? 'span 1' : 'span 2',
+              position: 'relative',
+              overflow: 'hidden',
+              borderRadius: '14px',
+              backgroundColor: '#111827'
             }}>
-              {photosSalon.slice(0, 3).map((img, i) => (
-                <div key={i} style={{ borderRadius: '12px', overflow: 'hidden', height: '100%', position: 'relative', backgroundColor: '#e5e7eb' }}>
-                  <img src={img} alt={`Salon photo ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img
+                src={photosSalon[0]}
+                alt={nomSalon}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+            </div>
+
+            {!isMobile && (
+              <>
+                {/* PHOTO 2 : HAUT MILIEU */}
+                <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
+                  <img
+                    src={photosSalon[1] || photosSalon[0]}
+                    alt={nomSalon}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
                 </div>
-              ))}
+
+                {/* PHOTO 3 : HAUT DROITE */}
+                <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
+                  <img
+                    src={photosSalon[2] || photosSalon[0]}
+                    alt={nomSalon}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
+                </div>
+
+                {/* PHOTO 4 : BAS MILIEU */}
+                <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
+                  <img
+                    src={photosSalon[3] || photosSalon[1] || photosSalon[0]}
+                    alt={nomSalon}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
+                </div>
+
+                {/* BOUTON VOIR TOUTES LES PHOTOS : BAS DROITE */}
+                <div
+                  onClick={() => setGalerieModalOpen(true)}
+                  style={{
+                    position: 'relative',
+                    overflow: 'hidden',
+                    borderRadius: '14px',
+                    backgroundColor: '#111827',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  {photosSalon[4] ? (
+                    <img
+                      src={photosSalon[4]}
+                      alt={nomSalon}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }}
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  ) : photosSalon[2] ? (
+                    <img
+                      src={photosSalon[2]}
+                      alt={nomSalon}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }}
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  ) : null}
+                  <span style={{ position: 'relative', zIndex: 2, color: '#ffffff', fontWeight: '700', fontSize: '13.5px', textShadow: '0 2px 4px rgba(0,0,0,0.6)' }}>
+                    Voir les {photosSalon.length} photos
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        ) : photosSalon.length === 2 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px', height: isMobile ? '240px' : '340px', marginBottom: '36px', borderRadius: '16px', overflow: 'hidden' }}>
+            {photosSalon.map((img, i) => (
+              <div key={i} style={{ borderRadius: '14px', overflow: 'hidden', height: '100%', backgroundColor: '#111827' }}>
+                <img src={img} alt={`${nomSalon} ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              </div>
+            ))}
+          </div>
+        ) : photosSalon.length === 1 ? (
+          <div style={{ height: isMobile ? '240px' : '340px', marginBottom: '36px', borderRadius: '16px', overflow: 'hidden', backgroundColor: '#111827' }}>
+            <img src={photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          </div>
+        ) : (
+          /* FALLBACK ESTHÉTIQUE EXECUTIVE AVEC LOGO DU SALON */
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.45fr 1fr', gap: '12px', marginBottom: '36px' }}>
+            <div style={{
+              minHeight: isMobile ? '220px' : '280px',
+              borderRadius: '16px',
+              backgroundColor: '#111827',
+              backgroundImage: 'linear-gradient(45deg, #1f2937 25%, transparent 25%, transparent 75%, #1f2937 75%, #1f2937), linear-gradient(45deg, #1f2937 25%, transparent 25%, transparent 75%, #1f2937 75%, #1f2937)',
+              backgroundSize: '20px 20px',
+              backgroundPosition: '0 0, 10px 10px',
+              color: '#ffffff',
+              padding: isMobile ? '24px' : '36px',
+              display: 'flex', flexDirection: 'column', justifyContent: 'space-between', position: 'relative', overflow: 'hidden', border: '1px solid #1f2937'
+            }}>
+              <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(17, 24, 39, 0.85)', zIndex: 1 }}></div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 2 }}>
+                <span style={{ padding: '6px 12px', borderRadius: '999px', backgroundColor: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.16)', fontSize: '11px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  Établissement Partenaire Certifié
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px', position: 'relative', zIndex: 2, margin: '24px 0' }}>
+                <div style={{ width: isMobile ? '68px' : '84px', height: isMobile ? '68px' : '84px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.08)', border: '1.5px solid rgba(255,255,255,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 12px 30px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+                  {infos.salon.logo_url ? (
+                    <img
+                      src={infos.salon.logo_url}
+                      alt={nomSalon}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '18px' }}
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
+                      }}
+                    />
+                  ) : null}
+                  <div style={{ display: infos.salon.logo_url ? 'none' : 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+                    <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.12em', opacity: 0.85 }}>{initialesSalon}</span>
+                  </div>
+                </div>
+                <div>
+                  <h2 style={{ margin: '0 0 6px 0', fontSize: isMobile ? '20px' : '24px', fontWeight: '800', color: '#ffffff' }}>
+                    {nomSalon}
+                  </h2>
+                  <div style={{ fontSize: '13px', opacity: 0.8, color: '#e5e7eb' }}>
+                    {adresseSalon}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        ) : null}
+        )}
 
         {/* DISPOSITION 2 COLONNES */}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 340px', gap: '32px', alignItems: 'start' }}>
@@ -807,8 +956,33 @@ export default function PageReservationPublique({ idSalon }) {
                         Calcul des disponibilités en cours...
                       </div>
                     ) : creneaux.length === 0 ? (
-                      <div style={{ padding: '18px', textAlign: 'center', color: '#6b7280', fontSize: '13.5px', backgroundColor: '#f9fafb', borderRadius: '10px' }}>
-                        Aucun créneau continu de {dureeTotaleMinutes} min disponible ce jour. Veuillez choisir un autre jour ci-dessus.
+                      <div style={{ padding: '20px 18px', textAlign: 'center', color: '#4b5563', fontSize: '13.5px', backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+                        <div style={{ marginBottom: '10px' }}>
+                          {dateChoisie === new Date().toLocaleString("fr-CA", { timeZone: "Europe/Paris" }).slice(0, 10)
+                            ? "Tous les créneaux pour aujourd'hui sont passés ou complets."
+                            : `Aucun créneau continu de ${dureeTotaleMinutes} min disponible ce jour.`
+                          }
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const jours = genererJoursSemaine();
+                            const demain = jours[1]?.date;
+                            if (demain) setDateChoisie(demain);
+                          }}
+                          style={{
+                            backgroundColor: '#111827',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '9px 18px',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Consulter les créneaux dès demain →
+                        </button>
                       </div>
                     ) : (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(78px, 1fr))', gap: '8px' }}>
@@ -1368,6 +1542,28 @@ export default function PageReservationPublique({ idSalon }) {
               >
                 Se déconnecter
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE PLEIN ÉCRAN TOUTES LES PHOTOS */}
+      {galerieModalOpen && (
+        <div
+          onClick={() => setGalerieModalOpen(false)}
+          style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(17,24,39,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ maxWidth: '860px', width: '100%', maxHeight: '85vh', backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <strong style={{ fontSize: '18px', color: '#111827' }}>Photos de {nomSalon}</strong>
+              <button type="button" onClick={() => setGalerieModalOpen(false)} style={{ background: '#f3f4f6', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '700', cursor: 'pointer', color: '#374151' }}>Fermer</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '14px' }}>
+              {photosSalon.map((url, idx) => (
+                <div key={idx} style={{ borderRadius: '12px', overflow: 'hidden', height: '240px', backgroundColor: '#f3f4f6' }}>
+                  <img src={url} alt={`${nomSalon} ${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                </div>
+              ))}
             </div>
           </div>
         </div>

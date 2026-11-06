@@ -132,7 +132,20 @@ export const useAppDataLoader = ({
             ? d.comptes_emails
             : d?.email_reception_factures
             ? [{ email: d.email_reception_factures, mot_de_passe: d.mot_de_passe_app_email || '' }]
-            : []
+            : [],
+          logo_url: d?.logo_url || null,
+          photos_salon: Array.isArray(d?.photos_salon)
+            ? d.photos_salon
+            : (typeof d?.photos_salon === 'string' ? JSON.parse(d.photos_salon || '[]') : []),
+          description_salon: d?.description_salon || '',
+          anti_noshow_actif: Boolean(d?.anti_noshow_actif),
+          anti_noshow_pourcentage: d?.anti_noshow_pourcentage !== undefined ? parseInt(d.anti_noshow_pourcentage, 10) : 30,
+          anti_noshow_mode_annulation: d?.anti_noshow_mode_annulation || 'AVOIR',
+          delai_annulation_heures: d?.delai_annulation_heures !== undefined ? parseInt(d.delai_annulation_heures, 10) : 24,
+          upsell_mode: d?.upsell_mode || 'AUTO',
+          upsell_articles_ids: Array.isArray(d?.upsell_articles_ids)
+            ? d.upsell_articles_ids
+            : (typeof d?.upsell_articles_ids === 'string' ? JSON.parse(d.upsell_articles_ids || '[]') : [])
         };
         setConfigSalon(config);
         await localforage.setItem('configSalon', config);

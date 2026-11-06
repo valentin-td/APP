@@ -95,7 +95,10 @@ function App() {
     google_api_key: '', google_account_id: '', google_location_id: '', email_factures: '', mot_de_passe_email: '', brevo_api_key: '', sms_sender_name: 'MonSalon', lien_google_maps: '', stripe_reader_id: '', heure_ouverture: 8, heure_fermeture: 20,
     fidelite_type: 'NONE', fidelite_points_seuil: 100, fidelite_points_valeur: 10, fidelite_tampons_seuil: 10, fidelite_recompense_type: 'MONTANT', fidelite_recompense_valeur: '10', fidelite_delai_sms: 60,
     telephone_gerant: '', alertes_sms_actives: false, email_comptable: '', jour_envoi_bilan: 1, derniere_verif_stock: null, pin_salon: '', temps_nettoyage_minutes: 0,
-    plan_actuel: 'PREMIUM_TRIAL', date_fin_essai: null
+    plan_actuel: 'PREMIUM_TRIAL', date_fin_essai: null,
+    logo_url: null, photos_salon: [], description_salon: '',
+    anti_noshow_actif: false, anti_noshow_pourcentage: 30, anti_noshow_mode_annulation: 'AVOIR', delai_annulation_heures: 24,
+    upsell_mode: 'AUTO', upsell_articles_ids: []
   });
 
   // --- HELPERS COMMUNS & GESTION DES ERREURS HTTP / NF525 ---

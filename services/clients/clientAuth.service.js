@@ -202,7 +202,8 @@ async function recupererProfilClient({ pool: p }, { id_client, id_salon }) {
     // Rendez-vous du client
     const rdvsRes = await dbPool.query(
         `SELECT r.id_rdv, r.date_heure_debut, r.prestation, r.prestations_details, r.duree_minutes, 
-                r.statut, r.acompte_paye, r.statut_acompte,
+                CASE WHEN r.date_annulation IS NOT NULL THEN 'ANNULE' ELSE 'CONFIRME' END AS statut,
+                r.acompte_paye, r.statut_acompte, r.date_annulation,
                 e.nom AS employe_nom, e.photo_url AS employe_photo
          FROM rendez_vous r
          LEFT JOIN employes e ON r.id_employe = e.id_employe
@@ -292,7 +293,7 @@ async function annulerRdvParClient({ pool: p, io, stripe }, { id_client, id_salo
     const dbPool = p || pool;
 
     const rdvRes = await dbPool.query(
-        `SELECT id_rdv, id_salon, id_client, telephone_client, date_heure_debut, prestation, acompte_paye, statut, stripe_payment_intent_id
+        `SELECT id_rdv, id_salon, id_client, telephone_client, date_heure_debut, prestation, acompte_paye, date_annulation, stripe_payment_intent_id
          FROM rendez_vous
          WHERE id_rdv = $1 AND id_salon = $2`,
         [id_rdv, id_salon]
@@ -305,7 +306,7 @@ async function annulerRdvParClient({ pool: p, io, stripe }, { id_client, id_salo
     }
 
     const rdv = rdvRes.rows[0];
-    if (rdv.statut === 'ANNULE') {
+    if (rdv.date_annulation) {
         return { message: "Ce rendez-vous est déjà annulé." };
     }
 

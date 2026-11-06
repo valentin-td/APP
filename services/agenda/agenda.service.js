@@ -226,20 +226,47 @@ async function calculerCreneauxReservationPublique({ pool }, { id_salon, date, i
         throw err;
     }
 
+    const dateObj = new Date(`${date}T12:00:00Z`);
+    const jourIndex = dateObj.getUTCDay(); // 0 = Dimanche
+    if (jourIndex === 0) {
+        return { creneaux: [], message: "Le salon est fermé le dimanche." };
+    }
+
     const configRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
     const config = configRes.rows[0] || {};
     const tempsNettoyage = parseInt(config.temps_nettoyage_minutes, 10) || 0;
     const dureePresta = (parseInt(duree, 10) || 30) + tempsNettoyage;
 
-    const ouvParts = String(config.heure_ouverture || '09:00').split(':');
-    const fermParts = String(config.heure_fermeture || '19:00').split(':');
-    const minDebutJour = (parseInt(ouvParts[0], 10) || 9) * 60 + (parseInt(ouvParts[1], 10) || 0);
-    const minFinJour = (parseInt(fermParts[0], 10) || 19) * 60 + (parseInt(fermParts[1], 10) || 0);
+    let hOuv = 8;
+    let mOuv = 0;
+    if (typeof config.heure_ouverture === 'number') {
+        hOuv = config.heure_ouverture;
+    } else if (config.heure_ouverture) {
+        const p = String(config.heure_ouverture).split(':');
+        hOuv = parseInt(p[0], 10) || 8;
+        mOuv = parseInt(p[1], 10) || 0;
+    }
+
+    let hFerm = 19;
+    let mFerm = 0;
+    if (typeof config.heure_fermeture === 'number') {
+        hFerm = config.heure_fermeture;
+    } else if (config.heure_fermeture) {
+        const p = String(config.heure_fermeture).split(':');
+        hFerm = parseInt(p[0], 10) || 19;
+        mFerm = parseInt(p[1], 10) || 0;
+    }
+
+    if (hFerm <= hOuv) hFerm = 19;
+    const minDebutJour = hOuv * 60 + mOuv;
+    const minFinJour = hFerm * 60 + mFerm;
 
     let employesCibles = [];
-    if (id_employe && id_employe !== 'AUTO') {
-        employesCibles = [parseInt(id_employe, 10)];
-    } else {
+    if (id_employe && id_employe !== 'AUTO' && id_employe !== 'undefined') {
+        const parsedEmp = parseInt(id_employe, 10);
+        if (!isNaN(parsedEmp)) employesCibles = [parsedEmp];
+    }
+    if (employesCibles.length === 0) {
         const empAll = await pool.query('SELECT id_employe FROM employes WHERE id_salon = $1', [id_salon]);
         employesCibles = empAll.rows.map(r => r.id_employe);
     }
@@ -259,7 +286,7 @@ async function calculerCreneauxReservationPublique({ pool }, { id_salon, date, i
     const rdvsRes = await pool.query(
         `SELECT id_employe, date_heure_debut, COALESCE(duree_minutes, 30) AS duree_minutes
          FROM rendez_vous
-         WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date AND statut != 'ANNULE'`,
+         WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date AND date_annulation IS NULL`,
         [id_salon, date]
     );
 
@@ -279,10 +306,10 @@ async function calculerCreneauxReservationPublique({ pool }, { id_salon, date, i
     for (let m = minDebutJour; m + dureePresta <= minFinJour; m += 30) {
         const hh = String(Math.floor(m / 60)).padStart(2, '0');
         const mm = String(m % 60).padStart(2, '0');
-        const debutSlot = new Date(`${date}T${hh}:${mm}:00`);
+        const debutSlot = new Date(`${date}T${hh}:${mm}:00+01:00`);
         const finSlot = new Date(debutSlot.getTime() + dureePresta * 60000);
 
-        if (debutSlot <= maintenant) continue;
+        if (debutSlot.getTime() <= maintenant.getTime()) continue;
 
         const employesLibres = employesDisposJour.filter(idEmp => {
             const conflit = rdvsRes.rows.some(r => {
@@ -498,7 +525,7 @@ async function creerReservationPublique({ pool, io, stripe, envoyerNotificationP
         const rdvsJour = await pool.query(
             `SELECT id_employe, date_heure_debut, COALESCE(duree_minutes, 30) AS duree_minutes
              FROM rendez_vous
-             WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date AND statut != 'ANNULE'`,
+             WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date AND date_annulation IS NULL`,
             [id_salon, dateJour]
         );
 
@@ -529,7 +556,7 @@ async function creerReservationPublique({ pool, io, stripe, envoyerNotificationP
         // Vérifier conflit si employé choisi manuellement
         const rdvExistants = await pool.query(
             `SELECT id_rdv FROM rendez_vous 
-             WHERE id_salon = $1 AND id_employe = $2 AND statut != 'ANNULE'
+             WHERE id_salon = $1 AND id_employe = $2 AND date_annulation IS NULL
              AND (
                 (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
                 AND 
