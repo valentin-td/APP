@@ -539,159 +539,77 @@ export default function PageReservationPublique({ idSalon }) {
           </div>
         </div>
 
-        {/* GALERIE BENTO (DISPOSITION CONFORME AVEC TOUTES LES PHOTOS ET MODALE PLEIN ÉCRAN) */}
-        {photosSalon.length >= 3 ? (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1fr 1fr',
-            gridTemplateRows: isMobile ? '240px' : '185px 185px',
-            gap: '12px',
-            marginBottom: '36px',
-            borderRadius: '16px',
-            overflow: 'hidden'
-          }}>
-            {/* GRANDE PHOTO COUVERTURE (À GAUCHE, SUR 2 LIGNES) */}
-            <div style={{
-              gridRow: isMobile ? 'span 1' : 'span 2',
-              position: 'relative',
-              overflow: 'hidden',
-              borderRadius: '14px',
-              backgroundColor: '#111827'
-            }}>
-              <img
-                src={photosSalon[0]}
-                alt={nomSalon}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-              />
+        {/* GALERIE / COUVERTURE (ADAPTÉE MOBILE FULL-BLEED ET SWIPE) */}
+        {photosSalon.length > 0 ? (
+          isMobile ? (
+            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '12px', marginBottom: '24px', scrollSnapType: 'x mandatory', margin: '0 -16px 24px -16px', padding: '0 16px 12px 16px', WebkitOverflowScrolling: 'touch' }}>
+              {photosSalon.map((img, i) => (
+                <div key={i} onClick={() => setGalerieModalOpen(true)} style={{ flexShrink: 0, width: photosSalon.length > 1 ? '85%' : '100%', height: '240px', borderRadius: '12px', overflow: 'hidden', scrollSnapAlign: 'center', position: 'relative' }}>
+                  <img src={img} alt={`${nomSalon} ${i+1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                  {i === photosSalon.length - 1 && photosSalon.length > 1 && (
+                    <div style={{ position: 'absolute', bottom: '12px', right: '12px', backgroundColor: 'rgba(17,24,39,0.7)', color: '#fff', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: '700' }}>
+                      Voir tout
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-
-            {!isMobile && (
-              <>
-                {/* PHOTO 2 : HAUT MILIEU */}
-                <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
-                  <img
-                    src={photosSalon[1] || photosSalon[0]}
-                    alt={nomSalon}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
-                </div>
-
-                {/* PHOTO 3 : HAUT DROITE */}
-                <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
-                  <img
-                    src={photosSalon[2] || photosSalon[0]}
-                    alt={nomSalon}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
-                </div>
-
-                {/* PHOTO 4 : BAS MILIEU */}
-                <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
-                  <img
-                    src={photosSalon[3] || photosSalon[1] || photosSalon[0]}
-                    alt={nomSalon}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
-                </div>
-
-                {/* BOUTON VOIR TOUTES LES PHOTOS : BAS DROITE */}
-                <div
-                  onClick={() => setGalerieModalOpen(true)}
-                  style={{
-                    position: 'relative',
-                    overflow: 'hidden',
-                    borderRadius: '14px',
-                    backgroundColor: '#111827',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                >
-                  {photosSalon[4] ? (
-                    <img
-                      src={photosSalon[4]}
-                      alt={nomSalon}
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }}
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                    />
-                  ) : photosSalon[2] ? (
-                    <img
-                      src={photosSalon[2]}
-                      alt={nomSalon}
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }}
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                    />
-                  ) : null}
-                  <span style={{ position: 'relative', zIndex: 2, color: '#ffffff', fontWeight: '700', fontSize: '13.5px', textShadow: '0 2px 4px rgba(0,0,0,0.6)' }}>
-                    Voir les {photosSalon.length} photos
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-        ) : photosSalon.length === 2 ? (
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px', height: isMobile ? '240px' : '340px', marginBottom: '36px', borderRadius: '16px', overflow: 'hidden' }}>
-            {photosSalon.map((img, i) => (
-              <div key={i} style={{ borderRadius: '14px', overflow: 'hidden', height: '100%', backgroundColor: '#111827' }}>
-                <img src={img} alt={`${nomSalon} ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              </div>
-            ))}
-          </div>
-        ) : photosSalon.length === 1 ? (
-          <div style={{ height: isMobile ? '240px' : '340px', marginBottom: '36px', borderRadius: '16px', overflow: 'hidden', backgroundColor: '#111827' }}>
-            <img src={photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          </div>
-        ) : (
-          /* FALLBACK ESTHÉTIQUE EXECUTIVE AVEC LOGO DU SALON */
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.45fr 1fr', gap: '12px', marginBottom: '36px' }}>
+          ) : (
             <div style={{
-              minHeight: isMobile ? '220px' : '280px',
+              display: 'grid',
+              gridTemplateColumns: photosSalon.length >= 3 ? '1.4fr 1fr 1fr' : (photosSalon.length === 2 ? '1fr 1fr' : '1fr'),
+              gridTemplateRows: photosSalon.length >= 3 ? '185px 185px' : '340px',
+              gap: '12px',
+              marginBottom: '36px',
               borderRadius: '16px',
-              backgroundColor: '#111827',
-              backgroundImage: 'linear-gradient(45deg, #1f2937 25%, transparent 25%, transparent 75%, #1f2937 75%, #1f2937), linear-gradient(45deg, #1f2937 25%, transparent 25%, transparent 75%, #1f2937 75%, #1f2937)',
-              backgroundSize: '20px 20px',
-              backgroundPosition: '0 0, 10px 10px',
-              color: '#ffffff',
-              padding: isMobile ? '24px' : '36px',
-              display: 'flex', flexDirection: 'column', justifyContent: 'space-between', position: 'relative', overflow: 'hidden', border: '1px solid #1f2937'
+              overflow: 'hidden'
             }}>
-              <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(17, 24, 39, 0.85)', zIndex: 1 }}></div>
-
+              <div style={{ gridRow: photosSalon.length >= 3 ? 'span 2' : 'span 1', position: 'relative', overflow: 'hidden', backgroundColor: '#111827' }}>
+                <img src={photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+              </div>
+              {photosSalon.length >= 3 && (
+                <>
+                  <div style={{ overflow: 'hidden', backgroundColor: '#1f2937' }}><img src={photosSalon[1] || photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>
+                  <div style={{ overflow: 'hidden', backgroundColor: '#1f2937' }}><img src={photosSalon[2] || photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>
+                  <div style={{ overflow: 'hidden', backgroundColor: '#1f2937' }}><img src={photosSalon[3] || photosSalon[1] || photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>
+                  <div onClick={() => setGalerieModalOpen(true)} style={{ position: 'relative', overflow: 'hidden', backgroundColor: '#111827', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {photosSalon[4] ? <img src={photosSalon[4]} alt={nomSalon} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }} /> : <img src={photosSalon[2] || photosSalon[0]} alt={nomSalon} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }} />}
+                    <span style={{ position: 'relative', zIndex: 2, color: '#ffffff', fontWeight: '700', fontSize: '13.5px', textShadow: '0 2px 4px rgba(0,0,0,0.6)' }}>Voir les {photosSalon.length} photos</span>
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        ) : (
+          /* FALLBACK ESTHÉTIQUE EXECUTIVE SANS DÉGRADÉ NOIR NI CERCLES */
+          <div style={{ marginBottom: '36px', margin: isMobile ? '0 -16px 24px -16px' : '0 0 36px 0' }}>
+            <div style={{
+              minHeight: isMobile ? '200px' : '280px',
+              borderRadius: isMobile ? '0' : '16px',
+              backgroundColor: '#111827',
+              color: '#ffffff',
+              padding: isMobile ? '24px 16px' : '36px',
+              display: 'flex', flexDirection: 'column', justifyContent: 'space-between', position: 'relative', overflow: 'hidden'
+            }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 2 }}>
                 <span style={{ padding: '6px 12px', borderRadius: '999px', backgroundColor: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.16)', fontSize: '11px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                  Établissement Partenaire Certifié
+                  Établissement Partenaire
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '20px', position: 'relative', zIndex: 2, margin: '24px 0' }}>
-                <div style={{ width: isMobile ? '68px' : '84px', height: isMobile ? '68px' : '84px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.08)', border: '1.5px solid rgba(255,255,255,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 12px 30px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
-                  {infos.salon.logo_url ? (
-                    <img
-                      src={infos.salon.logo_url}
-                      alt={nomSalon}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '18px' }}
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                        if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
-                      }}
-                    />
+                <div style={{ width: isMobile ? '64px' : '84px', height: isMobile ? '64px' : '84px', borderRadius: '16px', backgroundColor: '#ffffff', color: '#111827', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
+                  {infos?.salon?.logo_url ? (
+                    <img src={infos.salon.logo_url} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex'; }} />
                   ) : null}
-                  <div style={{ display: infos.salon.logo_url ? 'none' : 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
-                    <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.12em', opacity: 0.85 }}>{initialesSalon}</span>
+                  <div style={{ display: infos?.salon?.logo_url ? 'none' : 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                    <span style={{ fontSize: '18px', fontWeight: '800', letterSpacing: '0.05em' }}>{initialesSalon}</span>
                   </div>
                 </div>
                 <div>
-                  <h2 style={{ margin: '0 0 6px 0', fontSize: isMobile ? '20px' : '24px', fontWeight: '800', color: '#ffffff' }}>
+                  <h2 style={{ margin: '0 0 4px 0', fontSize: isMobile ? '22px' : '28px', fontWeight: '800', color: '#ffffff', letterSpacing: '-0.02em' }}>
                     {nomSalon}
                   </h2>
-                  <div style={{ fontSize: '13px', opacity: 0.8, color: '#e5e7eb' }}>
-                    {adresseSalon}
-                  </div>
+                  <div style={{ fontSize: '13px', color: '#d1d5db' }}>{infos?.salon?.adresse_salon || infos?.salon?.adresse || nomSalon}</div>
                 </div>
               </div>
             </div>
