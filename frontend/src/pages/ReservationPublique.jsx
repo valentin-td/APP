@@ -97,12 +97,30 @@ export default function PageReservationPublique({ idSalon }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Chargement des données du salon
+  // Chargement des données du salon + pré-sélection éventuelle depuis la Marketplace ou "Reprendre RDV"
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const dateUrl = params.get('date');
+    if (dateUrl && /^\d{4}-\d{2}-\d{2}$/.test(dateUrl)) {
+      setDateChoisie(dateUrl);
+    }
+
     fetch(`${API_URL}/api/public/reservation/${idSalon}`)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (data) setInfos(data);
+        if (data) {
+          setInfos(data);
+          const prestaUrl = params.get('prestation');
+          const heureUrl = params.get('heure');
+          if (Array.isArray(data.prestations) && data.prestations.length > 0) {
+            if (prestaUrl) {
+              const match = data.prestations.find(p => (p.nom || '').toLowerCase() === prestaUrl.toLowerCase());
+              if (match) setPanierPrestations([match]);
+            } else if (heureUrl) {
+              setPanierPrestations([data.prestations[0]]);
+            }
+          }
+        }
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -446,7 +464,11 @@ export default function PageReservationPublique({ idSalon }) {
       {/* BARRE DE NAVIGATION SUPÉRIEURE SOBRIÉTÉ EXECUTIVE */}
       <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: '1024px', margin: '0 auto', padding: isMobile ? '12px 16px' : '16px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800', fontSize: '17px', letterSpacing: '0.18em', color: '#111827' }}>
+          <div
+            onClick={() => { window.location.href = '/coiffeurs'; }}
+            title="Accéder à la Marketplace STACK"
+            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800', fontSize: '17px', letterSpacing: '0.18em', color: '#111827', cursor: 'pointer' }}
+          >
             <img src="/logo-stack.png" alt="STACK" style={{ height: '26px', width: 'auto', objectFit: 'contain', display: 'block' }} />
             <span>STACK</span>
           </div>
