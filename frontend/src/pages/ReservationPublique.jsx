@@ -466,11 +466,9 @@ export default function PageReservationPublique({ idSalon }) {
         <div style={{ maxWidth: '1024px', margin: '0 auto', padding: isMobile ? '12px 16px' : '16px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div
             onClick={() => { window.location.href = '/coiffeurs'; }}
-            title="Accéder à la Marketplace STACK"
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800', fontSize: '17px', letterSpacing: '0.18em', color: '#111827', cursor: 'pointer' }}
+            style={{ fontWeight: '800', fontSize: '19px', letterSpacing: '0.22em', color: '#111827', cursor: 'pointer' }}
           >
-            <img src="/logo-stack.png" alt="STACK" style={{ height: '26px', width: 'auto', objectFit: 'contain', display: 'block' }} />
-            <span>STACK</span>
+            STACK
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
