@@ -168,7 +168,8 @@ async function recupererInfosReservationPublique({ pool }, id_salon) {
             fidelite_points_seuil: s.fidelite_points_seuil || 100,
             fidelite_tampons_seuil: s.fidelite_tampons_seuil || 10,
             logo_url: normaliserUrlMedia(s.logo_url),
-            photos_salon: listPhotos.map(normaliserUrlMedia).filter(Boolean)
+            photos_salon: listPhotos.map(normaliserUrlMedia).filter(Boolean),
+            description_salon: s.description_salon || ''
         },
         prestations: prestaRes.rows,
         employes: empRes.rows

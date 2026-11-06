@@ -42,6 +42,7 @@ const {
     mettreAJourChecklistOnboarding,
     recupererConfigurationSalon,
     mettreAJourConfigurationSalon,
+    mettreAJourDescriptionSalon,
     uploaderGalerieSalon,
     supprimerElementGalerie
 } = require('./services/settings/settings.service');
@@ -606,6 +607,19 @@ app.delete('/api/parametres/galerie', verifierToken, async (req, res) => {
         res.json(result);
     } catch (e) {
         res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la suppression du visuel." });
+    }
+});
+
+app.put('/api/parametres/description', verifierToken, async (req, res) => {
+    try {
+        const { description_salon } = req.body;
+        const result = await mettreAJourDescriptionSalon(
+            { pool },
+            { id_salon: req.user.id_salon, role: req.user.role, description_salon }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la mise à jour de la description." });
     }
 });
 

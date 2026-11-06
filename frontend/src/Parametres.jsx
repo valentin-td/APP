@@ -124,6 +124,7 @@ const groupesBas = [
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [isSavingDescription, setIsSavingDescription] = useState(false);
   const [galerieNotice, setGalerieNotice] = useState(null);
 
   const handleUploadVisuel = async (event, type) => {
@@ -202,6 +203,36 @@ const groupesBas = [
       setTimeout(() => setGalerieNotice(null), 4000);
     } catch (err) {
       setGalerieNotice({ type: 'error', message: err.message || "Erreur lors de la suppression." });
+    }
+  };
+
+  const handleEnregistrerDescription = async () => {
+    setIsSavingDescription(true);
+    setGalerieNotice(null);
+    try {
+      const tokenLocal = localStorage.getItem('token_api') || localStorage.getItem('token') || localStorage.getItem('ui_token');
+      const res = await fetch(`${API_URL}/api/parametres/description`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {})
+        },
+        body: JSON.stringify({ description_salon: configSalon.description_salon ?? '' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.erreur || "Erreur lors de l'enregistrement de la description.");
+
+      setConfigSalon(prev => ({
+        ...prev,
+        description_salon: data.description_salon !== undefined ? data.description_salon : prev.description_salon
+      }));
+      setGalerieNotice({ type: 'success', message: data.message || "Description enregistrée avec succès !" });
+      setTimeout(() => setGalerieNotice(null), 4000);
+    } catch (err) {
+      setGalerieNotice({ type: 'error', message: err.message || "Erreur lors de l'enregistrement de la description." });
+    } finally {
+      setIsSavingDescription(false);
     }
   };
 
@@ -820,6 +851,80 @@ const groupesBas = [
               )}
             </div>
           )}
+        </div>
+
+        {/* SECTION 3 : DESCRIPTION DE L'ÉTABLISSEMENT */}
+        <div className="carte scan-carte" style={{ padding: '24px', borderRadius: '16px', border: '1px solid #e5e7eb', backgroundColor: '#ffffff', boxShadow: '0 2px 10px rgba(0,0,0,0.03)' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', fontWeight: '800', color: '#111827', letterSpacing: '-0.01em' }}>
+              Description de l'établissement
+            </h3>
+            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+              Présentez votre univers, vos spécialités et l'ambiance du salon. Ce texte apparaîtra directement sur votre vitrine de réservation publique.
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <textarea
+              value={configSalon.description_salon ?? ''}
+              onChange={(e) => setConfigSalon(prev => ({ ...prev, description_salon: e.target.value }))}
+              placeholder="Ex : Bienvenue dans notre salon ! Spécialistes des coiffures tendances, soins sur-mesure et balayages personnalisés, nous vous accueillons dans une ambiance chaleureuse et moderne pour sublimer votre style..."
+              rows={5}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                borderRadius: '12px',
+                border: '1.5px solid #e5e7eb',
+                fontSize: '14px',
+                lineHeight: '1.6',
+                color: '#111827',
+                backgroundColor: '#f9fafb',
+                resize: 'vertical',
+                outline: 'none',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+                transition: 'border-color 0.15s ease, background-color 0.15s ease'
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = '#111827';
+                e.target.style.backgroundColor = '#ffffff';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = '#e5e7eb';
+                e.target.style.backgroundColor = '#f9fafb';
+              }}
+            />
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                {(configSalon.description_salon || '').length} caractère{(configSalon.description_salon || '').length > 1 ? 's' : ''}
+              </span>
+
+              <button
+                type="button"
+                onClick={handleEnregistrerDescription}
+                disabled={isSavingDescription}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  backgroundColor: '#111827',
+                  color: '#ffffff',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  border: 'none',
+                  cursor: isSavingDescription ? 'wait' : 'pointer',
+                  opacity: isSavingDescription ? 0.7 : 1,
+                  boxShadow: '0 2px 8px rgba(17, 24, 39, 0.15)',
+                  transition: 'background-color 0.15s ease'
+                }}
+              >
+                <span>{isSavingDescription ? "Enregistrement..." : "Enregistrer la description"}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );

@@ -797,6 +797,30 @@ export default function PageReservationPublique({ idSalon }) {
               </div>
             </div>
 
+            {/* SECTION : DESCRIPTION DU SALON */}
+            <div id="description-salon" style={{ marginBottom: '40px' }}>
+              <h3 style={{ margin: '0 0 14px 0', fontSize: '20px', fontWeight: '800', color: '#111827' }}>
+                Description
+              </h3>
+              <div style={{
+                backgroundColor: '#ffffff',
+                borderRadius: '12px',
+                border: '1px solid #e5e7eb',
+                padding: '22px 24px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+              }}>
+                <p style={{
+                  margin: 0,
+                  fontSize: '14.5px',
+                  lineHeight: '1.7',
+                  color: '#374151',
+                  whiteSpace: 'pre-line'
+                }}>
+                  {infos.salon.description_salon || infos.salon.description || `Bienvenue chez ${nomSalon}. Notre équipe vous accueille avec passion et expertise pour prendre soin de vous et sublimer votre style. Choisissez votre prestation et réservez votre créneau en toute simplicité.`}
+                </p>
+              </div>
+            </div>
+
             {/* SECTION : COLLABORATEURS (PASTILLES INITIALES NOIRES & PRÉNOMS) */}
             {(infos.employes || []).length > 0 && (
               <div style={{ marginBottom: '32px' }}>

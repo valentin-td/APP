@@ -108,7 +108,8 @@ async function mettreAJourConfigurationSalon(
         compte_prestations, compte_produits, compte_tva, pennylane_api_key, mode_suivi_heures,
         nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville,
         fidelite_type, fidelite_points_seuil, fidelite_points_valeur, fidelite_tampons_seuil,
-        fidelite_recompense_type, fidelite_recompense_valeur, fidelite_delai_sms, rappel_rdv_2h_actif
+        fidelite_recompense_type, fidelite_recompense_valeur, fidelite_delai_sms, rappel_rdv_2h_actif,
+        description_salon
     } = body;
 
     if (user.role === 'employe') {
@@ -148,7 +149,13 @@ async function mettreAJourConfigurationSalon(
                 user.id_salon
             ]
         );
-        if (jet) await jet(user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { role: 'salon', champs_modifies: ['horaires', 'fidelite'] });
+        if (description_salon !== undefined) {
+            await dbPool.query(
+                'UPDATE configuration_salon SET description_salon = $1 WHERE id_salon = $2',
+                [String(description_salon).trim() || null, user.id_salon]
+            );
+        }
+        if (jet) await jet(user.id_salon, 'MODIFICATION_PARAMETRES_SALON', { role: 'salon', champs_modifies: ['horaires', 'fidelite', 'description'] });
         return { message: "Paramètres enregistrés avec succès !" };
     }
 
@@ -187,7 +194,8 @@ async function mettreAJourConfigurationSalon(
             fidelite_recompense_type = COALESCE($38, fidelite_recompense_type),
             fidelite_recompense_valeur = COALESCE($39, fidelite_recompense_valeur),
             fidelite_delai_sms = COALESCE($40, fidelite_delai_sms),
-            rappel_rdv_2h_actif = $41
+            rappel_rdv_2h_actif = $41,
+            description_salon = (CASE WHEN $42::boolean IS TRUE THEN $43::text ELSE description_salon END)
         WHERE id_salon = $16
     `;
 
@@ -211,7 +219,9 @@ async function mettreAJourConfigurationSalon(
         fidelite_recompense_type || 'MONTANT',
         fidelite_recompense_valeur !== undefined ? String(fidelite_recompense_valeur) : '10',
         fidelite_delai_sms !== undefined ? parseInt(fidelite_delai_sms, 10) : 60,
-        Boolean(rappel_rdv_2h_actif)
+        Boolean(rappel_rdv_2h_actif),
+        description_salon !== undefined,
+        description_salon !== undefined ? (String(description_salon).trim() || null) : null
     ];
     
     await dbPool.query(updateQuery, params);
@@ -405,12 +415,35 @@ async function supprimerElementGalerie({ pool: p }, { id_salon, role, type, inde
     };
 }
 
+/**
+ * Met à jour la description du salon (vitrine publique)
+ */
+async function mettreAJourDescriptionSalon({ pool: p }, { id_salon, role, description_salon }) {
+    if (role !== 'gerant' && role !== 'salon') {
+        const err = new Error("Action non autorisée.");
+        err.status = 403;
+        throw err;
+    }
+    const dbPool = p || pool;
+    const desc = description_salon !== undefined ? (String(description_salon).trim() || null) : null;
+    await dbPool.query(
+        'UPDATE configuration_salon SET description_salon = $1 WHERE id_salon = $2',
+        [desc, id_salon]
+    );
+    return {
+        success: true,
+        message: "Description enregistrée avec succès !",
+        description_salon: desc || ''
+    };
+}
+
 module.exports = {
     initSettingsService,
     recupererChecklistOnboarding,
     mettreAJourChecklistOnboarding,
     recupererConfigurationSalon,
     mettreAJourConfigurationSalon,
+    mettreAJourDescriptionSalon,
     uploaderGalerieSalon,
     supprimerElementGalerie,
     normaliserUrlMedia
