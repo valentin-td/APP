@@ -5,113 +5,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { API_URL } from '../api/config';
 import { isTokenExpired } from '../utils/auth';
 
-const CATEGORIES_HEADER = ['Coiffeur', 'Barbier', 'Manucure', 'Institut de beauté', 'Bien-être'];
-const CHIPS_FILTRES = [
-  { id: 'TOUS', label: 'Tous les salons' },
-  { id: 'Coiffure homme', label: 'Coiffure homme' },
-  { id: 'Coiffure femme', label: 'Coiffure femme' },
-  { id: 'Coiffure jeunes', label: 'Coiffure jeunes' },
-  { id: 'Barbier', label: 'Barbier' }
-];
-
-function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori }) {
-  const [photoIdx, setPhotoIdx] = useState(0);
-  const [apercuCreneaux, setApercuCreneaux] = useState(null);
-  const [loadingSlots, setLoadingSlots] = useState(true);
-
-  const startDateStr = useMemo(() => new Date().toLocaleString('fr-CA', { timeZone: 'Europe/Paris' }).slice(0, 10), []);
-
-  useEffect(() => {
-    let active = true;
-    setLoadingSlots(true);
-    fetch(`${API_URL}/api/public/marketplace/salon/${salon.id_salon}/creneaux-apercu?startDate=${startDateStr}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (active && data) setApercuCreneaux(data);
-        if (active) setLoadingSlots(false);
-      })
-      .catch(() => { if (active) setLoadingSlots(false); });
-    return () => { active = false; };
-  }, [salon.id_salon, startDateStr]);
-
-  const photos = salon.photos_salon && salon.photos_salon.length > 0 ? salon.photos_salon : [];
-  const isFav = favorisIds.includes(salon.id_salon);
-
-  const allerSurSalon = (paramsExtra = '') => {
-    window.location.href = `/?reservation=${salon.id_salon}${paramsExtra}`;
-  };
-
-  // Aplatir les créneaux pour le design vertical (Max 4 créneaux affichés)
-  const allSlots = [];
-  if (apercuCreneaux?.jours) {
-    apercuCreneaux.jours.forEach(j => {
-      j.matin.forEach(h => allSlots.push({ date: j.date, heure: h, label: j.label_jour }));
-      j.apres_midi.forEach(h => allSlots.push({ date: j.date, heure: h, label: j.label_jour }));
-    });
-  }
-  const displaySlots = allSlots.slice(0, 4);
-
-  return (
-    <div
-      onClick={() => allerSurSalon()}
-      style={{
-        backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e5e7eb',
-        overflow: 'hidden', display: 'flex', flexDirection: 'column',
-        boxShadow: '0 4px 15px rgba(0,0,0,0.03)', cursor: 'pointer',
-        transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-      }}
-    >
-      {/* PHOTO TOP */}
-      <div style={{ position: 'relative', height: '240px', backgroundColor: '#111827', overflow: 'hidden' }}>
-        {photos.length > 0 ? (
-          <img src={photos[photoIdx % photos.length]} alt={salon.nom_salon} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-        ) : (
-          <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff' }}>
-            <div style={{ width: '54px', height: '54px', borderRadius: '14px', border: '1.5px solid rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px', fontSize: '18px', fontWeight: '800' }}>
-              {String(salon.nom_salon || 'S').slice(0, 2).toUpperCase()}
-            </div>
-          </div>
-        )}
-
-        {/* COEUR FAVORIS */}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onToggleFavori(salon); }}
-          style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '50%', backgroundColor: 'rgba(17, 24, 39, 0.45)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', backdropFilter: 'blur(4px)' }}
-        >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill={isFav ? '#ffffff' : 'none'} stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-        </button>
-
-        {/* DOTS & FLÈCHES */}
-        {photos.length > 1 && (
-          <>
-            <button type="button" onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx - 1 + photos.length) % photos.length); }} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.8)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></button>
-            <button type="button" onClick={(e) => { e.stopPropagation(); setPhotoIdx((photoIdx + 1) % photos.length); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.8)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg></button>
-            <div style={{ position: 'absolute', bottom: '12px', left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: '5px' }}>
-              {photos.map((_, idx) => (
-                <span key={idx} style={{ width: idx === photoIdx % photos.length ? '16px' : '6px', height: '6px', borderRadius: '999px', backgroundColor: idx === photoIdx % photos.length ? '#ffffff' : 'rgba(255,255,255,0.55)', transition: 'all 0.2s ease' }} />
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* INFOS SALON (BOTTOM) */}
-      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-          <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: '10px' }}>
-            {salon.nom_salon}
-          </h3>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13.5px', fontWeight: '700', color: '#111827', flexShrink: 0 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="#111827" stroke="#111827" strokeWidth="1"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            {salon.note_moyenne || 'Nouveau'}
-          </div>
-        </div>
-        <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {salon.ville} • {salon.gamme_prix || '€€'}
-        </div>
-
-        {/* CRÉNEAUX DISPONIBLES (MINI PILULES) */}
+{/* CRÉNEAUX DISPONIBLES (MINI PILULES) */}
         <div style={{ marginTop: 'auto' }}>
           {loadingSlots ? (
             <div style={{ fontSize: '12px', color: '#9ca3af', textAlign: 'center', padding: '10px 0' }}>Disponibilités en cours...</div>
@@ -153,10 +47,73 @@ export default function MarketplaceHub() {
   const [searchQ, setSearchQ] = useState(initialQuery);
   const [searchVille, setSearchVille] = useState(initialVille);
   const [chipActif, setChipActif] = useState('TOUS');
+  const [filtreDispo, setFiltreDispo] = useState('TOUS'); // 'TOUS' | 'AUJOURDHUI' | 'DEMAIN' | 'NOTES'
+  const [disposParSalon, setDisposParSalon] = useState({});
 
   const [salons, setSalons] = useState([]);
   const [villesPopulaires, setVillesPopulaires] = useState([]);
   const [loadingSalons, setLoadingSalons] = useState(false);
+
+  const handleSlotsLoaded = (idSalon, data) => {
+    setDisposParSalon(prev => ({ ...prev, [idSalon]: data }));
+  };
+
+  const salonsFiltresAccueil = useMemo(() => {
+    let list = [...salons];
+    if (filtreDispo === 'AUJOURDHUI') {
+      list = list.filter(s => {
+        const ap = disposParSalon[s.id_salon];
+        if (!ap) return true;
+        return (ap.jours?.[0]?.total_dispos || 0) > 0;
+      });
+    } else if (filtreDispo === 'DEMAIN') {
+      list = list.filter(s => {
+        const ap = disposParSalon[s.id_salon];
+        if (!ap) return true;
+        return (ap.jours?.[1]?.total_dispos || 0) > 0;
+      });
+    } else if (filtreDispo === 'NOTES') {
+      list.sort((a, b) => {
+        const na = parseFloat(String(a.note_moyenne || '0').replace(',', '.')) || 0;
+        const nb = parseFloat(String(b.note_moyenne || '0').replace(',', '.')) || 0;
+        return nb - na;
+      });
+    }
+    return list;
+  }, [salons, filtreDispo, disposParSalon]);
+
+  const grandesMetropoles = useMemo(() => {
+    const base = [
+      { ville: 'Paris', region: 'Île-de-France' },
+      { ville: 'Lyon', region: 'Auvergne-Rhône-Alpes' },
+      { ville: 'Marseille', region: 'Provence-Alpes-Côte d’Azur' },
+      { ville: 'Bordeaux', region: 'Nouvelle-Aquitaine' },
+      { ville: 'Strasbourg', region: 'Grand Est' },
+      { ville: 'Toulouse', region: 'Occitanie' },
+      { ville: 'Lille', region: 'Hauts-de-France' },
+      { ville: 'Nantes', region: 'Pays de la Loire' },
+      { ville: 'Nice', region: 'Côte d’Azur' },
+      { ville: 'Montpellier', region: 'Occitanie' },
+      { ville: 'Rennes', region: 'Bretagne' },
+      { ville: 'Besançon', region: 'Bourgogne-Franche-Comté' }
+    ];
+
+    const mapVilles = new Map();
+    base.forEach(b => mapVilles.set(b.ville.toLowerCase(), { ...b, count: 0 }));
+
+    (villesPopulaires || []).forEach(vp => {
+      const nomNettoye = nettoyerNomVille(vp.ville, '');
+      if (!nomNettoye || nomNettoye === 'France' || /\d/.test(nomNettoye)) return;
+      const cle = nomNettoye.toLowerCase();
+      if (mapVilles.has(cle)) {
+        mapVilles.get(cle).count = vp.nb_salons || 1;
+      } else if (nomNettoye.length >= 3 && nomNettoye.length <= 22) {
+        mapVilles.set(cle, { ville: nomNettoye, region: 'France', count: vp.nb_salons || 1 });
+      }
+    });
+
+    return Array.from(mapVilles.values()).slice(0, 12);
+  }, [villesPopulaires]);
 
   const [favorisIds, setFavorisIds] = useState(() => {
     try {
@@ -285,120 +242,227 @@ export default function MarketplaceHub() {
       {/* =================================================================== */}
       {modeVue === 'ACCUEIL' ? (
         <>
-          {/* HERO BANNER AVEC DÉGRADÉ DOUX EXECUTIVE */}
+          {/* 1. HERO ÉDITORIAL SPLIT-SCREEN (GAUCHE : RECHERCHE | DROITE : ARCHITECTURE SALON) */}
           <section style={{
-            position: 'relative',
-            minHeight: isMobile ? '390px' : '470px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: isMobile ? '36px 16px' : '56px 24px',
-            background: 'radial-gradient(circle at 50% 0%, #ffffff 0%, #f1f5f9 55%, #e2e8f0 100%)',
-            borderBottom: '1px solid #e2e8f0'
+            backgroundColor: '#0f172a',
+            color: '#ffffff',
+            borderBottom: '1px solid #1e293b',
+            padding: isMobile ? '32px 16px 40px 16px' : '56px 32px 64px 32px'
           }}>
-            <div style={{ maxWidth: '860px', width: '100%', textAlign: 'center', position: 'relative', zIndex: 10 }}>
-              <h1 style={{ color: '#111827', fontSize: isMobile ? '28px' : '44px', fontWeight: '800', margin: '0 0 12px 0', letterSpacing: '-0.03em' }}>
-                L'Excellence près de chez vous.
-              </h1>
-              <p style={{ fontSize: isMobile ? '14px' : '16px', color: '#4b5563', margin: '0 0 32px 0', fontWeight: '500' }}>
-                Réservez en ligne dans les meilleurs salons de coiffure et barbiers partenaires.
-              </p>
-
-              {/* BARRE DE RECHERCHE UNIFIÉE */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  setModeVue('RESULTATS');
-                  lancerRecherche(searchVille, searchQ, chipActif);
-                }}
-                style={{
-                  backgroundColor: '#ffffff',
-                  borderRadius: '16px',
-                  padding: isMobile ? '12px' : '8px 8px 8px 24px',
-                  display: 'flex',
-                  flexDirection: isMobile ? 'column' : 'row',
-                  alignItems: 'stretch',
-                  gap: isMobile ? '12px' : '0',
-                  boxShadow: '0 20px 45px rgba(15, 23, 42, 0.08)',
-                  border: '1px solid #cbd5e1'
-                }}
-              >
-                <div style={{ flex: 1, textAlign: 'left', paddingRight: isMobile ? 0 : '16px', borderRight: isMobile ? 'none' : '1px solid #e5e7eb', borderBottom: isMobile ? '1px solid #e5e7eb' : 'none', paddingBottom: isMobile ? '12px' : 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Que cherchez-vous ?
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Coupe, Balayage, Barbier..."
-                    value={searchQ}
-                    onChange={e => setSearchQ(e.target.value)}
-                    style={{ border: 'none', outline: 'none', fontSize: '15px', fontWeight: '600', color: '#111827', width: '100%', padding: '2px 0', backgroundColor: 'transparent' }}
-                  />
+            <div style={{
+              maxWidth: '1200px',
+              margin: '0 auto',
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : '1.15fr 0.85fr',
+              gap: isMobile ? '32px' : '48px',
+              alignItems: 'center'
+            }}>
+              {/* Colonne Gauche : Proposition de valeur & Recherche */}
+              <div>
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '8px',
+                  padding: '6px 12px', borderRadius: '999px',
+                  backgroundColor: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)',
+                  fontSize: '11.5px', fontWeight: '700', letterSpacing: '0.06em', textTransform: 'uppercase',
+                  color: '#e2e8f0', marginBottom: '20px'
+                }}>
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981' }} />
+                  <span>Réservation en ligne 24h/24 • Confirmation immédiate</span>
                 </div>
 
-                <div style={{ flex: 1, textAlign: 'left', paddingLeft: isMobile ? 0 : '20px', paddingRight: isMobile ? 0 : '16px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Où ?
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Adresse, Ville, Code postal..."
-                    value={searchVille}
-                    onChange={e => setSearchVille(e.target.value)}
-                    style={{ border: 'none', outline: 'none', fontSize: '15px', fontWeight: '600', color: '#111827', width: '100%', padding: '2px 0', backgroundColor: 'transparent' }}
-                  />
-                </div>
+                <h1 style={{
+                  fontSize: isMobile ? '30px' : '46px',
+                  fontWeight: '800',
+                  lineHeight: 1.12,
+                  letterSpacing: '-0.03em',
+                  margin: '0 0 16px 0',
+                  color: '#ffffff'
+                }}>
+                  Réservez votre prochain rendez-vous coiffure & barbier.
+                </h1>
 
-                <button
-                  type="submit"
+                <p style={{
+                  fontSize: isMobile ? '14.5px' : '16px',
+                  color: '#94a3b8',
+                  lineHeight: 1.6,
+                  margin: '0 0 28px 0',
+                  maxWidth: '560px'
+                }}>
+                  Accédez aux agendas en temps réel des salons partenaires STACK, choisissez votre collaborateur et validez votre créneau en quelques secondes.
+                </p>
+
+                {/* Barre de recherche principale */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setModeVue('RESULTATS');
+                    lancerRecherche(searchVille, searchQ, chipActif);
+                  }}
                   style={{
-                    backgroundColor: '#111827', color: '#ffffff', border: 'none',
-                    borderRadius: '10px', padding: isMobile ? '16px' : '16px 32px',
-                    fontSize: '15px', fontWeight: '700', cursor: 'pointer', flexShrink: 0
+                    backgroundColor: '#ffffff',
+                    borderRadius: '14px',
+                    padding: isMobile ? '12px' : '8px 8px 8px 20px',
+                    display: 'flex',
+                    flexDirection: isMobile ? 'column' : 'row',
+                    alignItems: 'stretch',
+                    gap: isMobile ? '10px' : '0',
+                    boxShadow: '0 24px 48px rgba(0, 0, 0, 0.35)'
                   }}
                 >
-                  Rechercher
-                </button>
-              </form>
+                  <div style={{
+                    flex: 1.1, textAlign: 'left',
+                    paddingRight: isMobile ? 0 : '14px',
+                    borderRight: isMobile ? 'none' : '1px solid #e5e7eb',
+                    borderBottom: isMobile ? '1px solid #e5e7eb' : 'none',
+                    paddingBottom: isMobile ? '10px' : 0,
+                    display: 'flex', flexDirection: 'column', justifyContent: 'center'
+                  }}>
+                    <label style={{ fontSize: '10.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>
+                      Prestation ou salon
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Coupe, balayage, barbe, nom du salon..."
+                      value={searchQ}
+                      onChange={e => setSearchQ(e.target.value)}
+                      style={{ border: 'none', outline: 'none', fontSize: '14.5px', fontWeight: '600', color: '#111827', width: '100%', padding: '3px 0' }}
+                    />
+                  </div>
 
-              {/* PILLS CATÉGORIES */}
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '24px' }}>
-                {[
-                  { id: 'Coiffure femme', label: 'Coiffure', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg> },
-                  { id: 'Barbier', label: 'Barbier', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg> },
-                  { id: 'Coiffure homme', label: 'Coupe Homme', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> }
-                ].map(c => (
+                  <div style={{
+                    flex: 0.9, textAlign: 'left',
+                    paddingLeft: isMobile ? 0 : '16px',
+                    paddingRight: isMobile ? 0 : '12px',
+                    display: 'flex', flexDirection: 'column', justifyContent: 'center'
+                  }}>
+                    <label style={{ fontSize: '10.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>
+                      Ville ou code postal
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Paris, Lyon, Strasbourg..."
+                      value={searchVille}
+                      onChange={e => setSearchVille(e.target.value)}
+                      style={{ border: 'none', outline: 'none', fontSize: '14.5px', fontWeight: '600', color: '#111827', width: '100%', padding: '3px 0' }}
+                    />
+                  </div>
+
                   <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => { setChipActif(c.id); setModeVue('RESULTATS'); lancerRecherche(searchVille, searchQ, c.id); }}
+                    type="submit"
                     style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '6px',
-                      padding: '9px 18px', borderRadius: '999px', border: '1px solid #cbd5e1',
-                      backgroundColor: '#ffffff', color: '#111827', fontSize: '13px', fontWeight: '600',
-                      cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.03)'
+                      backgroundColor: '#111827',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: isMobile ? '14px' : '15px 26px',
+                      fontSize: '14.5px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      flexShrink: 0
                     }}
                   >
-                    {c.icon} {c.label}
+                    Rechercher
                   </button>
-                ))}
+                </form>
+
+                {/* Filtres rapides sous la barre */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '18px' }}>
+                  <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: '600', marginRight: '4px' }}>
+                    Accès direct :
+                  </span>
+                  {[
+                    { id: 'Coiffure femme', label: 'Coiffure Femme' },
+                    { id: 'Coiffure homme', label: 'Coupe Homme' },
+                    { id: 'Barbier', label: 'Barbier' },
+                    { id: 'Coiffure jeunes', label: 'Coupe Étudiant / Enfant' }
+                  ].map(tag => (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() => { setChipActif(tag.id); setModeVue('RESULTATS'); lancerRecherche(searchVille, searchQ, tag.id); }}
+                      style={{
+                        padding: '6px 13px',
+                        borderRadius: '999px',
+                        border: '1px solid rgba(255,255,255,0.18)',
+                        backgroundColor: 'rgba(255,255,255,0.06)',
+                        color: '#f8fafc',
+                        fontSize: '12.5px',
+                        fontWeight: '600',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {tag.label}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {/* Colonne Droite : Visuel Éditorial + Carte Flottante Temps Réel */}
+              {!isMobile && (
+                <div style={{ position: 'relative' }}>
+                  <div style={{
+                    height: '390px',
+                    borderRadius: '20px',
+                    overflow: 'hidden',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    boxShadow: '0 24px 60px rgba(0,0,0,0.45)'
+                  }}>
+                    <img
+                      src="https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=1000&q=80"
+                      alt="Salon de coiffure partenaire STACK"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
+                  </div>
+
+                  {/* Carte flottante d'aperçu */}
+                  <div style={{
+                    position: 'absolute',
+                    bottom: '-18px',
+                    left: '-24px',
+                    backgroundColor: '#ffffff',
+                    color: '#111827',
+                    borderRadius: '14px',
+                    padding: '14px 18px',
+                    boxShadow: '0 16px 36px rgba(0,0,0,0.22)',
+                    border: '1px solid #e5e7eb',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '14px'
+                  }}>
+                    <div style={{
+                      width: '40px', height: '40px', borderRadius: '10px',
+                      backgroundColor: '#111827', color: '#ffffff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                    }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#111827' }}>
+                        Disponibilités synchronisées
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                        Rappel SMS & modification en 1 clic
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
+          {/* CONTENU CENTRAL */}
           <section style={{ maxWidth: '1200px', margin: '0 auto', padding: isMobile ? '36px 16px' : '56px 32px' }}>
 
-            {/* SECTION 1 : SALONS AUTOUR DE VOUS */}
+            {/* 2. SECTION : SALONS AUTOUR DE VOUS + BARRE DE FILTRES DISPONIBILITÉ */}
             <div style={{ marginBottom: '64px' }}>
-              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: '12px', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'flex-end', gap: '16px', marginBottom: '20px' }}>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: '#111827', letterSpacing: '-0.02em' }}>
+                  <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>
+                    Réservation directe
+                  </div>
+                  <h2 style={{ margin: 0, fontSize: isMobile ? '22px' : '28px', fontWeight: '800', color: '#111827', letterSpacing: '-0.02em' }}>
                     Salons autour de vous {searchVille ? `(${searchVille})` : ''}
                   </h2>
-                  <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '4px' }}>
-                    Réservez un créneau disponible en temps réel dans les établissements proches de votre position.
-                  </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -425,7 +489,7 @@ export default function MarketplaceHub() {
                     }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>
-                    <span>Autour de ma position</span>
+                    <span>Me localiser</span>
                   </button>
 
                   {salons.length > 0 && (
@@ -434,180 +498,185 @@ export default function MarketplaceHub() {
                       onClick={() => setModeVue('RESULTATS')}
                       style={{ background: 'none', border: 'none', fontSize: '13.5px', fontWeight: '700', color: '#111827', textDecoration: 'underline', cursor: 'pointer' }}
                     >
-                      Voir tout ({salons.length})
+                      Voir tout le catalogue ({salons.length})
                     </button>
                   )}
                 </div>
               </div>
 
-              {loadingSalons ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280', fontSize: '14px', backgroundColor: '#f9fafb', borderRadius: '16px', border: '1px solid #e5e7eb' }}>
-                  Recherche des salons autour de vous...
-                </div>
-              ) : salons.length === 0 ? (
-                <div style={{ padding: '36px', textAlign: 'center', color: '#4b5563', fontSize: '14px', backgroundColor: '#f9fafb', borderRadius: '16px', border: '1px solid #e5e7eb' }}>
-                  Aucun salon trouvé dans ce secteur.
-                  {searchVille && (
+              {/* Barre de filtres "Disponibilité immédiate" */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto', paddingBottom: '8px', marginBottom: '22px' }}>
+                {[
+                  { id: 'TOUS', label: 'Tous les établissements' },
+                  { id: 'AUJOURDHUI', label: 'Disponible aujourd’hui' },
+                  { id: 'DEMAIN', label: 'Disponible demain' },
+                  { id: 'NOTES', label: 'Les mieux notés' }
+                ].map(f => {
+                  const actif = filtreDispo === f.id;
+                  return (
                     <button
+                      key={f.id}
                       type="button"
-                      onClick={() => { setSearchVille(''); lancerRecherche('', searchQ, chipActif); }}
-                      style={{ marginLeft: '10px', background: 'none', border: 'none', color: '#111827', fontWeight: '700', textDecoration: 'underline', cursor: 'pointer' }}
+                      onClick={() => setFiltreDispo(f.id)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '999px',
+                        border: actif ? '1.5px solid #111827' : '1px solid #e5e7eb',
+                        backgroundColor: actif ? '#111827' : '#ffffff',
+                        color: actif ? '#ffffff' : '#374151',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        flexShrink: 0
+                      }}
                     >
-                      Afficher tous les salons
+                      {f.label}
                     </button>
-                  )}
+                  );
+                })}
+              </div>
+
+              {loadingSalons ? (
+                <div style={{ padding: '44px', textAlign: 'center', color: '#6b7280', fontSize: '14px', backgroundColor: '#f9fafb', borderRadius: '16px', border: '1px solid #e5e7eb' }}>
+                  Chargement des salons partenaires...
+                </div>
+              ) : salonsFiltresAccueil.length === 0 ? (
+                <div style={{ padding: '36px', textAlign: 'center', color: '#4b5563', fontSize: '14px', backgroundColor: '#f9fafb', borderRadius: '16px', border: '1px solid #e5e7eb' }}>
+                  Aucun salon ne correspond à ce filtre immédiat.
+                  <button
+                    type="button"
+                    onClick={() => { setFiltreDispo('TOUS'); setSearchVille(''); lancerRecherche('', searchQ, chipActif); }}
+                    style={{ marginLeft: '10px', background: 'none', border: 'none', color: '#111827', fontWeight: '700', textDecoration: 'underline', cursor: 'pointer' }}
+                  >
+                    Réinitialiser les filtres
+                  </button>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(270px, 1fr))', gap: '20px' }}>
-                  {salons.slice(0, 4).map(s => (
-                    <SalonMarketplaceCard key={s.id_salon} salon={s} isMobile={isMobile} favorisIds={favorisIds} onToggleFavori={handleToggleFavori} />
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(270px, 1fr))', gap: '22px' }}>
+                  {salonsFiltresAccueil.slice(0, 4).map(s => (
+                    <SalonMarketplaceCard
+                      key={s.id_salon}
+                      salon={s}
+                      isMobile={isMobile}
+                      favorisIds={favorisIds}
+                      onToggleFavori={handleToggleFavori}
+                      onSlotsLoaded={handleSlotsLoaded}
+                    />
                   ))}
                 </div>
               )}
             </div>
 
-            {/* SECTION 2 : CARTE DE FRANCE INTERACTIVE ÉPURÉE (BLANC, NOIR & GRIS) */}
+            {/* 3. OPTION B : EXPLORATEUR PAR GRANDES MÉTROPOLES (SANS CARTE ARTIFICIELLE NI ADRESSES BRUTES) */}
             <div style={{
-              backgroundColor: '#ffffff',
+              backgroundColor: '#f8fafc',
               borderRadius: '20px',
-              border: '1px solid #e5e7eb',
-              padding: isMobile ? '24px 18px' : '40px 44px',
-              boxShadow: '0 8px 30px rgba(0,0,0,0.03)'
+              border: '1px solid #e2e8f0',
+              padding: isMobile ? '26px 18px' : '40px 44px',
+              marginBottom: '56px'
             }}>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 1fr', gap: isMobile ? '28px' : '48px', alignItems: 'center' }}>
-
-                {/* Colonne Gauche : Carte de France Vectorielle Interactive */}
-                <div style={{ position: 'relative', width: '100%', maxWidth: '440px', margin: '0 auto', aspectRatio: '1 / 1', backgroundColor: '#f8fafc', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '16px', boxSizing: 'border-box' }}>
-                  <svg viewBox="0 0 500 500" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
-                    {/* Contour Géographique de la France Métropolitaine (Blanc & Bordure Gris/Noir) */}
-                    <path
-                      d="M 255,28 L 285,36 L 315,62 L 368,78 L 430,115 L 442,148 L 415,198 L 418,242 L 438,278 L 425,322 L 448,365 L 415,402 L 362,422 L 315,410 L 285,438 L 235,452 L 170,425 L 138,402 L 152,335 L 132,265 L 105,222 L 58,185 L 62,152 L 125,148 L 145,108 L 195,98 L 215,58 Z"
-                      fill="#ffffff"
-                      stroke="#111827"
-                      strokeWidth="2.2"
-                      strokeLinejoin="round"
-                    />
-                    {/* Lignes internes minimalistes */}
-                    <line x1="255" y1="28" x2="260" y2="445" stroke="#f1f5f9" strokeWidth="1.5" />
-                    <line x1="60" y1="220" x2="435" y2="220" stroke="#f1f5f9" strokeWidth="1.5" />
-                    <line x1="138" y1="335" x2="430" y2="335" stroke="#f1f5f9" strokeWidth="1.5" />
-                  </svg>
-
-                  {/* Points des Villes Interactifs sur la Carte */}
-                  {[
-                    { nom: 'Lille', top: '11%', left: '53%' },
-                    { nom: 'Paris', top: '27%', left: '51%' },
-                    { nom: 'Rennes', top: '34%', left: '25%' },
-                    { nom: 'Strasbourg', top: '28%', left: '84%' },
-                    { nom: 'Nantes', top: '45%', left: '26%' },
-                    { nom: 'Besançon', top: '44%', left: '75%' },
-                    { nom: 'Lyon', top: '57%', left: '67%' },
-                    { nom: 'Bordeaux', top: '66%', left: '31%' },
-                    { nom: 'Toulouse', top: '81%', left: '45%' },
-                    { nom: 'Montpellier', top: '81%', left: '61%' },
-                    { nom: 'Marseille', top: '83%', left: '72%' },
-                    { nom: 'Nice', top: '78%', left: '84%' }
-                  ].map(pt => {
-                    const estSelectionnee = searchVille.toLowerCase() === pt.nom.toLowerCase();
-                    return (
-                      <button
-                        key={pt.nom}
-                        type="button"
-                        onClick={() => {
-                          setSearchVille(pt.nom);
-                          setModeVue('RESULTATS');
-                          lancerRecherche(pt.nom, searchQ, chipActif);
-                        }}
-                        style={{
-                          position: 'absolute',
-                          top: pt.top,
-                          left: pt.left,
-                          transform: 'translate(-50%, -50%)',
-                          background: 'none',
-                          border: 'none',
-                          padding: 0,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '3px',
-                          zIndex: estSelectionnee ? 10 : 5
-                        }}
-                      >
-                        <span style={{
-                          width: estSelectionnee ? '13px' : '10px',
-                          height: estSelectionnee ? '13px' : '10px',
-                          borderRadius: '50%',
-                          backgroundColor: '#111827',
-                          border: '2px solid #ffffff',
-                          boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
-                          transition: 'transform 0.15s ease'
-                        }} />
-                        <span style={{
-                          fontSize: '10.5px',
-                          fontWeight: '700',
-                          color: '#111827',
-                          backgroundColor: 'rgba(255,255,255,0.92)',
-                          padding: '1px 6px',
-                          borderRadius: '4px',
-                          border: '1px solid #e5e7eb',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          {pt.nom}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Colonne Droite : Sélection Rapide par Ville */}
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'flex-end', gap: '12px', marginBottom: '28px' }}>
                 <div>
-                  <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>
+                  <div style={{ fontSize: '11.5px', fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>
                     Réseau National STACK
                   </div>
-                  <h3 style={{ margin: '0 0 12px 0', fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: '#111827', letterSpacing: '-0.02em' }}>
-                    Recherchez par ville
+                  <h3 style={{ margin: 0, fontSize: isMobile ? '22px' : '26px', fontWeight: '800', color: '#111827', letterSpacing: '-0.02em' }}>
+                    Rechercher par grande ville
                   </h3>
-                  <p style={{ margin: '0 0 24px 0', fontSize: '14px', color: '#4b5563', lineHeight: 1.6 }}>
-                    Cliquez directement sur une ville de la carte ou sélectionnez une destination ci-dessous pour découvrir les salons partenaires et leurs créneaux disponibles.
-                  </p>
+                </div>
+                <span style={{ fontSize: '13.5px', color: '#6b7280' }}>
+                  Sélectionnez une métropole pour afficher ses établissements et créneaux disponibles.
+                </span>
+              </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
-                    {(villesPopulaires.length > 0
-                      ? villesPopulaires.slice(0, 8).map(v => v.ville)
-                      : ['Paris', 'Lyon', 'Marseille', 'Strasbourg', 'Bordeaux', 'Toulouse', 'Nantes', 'Lille']
-                    ).map(nomVille => (
-                      <button
-                        key={nomVille}
-                        type="button"
-                        onClick={() => {
-                          setSearchVille(nomVille);
-                          setModeVue('RESULTATS');
-                          lancerRecherche(nomVille, searchQ, chipActif);
-                        }}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '12px 16px',
-                          borderRadius: '10px',
-                          backgroundColor: '#f9fafb',
-                          border: '1px solid #e5e7eb',
-                          color: '#111827',
-                          fontSize: '13.5px',
-                          fontWeight: '700',
-                          cursor: 'pointer',
-                          textAlign: 'left'
-                        }}
-                      >
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nomVille}</span>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-                      </button>
-                    ))}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+                gap: '12px'
+              }}>
+                {grandesMetropoles.map(item => (
+                  <button
+                    key={item.ville}
+                    type="button"
+                    onClick={() => {
+                      setSearchVille(item.ville);
+                      setModeVue('RESULTATS');
+                      lancerRecherche(item.ville, searchQ, chipActif);
+                    }}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '15px 18px',
+                      borderRadius: '12px',
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #e5e7eb',
+                      color: '#111827',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '14.5px', fontWeight: '700', color: '#111827' }}>
+                        {item.ville}
+                      </div>
+                      <div style={{ fontSize: '11.5px', color: '#6b7280', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {item.count > 0 ? `${item.count} établissement${item.count > 1 ? 's' : ''}` : item.region}
+                      </div>
+                    </div>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" style={{ flexShrink: 0 }}><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 4. SECTION : POURQUOI RÉSERVER SUR STACK (3 CARTES MINIMALISTES) */}
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '20px' }}>
+              {[
+                {
+                  titre: 'Créneaux en temps réel',
+                  texte: 'Les disponibilités affichées sont directement reliées au planning de caisse du salon, sans attente ni double réservation.',
+                  icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                },
+                {
+                  titre: 'Rappel SMS & Gestion en 1 clic',
+                  texte: 'Recevez votre confirmation immédiatement et gérez ou déplacez vos rendez-vous depuis votre espace client.',
+                  icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                },
+                {
+                  titre: 'Programme de fidélité intégré',
+                  texte: 'Cumulez automatiquement vos points ou tampons de fidélité dans votre salon habituel à chaque réservation.',
+                  icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                }
+              ].map((card, i) => (
+                <div
+                  key={i}
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '16px',
+                    border: '1px solid #e5e7eb',
+                    padding: '24px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}
+                >
+                  <div style={{
+                    width: '40px', height: '40px', borderRadius: '10px',
+                    backgroundColor: '#f3f4f6', color: '#111827',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    {card.icon}
+                  </div>
+                  <div style={{ fontSize: '16px', fontWeight: '800', color: '#111827' }}>
+                    {card.titre}
+                  </div>
+                  <div style={{ fontSize: '13.5px', color: '#6b7280', lineHeight: 1.55 }}>
+                    {card.texte}
                   </div>
                 </div>
-
-              </div>
+              ))}
             </div>
 
           </section>
