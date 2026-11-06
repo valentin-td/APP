@@ -14,7 +14,11 @@ function extraireVilleDepuisAdresse(adresse) {
         return matchCpVille[2].trim();
     }
     const parts = str.split(',');
-    return parts[parts.length - 1].trim() || 'France';
+    const candidate = parts[parts.length - 1].trim();
+    if (/^\d+/.test(candidate) || /(rue|avenue|boulevard|chemin|place|impasse|allée|route)/i.test(candidate)) {
+        return 'France';
+    }
+    return candidate || 'France';
 }
 
 function calculerSymbolePrix(mediane) {
