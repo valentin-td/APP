@@ -43,7 +43,6 @@ export default function PageReservationPublique({ idSalon }) {
     const tzDate = new Date().toLocaleString("fr-CA", { timeZone: "Europe/Paris" });
     const nowParis = new Date();
     const heuresParis = parseInt(nowParis.toLocaleString("fr-FR", { timeZone: "Europe/Paris", hour: '2-digit', hour12: false }), 10) || 0;
-    // Si l'heure actuelle à Paris dépasse 18h, on pré-sélectionne directement le lendemain
     if (heuresParis >= 18) {
       const demain = new Date();
       demain.setDate(demain.getDate() + 1);
@@ -52,6 +51,8 @@ export default function PageReservationPublique({ idSalon }) {
     return tzDate.slice(0, 10);
   });
   const [creneaux, setCreneaux] = useState([]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [dateReference, setDateReference] = useState(() => new Date()); // Date de base pour générer les 14 jours
   const [loadingCreneaux, setLoadingCreneaux] = useState(false);
   const [creneauSelectionne, setCreneauSelectionne] = useState(null);
 
@@ -400,7 +401,7 @@ export default function PageReservationPublique({ idSalon }) {
   const genererJoursSemaine = () => {
     const jours = [];
     for (let i = 0; i < 14; i++) {
-      const d = new Date();
+      const d = new Date(dateReference); // On utilise dateReference au lieu de Date.now()
       d.setDate(d.getDate() + i);
       const localDateStr = d.toLocaleString("fr-CA", { timeZone: "Europe/Paris" }).slice(0, 10);
       jours.push({
@@ -754,18 +755,26 @@ export default function PageReservationPublique({ idSalon }) {
                             type="button"
                             onClick={() => togglePrestationPanier(p)}
                             style={{
-                              backgroundColor: estDansPanier ? '#111827' : '#ffffff',
-                              color: estDansPanier ? '#ffffff' : '#111827',
-                              border: estDansPanier ? '1px solid #111827' : '1px solid #d1d5db',
+                              backgroundColor: estDansPanier ? '#f9fafb' : '#ffffff',
+                              color: estDansPanier ? '#dc2626' : '#111827',
+                              border: estDansPanier ? '1px solid #e5e7eb' : '1px solid #d1d5db',
                               borderRadius: '8px',
                               padding: '8px 16px',
                               fontSize: '13px',
                               fontWeight: '700',
                               cursor: 'pointer',
-                              transition: 'all 0.15s ease'
+                              transition: 'all 0.15s ease',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px'
                             }}
                           >
-                            {estDansPanier ? "✓ Ajouté" : "Choisir"}
+                            {estDansPanier ? (
+                              <>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                Retirer
+                              </>
+                            ) : "Choisir"}
                           </button>
                         </div>
                       );
@@ -825,9 +834,12 @@ export default function PageReservationPublique({ idSalon }) {
 
                   {/* 2. SUGGESTION "VENTES ADDITIONNELLES" (UP-SELL EXPRESS) */}
                   {suggestionsUpsell.length > 0 && (
-                    <div style={{ backgroundColor: '#fefce8', border: '1px solid #fef08a', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
-                      <div style={{ fontSize: '13.5px', fontWeight: '800', color: '#854d0e', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>✨ Envie de parfaire ce moment ?</span>
+                    <div style={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
+                      <div style={{ fontSize: '13.5px', fontWeight: '800', color: '#111827', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ width: '24px', height: '24px', borderRadius: '6px', backgroundColor: '#111827', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        </div>
+                        <span>Envie de parfaire ce moment ?</span>
                       </div>
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                         {suggestionsUpsell.filter(up => !panierPrestations.some(p => (p.id_article || p.id) === up.id_article)).map(up => (
@@ -837,16 +849,17 @@ export default function PageReservationPublique({ idSalon }) {
                             onClick={() => togglePrestationPanier(up)}
                             style={{
                               backgroundColor: '#ffffff',
-                              border: '1px solid #fde047',
+                              border: '1px solid #d1d5db',
                               borderRadius: '8px',
                               padding: '8px 12px',
                               fontSize: '12.5px',
                               fontWeight: '600',
-                              color: '#713f12',
+                              color: '#374151',
                               cursor: 'pointer',
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: '6px'
+                              gap: '6px',
+                              transition: 'all 0.15s ease'
                             }}
                           >
                             <span>+ {up.nom}</span>
@@ -922,8 +935,40 @@ export default function PageReservationPublique({ idSalon }) {
 
                   {/* 4. DATE ET HORAIRE */}
                   <div style={{ marginBottom: creneauSelectionne ? '24px' : 0 }}>
-                    <div style={{ fontSize: '14.5px', fontWeight: '800', color: '#111827', marginBottom: '12px' }}>
-                      3. Date et heure du rendez-vous
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <div style={{ fontSize: '14.5px', fontWeight: '800', color: '#111827' }}>
+                        3. Date et heure du rendez-vous
+                      </div>
+                      
+                      {/* BOUTON CALENDRIER POUR PLUS TARD */}
+                      <div style={{ position: 'relative' }}>
+                        <button 
+                          type="button" 
+                          onClick={() => setShowDatePicker(!showDatePicker)}
+                          style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', fontWeight: '600' }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          Autre date
+                        </button>
+                        
+                        {showDatePicker && (
+                          <div style={{ position: 'absolute', right: 0, top: '24px', backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10 }}>
+                            <input 
+                              type="date" 
+                              min={new Date().toISOString().slice(0, 10)}
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  const selectedDate = new Date(e.target.value);
+                                  setDateReference(selectedDate);
+                                  setDateChoisie(e.target.value);
+                                  setShowDatePicker(false);
+                                }
+                              }}
+                              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '14px' }}>
