@@ -161,7 +161,9 @@ async function recupererInfosReservationPublique({ pool }, id_salon) {
             heure_fermeture: s.heure_fermeture || '19:00',
             fidelite_type: s.fidelite_type || 'POINTS',
             fidelite_points_seuil: s.fidelite_points_seuil || 100,
-            fidelite_tampons_seuil: s.fidelite_tampons_seuil || 10
+            fidelite_tampons_seuil: s.fidelite_tampons_seuil || 10,
+            logo_url: s.logo_url || null,
+            photos_salon: Array.isArray(s.photos_salon) ? s.photos_salon : (typeof s.photos_salon === 'string' ? JSON.parse(s.photos_salon || '[]') : [])
         },
         prestations: prestaRes.rows,
         employes: empRes.rows

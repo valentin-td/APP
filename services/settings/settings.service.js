@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { pool: defaultPool } = require('../../config/db');
 const { chiffrer: defaultChiffrer, dechiffrer: defaultDechiffrer, isPinWeak: defaultIsPinWeak } = require('../auth/auth.service');
@@ -228,10 +229,149 @@ async function mettreAJourConfigurationSalon(
     return { message: "Paramètres enregistrés avec succès !" };
 }
 
+/**
+ * Upload d'un logo ou d'une photo de vitrine vers Cloudflare R2 et mise à jour en BDD
+ */
+async function uploaderGalerieSalon({ pool: p, s3Client, PutObjectCommand }, { id_salon, role, type, file }) {
+    if (role !== 'gerant') {
+        const err = new Error("Seul le gérant peut modifier les visuels de l'établissement.");
+        err.status = 403;
+        throw err;
+    }
+
+    if (!file || !file.buffer) {
+        const err = new Error("Aucun fichier image valide fourni.");
+        err.status = 400;
+        throw err;
+    }
+
+    const typeVisuel = type === 'logo' ? 'logo' : 'photo';
+    const dbPool = p || pool;
+
+    const ext = file.mimetype.includes('png') ? 'png' : file.mimetype.includes('webp') ? 'webp' : 'jpg';
+    const cleR2 = `salons/${id_salon}/vitrine/${typeVisuel}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+
+    let urlFinale = null;
+
+    if (process.env.R2_BUCKET_NAME && s3Client && PutObjectCommand) {
+        try {
+            await s3Client.send(new PutObjectCommand({
+                Bucket: process.env.R2_BUCKET_NAME,
+                Key: cleR2,
+                Body: file.buffer,
+                ContentType: file.mimetype
+            }));
+
+            if (process.env.R2_PUBLIC_URL) {
+                urlFinale = `${process.env.R2_PUBLIC_URL.replace(/\/$/, '')}/${cleR2}`;
+            } else {
+                urlFinale = `https://${process.env.R2_BUCKET_NAME}.r2.cloudflarestorage.com/${cleR2}`;
+            }
+        } catch (r2Err) {
+            console.error("⚠️ [R2 Upload Galerie] Échec envoi R2, repli local :", r2Err.message);
+        }
+    }
+
+    if (!urlFinale) {
+        urlFinale = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+    }
+
+    let logo_url = null;
+    let photos_salon = [];
+
+    if (typeVisuel === 'logo') {
+        const res = await dbPool.query(
+            'UPDATE configuration_salon SET logo_url = $1 WHERE id_salon = $2 RETURNING logo_url, photos_salon',
+            [urlFinale, id_salon]
+        );
+        logo_url = res.rows[0]?.logo_url || urlFinale;
+        const rawPhotos = res.rows[0]?.photos_salon;
+        photos_salon = Array.isArray(rawPhotos) ? rawPhotos : (typeof rawPhotos === 'string' ? JSON.parse(rawPhotos || '[]') : []);
+    } else {
+        const curRes = await dbPool.query('SELECT logo_url, photos_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        logo_url = curRes.rows[0]?.logo_url || null;
+        const rawPhotos = curRes.rows[0]?.photos_salon;
+        const currentList = Array.isArray(rawPhotos) ? [...rawPhotos] : (typeof rawPhotos === 'string' ? JSON.parse(rawPhotos || '[]') : []);
+
+        if (currentList.length >= 5) {
+            const err = new Error("Limite atteinte : vous ne pouvez pas ajouter plus de 5 photos dans votre galerie.");
+            err.status = 400;
+            throw err;
+        }
+
+        currentList.push(urlFinale);
+        const updRes = await dbPool.query(
+            'UPDATE configuration_salon SET photos_salon = $1 WHERE id_salon = $2 RETURNING photos_salon',
+            [JSON.stringify(currentList), id_salon]
+        );
+        const updatedRaw = updRes.rows[0]?.photos_salon;
+        photos_salon = Array.isArray(updatedRaw) ? updatedRaw : (typeof updatedRaw === 'string' ? JSON.parse(updatedRaw || '[]') : currentList);
+    }
+
+    return {
+        success: true,
+        message: typeVisuel === 'logo' ? "Logo mis à jour avec succès !" : "Photo ajoutée à la galerie avec succès !",
+        logo_url,
+        photos_salon
+    };
+}
+
+/**
+ * Suppression d'un logo ou d'une photo de la galerie
+ */
+async function supprimerElementGalerie({ pool: p }, { id_salon, role, type, index, url }) {
+    if (role !== 'gerant') {
+        const err = new Error("Seul le gérant peut modifier les visuels de l'établissement.");
+        err.status = 403;
+        throw err;
+    }
+
+    const dbPool = p || pool;
+    let logo_url = null;
+    let photos_salon = [];
+
+    if (type === 'logo') {
+        const res = await dbPool.query(
+            'UPDATE configuration_salon SET logo_url = NULL WHERE id_salon = $1 RETURNING logo_url, photos_salon',
+            [id_salon]
+        );
+        logo_url = null;
+        const rawPhotos = res.rows[0]?.photos_salon;
+        photos_salon = Array.isArray(rawPhotos) ? rawPhotos : (typeof rawPhotos === 'string' ? JSON.parse(rawPhotos || '[]') : []);
+    } else {
+        const curRes = await dbPool.query('SELECT logo_url, photos_salon FROM configuration_salon WHERE id_salon = $1', [id_salon]);
+        logo_url = curRes.rows[0]?.logo_url || null;
+        const rawPhotos = curRes.rows[0]?.photos_salon;
+        let currentList = Array.isArray(rawPhotos) ? [...rawPhotos] : (typeof rawPhotos === 'string' ? JSON.parse(rawPhotos || '[]') : []);
+
+        if (typeof index === 'number' && index >= 0 && index < currentList.length) {
+            currentList.splice(index, 1);
+        } else if (url) {
+            currentList = currentList.filter(u => u !== url);
+        }
+
+        const updRes = await dbPool.query(
+            'UPDATE configuration_salon SET photos_salon = $1 WHERE id_salon = $2 RETURNING photos_salon',
+            [JSON.stringify(currentList), id_salon]
+        );
+        const updatedRaw = updRes.rows[0]?.photos_salon;
+        photos_salon = Array.isArray(updatedRaw) ? updatedRaw : (typeof updatedRaw === 'string' ? JSON.parse(updatedRaw || '[]') : currentList);
+    }
+
+    return {
+        success: true,
+        message: type === 'logo' ? "Logo supprimé avec succès." : "Photo supprimée de la galerie.",
+        logo_url,
+        photos_salon
+    };
+}
+
 module.exports = {
     initSettingsService,
     recupererChecklistOnboarding,
     mettreAJourChecklistOnboarding,
     recupererConfigurationSalon,
-    mettreAJourConfigurationSalon
+    mettreAJourConfigurationSalon,
+    uploaderGalerieSalon,
+    supprimerElementGalerie
 };

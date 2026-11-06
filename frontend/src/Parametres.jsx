@@ -32,10 +32,15 @@ const ICONS = {
   back: ico(<><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>),
   chevron: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
   person: <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21c0-4.2 3.6-6.8 8.5-6.8s8.5 2.6 8.5 6.8z"/></svg>,
+  camera: ico(<><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></>),
+  upload: ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>),
+  trash: ico(<><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>),
+  plus: ico(<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>),
 };
 
 const TITRES = {
   identite: 'Identité & Légal (NF525)',
+  galerie: 'Vitrine & Galerie Photos',
   securite: 'Sécurité & Codes PIN',
   fidelite: 'Programme de fidélité',
   sms: 'Fidélisation (SMS Auto)',
@@ -79,6 +84,7 @@ export default function Parametres({
     ] },
     { titre: 'Salon', lignes: [
       { id: 'identite', icone: ICONS.shield, label: 'Identité & Légal', valeur: statut(configSalon.siret) },
+      { id: 'galerie', icone: ICONS.camera, label: 'Vitrine & Galerie Photos', valeur: `${(Array.isArray(configSalon.photos_salon) ? configSalon.photos_salon : []).length} / 5 photos` },
       { id: 'abonnement', icone: ICONS.card, label: 'Mon Abonnement & Forfait', valeur: configSalon.plan_actuel === 'PREMIUM_TRIAL' ? 'Essai 30j' : (configSalon.plan_actuel || 'PREMIUM') },
       { id: 'securite', icone: ICONS.lock, label: 'Sécurité', valeur: configSalon.securite_pin_salon_active !== false ? 'Activée' : 'Désactivée' },
       { id: 'horaires', icone: ICONS.calendar, label: "Horaires de l'agenda", valeur: `${configSalon.heure_ouverture || 8}h – ${configSalon.heure_fermeture || 20}h` },
@@ -116,6 +122,88 @@ const groupesBas = [
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [galerieNotice, setGalerieNotice] = useState(null);
+
+  const handleUploadVisuel = async (event, type) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+
+    if (file.size > 5 * 1024 * 1024) {
+      setGalerieNotice({ type: 'error', message: "L'image ne doit pas dépasser 5 Mo." });
+      return;
+    }
+
+    if (type === 'logo') setIsUploadingLogo(true);
+    else setIsUploadingPhoto(true);
+    setGalerieNotice(null);
+
+    try {
+      const tokenLocal = localStorage.getItem('token_api') || localStorage.getItem('token') || localStorage.getItem('ui_token');
+      const formData = new FormData();
+      formData.append('type', type);
+      formData.append('file', file);
+
+      const res = await fetch(`${API_URL}/api/parametres/galerie`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {},
+        body: formData
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.erreur || "Erreur lors du téléversement.");
+
+      setConfigSalon(prev => ({
+        ...prev,
+        logo_url: data.logo_url !== undefined ? data.logo_url : prev.logo_url,
+        photos_salon: Array.isArray(data.photos_salon) ? data.photos_salon : prev.photos_salon
+      }));
+      setGalerieNotice({ type: 'success', message: data.message || "Visuel enregistré avec succès !" });
+      setTimeout(() => setGalerieNotice(null), 4000);
+    } catch (err) {
+      setGalerieNotice({ type: 'error', message: err.message || "Erreur réseau lors de l'envoi." });
+    } finally {
+      setIsUploadingLogo(false);
+      setIsUploadingPhoto(false);
+    }
+  };
+
+  const handleSupprimerVisuel = async (type, index = null) => {
+    const confirmation = window.confirm(
+      type === 'logo'
+        ? "Confirmez-vous la suppression du logo du salon ?"
+        : "Confirmez-vous la suppression de cette photo de la galerie ?"
+    );
+    if (!confirmation) return;
+
+    setGalerieNotice(null);
+    try {
+      const tokenLocal = localStorage.getItem('token_api') || localStorage.getItem('token') || localStorage.getItem('ui_token');
+      const res = await fetch(`${API_URL}/api/parametres/galerie`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenLocal ? { 'Authorization': `Bearer ${tokenLocal}` } : {})
+        },
+        body: JSON.stringify({ type, index })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.erreur || "Erreur lors de la suppression.");
+
+      setConfigSalon(prev => ({
+        ...prev,
+        logo_url: data.logo_url !== undefined ? data.logo_url : (type === 'logo' ? null : prev.logo_url),
+        photos_salon: Array.isArray(data.photos_salon) ? data.photos_salon : prev.photos_salon
+      }));
+      setGalerieNotice({ type: 'success', message: data.message || "Élément supprimé avec succès." });
+      setTimeout(() => setGalerieNotice(null), 4000);
+    } catch (err) {
+      setGalerieNotice({ type: 'error', message: err.message || "Erreur lors de la suppression." });
+    }
+  };
 
   const handleSave = async () => {
       setIsSaving(true);
@@ -393,8 +481,317 @@ const groupesBas = [
     }
   };
 
+  const renderGalerie = () => {
+    const photos = Array.isArray(configSalon.photos_salon) ? configSalon.photos_salon : [];
+    const logoUrl = configSalon.logo_url;
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {galerieNotice && (
+          <div style={{
+            padding: '12px 16px',
+            borderRadius: '10px',
+            fontSize: '13.5px',
+            fontWeight: '600',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            backgroundColor: galerieNotice.type === 'error' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+            color: galerieNotice.type === 'error' ? '#ef4444' : '#10b981',
+            border: `1px solid ${galerieNotice.type === 'error' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.25)'}`
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {galerieNotice.type === 'error' ? (
+                <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>
+              ) : (
+                <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>
+              )}
+            </svg>
+            <span>{galerieNotice.message}</span>
+          </div>
+        )}
+
+        {/* SECTION 1 : LOGO DU SALON */}
+        <div className="carte scan-carte">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
+            <div>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>Logo de l'établissement</h3>
+              <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                Ce logo apparaîtra en haut de votre vitrine de réservation publique et sur vos documents.
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+            <div style={{
+              width: '88px',
+              height: '88px',
+              borderRadius: '16px',
+              backgroundColor: 'var(--bg-hover)',
+              border: '1px solid var(--border-color)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              flexShrink: 0,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+            }}>
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo salon" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              ) : (
+                <div style={{ color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '28px', height: '28px', display: 'flex' }}>{ICONS.camera}</span>
+                  <span style={{ fontSize: '10.5px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Aucun</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 16px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--text-main)',
+                color: 'var(--bg-main)',
+                fontSize: '13px',
+                fontWeight: '600',
+                cursor: isUploadingLogo ? 'wait' : 'pointer',
+                opacity: isUploadingLogo ? 0.7 : 1,
+                border: 'none',
+                width: 'fit-content'
+              }}>
+                <span style={{ width: '15px', height: '15px', display: 'flex' }}>{ICONS.upload}</span>
+                <span>{isUploadingLogo ? "Téléversement..." : (logoUrl ? "Remplacer le logo" : "Ajouter un logo")}</span>
+                <input
+                  type="file"
+                  accept="image/png, image/jpeg, image/webp"
+                  onChange={(e) => handleUploadVisuel(e, 'logo')}
+                  disabled={isUploadingLogo}
+                  style={{ display: 'none' }}
+                />
+              </label>
+
+              {logoUrl && (
+                <button
+                  type="button"
+                  onClick={() => handleSupprimerVisuel('logo')}
+                  disabled={isUploadingLogo}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '7px 12px',
+                    borderRadius: '8px',
+                    backgroundColor: 'transparent',
+                    color: '#ef4444',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    width: 'fit-content'
+                  }}
+                >
+                  <span style={{ width: '13px', height: '13px', display: 'flex' }}>{ICONS.trash}</span>
+                  <span>Supprimer le logo</span>
+                </button>
+              )}
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Format PNG, JPG ou WEBP (max 5 Mo)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 2 : GALERIE PHOTOS (MAX 5) */}
+        <div className="carte scan-carte">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+            <div>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
+                Galerie de l'établissement
+              </h3>
+              <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                Alimente la vitrine et la galerie photo façon Planity sur votre page publique ({photos.length} / 5 photos).
+              </span>
+            </div>
+
+            {photos.length < 5 && (
+              <label style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 16px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--text-main)',
+                color: 'var(--bg-main)',
+                fontSize: '13px',
+                fontWeight: '600',
+                cursor: isUploadingPhoto ? 'wait' : 'pointer',
+                opacity: isUploadingPhoto ? 0.7 : 1,
+                border: 'none'
+              }}>
+                <span style={{ width: '15px', height: '15px', display: 'flex' }}>{ICONS.plus}</span>
+                <span>{isUploadingPhoto ? "Téléversement..." : "Ajouter une photo"}</span>
+                <input
+                  type="file"
+                  accept="image/png, image/jpeg, image/webp"
+                  onChange={(e) => handleUploadVisuel(e, 'photo')}
+                  disabled={isUploadingPhoto}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            )}
+          </div>
+
+          {photos.length === 0 ? (
+            <div style={{
+              textAlign: 'center',
+              padding: '36px 16px',
+              border: '2px dashed var(--border-color)',
+              borderRadius: '14px',
+              backgroundColor: 'var(--bg-hover)',
+              marginTop: '10px'
+            }}>
+              <div style={{ width: '38px', height: '38px', margin: '0 auto 10px', color: 'var(--text-secondary)' }}>
+                {ICONS.camera}
+              </div>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', marginBottom: '4px' }}>
+                Aucune photo dans votre vitrine
+              </div>
+              <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', maxWidth: '380px', margin: '0 auto 16px' }}>
+                Ajoutez jusqu'à 5 clichés de votre salon pour rassurer et séduire vos clients lors de la prise de rendez-vous en ligne.
+              </div>
+              <label style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 18px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--text-main)',
+                color: 'var(--bg-main)',
+                fontSize: '13px',
+                fontWeight: '600',
+                cursor: isUploadingPhoto ? 'wait' : 'pointer',
+                border: 'none'
+              }}>
+                <span style={{ width: '15px', height: '15px', display: 'flex' }}>{ICONS.plus}</span>
+                <span>{isUploadingPhoto ? "Téléversement..." : "Ajouter la première photo"}</span>
+                <input
+                  type="file"
+                  accept="image/png, image/jpeg, image/webp"
+                  onChange={(e) => handleUploadVisuel(e, 'photo')}
+                  disabled={isUploadingPhoto}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
+          ) : (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+              gap: '14px',
+              marginTop: '14px'
+            }}>
+              {photos.map((url, idx) => (
+                <div key={idx} style={{
+                  position: 'relative',
+                  height: '140px',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--bg-hover)'
+                }}>
+                  <img src={url} alt={`Photo ${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+
+                  {idx === 0 && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '8px',
+                      left: '8px',
+                      backgroundColor: 'rgba(17, 24, 39, 0.85)',
+                      color: '#ffffff',
+                      fontSize: '10px',
+                      fontWeight: '700',
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                      padding: '3px 8px',
+                      borderRadius: '6px',
+                      backdropFilter: 'blur(4px)'
+                    }}>
+                      Couverture
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleSupprimerVisuel('photo', idx)}
+                    style={{
+                      position: 'absolute',
+                      top: '8px',
+                      right: '8px',
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '8px',
+                      backgroundColor: 'rgba(17, 24, 39, 0.75)',
+                      color: '#ef4444',
+                      border: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      backdropFilter: 'blur(4px)',
+                      transition: 'all 0.15s ease'
+                    }}
+                    title="Supprimer cette photo"
+                  >
+                    <span style={{ width: '14px', height: '14px', display: 'flex' }}>{ICONS.trash}</span>
+                  </button>
+                </div>
+              ))}
+
+              {photos.length < 5 && (
+                <label style={{
+                  height: '140px',
+                  borderRadius: '12px',
+                  border: '2px dashed var(--border-color)',
+                  backgroundColor: 'var(--bg-hover)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  cursor: isUploadingPhoto ? 'wait' : 'pointer',
+                  transition: 'background-color 0.2s ease',
+                  padding: '12px',
+                  textAlign: 'center'
+                }}>
+                  <div style={{ width: '24px', height: '24px', color: 'var(--text-secondary)' }}>
+                    {isUploadingPhoto ? ICONS.upload : ICONS.plus}
+                  </div>
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-main)' }}>
+                    {isUploadingPhoto ? "Envoi en cours..." : "Ajouter une photo"}
+                  </span>
+                  <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>
+                    {5 - photos.length} restante{5 - photos.length > 1 ? 's' : ''}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/png, image/jpeg, image/webp"
+                    onChange={(e) => handleUploadVisuel(e, 'photo')}
+                    disabled={isUploadingPhoto}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderSection = (id) => {
     switch (id) {
+      case 'galerie': return renderGalerie();
       case 'identite': return (<>
           <div className="carte scan-carte">
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '16px' }}>Ces informations sont obligatoires pour générer votre Liasse Comptable Légale (NF525).</span>

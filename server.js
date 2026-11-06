@@ -41,7 +41,9 @@ const {
     recupererChecklistOnboarding,
     mettreAJourChecklistOnboarding,
     recupererConfigurationSalon,
-    mettreAJourConfigurationSalon
+    mettreAJourConfigurationSalon,
+    uploaderGalerieSalon,
+    supprimerElementGalerie
 } = require('./services/settings/settings.service');
 const {
     initClientsService,
@@ -232,6 +234,7 @@ const OpenAI = require('openai');
 const webpush = require('web-push');
 const pdfParse = require('pdf-parse');
 const Sentry = require('@sentry/node');
+const multer = require('multer');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
@@ -550,6 +553,59 @@ app.get('/api/settings', verifierToken, async (req, res) => {
         res.json(data);
     } catch (e) {
         res.status(e.status || 500).json({ erreur: e.message });
+    }
+});
+
+// --- GESTION VITRINE & GALERIE DU SALON (LOGO & JUSQU'À 5 PHOTOS VERS CLOUDFLARE R2) ---
+const uploadGalerie = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }, // Max 5 Mo par image
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype && file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error("Seules les images (PNG, JPG, WEBP) sont acceptées."));
+        }
+    }
+});
+
+const handleUploadGalerieMiddleware = (req, res, next) => {
+    uploadGalerie.single('file')(req, res, (err) => {
+        if (err instanceof multer.MulterError) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({ erreur: "L'image dépasse la limite maximale autorisée (5 Mo)." });
+            }
+            return res.status(400).json({ erreur: `Erreur téléversement : ${err.message}` });
+        } else if (err) {
+            return res.status(400).json({ erreur: err.message });
+        }
+        next();
+    });
+};
+
+app.put('/api/parametres/galerie', verifierToken, handleUploadGalerieMiddleware, async (req, res) => {
+    try {
+        const { type } = req.body;
+        const result = await uploaderGalerieSalon(
+            { pool, s3Client, PutObjectCommand },
+            { id_salon: req.user.id_salon, role: req.user.role, type, file: req.file }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors du téléversement du visuel." });
+    }
+});
+
+app.delete('/api/parametres/galerie', verifierToken, async (req, res) => {
+    try {
+        const { type, index, url } = req.body;
+        const result = await supprimerElementGalerie(
+            { pool },
+            { id_salon: req.user.id_salon, role: req.user.role, type, index, url }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la suppression du visuel." });
     }
 });
 

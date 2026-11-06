@@ -265,7 +265,9 @@ async function initDatabaseSchema({ webpush } = {}) {
       ADD COLUMN IF NOT EXISTS statut_onboarding VARCHAR(30) DEFAULT 'EN_COURS',
       ADD COLUMN IF NOT EXISTS est_bac_a_sable BOOLEAN DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS type_bac_a_sable VARCHAR(30) DEFAULT NULL,
-      ADD COLUMN IF NOT EXISTS date_expiration_sandbox TIMESTAMP DEFAULT NULL;
+      ADD COLUMN IF NOT EXISTS date_expiration_sandbox TIMESTAMP DEFAULT NULL,
+      ADD COLUMN IF NOT EXISTS logo_url TEXT,
+      ADD COLUMN IF NOT EXISTS photos_salon JSONB DEFAULT '[]'::jsonb;
     `);
 
     // Gestion des clés VAPID
