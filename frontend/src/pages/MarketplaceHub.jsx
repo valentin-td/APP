@@ -28,9 +28,9 @@ import { isTokenExpired } from '../utils/auth';
           ) : (
             <div style={{ fontSize: '12px', fontWeight: '600', color: '#9ca3af', textAlign: 'center', padding: '8px 0' }}>Aucun créneau immédiat</div>
           )}
-       
+        </div>
       </div>
-  
+    </div>
   );
 }
 
