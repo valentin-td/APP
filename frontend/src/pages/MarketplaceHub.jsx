@@ -403,7 +403,7 @@ export default function MarketplaceHub() {
       </header>
 
       {/* =================================================================== */}
-      {/* VUE 1 : PAGE D'ACCUEIL MARKETPLACE (DÉGRADÉ PREMIUM + CARTE FRANCE) */}
+      {/* VUE 1 : PAGE D'ACCUEIL MARKETPLACE (DÉGRADÉ PREMIUM + OPTION B)     */}
       {/* =================================================================== */}
       {modeVue === 'ACCUEIL' ? (
         <>
@@ -732,7 +732,7 @@ export default function MarketplaceHub() {
               )}
             </div>
 
-            {/* 3. OPTION B : EXPLORATEUR PAR GRANDES MÉTROPOLES (SANS CARTE ARTIFICIELLE NI ADRESSES BRUTES) */}
+            {/* 3. OPTION B : EXPLORATEUR PAR GRANDES MÉTROPOLES (SANS CARTE GÉOMÉTRIQUE) */}
             <div style={{
               backgroundColor: '#f8fafc',
               borderRadius: '20px',
