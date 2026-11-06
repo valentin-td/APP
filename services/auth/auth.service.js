@@ -65,10 +65,10 @@ function verifierToken(req, res, next) {
         token = authHeader && authHeader.split(' ')[1]; 
     }
 
-    if (!token) return res.status(401).json({ erreur: "Accès refusé." });
+    if (!token) return res.status(401).json({ erreur: "Session expirée. Veuillez vous reconnecter.", session_expiree: true });
     
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
-        if (err) return res.status(403).json({ erreur: "Token expiré ou invalide." });
+        if (err) return res.status(401).json({ erreur: "Token expiré ou invalide.", session_expiree: true });
         try {
             const conf = await pool.query('SELECT plan_actuel, date_fin_essai FROM configuration_salon WHERE id_salon = $1', [user.id_salon]);
             if (conf.rowCount > 0) {

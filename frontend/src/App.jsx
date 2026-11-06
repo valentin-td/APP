@@ -6,7 +6,7 @@ import PricingModal from './PricingModal';
 import { API_URL } from './api/config'; 
 
 import './utils/fetchClient';
-import { decodeToken, isPinWeak } from './utils/auth';
+import { decodeToken, isPinWeak, isTokenExpired } from './utils/auth';
 import AvisPublic from './AvisPublic.jsx';
 import PageReservationPublique from './pages/ReservationPublique.jsx';
 import ThemeToggleComponent from './components/common/ThemeToggle.jsx';
@@ -106,15 +106,19 @@ function App() {
   const handleFetchError = async (res) => {
       const data = await res.json().catch(() => ({})); 
 
+      if (
+          res.status === 401 ||
+          data.session_expiree ||
+          (data.erreur && (data.erreur.includes('expiré') || data.erreur.includes('invalide') || data.erreur.includes('Session expirée')))
+      ) { 
+          seDeconnecter(); 
+          throw new Error("Session expirée. Veuillez vous reconnecter."); 
+      } 
       if (res.status === 403 && data.require_upsell) {
           throw new Error("Forfait insuffisant");
       }
       if (res.status === 403 && !data.require_upsell) {
           throw new Error(data.erreur || "Accès refusé");
-      }
-      if (res.status === 401) { 
-          seDeconnecter(); 
-          throw new Error("Session expirée"); 
       } 
       if (res.status === 402) { 
           setIsAbonnementInactif(true); 
@@ -192,6 +196,26 @@ function App() {
     setActiveTab: (t) => setActiveTab(t),
     showToast: (m, t) => showToast(m, t)
   });
+
+  // Détection proactive de session expirée (au retour sur l'onglet ou après mise en veille)
+  useEffect(() => {
+    const verifierSession = () => {
+      const storedToken = localStorage.getItem('token') || localStorage.getItem('ui_token') || localStorage.getItem('token_api');
+      if (storedToken && isTokenExpired(storedToken)) {
+        seDeconnecter();
+      }
+    };
+
+    window.addEventListener('focus', verifierSession);
+    document.addEventListener('visibilitychange', verifierSession);
+    const timer = setInterval(verifierSession, 30000);
+
+    return () => {
+      window.removeEventListener('focus', verifierSession);
+      document.removeEventListener('visibilitychange', verifierSession);
+      clearInterval(timer);
+    };
+  }, [token, seDeconnecter]);
 
   // Interception du jeton Sandbox
   useEffect(() => {

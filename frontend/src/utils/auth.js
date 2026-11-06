@@ -37,6 +37,18 @@ export const decodeToken = (t) => {
 };
 
 /**
+ * Vérifie si un token JWT est expiré ou invalide
+ */
+export const isTokenExpired = (t) => {
+  if (!t || typeof t !== 'string') return true;
+  const decoded = decodeToken(t);
+  if (!decoded) return true;
+  if (!decoded.exp) return false;
+  // Marge de 10 secondes pour anticiper l'expiration
+  return (decoded.exp * 1000) <= (Date.now() + 10000);
+};
+
+/**
  * Détecte les codes PIN trop faibles (séquentiels ou répétitifs) selon les règles de conformité
  */
 export const isPinWeak = (pin) => {

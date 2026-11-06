@@ -504,10 +504,10 @@ app.post('/api/creer-checkout', async (req, res) => {
         const authHeader = req.headers['authorization'];
         token = authHeader && authHeader.split(' ')[1];
     }
-    if (!token) return res.status(401).json({ erreur: "Accès refusé." });
+    if (!token) return res.status(401).json({ erreur: "Session expirée. Veuillez vous reconnecter.", session_expiree: true });
 
     jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
-        if (err) return res.status(403).json({ erreur: "Token invalide." });
+        if (err) return res.status(401).json({ erreur: "Token expiré ou invalide.", session_expiree: true });
         try {
             const origin = req.headers.origin || process.env.FRONTEND_URL;
             const data = await creerCheckoutSession({ pool, stripe, legal }, { user, body: req.body, origin });
@@ -606,6 +606,28 @@ app.delete('/api/parametres/galerie', verifierToken, async (req, res) => {
         res.json(result);
     } catch (e) {
         res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la suppression du visuel." });
+    }
+});
+
+// --- ACCÈS PUBLIC AUX MÉDIAS DU SALON (STREAMING DEPUIS R2 AVEC CACHE) ---
+app.get('/api/public/media/*', async (req, res) => {
+    try {
+        const cle = req.params[0];
+        if (!cle || !process.env.R2_BUCKET_NAME || !s3Client) {
+            return res.status(404).send("Média non disponible.");
+        }
+        const cmd = new GetObjectCommand({
+            Bucket: process.env.R2_BUCKET_NAME,
+            Key: cle
+        });
+        const r2Res = await s3Client.send(cmd);
+        if (r2Res.ContentType) {
+            res.setHeader('Content-Type', r2Res.ContentType);
+        }
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        r2Res.Body.pipe(res);
+    } catch (e) {
+        res.status(404).send("Média introuvable.");
     }
 });
 

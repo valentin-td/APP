@@ -3,6 +3,8 @@
  * Gestion de l'agenda salon, des créneaux, réservations publiques en ligne et flux iCal
  */
 
+const { normaliserUrlMedia } = require('../settings/settings.service');
+
 /**
  * Création d'un rendez-vous interne avec détection de collision et d'absence
  */
@@ -151,6 +153,9 @@ async function recupererInfosReservationPublique({ pool }, id_salon) {
         [id_salon]
     );
 
+    const rawPhotos = s.photos_salon;
+    const listPhotos = Array.isArray(rawPhotos) ? rawPhotos : (typeof rawPhotos === 'string' ? JSON.parse(rawPhotos || '[]') : []);
+
     return {
         salon: {
             id_salon: s.id_salon,
@@ -162,8 +167,8 @@ async function recupererInfosReservationPublique({ pool }, id_salon) {
             fidelite_type: s.fidelite_type || 'POINTS',
             fidelite_points_seuil: s.fidelite_points_seuil || 100,
             fidelite_tampons_seuil: s.fidelite_tampons_seuil || 10,
-            logo_url: s.logo_url || null,
-            photos_salon: Array.isArray(s.photos_salon) ? s.photos_salon : (typeof s.photos_salon === 'string' ? JSON.parse(s.photos_salon || '[]') : [])
+            logo_url: normaliserUrlMedia(s.logo_url),
+            photos_salon: listPhotos.map(normaliserUrlMedia).filter(Boolean)
         },
         prestations: prestaRes.rows,
         employes: empRes.rows

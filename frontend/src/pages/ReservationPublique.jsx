@@ -334,24 +334,24 @@ export default function PageReservationPublique({ idSalon }) {
         {photosSalon.length >= 3 ? (
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1fr 1fr', gridTemplateRows: isMobile ? '240px' : '185px 185px', gap: '12px', marginBottom: '36px', borderRadius: '16px', overflow: 'hidden' }}>
             <div style={{ gridRow: isMobile ? 'span 1' : 'span 2', position: 'relative', overflow: 'hidden', borderRadius: '14px', backgroundColor: '#111827' }}>
-              <img src={photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src={photosSalon[0]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             </div>
             {!isMobile && (
               <>
                 <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
-                  <img src={photosSalon[1]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={photosSalon[1]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 </div>
                 <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
-                  <img src={photosSalon[2]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={photosSalon[2]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 </div>
                 <div style={{ overflow: 'hidden', borderRadius: '14px', backgroundColor: '#1f2937' }}>
-                  <img src={photosSalon[3] || photosSalon[1]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={photosSalon[3] || photosSalon[1]} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 </div>
                 <div
                   onClick={() => setGalerieModalOpen(true)}
                   style={{ position: 'relative', overflow: 'hidden', borderRadius: '14px', backgroundColor: '#111827', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                 >
-                  {photosSalon[4] && <img src={photosSalon[4]} alt={nomSalon} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }} />}
+                  {photosSalon[4] && <img src={photosSalon[4]} alt={nomSalon} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(4px) brightness(0.55)' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
                   <span style={{ position: 'relative', zIndex: 2, color: '#ffffff', fontWeight: '600', fontSize: '13.5px' }}>
                     Voir les {photosSalon.length} photos
                   </span>
@@ -381,15 +381,22 @@ export default function PageReservationPublique({ idSalon }) {
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '20px', position: 'relative', zIndex: 2, margin: '24px 0' }}>
-                <div style={{ width: isMobile ? '68px' : '84px', height: isMobile ? '68px' : '84px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.08)', border: '1.5px solid rgba(255,255,255,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 12px 30px rgba(0,0,0,0.25)' }}>
+                <div style={{ width: isMobile ? '68px' : '84px', height: isMobile ? '68px' : '84px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.08)', border: '1.5px solid rgba(255,255,255,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 12px 30px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
                   {infos.salon.logo_url ? (
-                    <img src={infos.salon.logo_url} alt={nomSalon} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '18px' }} />
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
-                      <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.12em', opacity: 0.85 }}>{initialesSalon}</span>
-                    </div>
-                  )}
+                    <img
+                      src={infos.salon.logo_url}
+                      alt={nomSalon}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '18px' }}
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
+                      }}
+                    />
+                  ) : null}
+                  <div style={{ display: infos.salon.logo_url ? 'none' : 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+                    <span style={{ fontSize: '11px', fontWeight: '800', letterSpacing: '0.12em', opacity: 0.85 }}>{initialesSalon}</span>
+                  </div>
                 </div>
                 <div>
                   <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: 1.15 }}>{nomSalon}</div>

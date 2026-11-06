@@ -77,6 +77,13 @@ async function recupererConfigurationSalon({ pool: p, dechiffrer: dechiffFn }, {
         config.comptes_emails = listeMails;
     }
     
+    if (config.logo_url) {
+        config.logo_url = normaliserUrlMedia(config.logo_url);
+    }
+    const rawPhotos = config.photos_salon;
+    const listPhotos = Array.isArray(rawPhotos) ? rawPhotos : (typeof rawPhotos === 'string' ? JSON.parse(rawPhotos || '[]') : []);
+    config.photos_salon = listPhotos.map(normaliserUrlMedia).filter(Boolean);
+
     return config;
 }
 
@@ -230,6 +237,37 @@ async function mettreAJourConfigurationSalon(
 }
 
 /**
+ * Normalise l'URL d'un média (résout les URLs brutes Cloudflare R2 non publiques vers notre proxy public Render)
+ */
+function normaliserUrlMedia(url) {
+    if (!url || typeof url !== 'string') return null;
+    const str = url.trim();
+    if (!str) return null;
+
+    if (str.startsWith('data:image/')) return str;
+
+    const backendUrl = (process.env.BACKEND_URL || 'https://api-salon-backend.onrender.com').replace(/\/$/, '');
+
+    const matchR2 = str.match(/https?:\/\/[^/]+\.r2\.cloudflarestorage\.com\/(.+)$/);
+    if (matchR2) {
+        if (process.env.R2_PUBLIC_URL) {
+            return `${process.env.R2_PUBLIC_URL.replace(/\/$/, '')}/${matchR2[1]}`;
+        }
+        return `${backendUrl}/api/public/media/${matchR2[1]}`;
+    }
+
+    if (str.startsWith('r2://')) {
+        const cle = str.replace('r2://', '');
+        if (process.env.R2_PUBLIC_URL) {
+            return `${process.env.R2_PUBLIC_URL.replace(/\/$/, '')}/${cle}`;
+        }
+        return `${backendUrl}/api/public/media/${cle}`;
+    }
+
+    return str;
+}
+
+/**
  * Upload d'un logo ou d'une photo de vitrine vers Cloudflare R2 et mise à jour en BDD
  */
 async function uploaderGalerieSalon({ pool: p, s3Client, PutObjectCommand }, { id_salon, role, type, file }) {
@@ -265,7 +303,8 @@ async function uploaderGalerieSalon({ pool: p, s3Client, PutObjectCommand }, { i
             if (process.env.R2_PUBLIC_URL) {
                 urlFinale = `${process.env.R2_PUBLIC_URL.replace(/\/$/, '')}/${cleR2}`;
             } else {
-                urlFinale = `https://${process.env.R2_BUCKET_NAME}.r2.cloudflarestorage.com/${cleR2}`;
+                const backendUrl = (process.env.BACKEND_URL || 'https://api-salon-backend.onrender.com').replace(/\/$/, '');
+                urlFinale = `${backendUrl}/api/public/media/${cleR2}`;
             }
         } catch (r2Err) {
             console.error("⚠️ [R2 Upload Galerie] Échec envoi R2, repli local :", r2Err.message);
@@ -311,8 +350,8 @@ async function uploaderGalerieSalon({ pool: p, s3Client, PutObjectCommand }, { i
     return {
         success: true,
         message: typeVisuel === 'logo' ? "Logo mis à jour avec succès !" : "Photo ajoutée à la galerie avec succès !",
-        logo_url,
-        photos_salon
+        logo_url: normaliserUrlMedia(logo_url),
+        photos_salon: photos_salon.map(normaliserUrlMedia).filter(Boolean)
     };
 }
 
@@ -361,8 +400,8 @@ async function supprimerElementGalerie({ pool: p }, { id_salon, role, type, inde
     return {
         success: true,
         message: type === 'logo' ? "Logo supprimé avec succès." : "Photo supprimée de la galerie.",
-        logo_url,
-        photos_salon
+        logo_url: normaliserUrlMedia(logo_url),
+        photos_salon: photos_salon.map(normaliserUrlMedia).filter(Boolean)
     };
 }
 
@@ -373,5 +412,6 @@ module.exports = {
     recupererConfigurationSalon,
     mettreAJourConfigurationSalon,
     uploaderGalerieSalon,
-    supprimerElementGalerie
+    supprimerElementGalerie,
+    normaliserUrlMedia
 };

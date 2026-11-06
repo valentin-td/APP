@@ -110,13 +110,13 @@ const PDFDocument = require('pdfkit');
 // Middleware de sécurité : Vérifie le JWT de l'agent
 const verifierTokenPartner = (req, res, next) => {
     const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: "Token manquant" });
+    if (!authHeader) return res.status(401).json({ error: "Session expirée. Veuillez vous reconnecter.", session_expiree: true });
     const token = authHeader.split(' ')[1];
     try {
         req.agent = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
         next();
     } catch (err) {
-        res.status(401).json({ error: "Token invalide ou expiré" });
+        res.status(401).json({ error: "Token invalide ou expiré", session_expiree: true });
     }
 };
 
