@@ -76,7 +76,7 @@ export default function PageReservationPublique({ idSalon }) {
   }, [idSalon]);
 
   useEffect(() => {
-    if (etapeActive === 3 && prestaChoisie && dateChoisie) {
+    if (prestaChoisie && dateChoisie) {
       setLoadingCreneaux(true);
       setCreneauSelectionne(null);
       const empId = employeChoisi === 'AUTO' ? '' : (employeChoisi || '');
@@ -88,7 +88,7 @@ export default function PageReservationPublique({ idSalon }) {
         })
         .catch(() => setLoadingCreneaux(false));
     }
-  }, [etapeActive, idSalon, prestaChoisie, employeChoisi, dateChoisie]);
+  }, [idSalon, prestaChoisie, employeChoisi, dateChoisie]);
 
   const prestationsParCategorie = useMemo(() => {
     const liste = infos?.prestations || [];
