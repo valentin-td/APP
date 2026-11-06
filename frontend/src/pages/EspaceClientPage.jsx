@@ -311,47 +311,41 @@ export default function EspaceClientPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f7f7f8', color: '#111827', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
 
-      {/* HEADER GLOBAL */}
+      {/* HEADER EXECUTIVE STACK */}
       <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div style={{ maxWidth: '1240px', margin: '0 auto', padding: isMobile ? '14px 16px' : '16px 32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '36px' }}>
-            <div
-              onClick={() => { window.location.href = '/coiffeurs'; }}
-              style={{ fontWeight: '800', fontSize: '19px', letterSpacing: '0.22em', color: '#111827', cursor: 'pointer' }}
-            >
-              STACK
-            </div>
-            {!isMobile && (
-              <nav style={{ display: 'flex', gap: '24px', fontSize: '14px', fontWeight: '500', color: '#111827' }}>
-                {['Coiffeur', 'Barbier', 'Manucure', 'Institut de beauté', 'Bien-être'].map(cat => (
-                  <span
-                    key={cat}
-                    onClick={() => { window.location.href = `/coiffeurs?categorie=${encodeURIComponent(cat)}`; }}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    {cat}
-                  </span>
-                ))}
-              </nav>
-            )}
+        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: isMobile ? '12px 16px' : '16px 32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div
+            onClick={() => { window.location.href = '/coiffeurs'; }}
+            style={{ fontWeight: '800', fontSize: '19px', letterSpacing: '0.22em', color: '#111827', cursor: 'pointer' }}
+          >
+            STACK
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {!isMobile && (
               <button
                 type="button"
                 onClick={() => { window.location.href = '/?pro=1'; }}
-                style={{ backgroundColor: '#f3f4f6', color: '#111827', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+                style={{
+                  background: 'none',
+                  color: '#4b5563',
+                  border: 'none',
+                  fontSize: '13.5px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: '4px'
+                }}
               >
-                Je suis un professionnel de beauté
+                STACK pour les Pros
               </button>
             )}
             <button
               type="button"
               onClick={() => { window.location.href = '/coiffeurs'; }}
-              style={{ backgroundColor: '#1f2328', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '10px 18px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+              style={{ backgroundColor: '#111827', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '10px 18px', fontSize: '13.5px', fontWeight: '700', cursor: 'pointer' }}
             >
-              Rechercher un salon
+              Explorer les salons
             </button>
           </div>
         </div>
