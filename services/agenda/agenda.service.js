@@ -146,7 +146,7 @@ async function recupererInfosReservationPublique({ pool }, id_salon) {
     );
 
     const empRes = await pool.query(
-        `SELECT id_employe, nom, photo_url, role
+        `SELECT id_employe, nom, photo_url, role, COALESCE(expertises, '[]'::jsonb) AS expertises
          FROM employes
          WHERE id_salon = $1
          ORDER BY nom ASC`,
@@ -155,6 +155,41 @@ async function recupererInfosReservationPublique({ pool }, id_salon) {
 
     const rawPhotos = s.photos_salon;
     const listPhotos = Array.isArray(rawPhotos) ? rawPhotos : (typeof rawPhotos === 'string' ? JSON.parse(rawPhotos || '[]') : []);
+
+    // Suggestions Up-Sell express
+    let suggestionsUpsell = [];
+    if (s.upsell_mode === 'MANUEL' && Array.isArray(s.upsell_articles_ids) && s.upsell_articles_ids.length > 0) {
+        const upRes = await pool.query(
+            `SELECT id_article, nom, prix, COALESCE(duree_estimee_minutes, 10) AS duree_estimee_minutes
+             FROM catalogue
+             WHERE id_salon = $1 AND id_article = ANY($2::int[])`,
+            [id_salon, s.upsell_articles_ids]
+        );
+        suggestionsUpsell = upRes.rows;
+    }
+    if (suggestionsUpsell.length === 0) {
+        // Mode automatique par défaut : sélection des prestations courtes (<= 15 min) du catalogue
+        const autoUpRes = await pool.query(
+            `SELECT id_article, nom, prix, COALESCE(duree_estimee_minutes, 10) AS duree_estimee_minutes
+             FROM catalogue
+             WHERE id_salon = $1 AND type_article = 'PRESTATION' AND COALESCE(duree_estimee_minutes, 30) <= 15
+             ORDER BY prix ASC
+             LIMIT 3`,
+            [id_salon]
+        );
+        suggestionsUpsell = autoUpRes.rows;
+        if (suggestionsUpsell.length === 0) {
+            const fallbackUpRes = await pool.query(
+                `SELECT id_article, nom, prix, COALESCE(duree_estimee_minutes, 15) AS duree_estimee_minutes
+                 FROM catalogue
+                 WHERE id_salon = $1 AND type_article = 'PRESTATION'
+                 ORDER BY prix ASC
+                 LIMIT 2`,
+                [id_salon]
+            );
+            suggestionsUpsell = fallbackUpRes.rows;
+        }
+    }
 
     return {
         salon: {
@@ -169,7 +204,12 @@ async function recupererInfosReservationPublique({ pool }, id_salon) {
             fidelite_tampons_seuil: s.fidelite_tampons_seuil || 10,
             logo_url: normaliserUrlMedia(s.logo_url),
             photos_salon: listPhotos.map(normaliserUrlMedia).filter(Boolean),
-            description_salon: s.description_salon || ''
+            description_salon: s.description_salon || '',
+            anti_noshow_actif: s.anti_noshow_actif === true,
+            anti_noshow_pourcentage: s.anti_noshow_pourcentage || 30,
+            anti_noshow_mode_annulation: s.anti_noshow_mode_annulation || 'AVOIR',
+            delai_annulation_heures: s.delai_annulation_heures || 24,
+            upsell_suggestions: suggestionsUpsell
         },
         prestations: prestaRes.rows,
         employes: empRes.rows
@@ -219,9 +259,19 @@ async function calculerCreneauxReservationPublique({ pool }, { id_salon, date, i
     const rdvsRes = await pool.query(
         `SELECT id_employe, date_heure_debut, COALESCE(duree_minutes, 30) AS duree_minutes
          FROM rendez_vous
-         WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date`,
+         WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date AND statut != 'ANNULE'`,
         [id_salon, date]
     );
+
+    // Calcul du temps total déjà réservé par collaborateur (pour privilégier celui ayant le plus de "trous")
+    const occupationParEmploye = {};
+    employesDisposJour.forEach(idEmp => { occupationParEmploye[Number(idEmp)] = 0; });
+    rdvsRes.rows.forEach(r => {
+        const idEmp = Number(r.id_employe);
+        if (occupationParEmploye[idEmp] !== undefined) {
+            occupationParEmploye[idEmp] += (parseInt(r.duree_minutes, 10) || 30) + tempsNettoyage;
+        }
+    });
 
     const creneauxDispos = [];
     const maintenant = new Date();
@@ -234,7 +284,7 @@ async function calculerCreneauxReservationPublique({ pool }, { id_salon, date, i
 
         if (debutSlot <= maintenant) continue;
 
-        const employeLibre = employesDisposJour.find(idEmp => {
+        const employesLibres = employesDisposJour.filter(idEmp => {
             const conflit = rdvsRes.rows.some(r => {
                 if (Number(r.id_employe) !== Number(idEmp)) return false;
                 const dExistant = new Date(String(r.date_heure_debut).replace('Z', ''));
@@ -244,11 +294,15 @@ async function calculerCreneauxReservationPublique({ pool }, { id_salon, date, i
             return !conflit;
         });
 
-        if (employeLibre) {
+        if (employesLibres.length > 0) {
+            // IA d'optimisation de remplissage : attribuer au collaborateur ayant le plus de "trous"
+            employesLibres.sort((a, b) => (occupationParEmploye[Number(a)] || 0) - (occupationParEmploye[Number(b)] || 0));
+            const meilleurEmploye = employesLibres[0];
+
             creneauxDispos.push({
                 heure: `${hh}:${mm}`,
                 date_heure_debut: `${date}T${hh}:${mm}`,
-                id_employe_suggere: employeLibre
+                id_employe_suggere: meilleurEmploye
             });
         }
     }
@@ -284,33 +338,204 @@ async function verifierFideliteReservationPublique({ pool }, { id_salon, telepho
 }
 
 /**
- * Création d'une réservation en ligne par un client avec option acompte Stripe
+ * Envoi d'un email transactionnel de confirmation de rendez-vous via Brevo SMTP API
+ */
+async function envoyerEmailConfirmationRdvBrevo({ pool }, { id_salon, rdv, client, configSalon, employeNom }) {
+    try {
+        const destEmail = rdv.email_client || client?.email;
+        if (!destEmail || !destEmail.includes('@')) return;
+
+        let brevoKey = (configSalon?.brevo_api_key || process.env.BREVO_API_KEY || '').trim();
+        if (!brevoKey) {
+            const dbKey = await pool.query(`SELECT brevo_api_key FROM configuration_salon WHERE id_salon = $1`, [id_salon]).catch(() => ({ rows: [] }));
+            brevoKey = (dbKey.rows[0]?.brevo_api_key || process.env.BREVO_API_KEY || '').trim();
+        }
+        if (!brevoKey) return;
+
+        const nomSalon = configSalon?.nom_salon || "Votre Salon";
+        const adresseSalon = configSalon?.adresse_salon || configSalon?.adresse || "";
+        const telSalon = configSalon?.telephone_salon || configSalon?.telephone_gerant || "";
+        
+        const dateRdvObj = new Date(String(rdv.date_heure_debut).replace('Z', ''));
+        const dateFr = dateRdvObj.toLocaleDateString('fr-FR', {
+            weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+        });
+        const heureFr = dateRdvObj.toLocaleTimeString('fr-FR', {
+            hour: '2-digit', minute: '2-digit'
+        });
+
+        const prenomAffiche = client?.prenom || (client?.nom ? client.nom.split(' ')[0] : 'Cher(e) client(e)');
+
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"></head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 30px 15px; color: #111827;">
+          <div style="max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.05);">
+            <div style="background: #111827; padding: 26px 30px; text-align: center; color: #ffffff;">
+              <h1 style="margin: 0; font-size: 20px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;">${nomSalon}</h1>
+              <p style="margin: 6px 0 0 0; font-size: 13px; color: #9ca3af;">Confirmation de votre rendez-vous</p>
+            </div>
+            <div style="padding: 28px 30px;">
+              <p style="font-size: 15px; margin: 0 0 16px 0; color: #111827;">Bonjour <strong>${prenomAffiche}</strong>,</p>
+              <p style="font-size: 14px; color: #4b5563; margin: 0 0 24px 0; line-height: 1.6;">
+                Votre rendez-vous a bien été enregistré chez <strong>${nomSalon}</strong>. Toute notre équipe se réjouit de vous recevoir !
+              </p>
+              <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                  <tr>
+                    <td style="padding: 7px 0; color: #6b7280; width: 140px;">📅 Date :</td>
+                    <td style="padding: 7px 0; font-weight: 700; color: #111827; text-transform: capitalize;">${dateFr}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 7px 0; color: #6b7280;">⏰ Heure :</td>
+                    <td style="padding: 7px 0; font-weight: 700; color: #111827;">${heureFr}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 7px 0; color: #6b7280;">✂️ Prestation(s) :</td>
+                    <td style="padding: 7px 0; font-weight: 700; color: #111827;">${rdv.prestation}</td>
+                  </tr>
+                  ${employeNom ? `
+                  <tr>
+                    <td style="padding: 7px 0; color: #6b7280;">👤 Coiffeur :</td>
+                    <td style="padding: 7px 0; font-weight: 700; color: #111827;">${employeNom}</td>
+                  </tr>` : ''}
+                  ${rdv.acompte_paye > 0 ? `
+                  <tr>
+                    <td style="padding: 7px 0; color: #059669;">💳 Acompte en ligne :</td>
+                    <td style="padding: 7px 0; font-weight: 800; color: #059669;">${parseFloat(rdv.acompte_paye).toFixed(2)} € (décompté de votre note)</td>
+                  </tr>` : ''}
+                  ${adresseSalon ? `
+                  <tr>
+                    <td style="padding: 7px 0; color: #6b7280;">📍 Adresse :</td>
+                    <td style="padding: 7px 0; color: #111827;">${adresseSalon}</td>
+                  </tr>` : ''}
+                  ${telSalon ? `
+                  <tr>
+                    <td style="padding: 7px 0; color: #6b7280;">📞 Téléphone :</td>
+                    <td style="padding: 7px 0; color: #111827;">${telSalon}</td>
+                  </tr>` : ''}
+                </table>
+              </div>
+              <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 14px 16px; border-radius: 6px; font-size: 13px; color: #1e40af; margin-bottom: 24px; line-height: 1.5;">
+                <strong>Rappel :</strong> Vous pouvez consulter ou annuler votre réservation jusqu'à 24h avant sans frais depuis votre espace client.
+              </div>
+              <p style="font-size: 12px; color: #9ca3af; text-align: center; margin: 28px 0 0 0;">
+                ${nomSalon} • Propulsé par la plateforme de réservation <strong>STACK</strong>
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+        `;
+
+        await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: {
+                'accept': 'application/json',
+                'api-key': brevoKey,
+                'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+                sender: { name: nomSalon, email: configSalon?.email_reception_factures || "contact@app-salon.com" },
+                to: [{ email: destEmail, name: `${client?.prenom || ''} ${client?.nom || ''}`.trim() || destEmail }],
+                subject: `Confirmation de votre rendez-vous — ${nomSalon}`,
+                htmlContent
+            })
+        });
+    } catch (e) {
+        console.error("⚠️ Erreur lors de l'envoi de l'email de confirmation Brevo :", e.message);
+    }
+}
+
+/**
+ * Création d'une réservation en ligne avec CRM automatique, Brevo et Anti-NoShow
  */
 async function creerReservationPublique({ pool, io, stripe, envoyerNotificationPush }, { id_salon, originUrl, body }) {
-    const { nom_client, telephone_client, id_employe, prestation, date_heure_debut, duree_minutes, payer_acompte } = body;
+    const { 
+        nom_client, telephone_client, email_client, id_employe, prestation, 
+        prestations, date_heure_debut, duree_minutes, payer_acompte 
+    } = body;
 
-    if (!nom_client || !telephone_client || !prestation || !date_heure_debut) {
+    if (!nom_client || !telephone_client || (!prestation && (!Array.isArray(prestations) || prestations.length === 0)) || !date_heure_debut) {
         const err = new Error("Veuillez remplir tous les champs obligatoires.");
         err.status = 400;
         throw err;
     }
 
-    const dureeReelle = parseInt(duree_minutes, 10) || 30;
+    // Gestion multi-prestations
+    let prestationsList = [];
+    if (Array.isArray(prestations) && prestations.length > 0) {
+        prestationsList = prestations;
+    } else {
+        prestationsList = [{ nom: prestation, duree_estimee_minutes: parseInt(duree_minutes, 10) || 30, prix: body.prix || 0 }];
+    }
+
+    const libellePrestation = prestationsList.map(p => p.nom || p).join(' + ');
+    const dureeReelle = prestationsList.reduce((acc, p) => acc + (parseInt(p.duree_estimee_minutes || p.duree || 0, 10) || 30), 0) || parseInt(duree_minutes, 10) || 30;
+
     const configRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [id_salon]);
     const config = configRes.rows[0] || {};
     const tempsNettoyage = parseInt(config.temps_nettoyage_minutes, 10) || 0;
     const dureeTotaleBloquee = dureeReelle + tempsNettoyage;
 
-    if (id_employe) {
+    // Détermination de l'employé (auto-attribution intelligente si AUTO / non spécifié)
+    let finalEmployeId = id_employe && id_employe !== 'AUTO' ? parseInt(id_employe, 10) : null;
+
+    if (!finalEmployeId) {
+        // Trouver le collaborateur disponible qui a le moins de temps réservé (le plus de trous)
+        const dateJour = date_heure_debut.slice(0, 10);
+        const empAll = await pool.query('SELECT id_employe FROM employes WHERE id_salon = $1', [id_salon]);
+        const idsEmp = empAll.rows.map(r => r.id_employe);
+
+        const absRes = await pool.query(
+            `SELECT id_employe FROM absences_employes WHERE id_salon = $1 AND statut = 'VALIDE' AND $2::date BETWEEN date_debut AND date_fin`,
+            [id_salon, dateJour]
+        );
+        const idsAbsents = new Set(absRes.rows.map(r => Number(r.id_employe)));
+        const employesDispos = idsEmp.filter(id => !idsAbsents.has(Number(id)));
+
+        const rdvsJour = await pool.query(
+            `SELECT id_employe, date_heure_debut, COALESCE(duree_minutes, 30) AS duree_minutes
+             FROM rendez_vous
+             WHERE id_salon = $1 AND DATE(date_heure_debut) = $2::date AND statut != 'ANNULE'`,
+            [id_salon, dateJour]
+        );
+
+        const debutSlot = new Date(String(date_heure_debut).replace('Z', ''));
+        const finSlot = new Date(debutSlot.getTime() + dureeTotaleBloquee * 60000);
+
+        const occupation = {};
+        employesDispos.forEach(id => { occupation[id] = 0; });
+        rdvsJour.rows.forEach(r => {
+            const id = Number(r.id_employe);
+            if (occupation[id] !== undefined) occupation[id] += (parseInt(r.duree_minutes, 10) || 30) + tempsNettoyage;
+        });
+
+        const libres = employesDispos.filter(idEmp => {
+            return !rdvsJour.rows.some(r => {
+                if (Number(r.id_employe) !== Number(idEmp)) return false;
+                const dExistant = new Date(String(r.date_heure_debut).replace('Z', ''));
+                const fExistant = new Date(dExistant.getTime() + ((parseInt(r.duree_minutes, 10) || 30) + tempsNettoyage) * 60000);
+                return dExistant < finSlot && fExistant > debutSlot;
+            });
+        });
+
+        if (libres.length > 0) {
+            libres.sort((a, b) => (occupation[a] || 0) - (occupation[b] || 0));
+            finalEmployeId = libres[0];
+        }
+    } else {
+        // Vérifier conflit si employé choisi manuellement
         const rdvExistants = await pool.query(
             `SELECT id_rdv FROM rendez_vous 
-             WHERE id_salon = $1 AND id_employe = $2 
+             WHERE id_salon = $1 AND id_employe = $2 AND statut != 'ANNULE'
              AND (
                 (date_heure_debut < ($3::timestamp + ($4 || ' minutes')::interval)) 
                 AND 
                 (date_heure_debut + ((COALESCE(duree_minutes, 30) + $5) || ' minutes')::interval > $3::timestamp)
              )`,
-            [id_salon, id_employe, date_heure_debut, dureeTotaleBloquee, tempsNettoyage]
+            [id_salon, finalEmployeId, date_heure_debut, dureeTotaleBloquee, tempsNettoyage]
         );
         if (rdvExistants.rowCount > 0) {
             const err = new Error("Ce créneau vient tout juste d'être réservé. Veuillez choisir un autre horaire.");
@@ -319,59 +544,183 @@ async function creerReservationPublique({ pool, io, stripe, envoyerNotificationP
         }
     }
 
+    // --- RECHERCHE OU CRÉATION AUTOMATIQUE DU CLIENT DANS LE CRM DU SALON ---
+    const telPropre = String(telephone_client || '').trim();
+    const telChiffres = telPropre.replace(/[^\d+]/g, '');
+    const emailPropre = email_client ? String(email_client).trim().toLowerCase() : null;
+
+    let nomVal = nom_client.trim();
+    let prenomVal = (body.prenom_client || body.prenom || '').trim();
+    if (!prenomVal && nomVal.includes(' ')) {
+        const parts = nomVal.split(/\s+/);
+        prenomVal = parts[0];
+        nomVal = parts.slice(1).join(' ');
+    }
+
+    let clientRow = null;
+    if (telChiffres) {
+        const existTel = await pool.query(
+            `SELECT id_client, nom, prenom, email, telephone, solde_avoir, points_fidelite, tampons_fidelite
+             FROM clients
+             WHERE id_salon = $1 AND (telephone = $2 OR REPLACE(REPLACE(telephone, ' ', ''), '.', '') = $3)
+             LIMIT 1`,
+            [id_salon, telPropre, telChiffres]
+        );
+        if (existTel.rowCount > 0) clientRow = existTel.rows[0];
+    }
+    if (!clientRow && emailPropre) {
+        const existEmail = await pool.query(
+            `SELECT id_client, nom, prenom, email, telephone, solde_avoir, points_fidelite, tampons_fidelite
+             FROM clients
+             WHERE id_salon = $1 AND LOWER(TRIM(email)) = $2
+             LIMIT 1`,
+            [id_salon, emailPropre]
+        );
+        if (existEmail.rowCount > 0) clientRow = existEmail.rows[0];
+    }
+
+    if (!clientRow) {
+        // Auto-création de la fiche client
+        const insClient = await pool.query(
+            `INSERT INTO clients (id_salon, nom, prenom, telephone, email)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id_client, nom, prenom, email, telephone, solde_avoir, points_fidelite, tampons_fidelite`,
+            [id_salon, nomVal || 'Client', prenomVal || '', telPropre, emailPropre]
+        );
+        clientRow = insClient.rows[0];
+    } else {
+        if (!clientRow.email && emailPropre) {
+            await pool.query('UPDATE clients SET email = $1 WHERE id_client = $2', [emailPropre, clientRow.id_client]);
+            clientRow.email = emailPropre;
+        }
+    }
+
+    // Récupérer le nom du collaborateur pour l'email
+    let employeNom = '';
+    if (finalEmployeId) {
+        const empNomRes = await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [finalEmployeId]);
+        employeNom = empNomRes.rows[0]?.nom || '';
+    }
+
+    // Calcul du prix total des prestations pour l'acompte Anti-NoShow
+    let prixTotalPrestations = 0;
+    for (const p of prestationsList) {
+        if (p.prix !== undefined && p.prix !== null) {
+            prixTotalPrestations += parseFloat(p.prix) || 0;
+        } else {
+            const pr = await pool.query('SELECT prix FROM catalogue WHERE id_salon = $1 AND nom = $2 LIMIT 1', [id_salon, p.nom || p]);
+            if (pr.rowCount > 0) prixTotalPrestations += parseFloat(pr.rows[0].prix) || 0;
+        }
+    }
+    if (prixTotalPrestations <= 0) prixTotalPrestations = 30.00;
+
+    const antiNoShowActif = config.anti_noshow_actif === true || Boolean(payer_acompte);
+    const pourcentageAcompte = parseInt(config.anti_noshow_pourcentage, 10) || 30;
+    const montantAcompteBrut = antiNoShowActif
+        ? Math.max(5.00, Math.round(prixTotalPrestations * (pourcentageAcompte / 100) * 100) / 100)
+        : 0.00;
+
+    // Déduction éventuelle de l'avoir disponible sur le compte du client
+    let acompteFinalAPayer = montantAcompteBrut;
+    let avoirDeduit = 0.00;
+    const soldeAvoirClient = parseFloat(clientRow?.solde_avoir || 0);
+
+    if (montantAcompteBrut > 0 && soldeAvoirClient > 0) {
+        avoirDeduit = Math.min(montantAcompteBrut, soldeAvoirClient);
+        acompteFinalAPayer = Math.max(0, Math.round((montantAcompteBrut - avoirDeduit) * 100) / 100);
+        await pool.query(
+            'UPDATE clients SET solde_avoir = solde_avoir - $1 WHERE id_client = $2',
+            [avoirDeduit, clientRow.id_client]
+        );
+    }
+
+    // Enregistrement du rendez-vous
+    const statutAcompteInitial = acompteFinalAPayer > 0 ? 'EN_ATTENTE_STRIPE' : (avoirDeduit > 0 ? 'PAYE_PAR_AVOIR' : 'NON_APPLICABLE');
+
     const insertRdv = await pool.query(
-        `INSERT INTO rendez_vous (id_salon, id_employe, nom_client, telephone_client, prestation, date_heure_debut, duree_minutes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO rendez_vous (
+            id_salon, id_employe, id_client, nom_client, telephone_client, email_client,
+            prestation, prestations_details, date_heure_debut, duree_minutes,
+            acompte_exige, acompte_paye, statut_acompte
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING id_rdv`,
-        [id_salon, id_employe || null, nom_client.trim(), telephone_client.trim(), prestation, date_heure_debut, dureeReelle]
+        [
+            id_salon, finalEmployeId || null, clientRow.id_client, nomVal, telPropre, emailPropre,
+            libellePrestation, JSON.stringify(prestationsList), date_heure_debut, dureeReelle,
+            montantAcompteBrut, avoirDeduit, statutAcompteInitial
+        ]
     );
+
+    const idRdv = insertRdv.rows[0].id_rdv;
 
     if (io) io.to(id_salon.toString()).emit('nouveauRDV');
 
     if (typeof envoyerNotificationPush === 'function') {
         envoyerNotificationPush(id_salon, 'gerant', {
             title: "Nouvelle réservation en ligne STACK",
-            body: `${nom_client} a réservé "${prestation}" (${date_heure_debut.replace('T', ' à ')}).`,
+            body: `${nomVal} a réservé "${libellePrestation}" (${date_heure_debut.replace('T', ' à ')}).`,
             url: '/?tab=agenda'
         });
     }
 
-    if (payer_acompte && process.env.STRIPE_SECRET_KEY && stripe) {
-        const prestaRes = await pool.query('SELECT prix FROM catalogue WHERE id_salon = $1 AND nom = $2 LIMIT 1', [id_salon, prestation]);
-        const prixPresta = prestaRes.rowCount > 0 ? (parseFloat(prestaRes.rows[0].prix) || 30) : 30;
-        const montantAcompteCents = Math.max(500, Math.round(prixPresta * 0.30 * 100));
-
+    // Gestion session Stripe Checkout si acompte requis
+    if (acompteFinalAPayer > 0 && process.env.STRIPE_SECRET_KEY && stripe) {
+        const montantCents = Math.round(acompteFinalAPayer * 100);
         const baseOrigin = originUrl || 'https://app-salon-caiss.onrender.com';
+
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
             mode: 'payment',
+            customer_email: emailPropre || undefined,
+            client_reference_id: String(idRdv),
+            metadata: {
+                id_salon: String(id_salon),
+                id_rdv: String(idRdv),
+                id_client: String(clientRow.id_client),
+                acompte_montant: String(acompteFinalAPayer)
+            },
             line_items: [{
                 price_data: {
                     currency: 'eur',
                     product_data: {
-                        name: `Acompte Réservation — ${prestation} (${config.nom_salon || 'Salon'})`,
-                        description: `RDV du ${date_heure_debut.replace('T', ' à ')} pour ${nom_client}`
+                        name: `Acompte Réservation — ${libellePrestation} (${config.nom_salon || 'Salon'})`,
+                        description: `RDV du ${date_heure_debut.replace('T', ' à ')} pour ${nomVal}`
                     },
-                    unit_amount: montantAcompteCents
+                    unit_amount: montantCents
                 },
                 quantity: 1
             }],
-            success_url: `${baseOrigin}/?reservation=${id_salon}&success=1`,
-            cancel_url: `${baseOrigin}/?reservation=${id_salon}`
+            success_url: `${baseOrigin}/?reservation=${id_salon}&success=1&id_rdv=${idRdv}`,
+            cancel_url: `${baseOrigin}/?reservation=${id_salon}&cancelled=1`
         });
+
+        // Mise à jour de la session Stripe
+        await pool.query('UPDATE rendez_vous SET stripe_payment_intent_id = $1 WHERE id_rdv = $2', [session.id, idRdv]);
 
         return {
             status: 201,
-            message: "Redirection vers l'acompte Stripe...",
+            message: "Redirection vers le paiement sécurisé de l'acompte...",
             checkout_url: session.url,
-            id_rdv: insertRdv.rows[0].id_rdv
+            id_rdv: idRdv,
+            acompte_exige: acompteFinalAPayer
         };
     }
 
+    // Envoi de l'email de confirmation Brevo (asynchrone)
+    envoyerEmailConfirmationRdvBrevo({ pool }, {
+        id_salon,
+        rdv: { date_heure_debut, prestation: libellePrestation, email_client: emailPropre, acompte_paye: avoirDeduit },
+        client: clientRow,
+        configSalon: config,
+        employeNom
+    }).catch(() => {});
+
     return {
         status: 201,
-        message: "Rendez-vous confirmé.",
-        id_rdv: insertRdv.rows[0].id_rdv
+        message: "Rendez-vous confirmé avec succès !",
+        id_rdv: idRdv,
+        id_client: clientRow.id_client
     };
 }
 
@@ -585,5 +934,6 @@ module.exports = {
     creerReservationPublique,
     annulerRdvEnMasse,
     recupererPlanning,
-    genererFluxIcal
+    genererFluxIcal,
+    envoyerEmailConfirmationRdvBrevo
 };

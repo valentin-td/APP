@@ -334,3 +334,14 @@ Le tableau ci-dessous indique pour chaque fonctionnalité son niveau d'interconn
 
 3. **Absence de dépendance circulaire dans les services** :
    - L'architecture modulaire mise en place (`services/pdf/`, `services/compta/`, `services/stock/`, `services/rh/`) utilise l'**injection de dépendances**. Les services ne s'importent pas mutuellement en boucle mais reçoivent les clients (`pool`, `s3Client`, `io`) en paramètre.
+
+---
+
+## 6. Intégrations & Flux Externes Spécifiques
+
+| Fournisseur / API | Usage Métier | Dépendances & Gestion d'erreur |
+| :--- | :--- | :--- |
+| **Brevo SMTP API** (`api.brevo.com/v3/smtp/email`) | Confirmation instantanée de rendez-vous en ligne avec récapitulatif détaillé et accès client. | Envoi asynchrone non bloquant avec capture d'erreurs locale (`catch(() => {})`). Clé `BREVO_API_KEY` ou `SENDINBLUE_API_KEY`. |
+| **Cloudflare R2** (`@aws-sdk/client-s3`) | Hébergement sécurisé des logos de salon et de la galerie photo établissement (5 photos vitrine). | Bucket `R2_BUCKET_NAME`. Proxy streaming via `GET /api/public/media/*` avec mise en cache HTTP (`Cache-Control: public, max-age=86400`). |
+| **Stripe Payments & Refunds** (`stripe`) | Encaissement d'acompte Anti-NoShow en amont via Stripe Checkout ; remboursement automatique en cas d'annulation $>24$h si mode `'REMBOURSEMENT'` sélectionné. | Clé `STRIPE_SECRET_KEY`. Traitement idempotente dans `checkout.session.completed` et déduction du solde d'avoir client (`solde_avoir`). |
+

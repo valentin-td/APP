@@ -63,6 +63,8 @@ export const CaisseTab = ({
   sousTotalCaisse = 0,
   montantPourboireFinal = 0,
   totalCaisse = 0,
+  acompteADeduire = 0,
+  netAPayer,
   methodePaiement,
   setMethodePaiement,
   notificationCaisse,
@@ -485,9 +487,16 @@ export const CaisseTab = ({
                   )}
                 </div>
 
+                {acompteADeduire > 0 && (
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', fontSize: '13px', color: '#047857', background: '#ecfdf5', padding: '8px 12px', borderRadius: '8px', border: '1px solid #a7f3d0'}}>
+                    <span style={{fontWeight: '700'}}>💳 Acompte réservation réglé en ligne</span>
+                    <span style={{fontWeight: '800'}}>-{acompteADeduire.toFixed(2)} €</span>
+                  </div>
+                )}
+
                 <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text-main)'}}>
-                  <span>Total TTC</span>
-                  <span>{totalCaisse.toFixed(2)} €</span>
+                  <span>{acompteADeduire > 0 ? "Solde net à régler" : "Total TTC"}</span>
+                  <span>{(netAPayer !== undefined ? netAPayer : totalCaisse).toFixed(2)} €</span>
                 </div>
 
                 <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
@@ -507,7 +516,7 @@ export const CaisseTab = ({
                   ) : notificationCaisse && notificationCaisse.includes('Envoi') ? (
                     "En attente du TPE..."
                   ) : (
-                    `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${totalCaisse.toFixed(2)} €`
+                    `Encaisser ${(isOffline || !navigator.onLine) ? '(Hors-Ligne) ' : ''}${(netAPayer !== undefined ? netAPayer : totalCaisse).toFixed(2)} €`
                   )}
                 </button>
               </div>

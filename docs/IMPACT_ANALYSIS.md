@@ -290,3 +290,17 @@ git commit -m "refactor: ..."
 # 5. Push propre sans forçage
 git push origin main
 ```
+
+---
+
+## 5. Impact Fiscal & Traçabilité NF525 : Acomptes et Soldes d'Avoir
+
+### 1. Traitement des Acomptes Prépayés en Ligne
+- L'acompte Anti-NoShow payé en amont par le client (`acompte_paye`) constitue un encaissement anticipé.
+- Au passage en caisse, ce montant est injecté en déduction claire sur le ticket de caisse (`acompteADeduire`), permettant d'afficher le sous-total brut des prestations réalisées, la déduction d'acompte, et le solde net restant dû par le client.
+- La ligne de déduction est scellée dans les données du ticket NF525 pour éviter toute double imposition de TVA et garantir l'équilibre comptable lors de la clôture Z.
+
+### 2. Gestion des Avoirs en Base de Données
+- Si un client annule dans le respect du délai légal ($>24$h) et que le salon applique la politique d'avoir, la colonne `clients.solde_avoir` est incrémentée.
+- Ce solde est prioritairement décompté lors des réservations en ligne ultérieures ou déductible en caisse physique, assurant une parfaite traçabilité sans perte de valeur financière pour le client ni pour l'établissement.
+

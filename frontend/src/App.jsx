@@ -726,6 +726,9 @@ function App() {
     setTelephoneTicketClient,
     sousTotalCaisse,
     totalCaisse,
+    acompteDeduit,
+    acompteADeduire,
+    netAPayer,
     montantPourboireFinal,
     clientCaisseObj,
     isEligibleFidelite,
@@ -746,6 +749,7 @@ function App() {
     configSalon,
     clientsListe,
     employesListe,
+    catalogueListe,
     getPlanningData: () => (typeof planningData !== 'undefined' ? planningData : []),
     getAuthHeaders,
     handleFetchError,
@@ -1265,6 +1269,7 @@ function App() {
                   photoUrl={(employesListe || []).find(e => e.id_employe === decodeToken(token)?.id_employe)?.photo_url}
                   onUploadPhoto={modifierMaPhoto}
                   employesListe={employesListe}
+                  catalogueListe={catalogueListe}
                 />
               )}
               
@@ -1330,6 +1335,8 @@ function App() {
                   sousTotalCaisse={sousTotalCaisse}
                   montantPourboireFinal={montantPourboireFinal}
                   totalCaisse={totalCaisse}
+                  acompteADeduire={acompteADeduire}
+                  netAPayer={netAPayer}
                   methodePaiement={methodePaiement}
                   setMethodePaiement={setMethodePaiement}
                   notificationCaisse={notificationCaisse}

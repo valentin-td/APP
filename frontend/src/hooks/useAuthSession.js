@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { decodeToken } from '../utils/auth';
+import { decodeToken, isTokenExpired } from '../utils/auth';
 
 /**
  * useAuthSession - Hook métier gérant l'authentification (gérant, salon, employé avec code PIN),
@@ -12,7 +12,18 @@ export const useAuthSession = ({
   showToast = () => {},
   socket = null
 }) => {
-  const [token, setToken] = useState(() => localStorage.getItem('ui_token'));
+  const [token, setToken] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    const saved = localStorage.getItem('ui_token') || localStorage.getItem('token');
+    if (saved && isTokenExpired(saved)) {
+      localStorage.removeItem('ui_token');
+      localStorage.removeItem('api_token');
+      localStorage.removeItem('token');
+      localStorage.removeItem('token_api');
+      return null;
+    }
+    return saved;
+  });
   const [userRole, setUserRole] = useState(() => {
     const saved = localStorage.getItem('ui_token');
     return saved ? decodeToken(saved)?.role || 'gerant' : 'gerant';
@@ -208,12 +219,22 @@ export const useAuthSession = ({
     fetch(`${API_URL}/api/logout`, { method: 'POST' }).catch((e) => console.log(e));
     localStorage.removeItem('ui_token');
     localStorage.removeItem('api_token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('token_api');
     localStorage.removeItem('skip_legal_sandbox');
     setToken(null);
     setIsAbonnementInactif(false);
     setUserRole('gerant');
     if (socket) socket.disconnect();
   };
+
+  useEffect(() => {
+    const handleSessionExpiree = () => {
+      seDeconnecter();
+    };
+    window.addEventListener('session_expiree', handleSessionExpiree);
+    return () => window.removeEventListener('session_expiree', handleSessionExpiree);
+  }, []);
 
   const lancerPaiementStripe = async (planChoisi = 'PREMIUM') => {
     try {

@@ -14,6 +14,7 @@ export function useCaissePOS({
   configSalon = {},
   clientsListe = [],
   employesListe = [],
+  catalogueListe = [],
   planningData = [],
   getPlanningData,
   getAuthHeaders,
@@ -32,6 +33,7 @@ export function useCaissePOS({
 
   const [clientCaisse, setClientCaisse] = useState('');
   const [panierCaisse, setPanierCaisse] = useState([]);
+  const [acompteDeduit, setAcompteDeduit] = useState(0);
   const [remiseAppliquee, setRemiseAppliquee] = useState(false);
   const [pourboireCaisse, setPourboireCaisse] = useState('');
   const [showPourboireInput, setShowPourboireInput] = useState(false);
@@ -77,7 +79,14 @@ export function useCaissePOS({
           );
         }
         if (clientInCRM && !matches.find((m) => m.id_client === clientInCRM.id_client)) {
-          matches.push({ ...clientInCRM, prestation_rdv: rdv.prestation, diffMinutes });
+          matches.push({
+            ...clientInCRM,
+            prestation_rdv: rdv.prestation,
+            prestations_details: rdv.prestations_details,
+            acompte_paye: parseFloat(rdv.acompte_paye || 0),
+            id_rdv: rdv.id_rdv,
+            diffMinutes
+          });
         }
       }
     }
@@ -87,9 +96,65 @@ export function useCaissePOS({
     if (matches.length > 0) {
       setClientsSuggeres(matches);
       setClientCaisse(matches[0].id_client.toString());
+
+      // Pré-chargement automatique des prestations réservées dans le panier caisse
+      const matchRdv = matches[0];
+      const articlesACharger = [];
+
+      if (Array.isArray(matchRdv.prestations_details) && matchRdv.prestations_details.length > 0) {
+        matchRdv.prestations_details.forEach(p => {
+          const itemInCat = (catalogueListe || []).find(c => 
+            c.id_article === p.id_article || (c.nom && c.nom.toLowerCase() === (p.nom || '').toLowerCase())
+          );
+          if (itemInCat) {
+            articlesACharger.push({ ...itemInCat, quantite: 1, prix_unitaire: parseFloat(itemInCat.prix || p.prix || 0) });
+          } else {
+            articlesACharger.push({
+              id_article: p.id_article || `rdv_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+              nom: p.nom || "Prestation réservée",
+              prix: parseFloat(p.prix || 0),
+              prix_unitaire: parseFloat(p.prix || 0),
+              quantite: 1,
+              type_article: 'PRESTATION'
+            });
+          }
+        });
+      } else if (matchRdv.prestation_rdv) {
+        const nomsPrestas = String(matchRdv.prestation_rdv).split(' + ');
+        nomsPrestas.forEach(nomP => {
+          const cleanNom = nomP.trim();
+          const itemInCat = (catalogueListe || []).find(c => 
+            c.nom && c.nom.toLowerCase() === cleanNom.toLowerCase()
+          );
+          if (itemInCat) {
+            articlesACharger.push({ ...itemInCat, quantite: 1, prix_unitaire: parseFloat(itemInCat.prix || 0) });
+          } else {
+            articlesACharger.push({
+              id_article: `rdv_${cleanNom.replace(/\s+/g, '_')}`,
+              nom: cleanNom,
+              prix: 30,
+              prix_unitaire: 30,
+              quantite: 1,
+              type_article: 'PRESTATION'
+            });
+          }
+        });
+      }
+
+      if (articlesACharger.length > 0) {
+        setPanierCaisse(articlesACharger);
+      }
+
+      // Mémoriser l'acompte déjà payé en ligne
+      if (matchRdv.acompte_paye > 0) {
+        setAcompteDeduit(matchRdv.acompte_paye);
+      } else {
+        setAcompteDeduit(0);
+      }
     } else {
       setClientCaisse('');
       setClientsSuggeres([]);
+      setAcompteDeduit(0);
     }
     setPosStep('type');
   };
@@ -194,6 +259,10 @@ export function useCaissePOS({
   const montantPourboireFinal = parseFloat(String(pourboireCaisse || '').replace(',', '.')) || 0;
   totalCaisse = Number.isFinite(totalCaisse) ? Number((totalCaisse + montantPourboireFinal).toFixed(2)) : 0;
 
+  // Décompte de l'acompte Anti-NoShow déjà réglé en ligne lors de la réservation
+  const acompteADeduire = Math.min(totalCaisse, acompteDeduit);
+  const netAPayer = Math.max(0, Number((totalCaisse - acompteADeduire).toFixed(2)));
+
   const lancerPaiementTPE = async (montant, lignes) => {
     const vraimentHorsLigne = isOffline || !navigator.onLine;
     if (vraimentHorsLigne !== isOffline && setIsOffline) setIsOffline(vraimentHorsLigne);
@@ -205,7 +274,8 @@ export function useCaissePOS({
       lignes,
       recompense_appliquee: remiseAppliquee,
       methode_paiement: methodePaiement,
-      pourboire: montantPourboireFinal
+      pourboire: montantPourboireFinal,
+      acompte_deduit: acompteADeduire
     };
 
     const forcerSauvegardeLocale = async () => {
@@ -237,6 +307,7 @@ export function useCaissePOS({
 
       setPanierCaisse([]);
       setClientCaisse('');
+      setAcompteDeduit(0);
       setRemiseAppliquee(false);
       setMethodePaiement('ESPECES');
       setRechercheCaisse('');
@@ -280,6 +351,7 @@ export function useCaissePOS({
 
       setPanierCaisse([]);
       setClientCaisse('');
+      setAcompteDeduit(0);
       setRemiseAppliquee(false);
       setMethodePaiement('CARTE');
       setPourboireCaisse('');
@@ -311,7 +383,7 @@ export function useCaissePOS({
       return;
     }
 
-    lancerPaiementTPE(totalCaisse, panierCaisse);
+    lancerPaiementTPE(netAPayer, panierCaisse);
   };
 
   const envoyerTicketEco = async (methode) => {
@@ -408,6 +480,10 @@ export function useCaissePOS({
     setTelephoneTicketClient,
     sousTotalCaisse,
     totalCaisse,
+    acompteDeduit,
+    setAcompteDeduit,
+    acompteADeduire,
+    netAPayer,
     montantPourboireFinal,
     clientCaisseObj,
     isEligibleFidelite,

@@ -25,7 +25,25 @@ export function setupFetchInterceptor() {
         };
       }
     }
-    return originalFetch(resource, config);
+    const response = await originalFetch(resource, config);
+
+    // Détection globale d'expiration de session sur l'API backend
+    if (
+      response.status === 401 &&
+      typeof resource === 'string' &&
+      !resource.includes('/api/login') &&
+      !resource.includes('/api/employe-login') &&
+      !resource.includes('/api/public/client/login') &&
+      !resource.includes('/api/partner/login')
+    ) {
+      localStorage.removeItem('ui_token');
+      localStorage.removeItem('api_token');
+      localStorage.removeItem('token');
+      localStorage.removeItem('token_api');
+      window.dispatchEvent(new CustomEvent('session_expiree'));
+    }
+
+    return response;
   };
 
   interceptorInstalled = true;

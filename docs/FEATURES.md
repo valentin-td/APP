@@ -633,3 +633,42 @@
   - Droits ultra-élevés : accès strictement restreint par mot de passe et email super-admin.
 - **Tests Recommandés** :
   - Tentative d'accès avec un compte gérant classique (doit renvoyer HTTP 403 Forbidden).
+
+---
+
+## 28. Vitrine Réservation Publique (Planity-Style), Multi-Prestations & Up-Sell
+
+- **Objectif** : Offrir aux clients finaux un tunnel de réservation haut de gamme inspiré des standards Planity : galerie photo plein écran, logo de l'établissement, description personnalisée, sélection d'une ou plusieurs prestations dans un panier cumulatif, suggestions de ventes additionnelles express (soins et massages), et sélection intelligente du collaborateur selon ses expertises ou optimisation des créneaux creux ("Peu importe").
+- **Fichiers Frontend** : `frontend/src/pages/ReservationPublique.jsx`, `frontend/src/Parametres.jsx` (gestion galerie, logo, description, mode up-sell).
+- **Fichiers Backend** : `services/agenda/agenda.service.js`, `services/settings/settings.service.js`, `server.js`.
+- **Routes API** :
+  - `GET /api/public/reservation/:id_salon`
+  - `GET /api/public/reservation/:id_salon/creneaux`
+  - `POST /api/public/reservation/:id_salon/reserver`
+  - `PUT /api/parametres/galerie`
+  - `PUT /api/parametres/description`
+- **Tables BDD** : `configuration_salon` (`logo_url`, `photos_salon`, `description_salon`, `upsell_mode`, `upsell_articles_ids`), `employes` (`expertises`), `catalogue`.
+- **Tests Recommandés** :
+  - Ajout de 2 prestations + 1 soin up-sell express : calcul exact de la durée cumulée et affichage des créneaux disponibles.
+  - Choix "Peu importe" : attribution automatique au coiffeur le moins chargé de la journée.
+
+---
+
+## 29. Anti-NoShow 24h, Espace Client & Décompte Caisse POS
+
+- **Objectif** : Protéger les salons contre les rendez-vous non honorés grâce à la collecte d'un acompte en amont (configurable par le gérant), tout en garantissant une expérience client fluide (espace client, annulation en 1 clic jusqu'à 24h avant avec solde d'avoir ou remboursement Stripe, décompte automatique de l'acompte lors du passage en caisse sans rigidifier le panier du coiffeur).
+- **Fichiers Frontend** : `frontend/src/pages/ReservationPublique.jsx`, `frontend/src/components/caisse/CaisseTab.jsx`, `frontend/src/hooks/useCaissePOS.js`, `frontend/src/Parametres.jsx`.
+- **Fichiers Backend** : `services/clients/clientAuth.service.js`, `services/agenda/agenda.service.js`, `services/stripe/stripe.service.js`, `server.js`.
+- **Routes API** :
+  - `POST /api/public/client/register`
+  - `POST /api/public/client/login`
+  - `GET /api/public/client/me`
+  - `POST /api/public/client/annuler-rdv/:id_rdv`
+  - `POST /api/public/reservation/:id_salon/valider-retour-stripe/:id_rdv`
+- **Tables BDD** : `clients` (`solde_avoir`, `mot_de_passe_hash`, `email_verifie`), `rendez_vous` (`id_client`, `email_client`, `acompte_exige`, `acompte_paye`, `statut_acompte`, `stripe_payment_intent_id`, `date_annulation`, `motif_annulation`).
+- **Conformité & NF525** :
+  - L'acompte payé en amont apparaît comme ligne de déduction sur le ticket de caisse (`acompteADeduire`).
+  - Le solde net encaissé respecte la signature JET et les clôtures journalières.
+- **Emails Transactionnels** :
+  - Brevo SMTP API (`https://api.brevo.com/v3/smtp/email`) : email de confirmation automatique contenant la date, l'heure, les prestations, le nom du coiffeur, l'adresse, l'acompte déduit et le lien vers l'espace client.
+

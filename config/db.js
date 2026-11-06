@@ -41,6 +41,28 @@ async function initDatabaseSchema({ webpush } = {}) {
       ALTER TABLE clients ADD COLUMN IF NOT EXISTS derniere_visite DATE;
       ALTER TABLE clients ADD COLUMN IF NOT EXISTS remise_winback VARCHAR(100);
       ALTER TABLE clients ADD COLUMN IF NOT EXISTS dernier_sms_relance DATE;
+      ALTER TABLE clients ADD COLUMN IF NOT EXISTS solde_avoir NUMERIC(10,2) DEFAULT 0.00;
+      ALTER TABLE clients ADD COLUMN IF NOT EXISTS mot_de_passe_hash VARCHAR(255);
+      ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_verifie BOOLEAN DEFAULT FALSE;
+
+      ALTER TABLE employes ADD COLUMN IF NOT EXISTS expertises JSONB DEFAULT '[]'::jsonb;
+
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS id_client INT REFERENCES clients(id_client) ON DELETE SET NULL;
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS email_client VARCHAR(255);
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS prestations_details JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS acompte_exige NUMERIC(10,2) DEFAULT 0.00;
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS acompte_paye NUMERIC(10,2) DEFAULT 0.00;
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS statut_acompte VARCHAR(30) DEFAULT 'NON_APPLICABLE';
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS stripe_payment_intent_id VARCHAR(255);
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS date_annulation TIMESTAMP;
+      ALTER TABLE rendez_vous ADD COLUMN IF NOT EXISTS motif_annulation VARCHAR(255);
+
+      ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS anti_noshow_actif BOOLEAN DEFAULT FALSE;
+      ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS anti_noshow_pourcentage INT DEFAULT 30;
+      ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS anti_noshow_mode_annulation VARCHAR(30) DEFAULT 'AVOIR';
+      ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS delai_annulation_heures INT DEFAULT 24;
+      ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS upsell_mode VARCHAR(20) DEFAULT 'AUTO';
+      ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS upsell_articles_ids JSONB DEFAULT '[]'::jsonb;
       ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_ouverture INT DEFAULT 8;
       ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS heure_fermeture INT DEFAULT 20;
       ALTER TABLE configuration_salon ADD COLUMN IF NOT EXISTS fidelite_type VARCHAR(20) DEFAULT 'NONE';

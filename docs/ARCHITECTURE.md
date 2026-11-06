@@ -393,3 +393,54 @@ flowchart TD
 | `IMG_6804.png` | `/IMG_6804.png` | **Logo Mode Jour (Light Mode)** | Typographie sombre « STACK » avec symbole. Destiné aux interfaces à fond clair (`!isDarkMode`), page publique de réservation, et impressions PDF A4. |
 | `IMG_6805.png` | `/IMG_6805.png` | **Logo Mode Nuit (Dark Mode)** | Typographie claire « STACK » avec symbole. Destiné aux interfaces à fond sombre (`isDarkMode === true`), logiciel de caisse principal et login dark. |
 
+---
+
+## 7. Tunnel de Réservation Publique, CRM Auto, Anti-NoShow 24h & Caisse POS
+
+### Diagramme de Séquence : Parcours Réservation, Anti-NoShow et Passage en Caisse
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client Public
+    participant V as Vitrine Réservation (Planity-style)
+    participant API as Backend Express API
+    participant DB as PostgreSQL Database
+    participant Brevo as Brevo SMTP API
+    actor Coiff as Coiffeur / Caisse POS
+
+    C->>V: Sélectionne Prestation(s) (+ Vente Express Up-Sell)
+    C->>V: Choix Collaborateur (Expertise ou "Peu importe")
+    C->>V: Étape Identification (Nouveau vs Déjà un compte)
+    V->>API: POST /api/public/reservation/:id_salon/reserver
+    API->>DB: Lookup client par tel / email
+    alt Client non existant
+        API->>DB: INSERT INTO clients (auto-création CRM)
+    end
+    alt Acompte Anti-NoShow exigé
+        API->>DB: Déduit solde_avoir disponible si présent
+        API-->>V: URL Stripe Checkout (acompte X%)
+        C->>API: Confirmation Paiement Stripe
+    end
+    API->>DB: INSERT INTO rendez_vous (id_client, prestations, acompte_paye)
+    API->>Brevo: POST /v3/smtp/email (Confirmation détaillée avec lien espace client)
+    
+    Note over C,Coiff: Le jour du Rendez-Vous
+    Coiff->>API: Sélectionne collaborateur / client en caisse
+    API-->>Coiff: Panier pré-rempli avec prestations réservées
+    Coiff->>Coiff: Ajoute/Retire des articles selon la prestation réelle
+    Note over Coiff: Décompte automatique de l'acompte payé en ligne (acompte_paye)
+    Coiff->>API: Encaissement du solde net (NF525 clôture ticket)
+```
+
+### Règle d'Annulation Anti-NoShow (24 Heures)
+
+1. **Annulation > 24h avant le créneau** :
+   - Selon la politique définie par le gérant dans ses paramètres (`anti_noshow_mode_annulation`) :
+     - Soit **Avoir** : le montant de l'acompte est automatiquement recrédité sur la fiche CRM du client (`clients.solde_avoir`), réutilisable immédiatement lors de sa prochaine réservation en ligne ou en caisse.
+     - Soit **Remboursement** : le montant est remboursé sur la carte bancaire via l'API Stripe Refunds.
+2. **Annulation < 24h avant le créneau (ou No-Show)** :
+   - Aucun remboursement ni avoir n'est accordé.
+   - Le statut passe à `CONSERVE_NO_SHOW` et l'acompte est acquis par l'établissement en compensation du créneau bloqué non honoré.
+
+

@@ -55,6 +55,14 @@ const {
     mettreAJourNotesClient
 } = require('./services/clients/clients.service');
 const {
+    initClientAuthService,
+    inscrireClient,
+    connecterClient,
+    recupererProfilClient,
+    annulerRdvParClient,
+    verifierTokenClient
+} = require('./services/clients/clientAuth.service');
+const {
     creerMiddlewareSSOSandbox,
     creerMiddlewareCertificatLegalPDF
 } = require('./services/pdf/legalAcceptancePdf.service'); 
@@ -771,6 +779,86 @@ app.post('/api/public/reservation/:id_salon/reserver', limiteurReservationPubliq
         res.status(result.status || 201).json(result);
     } catch (e) {
         res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la réservation." });
+    }
+});
+
+app.post('/api/public/reservation/:id_salon/valider-retour-stripe/:id_rdv', limiteurReservationPublique, async (req, res) => {
+    try {
+        const idRdv = parseInt(req.params.id_rdv, 10);
+        const idSalon = parseInt(req.params.id_salon, 10);
+        const rdvRes = await pool.query('SELECT * FROM rendez_vous WHERE id_rdv = $1 AND id_salon = $2', [idRdv, idSalon]);
+        if (rdvRes.rowCount === 0) return res.status(404).json({ erreur: "Rendez-vous introuvable." });
+        const rdv = rdvRes.rows[0];
+
+        if (rdv.statut_acompte === 'EN_ATTENTE_STRIPE') {
+            await pool.query(
+                `UPDATE rendez_vous 
+                 SET acompte_paye = GREATEST(acompte_paye, acompte_exige),
+                     statut_acompte = 'PAYE_STRIPE'
+                 WHERE id_rdv = $1`,
+                [idRdv]
+            );
+            const confRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [idSalon]).catch(() => ({ rows: [] }));
+            const clientRes = rdv.id_client ? await pool.query('SELECT * FROM clients WHERE id_client = $1', [rdv.id_client]).catch(() => ({ rows: [] })) : { rows: [] };
+            const empRes = rdv.id_employe ? await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [rdv.id_employe]).catch(() => ({ rows: [] })) : { rows: [] };
+            
+            const { envoyerEmailConfirmationRdvBrevo } = require('./services/agenda/agenda.service');
+            envoyerEmailConfirmationRdvBrevo({ pool }, {
+                id_salon: idSalon,
+                rdv: { ...rdv, acompte_paye: rdv.acompte_exige },
+                client: clientRes.rows[0] || { nom: rdv.nom_client, telephone: rdv.telephone_client, email: rdv.email_client },
+                configSalon: confRes.rows[0] || {},
+                employeNom: empRes.rows[0]?.nom || ''
+            }).catch(() => {});
+        }
+
+        res.json({ success: true, message: "Paiement validé avec succès." });
+    } catch (e) {
+        res.status(500).json({ erreur: e.message || "Erreur validation paiement retour." });
+    }
+});
+
+// =========================================================================
+// --- MODULE ESPACE CLIENT & AUTHENTIFICATION CLIENT PUBLIQUE ---
+// =========================================================================
+app.post('/api/public/client/register', limiteurReservationPublique, async (req, res) => {
+    try {
+        const { id_salon, nom, prenom, telephone, email, mot_de_passe } = req.body;
+        const result = await inscrireClient({ pool }, { id_salon, nom, prenom, telephone, email, mot_de_passe });
+        res.status(201).json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la création du compte." });
+    }
+});
+
+app.post('/api/public/client/login', limiteurReservationPublique, async (req, res) => {
+    try {
+        const { id_salon, identifiant, mot_de_passe } = req.body;
+        const result = await connecterClient({ pool }, { id_salon, identifiant, mot_de_passe });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de la connexion." });
+    }
+});
+
+app.get('/api/public/client/me', verifierTokenClient, async (req, res) => {
+    try {
+        const result = await recupererProfilClient({ pool }, { id_client: req.client.id_client, id_salon: req.client.id_salon });
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur profil client." });
+    }
+});
+
+app.post('/api/public/client/annuler-rdv/:id_rdv', verifierTokenClient, async (req, res) => {
+    try {
+        const result = await annulerRdvParClient(
+            { pool, io, stripe },
+            { id_client: req.client.id_client, id_salon: req.client.id_salon, id_rdv: req.params.id_rdv }
+        );
+        res.json(result);
+    } catch (e) {
+        res.status(e.status || 500).json({ erreur: e.message || "Erreur lors de l'annulation du rendez-vous." });
     }
 });
 

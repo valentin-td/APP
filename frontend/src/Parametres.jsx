@@ -61,7 +61,7 @@ const TITRES = {
 
 export default function Parametres({
   configSalon: rawConfigSalon, setConfigSalon: rawSetConfigSalon, onSave, onBack, onLogout,
-  salonId, isDarkMode, onToggleTheme, onEnablePush, role, photoUrl, onUploadPhoto, employesListe
+  salonId, isDarkMode, onToggleTheme, onEnablePush, role, photoUrl, onUploadPhoto, employesListe, catalogueListe = []
 }) {
   const configSalon = rawConfigSalon || {};
   const setConfigSalon = typeof rawSetConfigSalon === 'function' ? rawSetConfigSalon : () => {};
@@ -926,6 +926,186 @@ const groupesBas = [
             </div>
           </div>
         </div>
+
+        {/* SECTION 4 : ACOMPTE ANTI-NOSHOW & CONDITIONS D'ANNULATION */}
+        <div className="carte scan-carte" style={{ padding: '24px', borderRadius: '16px', border: '1px solid #e5e7eb', backgroundColor: '#ffffff', boxShadow: '0 2px 10px rgba(0,0,0,0.03)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#111827', letterSpacing: '-0.01em' }}>
+                  Acompte Anti-NoShow (Réservation en Ligne)
+                </h3>
+                <span style={{
+                  padding: '3px 8px',
+                  borderRadius: '999px',
+                  backgroundColor: configSalon.anti_noshow_actif ? 'rgba(16, 185, 129, 0.1)' : '#f3f4f6',
+                  color: configSalon.anti_noshow_actif ? '#15803d' : '#6b7280',
+                  fontSize: '11px',
+                  fontWeight: '700'
+                }}>
+                  {configSalon.anti_noshow_actif ? 'Actif' : 'Désactivé'}
+                </span>
+              </div>
+              <span style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px', display: 'block' }}>
+                Exigez le versement d'un acompte par carte bancaire lors de la réservation publique pour éliminer les rendez-vous non honorés.
+              </span>
+            </div>
+
+            <label style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
+              <input
+                type="checkbox"
+                checked={Boolean(configSalon.anti_noshow_actif)}
+                onChange={(e) => setConfigSalon(prev => ({ ...prev, anti_noshow_actif: e.target.checked }))}
+                style={{ width: '18px', height: '18px', accentColor: '#111827', cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: '13.5px', fontWeight: '700', color: '#111827' }}>Activer l'option Anti-NoShow</span>
+            </label>
+          </div>
+
+          {configSalon.anti_noshow_actif && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', color: '#374151', marginBottom: '6px' }}>
+                    Pourcentage d'acompte exigé
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="number"
+                      min="10"
+                      max="100"
+                      step="5"
+                      value={configSalon.anti_noshow_pourcentage ?? 30}
+                      onChange={(e) => setConfigSalon(prev => ({ ...prev, anti_noshow_pourcentage: parseInt(e.target.value, 10) || 30 }))}
+                      style={{
+                        width: '90px',
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        border: '1.5px solid #e5e7eb',
+                        fontSize: '14px',
+                        fontWeight: '700',
+                        color: '#111827'
+                      }}
+                    />
+                    <span style={{ fontSize: '14px', fontWeight: '800', color: '#111827' }}>% du montant total</span>
+                  </div>
+                  <span style={{ fontSize: '11.5px', color: '#6b7280', marginTop: '4px', display: 'block' }}>
+                    Exemple : pour une prestation à 40 €, l'acompte à régler en ligne sera de {((40 * (configSalon.anti_noshow_pourcentage || 30)) / 100).toFixed(2)} €.
+                  </span>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '700', color: '#374151', marginBottom: '6px' }}>
+                    En cas d'annulation dans les délais (&gt; 24h)
+                  </label>
+                  <select
+                    value={configSalon.anti_noshow_mode_annulation || 'AVOIR'}
+                    onChange={(e) => setConfigSalon(prev => ({ ...prev, anti_noshow_mode_annulation: e.target.value }))}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      borderRadius: '10px',
+                      border: '1.5px solid #e5e7eb',
+                      fontSize: '13.5px',
+                      fontWeight: '600',
+                      color: '#111827',
+                      backgroundColor: '#ffffff'
+                    }}
+                  >
+                    <option value="AVOIR">Créditer un Avoir Client (Recommandé - Fidélise le client)</option>
+                    <option value="REMBOURSEMENT">Rembourser directement sur la carte Stripe</option>
+                  </select>
+                  <span style={{ fontSize: '11.5px', color: '#6b7280', marginTop: '4px', display: 'block' }}>
+                    L'application enregistre le solde d'avoir du client et le déduit automatiquement lors de sa prochaine visite.
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#f9fafb', padding: '14px 16px', borderRadius: '10px', border: '1px solid #e5e7eb', fontSize: '12.5px', color: '#4b5563', lineHeight: 1.5 }}>
+                ℹ️ <strong>Règle Anti-NoShow stricte :</strong> Si le client annule à moins de 24 heures de son rendez-vous (ou ne se présente pas), l'acompte est automatiquement conservé par votre salon à titre de dédommagement.
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* SECTION 5 : VENTES ADDITIONNELLES EXPRESS (UP-SELL) */}
+        <div className="carte scan-carte" style={{ padding: '24px', borderRadius: '16px', border: '1px solid #e5e7eb', backgroundColor: '#ffffff', boxShadow: '0 2px 10px rgba(0,0,0,0.03)' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', fontWeight: '800', color: '#111827', letterSpacing: '-0.01em' }}>
+              Ventes Additionnelles Express (Up-Sell)
+            </h3>
+            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+              Proposez 2 à 3 soins rapides et rentables à vos clients juste avant le choix de l'horaire pour booster votre panier moyen.
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+                <input
+                  type="radio"
+                  name="upsell_mode"
+                  value="AUTO"
+                  checked={(configSalon.upsell_mode || 'AUTO') === 'AUTO'}
+                  onChange={() => setConfigSalon(prev => ({ ...prev, upsell_mode: 'AUTO' }))}
+                  style={{ accentColor: '#111827' }}
+                />
+                <span>Sélection automatique (Prestations courtes ≤ 15 min du catalogue)</span>
+              </label>
+
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+                <input
+                  type="radio"
+                  name="upsell_mode"
+                  value="MANUEL"
+                  checked={configSalon.upsell_mode === 'MANUEL'}
+                  onChange={() => setConfigSalon(prev => ({ ...prev, upsell_mode: 'MANUEL' }))}
+                  style={{ accentColor: '#111827' }}
+                />
+                <span>Sélection personnalisée</span>
+              </label>
+            </div>
+
+            {configSalon.upsell_mode === 'MANUEL' && (
+              <div style={{ marginTop: '8px', padding: '16px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+                <div style={{ fontSize: '12.5px', fontWeight: '700', color: '#374151', marginBottom: '10px' }}>
+                  Cochez jusqu'à 3 prestations à suggérer en Up-Sell :
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
+                  {(catalogueListe || []).filter(c => c.type_article === 'PRESTATION').map(p => {
+                    const currentIds = Array.isArray(configSalon.upsell_articles_ids) ? configSalon.upsell_articles_ids : [];
+                    const isChecked = currentIds.includes(p.id_article);
+                    return (
+                      <label key={p.id_article} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderRadius: '8px', backgroundColor: isChecked ? '#ffffff' : 'transparent', border: isChecked ? '1px solid #111827' : '1px solid transparent', cursor: 'pointer', fontSize: '13px' }}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            let next;
+                            if (e.target.checked) {
+                              if (currentIds.length >= 3) {
+                                alert("Vous pouvez sélectionner au maximum 3 prestations pour l'Up-Sell.");
+                                return;
+                              }
+                              next = [...currentIds, p.id_article];
+                            } else {
+                              next = currentIds.filter(id => id !== p.id_article);
+                            }
+                            setConfigSalon(prev => ({ ...prev, upsell_articles_ids: next }));
+                          }}
+                          style={{ accentColor: '#111827' }}
+                        />
+                        <span style={{ fontWeight: isChecked ? '700' : '500' }}>{p.nom} ({parseFloat(p.prix).toFixed(0)}€)</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {carteSauvegarde}
       </div>
     );
   };

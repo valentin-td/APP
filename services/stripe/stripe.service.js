@@ -421,6 +421,43 @@ async function traiterWebhookStripe({ pool, stripe }, { rawBody, signature, webh
         if (idSalon) {
             await pool.query('UPDATE configuration_salon SET plan_actuel = $1, frequence_paiement = $2, stripe_subscription_id = COALESCE($3, stripe_subscription_id), empreinte_cb_validee = TRUE, statut_abonnement = \'actif\' WHERE id_salon = $4', [planChoisi, frequence, session.subscription, idSalon]).catch(() => {});
         }
+
+        // 1.b. Validation de l'Acompte Anti-NoShow pour une réservation en ligne
+        if (session.metadata?.id_rdv) {
+            const idRdv = parseInt(session.metadata.id_rdv, 10);
+            const acompteMontant = parseFloat(session.metadata.acompte_montant || 0);
+            const rdvRes = await pool.query(
+                `UPDATE rendez_vous 
+                 SET acompte_paye = acompte_paye + $1,
+                     statut_acompte = 'PAYE_STRIPE',
+                     stripe_payment_intent_id = COALESCE($2, stripe_payment_intent_id)
+                 WHERE id_rdv = $3
+                 RETURNING *`,
+                [acompteMontant, session.payment_intent || session.id, idRdv]
+            ).catch(() => ({ rows: [] }));
+
+            if (rdvRes.rows && rdvRes.rows.length > 0) {
+                const rdv = rdvRes.rows[0];
+                const confRes = await pool.query('SELECT * FROM configuration_salon WHERE id_salon = $1', [rdv.id_salon]).catch(() => ({ rows: [] }));
+                const clientRes = rdv.id_client ? await pool.query('SELECT * FROM clients WHERE id_client = $1', [rdv.id_client]).catch(() => ({ rows: [] })) : { rows: [] };
+                const empRes = rdv.id_employe ? await pool.query('SELECT nom FROM employes WHERE id_employe = $1', [rdv.id_employe]).catch(() => ({ rows: [] })) : { rows: [] };
+
+                try {
+                    const { envoyerEmailConfirmationRdvBrevo } = require('../agenda/agenda.service');
+                    if (envoyerEmailConfirmationRdvBrevo) {
+                        await envoyerEmailConfirmationRdvBrevo({ pool }, {
+                            id_salon: rdv.id_salon,
+                            rdv,
+                            client: clientRes.rows[0] || { nom: rdv.nom_client, telephone: rdv.telephone_client, email: rdv.email_client },
+                            configSalon: confRes.rows[0] || {},
+                            employeNom: empRes.rows[0]?.nom || ''
+                        });
+                    }
+                } catch (mailErr) {
+                    console.error("⚠️ Erreur Brevo après confirmation Stripe :", mailErr.message);
+                }
+            }
+        }
     }
 
     // 2. Résiliation

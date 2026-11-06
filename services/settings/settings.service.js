@@ -109,7 +109,8 @@ async function mettreAJourConfigurationSalon(
         nom_salon, siret, adresse_salon, tva_intra, forme_juridique, capital_social, rcs_ville,
         fidelite_type, fidelite_points_seuil, fidelite_points_valeur, fidelite_tampons_seuil,
         fidelite_recompense_type, fidelite_recompense_valeur, fidelite_delai_sms, rappel_rdv_2h_actif,
-        description_salon
+        description_salon, anti_noshow_actif, anti_noshow_pourcentage, anti_noshow_mode_annulation,
+        delai_annulation_heures, upsell_mode, upsell_articles_ids
     } = body;
 
     if (user.role === 'employe') {
@@ -195,7 +196,13 @@ async function mettreAJourConfigurationSalon(
             fidelite_recompense_valeur = COALESCE($39, fidelite_recompense_valeur),
             fidelite_delai_sms = COALESCE($40, fidelite_delai_sms),
             rappel_rdv_2h_actif = $41,
-            description_salon = (CASE WHEN $42::boolean IS TRUE THEN $43::text ELSE description_salon END)
+            description_salon = (CASE WHEN $42::boolean IS TRUE THEN $43::text ELSE description_salon END),
+            anti_noshow_actif = COALESCE($44, anti_noshow_actif),
+            anti_noshow_pourcentage = COALESCE($45, anti_noshow_pourcentage),
+            anti_noshow_mode_annulation = COALESCE($46, anti_noshow_mode_annulation),
+            delai_annulation_heures = COALESCE($47, delai_annulation_heures),
+            upsell_mode = COALESCE($48, upsell_mode),
+            upsell_articles_ids = (CASE WHEN $49::boolean IS TRUE THEN $50::jsonb ELSE upsell_articles_ids END)
         WHERE id_salon = $16
     `;
 
@@ -221,7 +228,14 @@ async function mettreAJourConfigurationSalon(
         fidelite_delai_sms !== undefined ? parseInt(fidelite_delai_sms, 10) : 60,
         Boolean(rappel_rdv_2h_actif),
         description_salon !== undefined,
-        description_salon !== undefined ? (String(description_salon).trim() || null) : null
+        description_salon !== undefined ? (String(description_salon).trim() || null) : null,
+        anti_noshow_actif !== undefined ? Boolean(anti_noshow_actif) : null,
+        anti_noshow_pourcentage !== undefined ? parseInt(anti_noshow_pourcentage, 10) : null,
+        anti_noshow_mode_annulation || null,
+        delai_annulation_heures !== undefined ? parseInt(delai_annulation_heures, 10) : null,
+        upsell_mode || null,
+        upsell_articles_ids !== undefined,
+        upsell_articles_ids !== undefined ? JSON.stringify(upsell_articles_ids) : null
     ];
     
     await dbPool.query(updateQuery, params);
