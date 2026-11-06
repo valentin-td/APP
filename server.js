@@ -610,9 +610,12 @@ app.delete('/api/parametres/galerie', verifierToken, async (req, res) => {
 });
 
 // --- ACCÈS PUBLIC AUX MÉDIAS DU SALON (STREAMING DEPUIS R2 AVEC CACHE) ---
-app.get('/api/public/media/*', async (req, res) => {
+app.use('/api/public/media', async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return res.status(405).send("Méthode non autorisée.");
+    }
     try {
-        const cle = req.params[0];
+        const cle = decodeURIComponent(req.path.replace(/^\/+/, ''));
         if (!cle || !process.env.R2_BUCKET_NAME || !s3Client) {
             return res.status(404).send("Média non disponible.");
         }

@@ -356,3 +356,40 @@ erDiagram
     clotures_caisse ||--o{ liasses_mensuelles_validees : "agregee dans"
     configuration_salon ||--o{ jet_logs : "trace"
 ```
+
+---
+
+## 6. Charte Graphique & Cartographie d'Utilisation des Logos
+
+Ce schéma formalise le rôle architectural et l'affectation UI de chaque déclinaison du logo officiel STACK.
+
+```mermaid
+flowchart TD
+    Brand["Identité Visuelle & Logos STACK"] --> LogoSansTexte["Logo Sans Texte - Monogramme (IMG_7089.PNG / logo-stack.png)"]
+    Brand --> LogoJour["Logo avec inscription STACK - Mode Jour (IMG_6804.png)"]
+    Brand --> LogoNuit["Logo avec inscription STACK - Mode Nuit (IMG_6805.png)"]
+
+    LogoSansTexte --> MonogrammeUsage["Rôle : Petits encarts et espaces compacts"]
+    MonogrammeUsage --> U1["STACK Partners (Header, navigation et formulaire login)"]
+    MonogrammeUsage --> U2["Favicon du navigateur et icône application mobile PWA"]
+    MonogrammeUsage --> U3["Pastilles réduites, badges certifiés et modales compactes"]
+
+    LogoJour --> JourUsage["Rôle : Thème Lumineux et Documents (Mode Jour)"]
+    JourUsage --> J1["Application caisse et gérant quand isDarkMode est faux"]
+    JourUsage --> J2["Vitrine de réservation en ligne publique (façon Planity)"]
+    JourUsage --> J3["Exports de factures PDF, tickets A4 et documents officiels"]
+
+    LogoNuit --> NuitUsage["Rôle : Thème Sombre et Écrans Nuit (Mode Nuit)"]
+    NuitUsage --> N1["Interface principale logiciel de caisse en thème sombre"]
+    NuitUsage --> N2["Écrans de connexion sombres et modales dark mode"]
+    NuitUsage --> N3["Conteneurs et bannières à fort contraste sur fond sombre"]
+```
+
+### Répertoire des Fichiers Graphiques Officiels
+
+| Fichier source | Emplacement public | Rôle | Caractéristiques & Usages prévus |
+| :--- | :--- | :--- | :--- |
+| `IMG_7089.PNG` | `/logo-stack.png` & `/IMG_7089.PNG` | **Logo Sans Texte (Monogramme)** | Symbole épuré violet/bleu sans lettrage. Dédié aux petits encarts, headers compacts, portail STACK Partners, favicons, pastilles et badges. |
+| `IMG_6804.png` | `/IMG_6804.png` | **Logo Mode Jour (Light Mode)** | Typographie sombre « STACK » avec symbole. Destiné aux interfaces à fond clair (`!isDarkMode`), page publique de réservation, et impressions PDF A4. |
+| `IMG_6805.png` | `/IMG_6805.png` | **Logo Mode Nuit (Dark Mode)** | Typographie claire « STACK » avec symbole. Destiné aux interfaces à fond sombre (`isDarkMode === true`), logiciel de caisse principal et login dark. |
+
