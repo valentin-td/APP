@@ -37,7 +37,7 @@ function nettoyerNomVille(villeBrute, adresseBrute) {
   return source || 'France';
 }
 
-function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori, onSlotsLoaded, isHorizontal = false }) {
+function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori, onSlotsLoaded, isHorizontal = false, cardIndex = 0 }) {
   const [photoIdx, setPhotoIdx] = useState(0);
   const [apercuCreneaux, setApercuCreneaux] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(true);
@@ -63,7 +63,7 @@ function SalonMarketplaceCard({ salon, isMobile, favorisIds, onToggleFavori, onS
   }, [salon.id_salon, startDateStr]);
 
   const aVraiesPhotos = Array.isArray(salon.photos_salon) && salon.photos_salon.length > 0;
-  const fallbackPhoto = PHOTOS_SALON_DEFAUT[(Number(salon.id_salon) || 0) % PHOTOS_SALON_DEFAUT.length];
+  const fallbackPhoto = PHOTOS_SALON_DEFAUT[cardIndex % PHOTOS_SALON_DEFAUT.length];
   const photos = aVraiesPhotos ? salon.photos_salon : [fallbackPhoto];
   const isFav = favorisIds.includes(salon.id_salon);
   const villePropre = nettoyerNomVille(salon.ville, salon.adresse_salon);
@@ -660,9 +660,10 @@ export default function MarketplaceHub() {
                         : 'repeat(auto-fill, minmax(270px, 1fr))',
                   gap: '22px'
                 }}>
-                  {salonsFiltresAccueil.slice(0, 4).map(s => (
+                  {salonsFiltresAccueil.slice(0, 4).map((s, idx) => (
                     <SalonMarketplaceCard
                       key={s.id_salon}
+                      cardIndex={idx}
                       salon={s}
                       isMobile={isMobile}
                       favorisIds={favorisIds}
@@ -908,6 +909,35 @@ export default function MarketplaceHub() {
           </div>
         </div>
       )}
+
+      {/* PIED DE PAGE ÉDITORIAL + MARGE DE SÉCURITÉ BARRE SAFARI IPHONE */}
+      <footer style={{
+        borderTop: '1px solid #e5e7eb',
+        backgroundColor: '#ffffff',
+        padding: isMobile ? '28px 16px 110px 16px' : '36px 32px'
+      }}>
+        <div style={{
+          maxWidth: '1200px',
+          margin: '0 auto',
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          justifyContent: 'space-between',
+          alignItems: isMobile ? 'flex-start' : 'center',
+          gap: '16px',
+          fontSize: '13px',
+          color: '#6b7280'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <strong style={{ color: '#111111', letterSpacing: '0.18em', fontSize: '14px' }}>STACK</strong>
+            <span>•</span>
+            <span>Réservation en ligne pour salons de coiffure & barbiers</span>
+          </div>
+          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+            <a href="/mon-compte" style={{ color: '#4b5563', textDecoration: 'none', fontWeight: '500' }}>Mon compte client</a>
+            <a href="/?pro=1" style={{ color: '#4b5563', textDecoration: 'none', fontWeight: '500' }}>Accès Professionnels</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
